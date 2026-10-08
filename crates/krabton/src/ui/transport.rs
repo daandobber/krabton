@@ -1,0 +1,288 @@
+//! Top transport bar, menus and the bottom status bar.
+
+use crate::app::{App, View};
+use crate::theme::*;
+use crate::widgets::*;
+use egui::{vec2, Align2, RichText, Sense, Ui};
+use krabton_engine::{Command, Instrument, Quantize};
+use std::sync::atomic::Ordering;
+use std::time::Instant;
+
+/// Bars.beats.sixteenths, 1-based like Live.
+pub fn format_pos(beats: f64, bpb: u32) -> String {
+    let beats = beats.max(0.0);
+    let bpb = bpb.max(1) as f64;
+    let bar = (beats / bpb).floor();
+    let beat = (beats - bar * bpb).floor();
+    let six = ((beats - beats.floor()) * 4.0).floor();
+    format!("{}. {}. {}", bar as i64 + 1, beat as i64 + 1, six as i64 + 1)
+}
+
+impl App {
+    pub(crate) fn ui_transport(&mut self, ui: &mut Ui) {
+        ui.horizontal_centered(|ui| {
+            self.ui_menus(ui);
+            ui.separator();
+
+            // Tempo, tap and meter.
+            ui.label(RichText::new("BPM").color(TEXT_DIM).small());
+            ui.add(egui::DragValue::new(&mut self.project.bpm).range(20.0..=999.0).speed(0.2).fixed_decimals(2))
+                .on_hover_text("Tempo. Drag or double-click to type.");
+            if ui.button("TAP").on_hover_text("Tap tempo").clicked() {
+                self.tap_tempo();
+            }
+            ui.add(egui::DragValue::new(&mut self.project.beats_per_bar).range(1..=16).suffix(" / 4")).on_hover_text("Beats per bar");
+            let metro = self.project.metronome;
+            if ui.add(egui::Button::new(RichText::new("Click").color(if metro { TEXT_DARK } else { TEXT })).fill(if metro { ACCENT } else { PANEL3 })).on_hover_text("Metronome").clicked() {
+                self.project.metronome = !metro;
+            }
+            egui::ComboBox::from_id_salt("quant")
+                .width(64.0)
+                .selected_text(self.project.launch_quantize.name())
+                .show_ui(ui, |ui| {
+                    for q in Quantize::ALL {
+                        ui.selectable_value(&mut self.project.launch_quantize, q, q.name());
+                    }
+                })
+                .response
+                .on_hover_text("Global launch quantization");
+            let scale_on = self.project.scale_mode;
+            let scale_btn = egui::Button::new(RichText::new(self.project.scale.name()).color(if scale_on { TEXT_DARK } else { TEXT })).fill(if scale_on { ACCENT } else { PANEL3 });
+            let resp = ui.add(scale_btn).on_hover_text("Key & scale of the project. Click to change or convert the whole project; right-click toggles scale mode.");
+            if resp.clicked() {
+                self.open_scale_dialog();
+            }
+            if resp.secondary_clicked() {
+                self.project.scale_mode = !scale_on;
+            }
+            ui.separator();
+
+            // Position + transport buttons.
+            let status = self.status();
+            let playing = status.playing.load(Ordering::Relaxed);
+            let pos = status.song_pos.load();
+            let (r, _) = ui.allocate_exact_size(vec2(84.0, 24.0), Sense::hover());
+            rect_fill(ui.painter(), r, 2.0, BG);
+            ui.painter().text(r.center(), Align2::CENTER_CENTER, format_pos(pos, self.project.beats_per_bar), mono(), if playing { PLAY } else { TEXT });
+
+            let (r, resp) = ui.allocate_exact_size(vec2(28.0, 24.0), Sense::click());
+            rect_fill(ui.painter(), r, 2.0, if playing { shade(PLAY, 0.35) } else { PANEL3 });
+            play_icon(ui.painter(), r.center(), 12.0, if playing { PLAY } else { TEXT });
+            if resp.on_hover_text("Play (Space)").clicked() {
+                self.cmd(Command::Play);
+            }
+            let (r, resp) = ui.allocate_exact_size(vec2(28.0, 24.0), Sense::click());
+            rect_fill(ui.painter(), r, 2.0, PANEL3);
+            stop_icon(ui.painter(), r.center(), 10.0, TEXT);
+            if resp.on_hover_text("Stop (press twice to return to the start)").clicked() {
+                self.cmd(Command::Stop);
+            }
+            let (r, resp) = ui.allocate_exact_size(vec2(28.0, 24.0), Sense::click());
+            let rec = self.recording;
+            rect_fill(ui.painter(), r, 2.0, if rec { shade(REC, 0.4) } else { PANEL3 });
+            rec_icon(ui.painter(), r.center(), 11.0, if rec { REC } else { TEXT_DIM });
+            if resp.on_hover_text("Session Record (F9): arm a MIDI track, press record, play notes").clicked() {
+                self.toggle_record();
+            }
+            let overridden = self.project.tracks.iter().enumerate().any(|(i, _)| status.tracks.get(i).map(|t| t.overridden.load(Ordering::Relaxed)).unwrap_or(false));
+            let has_arr = self.project.tracks.iter().any(|t| !t.arrangement.is_empty());
+            if overridden && has_arr {
+                if ui.add(egui::Button::new(RichText::new("Back to Arr.").color(TEXT_DARK)).fill(ACCENT)).on_hover_text("Session clips are overriding the arrangement. Click to return.").clicked() {
+                    self.cmd(Command::BackToArrangement);
+                }
+            }
+            ui.separator();
+
+            // Loop.
+            let lp = self.project.loop_enabled;
+            if ui.add(egui::Button::new(RichText::new("Loop").color(if lp { TEXT_DARK } else { TEXT })).fill(if lp { ACCENT } else { PANEL3 })).clicked() {
+                self.project.loop_enabled = !lp;
+            }
+            let bar = self.project.beats_per_bar_f();
+            let mut start_bar = self.project.loop_start / bar + 1.0;
+            let mut len_bars = (self.project.loop_end - self.project.loop_start) / bar;
+            let a = ui.add(egui::DragValue::new(&mut start_bar).range(1.0..=999.0).speed(0.05).fixed_decimals(0).prefix("start "));
+            let b = ui.add(egui::DragValue::new(&mut len_bars).range(1.0..=256.0).speed(0.05).fixed_decimals(0).suffix(" bars"));
+            if a.changed() || b.changed() {
+                self.project.loop_start = (start_bar.round() - 1.0).max(0.0) * bar;
+                self.project.loop_end = self.project.loop_start + len_bars.round().max(1.0) * bar;
+            }
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let cpu = status.cpu_load.load();
+                ui.label(RichText::new(format!("CPU {:>3.0}%", cpu * 100.0)).color(if cpu > 0.8 { REC } else { TEXT_DIM }).small());
+                ui.separator();
+                let dragging_clip = egui::DragAndDrop::payload::<crate::app::SlotDrag>(ui.ctx()).is_some() || egui::DragAndDrop::payload::<crate::app::ArrClipDrag>(ui.ctx()).is_some();
+                for (v, label) in [(View::Arrangement, "Arrangement"), (View::Session, "Session")] {
+                    let on = self.view == v;
+                    let resp = ui.add(egui::Button::new(RichText::new(label).color(if on { TEXT_DARK } else { TEXT })).fill(if on { ACCENT } else { PANEL3 })).on_hover_text("Tab switches views (also while dragging a clip)");
+                    if resp.clicked() {
+                        self.view = v;
+                    }
+                    // Dragging a clip over the other view's button switches to it.
+                    if dragging_clip && !on && resp.contains_pointer() {
+                        self.view = v;
+                    }
+                }
+            });
+        });
+    }
+
+    fn tap_tempo(&mut self) {
+        let now = Instant::now();
+        let taps = &mut self.session.taps;
+        if let Some(last) = taps.last() {
+            if now.duration_since(*last).as_secs_f64() > 2.0 {
+                taps.clear();
+            }
+        }
+        taps.push(now);
+        if taps.len() > 6 {
+            taps.remove(0);
+        }
+        if taps.len() >= 3 {
+            let span = taps.last().unwrap().duration_since(taps[0]).as_secs_f64();
+            let bpm = 60.0 * (taps.len() - 1) as f64 / span;
+            if (20.0..=999.0).contains(&bpm) {
+                self.project.bpm = (bpm * 100.0).round() / 100.0;
+            }
+        }
+    }
+
+    fn ui_menus(&mut self, ui: &mut Ui) {
+        ui.menu_button(RichText::new("Krabton").strong().color(ACCENT), |ui| {
+            if ui.button("New Set        Ctrl+N").clicked() {
+                self.new_project();
+                ui.close();
+            }
+            if ui.button("Open...        Ctrl+O").clicked() {
+                ui.close();
+                self.open();
+            }
+            if ui.button("Save           Ctrl+S").clicked() {
+                ui.close();
+                self.save(false);
+            }
+            if ui.button("Save As...     Ctrl+Shift+S").clicked() {
+                ui.close();
+                self.save(true);
+            }
+            ui.separator();
+            if ui.button("Export Audio... Ctrl+R").clicked() {
+                self.export.open = true;
+                ui.close();
+            }
+            if ui.button("Load Demo Set").clicked() {
+                self.load_demo();
+                ui.close();
+            }
+            ui.separator();
+            if ui.button("About Krabton").clicked() {
+                self.show_about = true;
+                ui.close();
+            }
+        });
+        ui.menu_button("Edit", |ui| {
+            if ui.button("Undo   Ctrl+Z").clicked() {
+                self.undo();
+                ui.close();
+            }
+            if ui.button("Redo   Ctrl+Y").clicked() {
+                self.redo();
+                ui.close();
+            }
+            ui.separator();
+            if ui.button("Scenes to Arrangement").on_hover_text("Lay every scene out on the timeline, one after another").clicked() {
+                let n = self.project.scenes_to_arrangement();
+                self.toast(format!("Placed {n} scene(s) in the arrangement"));
+                self.view = View::Arrangement;
+                ui.close();
+            }
+        });
+        ui.menu_button("Create", |ui| {
+            if ui.button("MIDI Track    Ctrl+Shift+T").clicked() {
+                self.add_midi_track(Some(Instrument::synth("Init")));
+                ui.close();
+            }
+            if ui.button("Audio Track   Ctrl+T").clicked() {
+                self.add_audio_track();
+                ui.close();
+            }
+            if ui.button("Return Track").clicked() {
+                let n = self.project.returns.len();
+                if n < krabton_engine::engine::MAX_RETURNS {
+                    let name = format!("{} Return", (b'A' + n as u8) as char);
+                    self.project.add_return(&name, Vec::new());
+                }
+                ui.close();
+            }
+            if ui.button("Scene         Ctrl+I").clicked() {
+                let at = self.sel_scene + 1;
+                self.project.add_scene(at);
+                ui.close();
+            }
+        });
+        ui.menu_button("Options", |ui| {
+            ui.label(RichText::new("MIDI input").color(TEXT_DIM).small());
+            let ports = self.midi.ports.clone();
+            if ports.is_empty() {
+                ui.label("No MIDI inputs found");
+            }
+            for p in ports {
+                let on = self.midi.connected.as_deref() == Some(p.as_str());
+                if ui.selectable_label(on, &p).clicked() {
+                    if on {
+                        self.midi.disconnect();
+                    } else if let Err(e) = self.midi.connect(&p) {
+                        self.toast(e);
+                    }
+                    ui.close();
+                }
+            }
+            if ui.button("Rescan MIDI ports").clicked() {
+                self.midi.refresh();
+            }
+            ui.separator();
+            ui.checkbox(&mut self.kb_enabled, "Computer MIDI keyboard (M)");
+            ui.checkbox(&mut self.rec_quantize, "Record quantization 1/16");
+            ui.separator();
+            ui.label(RichText::new("Scale").color(TEXT_DIM).small());
+            ui.checkbox(&mut self.snap_input, "Snap played notes to scale");
+            ui.checkbox(&mut self.scale_keys, "Keyboard plays scale steps");
+            if ui.button("Key & Scale...").clicked() {
+                self.open_scale_dialog();
+                ui.close();
+            }
+        });
+    }
+
+    pub(crate) fn ui_statusbar(&mut self, ui: &mut Ui) {
+        ui.horizontal_centered(|ui| {
+            if let Some((msg, at)) = &self.message {
+                let age = at.elapsed().as_secs_f32();
+                if age < 8.0 {
+                    let fade = (1.0 - (age - 6.0).max(0.0) / 2.0).clamp(0.0, 1.0);
+                    ui.label(RichText::new(msg).color(mix(BG, TEXT, fade)).small());
+                }
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(RichText::new(&self.audio_desc).color(TEXT_DIM).small());
+                ui.separator();
+                let midi = self.midi.connected.clone().unwrap_or_else(|| "no MIDI in".into());
+                ui.label(RichText::new(midi).color(TEXT_DIM).small());
+                ui.separator();
+                if self.kb_enabled {
+                    ui.label(
+                        RichText::new(format!("Keys: C{} vel {}", self.kb_octave, (self.kb_velocity * 127.0).round() as i32))
+                            .color(TEXT_DIM)
+                            .small(),
+                    );
+                }
+                if let Some(job) = &self.export_job {
+                    ui.separator();
+                    ui.add(egui::ProgressBar::new(job.progress.fraction()).desired_width(120.0).text("Exporting"));
+                }
+            });
+        });
+    }
+}

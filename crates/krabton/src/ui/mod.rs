@@ -1,0 +1,46 @@
+//! All views. Each submodule adds `impl App` methods for its part of the UI.
+
+pub mod arrangement;
+pub mod browser;
+pub mod classic_view;
+pub mod detail;
+pub mod devices;
+pub mod dialogs;
+pub mod fm_panel;
+pub mod grid_panel;
+pub mod modulation;
+pub mod piano_roll;
+pub mod seq_view;
+pub mod session;
+pub mod transport;
+
+use crate::app::{App, ArrClipDrag, BrowserItem, ClipSel, SlotDrag, View};
+use crate::theme::*;
+use egui::{Align2, Context, DragAndDrop, Id, LayerId, Order};
+
+impl App {
+    /// Shows what is being dragged next to the mouse pointer.
+    pub(crate) fn draw_drag_ghost(&self, ctx: &Context) {
+        let label = if let Some(item) = DragAndDrop::payload::<BrowserItem>(ctx) {
+            item.label()
+        } else if let (Some(d), View::Session) = (DragAndDrop::payload::<ArrClipDrag>(ctx), self.view) {
+            let name = self.project.tracks.iter().flat_map(|t| &t.arrangement).find(|a| a.id == d.id).map(|a| a.clip.name.clone()).unwrap_or_default();
+            format!("{name}: drop on a slot")
+        } else if let Some(chip) = DragAndDrop::payload::<modulation::ModChip>(ctx) {
+            let name = self.project.modulators.iter().find(|m| m.id == chip.0).map(|m| m.name.clone()).unwrap_or_default();
+            format!("{name}: drop on a knob")
+        } else if let Some(d) = DragAndDrop::payload::<SlotDrag>(ctx) {
+            let name = self.clip_ref(ClipSel::Slot { track: d.track, scene: d.scene }).map(|c| c.name.clone()).unwrap_or_default();
+            let copy = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
+            format!("{name}{}", if copy { "  (copy)" } else { "" })
+        } else {
+            return;
+        };
+        let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) else { return };
+        let p = ctx.layer_painter(LayerId::new(Order::Tooltip, Id::new("drag_ghost")));
+        let galley_pos = pos + egui::vec2(14.0, 10.0);
+        let r = p.text(galley_pos, Align2::LEFT_TOP, &label, small(), TEXT_DARK);
+        p.rect_filled(r.expand(4.0), 3.0, ACCENT);
+        p.text(galley_pos, Align2::LEFT_TOP, &label, small(), TEXT_DARK);
+    }
+}

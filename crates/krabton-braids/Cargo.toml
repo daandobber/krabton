@@ -1,0 +1,10 @@
+[package]
+name = "krabton-braids"
+description = "Rust port of the Mutable Instruments Braids macro-oscillator DSP, for Krabton"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license = "MIT"
+authors = ["Krabton contributors", "Emilie Gillet (original Braids code)"]
+
+[dependencies]

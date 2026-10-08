@@ -1,0 +1,37 @@
+[workspace]
+resolver = "2"
+members = ["crates/krabton-engine", "crates/krabton-clap", "crates/krabton-monome", "crates/krabton-braids", "crates/krabton-elements", "crates/krabton"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Krabton contributors"]
+repository = "https://github.com/daandobber/krabton"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+crossbeam-channel = "0.5"
+hound = "3.5"
+
+# Audio code is unusable without optimizations, so even dev builds get some.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+# The Braids port keeps the fixed-point C++ semantics: integer arithmetic
+# wraps like on the original hardware, in debug builds too.
+[profile.dev.package.krabton-braids]
+opt-level = 3
+overflow-checks = false
+
+# Elements runs dozens of filters per sample; keep it fast in dev builds.
+[profile.dev.package.krabton-elements]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 4

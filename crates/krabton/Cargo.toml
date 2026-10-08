@@ -1,0 +1,23 @@
+[package]
+name = "krabton"
+description = "Krabton: an open-source, Live-inspired DAW written in Rust"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+krabton-engine = { path = "../krabton-engine" }
+krabton-braids = { path = "../krabton-braids" }
+krabton-clap = { path = "../krabton-clap" }
+krabton-monome = { path = "../krabton-monome" }
+base64 = "0.22"
+eframe = { version = "0.32", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+egui = "0.32"
+cpal = "0.16"
+midir = "0.10"
+rfd = "0.15"
+crossbeam-channel.workspace = true
+serde.workspace = true
+serde_json.workspace = true

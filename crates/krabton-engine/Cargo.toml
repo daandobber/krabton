@@ -1,0 +1,18 @@
+[package]
+name = "krabton-engine"
+description = "Audio engine, DSP and project model for the Krabton DAW"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+crossbeam-channel.workspace = true
+hound.workspace = true
+krabton-braids = { path = "../krabton-braids" }
+krabton-elements = { path = "../krabton-elements" }
+# Mutable Instruments Plaits DSP (MIT), pinned to a reviewed commit.
+mi-plaits-dsp = { git = "https://github.com/sourcebox/mi-plaits-dsp-rs", rev = "effe9864bb67d23aaf5724722ac1ce165d4e7c9f" }
