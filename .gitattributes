@@ -1,0 +1,8 @@
+# Normalize text files to LF in the repository.
+* text=auto
+
+# Sample data and images must never be converted.
+*.bin binary
+*.png binary
+*.wav binary
+*.syx binary
