@@ -624,8 +624,10 @@ impl App {
                                         let idx = v.len() - 1;
                                         self.piano.selected = [idx].into_iter().collect();
                                     }
-                                    let ids = self.preview_note_on(track, pitch, 0.8);
-                                    self.note_off(pitch, &ids);
+                                    if self.prefs.note_preview {
+                                        let ids = self.preview_note_on(track, pitch, 0.8);
+                                        self.note_off(pitch, &ids);
+                                    }
                                 }
                             }
                         } else if !shift {

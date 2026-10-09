@@ -97,16 +97,19 @@ impl App {
         }
 
         ui.separator();
-        ui.label(RichText::new("monome (serialosc)").strong());
-        let (grid_id, arc_id, devices, err) = match &self.grid.monome {
-            Some(m) => (m.grid_id().map(str::to_string), m.arc_id().map(str::to_string), m.devices.clone(), None),
-            None => (None, None, Vec::new(), self.grid.error.clone()),
+        ui.label(RichText::new("monome").strong());
+        let (grid_id, arc_id, devices, err, port) = match &self.grid.monome {
+            Some(m) => (m.grid_id().map(str::to_string), m.arc_id().map(str::to_string), m.devices.clone(), None, m.grid_port().map(str::to_string)),
+            None => (None, None, Vec::new(), self.grid.error.clone(), None),
         };
         if let Some(e) = err {
             ui.label(RichText::new(e).small().color(REC));
         }
         match &grid_id {
-            Some(id) => ui.label(RichText::new(format!("grid {id} ({}x{})", self.grid.width, self.grid.height)).small().color(PLAY)),
+            Some(id) => {
+                let via = port.as_ref().map(|p| format!(" on {p}")).unwrap_or_else(|| " via serialosc".into());
+                ui.label(RichText::new(format!("grid {id}{via} ({}x{})", self.grid.width, self.grid.height)).small().color(PLAY))
+            }
             None => ui.label(RichText::new("No grid: the one on the right works with the mouse.").small().color(TEXT_DIM)),
         };
         if let Some(id) = &arc_id {
@@ -125,9 +128,23 @@ impl App {
             }
         }
         ui.horizontal(|ui| {
-            if ui.button("Rescan").on_hover_text("Ask serialosc for devices again").clicked() {
+            ui.label(RichText::new("Rotation").small().color(TEXT_DIM));
+            // A 16x8 grid only turns half way; square grids every quarter.
+            let square = self.grid.monome.as_ref().map(|m| m.grid_size.0 == m.grid_size.1).unwrap_or(false);
+            let cur = self.prefs.grid_rotation;
+            for deg in [0, 90, 180, 270] {
+                if deg % 180 == 90 && !square && cur != deg {
+                    continue;
+                }
+                if ui.selectable_label(cur == deg, format!("{deg}°")).on_hover_text("Turn the grid, e.g. when its cable points the other way").clicked() {
+                    self.set_grid_rotation(deg);
+                }
+            }
+        });
+        ui.horizontal(|ui| {
+            if ui.button("Rescan").on_hover_text("Look for grids and arcs again (serialosc and USB serial ports)").clicked() {
                 if let Some(m) = self.grid.monome.as_mut() {
-                    m.discover();
+                    m.rescan();
                 }
                 self.toast("Looking for monome devices...");
             }

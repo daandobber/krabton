@@ -8,6 +8,7 @@ pub mod devices;
 pub mod dialogs;
 pub mod fm_panel;
 pub mod io_section;
+pub mod lens;
 pub mod grid_panel;
 pub mod modulation;
 pub mod piano_roll;

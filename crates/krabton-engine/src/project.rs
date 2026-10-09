@@ -349,6 +349,15 @@ impl Instrument {
         }
     }
 
+    /// The name a track gets for this instrument: the device ("Analog",
+    /// "Drums"), or the plugin's name.
+    pub fn track_name(&self) -> String {
+        match self {
+            Instrument::Plugin(p) => p.name.clone(),
+            i => i.kind_name().to_string(),
+        }
+    }
+
     pub fn is_drums(&self) -> bool {
         matches!(self, Instrument::Drums { .. })
     }
@@ -593,9 +602,9 @@ impl Project {
 
     pub fn add_midi_track(&mut self, instrument: Option<Instrument>) -> usize {
         let n = self.tracks.len() + 1;
+        // Like Live, a track is named after its instrument, not the preset.
         let name = match &instrument {
-            Some(Instrument::Drums { .. }) => "Drums".to_string(),
-            Some(i) => i.display_name(),
+            Some(i) => i.track_name(),
             None => format!("{n} MIDI"),
         };
         let t = self.new_track(TrackKind::Midi, name, instrument);

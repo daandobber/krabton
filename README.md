@@ -14,6 +14,18 @@
 - Drag clips between slots (Ctrl+drag copies), right-click menus, rename, recolor, duplicate
 - Mixer under the grid: sends, pan, volume fader with peak meters, track activator, solo, arm
 - Two return tracks (A Reverb, B Delay) out of the box, and a master track
+- Stop keeps the launched clips, so Play starts them again, as in Live; *Stop All Clips* or a track's stop button clears them
+- New tracks are named after their instrument (Analog, Elements, FM, ...), not after the preset; a name you type stays
+
+**Browser** (laid out like Live's)
+- A sidebar with *Collections* (Favorites and six colors), *Categories* (All, Sounds, Drums, Instruments, Audio Effects, MIDI Effects, Plug-ins, Clips, Samples) and *Places* (Music, the current project's folder and folders you add)
+- A *Name* list where devices open up into their presets (Analog, Braids, Drums, Elements, FM with its banks, Plaits, Sampler, Synth) and folders on disk into their samples and DX7 banks
+- *Sounds* sorts every preset by the kind of sound (Bass, Keys, Lead, Pad, Strings, Mallets & Bells, ...), *Drums* has the kits and the drum hits, *Clips* the clips of this project to copy elsewhere
+- Search finds words anywhere in a name or its folders and opens the folders with results; *All* searches everything
+- Double-click or Enter loads an item onto the selected track, or drag it onto a track, slot or the arrangement. A device folder loads the device
+- Arrow keys browse (Left/Right close and open folders), 1-7 put the selected item in a collection, 0 takes it out of all of them; right-click for the same
+- A preview strip shows the selected sample's waveform and plays it (Preview on/off)
+- Collections, Places, plug-in folders, FM banks and the grid rotation are kept between sessions in `prefs.json` (`%APPDATA%\Krabton`, `~/Library/Application Support/Krabton` or `~/.config/krabton`)
 
 **Arrangement view**
 - One lane per track with mini note/waveform previews
@@ -23,7 +35,7 @@
 - Session clips override the arrangement per track, with *Back to Arrangement* like Live
 
 **Editing and recording**
-- Piano roll with draw mode, marquee selection, move/resize, Ctrl+drag duplicate, velocity lane, quantize, transpose, x2 / /2
+- Piano roll with draw mode, marquee selection, move/resize, Ctrl+drag duplicate, velocity lane, quantize, transpose, x2 / /2, and a *Preview* switch to hear notes while placing and moving them (off by default; the keys on the left always play)
 - Drum mode: the piano roll folds to the pads of the drum rack
 - Computer MIDI keyboard (A W S E D F T G Y H U J K ..., Z/X octave, C/V velocity) and hardware MIDI input
 - Session record: arm a track, press record (F9), play; notes are overdubbed into the looping clip with optional 1/16 quantization
@@ -74,11 +86,12 @@
 - Modulated knobs show a ring per connection in the modulator's color and a dot that moves with the live value; the Mod tab has a scope per modulator
 - Runs inside the audio engine at control rate (every 64 samples, about 1.3 ms), so it is also in *Export Audio*
 
-**monome grid and arc** (native serialosc support, no extra software besides serialosc)
-- Plug in a grid and Krabton finds it. Three modes: *Session* (launch clips and scenes, stop tracks), *Keys* (an in-key isomorphic keyboard, rows a fourth apart) and *Sequencer* (edit the selected track's sequencer on the grid: draw Life seeds, edit Polymeter lanes, set euclidean pulses, ...)
+**monome grid and arc** (native serialosc support, and grids straight over USB serial)
+- Plug in a grid and Krabton finds it: through serialosc, or, for grids serialosc does not see (newer and DIY grids that are plain USB serial devices), directly on their serial port with monome's serial protocol. The Grid tab shows which grid is connected and where, and *Rescan* looks again Three modes: *Session* (launch clips and scenes, stop tracks), *Keys* (an in-key isomorphic keyboard, rows a fourth apart) and *Sequencer* (edit the selected track's sequencer on the grid: draw Life seeds, edit Polymeter lanes, set euclidean pulses, ...)
 - An arc controls the first four parameters of the selected track's first MIDI device, or volume, pan and sends; with the Mod tab open it plays the selected modulator
 - No grid? The *Grid* tab in the detail view has an on-screen grid that runs the same logic with the mouse
-- Varibright LEDs, 8x8, 16x8 and 16x16 grids. Tested against a simulated serialosc; reports from real hardware are welcome
+- *Rotation* turns the grid (0 or 180 degrees, and 90 or 270 for square grids) when its cable points the other way; keys and LEDs follow
+- Varibright LEDs, 8x8, 16x8 and 16x16 grids. Tested against a simulated serialosc and a DIY 16x8 grid over USB serial
 
 **Instruments**
 - **Analog**: a classic analog polysynth, see below
@@ -130,7 +143,13 @@
 - Krabton does not bundle these plugins: install them yourself (they keep their own licenses, mostly GPL-3)
 - Supported so far: CLAP instruments with note input; editors are embedded on Windows, other platforms use the plugin's floating window when available. Effect plugins and VST3 are on the roadmap
 
-**Audio effects**: EQ Three (with kills), Auto Filter (tempo-synced LFO), Compressor (parallel mix), Saturator (soft/hard/fold/tube), Delay (tempo-synced, ping-pong), Reverb, Chorus, Redux (bit crusher), Utility, Oscilloscope
+**Audio effects**: EQ Three (with kills), Auto Filter (tempo-synced LFO), Compressor (parallel mix), Saturator (soft/hard/fold/tube), Delay (tempo-synced, ping-pong), Reverb, Chorus, Redux (bit crusher), Utility, Oscilloscope, Lens EQ, Lens Comp, Lens Limiter
+
+**Lens EQ, Lens Comp, Lens Limiter** (in the style of the big visual mixing plug-ins)
+- *Lens EQ*: twelve bands on a big interactive curve over a real-time spectrum analyzer (before and/or after the EQ, with the usual 4.5 dB/oct tilt). Double-click to add a band (cuts near the edges), drag a dot for frequency and gain (Shift for fine), scroll for Q, Alt+click to bypass, double-click a dot to remove it, right-click for shape, slope, stereo and dynamics. Shapes: bell, low/high shelf, tilt, low/high cut from 6 to 96 dB/oct with resonance, notch and band pass. Every band can work on stereo, left, right, mid or side, and can be *dynamic*: its gain moves by up to its range as the level in its own frequency region crosses the threshold, and the display shows where it is right now. The filters are matched to their analog shapes, so a bell at 15 kHz keeps its shape up to Nyquist instead of being squeezed, and the drawn curve is computed from the same filters the audio runs through
+- *Lens Comp*: eight styles (Clean, Classic feedback, Opto with program-dependent release, Vocal, Mastering, Bus, Punch, Pumping), threshold, ratio, knee, range, attack, release with auto release, lookahead, hold, sidechain high-pass, stereo link, mix and auto gain; a scrolling display of input, output and gain reduction with the threshold, a transfer curve with the current level, and a gain reduction meter
+- *Lens Limiter*: lookahead brickwall limiting whose gain ramps down before each peak, true-peak detection (4x), eight release styles (Transparent, Punchy, Dynamic, Aggressive, Allround, Bus, Safe, Modern), channel link and unity-gain monitoring; an EBU R128 loudness meter (momentary, short-term and gated integrated LUFS, true peak) next to a scrolling level and gain reduction display
+- Krabton is not affiliated with FabFilter; these are its own implementations
 
 **See the wave**
 - Every instrument panel shows the live wave of that instrument, locked to its pitch so it stands still while you turn knobs: a saw opening up through the filter, sync sweeps, the bow on an Elements string. Click it for 1, 2 or 4 cycles; the note it hears is shown below the wave, and the last wave stays on screen after the note ends
@@ -175,7 +194,10 @@ cargo test -p krabton-engine -p krabton-monome -p krabton-braids -p krabton-elem
 | Z / X, C / V | Octave down/up, velocity down/up |
 | M | Computer MIDI keyboard on/off |
 | F9 | Record (session, or the arrangement in Arrangement view) |
-| Enter | Launch the selected scene |
+| Enter | Launch the selected scene (with the browser focused: load the selected item) |
+| Ctrl+F | Search in the browser (Down goes from the search field to the results) |
+| Ctrl+Alt+B | Show or hide the browser |
+| Arrow keys, Enter, 1-7, 0 in the browser | Browse, open and close folders, load; put the selected item in a collection, take it out of all of them |
 | B | Draw mode in the piano roll |
 | Click / right-click the key in the transport | Key & Scale dialog / scale mode on-off |
 | Ctrl+U, Ctrl+A | Quantize notes, select all notes |
@@ -196,7 +218,7 @@ The workspace has six crates:
 
 - [`crates/krabton-engine`](crates/krabton-engine): the project model, DSP and the real-time engine. It has no GUI or audio-device dependencies, so it is fully unit tested and can render offline.
 - [`crates/krabton-clap`](crates/krabton-clap): CLAP plugin hosting (loading, audio processing, state, editor windows).
-- [`crates/krabton-monome`](crates/krabton-monome): a small OSC codec and serialosc client for monome grids and arcs (no dependencies).
+- [`crates/krabton-monome`](crates/krabton-monome): a small OSC codec and serialosc client for monome grids and arcs, plus monome's serial protocol for grids on a USB serial port (with [serialport](https://github.com/serialport/serialport-rs)).
 - [`crates/krabton-braids`](crates/krabton-braids): the Rust port of the Braids macro-oscillator (fixed-point DSP, no dependencies).
 - [`crates/krabton-elements`](crates/krabton-elements): the Rust port of the Elements modal voice (float DSP, no dependencies).
 - [`crates/krabton`](crates/krabton): the application, built with [egui](https://github.com/emilk/egui)/eframe, [cpal](https://github.com/RustAudio/cpal) for audio output and [midir](https://github.com/Boddlnagg/midir) for MIDI input.
@@ -239,15 +261,16 @@ The first plays a chord straight into the plugin and checks its state save/resto
 - `KRABTON_NO_AUDIO=1` runs the engine on a silent real-time thread instead of the audio device.
 - `KRABTON_SCRIPT="30:scene=1;60:arrangement;90:devices;120:convert=0,0"` runs UI actions at the given frame numbers (see `run_script` in `app.rs`). Handy for screenshots and manual testing.
 - `KRABTON_SERIALOSC_PORT=12102` talks to a serialosc on another port, for example a simulated one.
+- Test windows (`KRABTON_TEST_WINDOW`, or a custom serialosc port) never open grids on serial ports, so they cannot take over a real grid; `KRABTON_SERIAL_GRID=1` allows it. `cargo run -p krabton-monome --example serial_probe` lists the serial ports that look like grids and asks them for their id and size, without lighting anything.
+- Test windows keep their settings in memory; `KRABTON_PREFS=path/to/prefs.json` uses another settings file.
 - Script actions `routetrack=i` (a new audio track listening to track `i`) and `recslot=t,s` (start or stop recording track `t` into slot `s`) drive audio recording.
 - Script action `fx=n` adds effect number `n` (in the order of the effect list) to the selected chain, for example `fx=9` for an Oscilloscope.
-- Script actions `click=x,y` and `drag=x1,y1,x2,y2` (in UI points) feed pointer events to the Krabton window only, so UI flows can be replayed without touching the desktop.
+- Script actions `click=x,y`, `dclick=x,y`, `rclick=x,y`, `drag=x1,y1,x2,y2` (in UI points), `press=ctrl+f` and `type=text` feed input to the Krabton window only, so UI flows can be replayed without touching the desktop. `quit` closes the window cleanly (a connected grid goes dark).
 
 ## Roadmap
 
 Ideas that would make Krabton even more Live-like (contributions welcome):
 
-- Audio input recording and arrangement recording
 - Automation lanes and clip envelopes
 - Effect plugins and VST3 hosting, plugin parameter automation
 - Time-stretching warp modes (Beats, Complex)

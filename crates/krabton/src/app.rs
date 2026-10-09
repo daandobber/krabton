@@ -83,6 +83,8 @@ pub enum BrowserItem {
     Elements(&'static str),
     /// An Analog preset.
     Analog(&'static str),
+    /// A copy of a clip in this project.
+    Clip { id: u64, name: String },
 }
 
 /// A bank of DX7 voices for FM.
@@ -110,6 +112,7 @@ impl BrowserItem {
             BrowserItem::FmVoice { voice, .. } => {
                 krabton_engine::dsp::dx7::Dx7Voice::from_slice(voice).map(|v| format!("FM: {}", v.name())).unwrap_or_default()
             }
+            BrowserItem::Clip { name, .. } => name.clone(),
         }
     }
 }
@@ -298,6 +301,8 @@ pub struct App {
     pub arr: ArrState,
     pub piano: PianoState,
     pub browser: BrowserState,
+    /// Settings kept between sessions.
+    pub prefs: crate::prefs::Prefs,
     pub sel_pad: usize,
     pub pending_pad_hit: Option<u8>,
     sample_cache: HashMap<PathBuf, SampleRef>,
@@ -314,6 +319,8 @@ pub struct App {
     /// to this window only (never to the desktop).
     script_input: std::collections::VecDeque<Vec<egui::Event>>,
     pub(crate) frame: u64,
+    /// Close the window at the end of this frame (script action `quit`).
+    quit_requested: bool,
 }
 
 impl App {
@@ -398,6 +405,7 @@ impl App {
             arr: ArrState::default(),
             piano: PianoState::default(),
             browser: BrowserState::new(),
+            prefs: crate::prefs::Prefs::load(),
             sel_pad: 0,
             pending_pad_hit: None,
             sample_cache: HashMap::new(),
@@ -410,7 +418,9 @@ impl App {
             script: parse_script(std::env::var("KRABTON_SCRIPT").unwrap_or_default().as_str()),
             script_input: std::collections::VecDeque::new(),
             frame: 0,
+            quit_requested: false,
         };
+        app.apply_prefs();
         let hint = if app.midi.connected.is_some() { "" } else { " Play notes with A-W-S-E-D... (Z/X = octave)." };
         app.toast(format!("Welcome to Krabton! Press Space or launch a scene.{hint}"));
         app
@@ -705,9 +715,6 @@ impl App {
                             _ => Instrument::synth("Pluck"),
                         };
                         let t = self.add_midi_track(Some(inst));
-                        if kind.is_sequencer() {
-                            self.project.tracks[t].name = kind.name().to_string();
-                        }
                         Some(t)
                     }
                     _ => target_track.filter(|&t| is_midi(self, t)).or(sel),
@@ -738,6 +745,7 @@ impl App {
                 match target_track {
                     Some(t) if is_midi(self, t) => {
                         let tr = &mut self.project.tracks[t];
+                        let auto = tr.name.ends_with("MIDI") || tr.instrument.as_ref().map(|i| i.track_name() == tr.name || i.display_name() == tr.name).unwrap_or(true);
                         if let Some(Instrument::Fm { voice: cur, bank: b, .. }) = &mut tr.instrument {
                             // Keep the engine settings, swap the voice.
                             *cur = v.0.to_vec();
@@ -745,13 +753,16 @@ impl App {
                         } else {
                             tr.instrument = Some(Instrument::fm(&v, bank));
                         }
-                        tr.name = name;
+                        if auto {
+                            tr.name = "FM".into();
+                        }
+                        let _ = name;
                         self.sel_track = TrackSel::Track(t);
                         self.detail = DetailTab::Devices;
                     }
                     _ => {
-                        let t = self.add_midi_track(Some(Instrument::fm(&v, bank)));
-                        self.project.tracks[t].name = name;
+                        self.add_midi_track(Some(Instrument::fm(&v, bank)));
+                        let _ = name;
                     }
                 }
             }
@@ -786,9 +797,10 @@ impl App {
                 match target_track {
                     Some(t) if is_midi(self, t) => {
                         let tr = &mut self.project.tracks[t];
-                        let generic = tr.name.ends_with("MIDI") || tr.instrument.as_ref().map(|i| i.display_name() == tr.name || tr.name == "Drums").unwrap_or(true);
+                        // A name Krabton gave follows the new instrument; one you typed stays.
+                        let generic = tr.name.ends_with("MIDI") || tr.instrument.as_ref().map(|i| i.track_name() == tr.name || i.display_name() == tr.name).unwrap_or(true);
                         if generic {
-                            tr.name = if inst.is_drums() { "Drums".into() } else { inst.display_name() };
+                            tr.name = inst.track_name();
                         }
                         tr.instrument = Some(inst);
                         self.sel_track = TrackSel::Track(t);
@@ -820,6 +832,36 @@ impl App {
                     }
                 }
                 self.detail = DetailTab::Devices;
+            }
+            BrowserItem::Clip { id, .. } => {
+                let found = self.project.tracks.iter().flat_map(|t| t.slots.iter().flatten()).find(|c| c.id == *id).cloned();
+                let Some(mut clip) = found else { return };
+                let midi = matches!(clip.content, ClipContent::Midi { .. });
+                clip.id = self.project.alloc_id();
+                let fits = |app: &App, t: usize| is_midi(app, t) == midi;
+                match target {
+                    DropTarget::ArrLane { track, beat } if fits(self, track) => {
+                        let aid = self.project.alloc_id();
+                        let length = clip.length;
+                        self.project.tracks[track].arrangement.push(ArrangementClip { id: aid, start: beat, length, offset: 0.0, clip });
+                        self.select_clip(ClipSel::Arr { track, id: aid });
+                    }
+                    _ => {
+                        let (track, scene) = match (target, target_track) {
+                            (DropTarget::Slot { track, scene }, _) => (track, scene),
+                            (_, Some(t)) => (t, self.sel_scene),
+                            (_, None) => (if midi { self.add_midi_track(None) } else { self.add_audio_track() }, self.sel_scene),
+                        };
+                        if !fits(self, track) {
+                            self.toast(if midi { "MIDI clips go on MIDI tracks" } else { "Audio clips go on audio tracks" });
+                            return;
+                        }
+                        if let Some(slot) = self.project.tracks[track].slots.get_mut(scene) {
+                            *slot = Some(clip);
+                            self.select_clip(ClipSel::Slot { track, scene });
+                        }
+                    }
+                }
             }
             BrowserItem::Sample(path) => {
                 let Some(sample) = self.load_sample(path) else { return };
@@ -979,6 +1021,34 @@ impl App {
         }
     }
 
+    /// Settings from the last session: grid rotation, plugin folders, FM banks.
+    fn apply_prefs(&mut self) {
+        let rotation = self.prefs.grid_rotation;
+        self.set_grid_rotation(rotation);
+        self.plugins.extra_folders = self.prefs.plugin_folders.clone();
+        for path in self.prefs.fm_banks.clone() {
+            if path.is_file() {
+                let _ = self.load_fm_bank(&path);
+            }
+        }
+    }
+
+    /// Turns the monome grid (0, 90, 180 or 270 degrees) and remembers it.
+    pub fn set_grid_rotation(&mut self, degrees: u32) {
+        if let Some(m) = self.grid.monome.as_mut() {
+            m.set_rotation(degrees);
+            if m.grid_id().is_some() {
+                let (w, h) = m.grid_dims();
+                self.grid.width = w.clamp(8, 16);
+                self.grid.height = h.clamp(8, 16);
+            }
+        }
+        if self.prefs.grid_rotation != degrees {
+            self.prefs.grid_rotation = degrees;
+            self.prefs.save();
+        }
+    }
+
     /// Loads a DX7 .syx bank (or single voice) for FM. Returns its index.
     pub fn load_fm_bank(&mut self, path: &Path) -> Result<usize, String> {
         if let Some(i) = self.fm_banks.iter().position(|b| b.path.as_deref() == Some(path)) {
@@ -988,6 +1058,10 @@ impl App {
         let voices = krabton_engine::dsp::dx7::parse_sysex(&data).map_err(|e| format!("{}: {e}", path.display()))?;
         let name = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "Bank".into());
         self.fm_banks.push(FmBank { name, path: Some(path.to_path_buf()), voices });
+        // Remembered for next time (saved by the caller).
+        if !self.prefs.fm_banks.iter().any(|p| p == path) {
+            self.prefs.fm_banks.push(path.to_path_buf());
+        }
         Ok(self.fm_banks.len() - 1)
     }
 
@@ -1007,7 +1081,9 @@ impl App {
         let mut files = Vec::new();
         walk(dir, 0, &mut files);
         files.sort();
-        files.into_iter().take(1000).filter(|f| self.load_fm_bank(f).is_ok()).count()
+        let n = files.into_iter().take(1000).filter(|f| self.load_fm_bank(f).is_ok()).count();
+        self.prefs.save();
+        n
     }
 
     /// Applies the structural edits queued during this frame.
@@ -1167,7 +1243,10 @@ impl App {
                 egui::Event::Paste(_) if !typing => self.edit_paste(),
                 egui::Event::Cut if !typing => self.edit_cut(),
                 egui::Event::Key { key, pressed, repeat, modifiers, .. } => {
-                    if *pressed && !*repeat && !typing {
+                    if *pressed && *repeat && !typing && matches!(key, Key::ArrowUp | Key::ArrowDown) && modifiers.is_none() {
+                        // Holding an arrow walks through the browser.
+                        self.browser_key(*key);
+                    } else if *pressed && !*repeat && !typing {
                         self.key_down(*key, *modifiers);
                     } else if !*pressed {
                         if let Some((pitch, ids)) = self.held_keys.remove(key) {
@@ -1192,8 +1271,16 @@ impl App {
     }
 
     fn key_down(&mut self, key: Key, m: Modifiers) {
+        if m.is_none() && self.browser_key(key) {
+            return;
+        }
         if m.command || m.ctrl {
             match key {
+                Key::B if m.alt => self.browser.visible = !self.browser.visible,
+                Key::F => {
+                    self.browser.visible = true;
+                    self.browser.focus_search = true;
+                }
                 Key::Z if m.shift => self.redo(),
                 Key::Z => self.undo(),
                 Key::Y => self.redo(),
@@ -1528,6 +1615,22 @@ impl App {
                         }
                     }
                 }
+                "rotate" => self.set_grid_rotation(nums.first().copied().unwrap_or(0) as u32),
+                // Text typed into the focused field of this window.
+                "type" => self.script_input.push_back(vec![egui::Event::Text(arg.to_string())]),
+                "rclick" | "dclick" => {
+                    let f: Vec<f32> = arg.split(',').filter_map(|v| v.trim().parse().ok()).collect();
+                    if f.len() >= 2 {
+                        let pos = egui::pos2(f[0], f[1]);
+                        let button = if name == "rclick" { egui::PointerButton::Secondary } else { egui::PointerButton::Primary };
+                        let ev = |pressed| egui::Event::PointerButton { pos, button, pressed, modifiers: Modifiers::NONE };
+                        self.script_input.push_back(vec![egui::Event::PointerMoved(pos)]);
+                        for _ in 0..if name == "dclick" { 2 } else { 1 } {
+                            self.script_input.push_back(vec![ev(true)]);
+                            self.script_input.push_back(vec![ev(false)]);
+                        }
+                    }
+                }
                 "click" | "drag" => {
                     let f: Vec<f32> = arg.split(',').filter_map(|v| v.trim().parse().ok()).collect();
                     if f.len() >= 2 {
@@ -1609,6 +1712,16 @@ impl App {
                         self.stop_slot_take(t);
                     } else {
                         self.start_slot_take(t, s);
+                    }
+                }
+                "quit" => self.quit_requested = true,
+                "fxparam" => {
+                    // fxparam=device,param,value sets a parameter of a device in the selected chain.
+                    let f: Vec<f32> = arg.split(',').filter_map(|v| v.trim().parse().ok()).collect();
+                    if f.len() == 3 {
+                        if let Some(v) = self.chain_mut(self.sel_track).and_then(|c| c.get_mut(f[0] as usize)).and_then(|d| d.params.get_mut(f[1] as usize)) {
+                            *v = f[2];
+                        }
                     }
                 }
                 "fx" => {
@@ -1757,18 +1870,36 @@ impl eframe::App for App {
             .exact_height(22.0)
             .frame(egui::Frame::new().fill(theme::BG).inner_margin(egui::Margin::symmetric(8, 2)))
             .show(ctx, |ui| self.ui_statusbar(ui));
+        // The browser runs from top to bottom, next to the detail view, as in Live.
+        if self.browser.visible {
+            egui::SidePanel::left("browser")
+                .resizable(true)
+                .default_width(330.0)
+                .width_range(240.0..=640.0)
+                .frame(egui::Frame::new().fill(theme::PANEL))
+                .show(ctx, |ui| self.ui_browser(ui));
+        } else {
+            egui::SidePanel::left("browser_hidden")
+                .resizable(false)
+                .exact_width(16.0)
+                .frame(egui::Frame::new().fill(theme::PANEL))
+                .show(ctx, |ui| {
+                    let r = ui.max_rect();
+                    let resp = ui.interact(r, ui.id().with("show_browser"), egui::Sense::click()).on_hover_text("Show the browser (Ctrl+Alt+B)");
+                    let c = egui::pos2(r.center().x, r.top() + 14.0);
+                    let col = if resp.hovered() { theme::TEXT } else { theme::TEXT_DIM };
+                    ui.painter().add(egui::Shape::convex_polygon(vec![c + egui::vec2(-2.0, -4.0), c + egui::vec2(3.0, 0.0), c + egui::vec2(-2.0, 4.0)], col, egui::Stroke::NONE));
+                    if resp.clicked() {
+                        self.browser.visible = true;
+                    }
+                });
+        }
         egui::TopBottomPanel::bottom("detail")
             .resizable(true)
             .default_height(290.0)
             .min_height(160.0)
             .frame(egui::Frame::new().fill(theme::PANEL).inner_margin(egui::Margin::same(0)))
             .show(ctx, |ui| self.ui_detail(ui));
-        egui::SidePanel::left("browser")
-            .resizable(true)
-            .default_width(210.0)
-            .min_width(150.0)
-            .frame(egui::Frame::new().fill(theme::PANEL).inner_margin(egui::Margin::same(6)))
-            .show(ctx, |ui| self.ui_browser(ui));
         egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::BG)).show(ctx, |ui| match self.view {
             View::Session => self.ui_session(ui),
             View::Arrangement => self.ui_arrangement(ui),
@@ -1779,6 +1910,9 @@ impl eframe::App for App {
 
         self.sync(ctx);
         self.update_title(ctx);
+        if self.quit_requested {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
         ctx.request_repaint();
     }
 }

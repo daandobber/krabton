@@ -9,10 +9,17 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 /// Samples kept per track for the live wave of its instrument (mono).
 pub const WAVE_LEN: usize = 8192;
-/// Samples kept per Oscilloscope device (stereo): over a second at 48 kHz.
-pub const SCOPE_LEN: usize = 65536;
-/// Oscilloscope devices that can show audio at the same time.
-pub const MAX_SCOPES: usize = 8;
+/// Samples kept per device tap (stereo): about 0.7 s at 48 kHz.
+pub const SCOPE_LEN: usize = 32768;
+/// Device taps that can show audio at the same time (an analyzer device
+/// uses two: before and after it).
+pub const MAX_SCOPES: usize = 24;
+/// Added to a device id for the tap in front of the device.
+pub const PRE_KEY: u64 = 1 << 63;
+/// Devices that can publish meter values at the same time.
+pub const MAX_METER_DEVICES: usize = 32;
+/// Values per device in the meter bank.
+pub const METER_VALUES: usize = 32;
 
 pub struct ScopeBuffer {
     l: Box<[AtomicU32]>,
@@ -135,6 +142,116 @@ impl ScopeBank {
     }
 }
 
+/// Numbers devices publish for their displays (gain reduction, loudness,
+/// dynamic EQ gains), by device id.
+pub struct MeterBank {
+    owners: Vec<AtomicU64>,
+    values: Vec<AtomicU32>,
+}
+
+impl Default for MeterBank {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MeterBank {
+    pub fn new() -> Self {
+        Self { owners: (0..MAX_METER_DEVICES).map(|_| AtomicU64::new(0)).collect(), values: (0..MAX_METER_DEVICES * METER_VALUES).map(|_| AtomicU32::new(0)).collect() }
+    }
+
+    fn claim(&self, id: u64) -> Option<usize> {
+        if id == 0 {
+            return None;
+        }
+        self.owners
+            .iter()
+            .position(|o| o.load(Ordering::Acquire) == id)
+            .or_else(|| self.owners.iter().position(|o| o.compare_exchange(0, id, Ordering::AcqRel, Ordering::Relaxed).is_ok()))
+    }
+
+    /// UI: the latest values of device `id`.
+    pub fn read(&self, id: u64) -> Option<[f32; METER_VALUES]> {
+        let slot = self.owners.iter().position(|o| o.load(Ordering::Acquire) == id)?;
+        let mut out = [0.0; METER_VALUES];
+        for (k, v) in out.iter_mut().enumerate() {
+            *v = f32::from_bits(self.values[slot * METER_VALUES + k].load(Ordering::Relaxed));
+        }
+        Some(out)
+    }
+
+    /// UI: frees the slots of devices that no longer exist.
+    pub fn release_unused(&self, alive: impl Fn(u64) -> bool) {
+        for o in &self.owners {
+            let id = o.load(Ordering::Acquire);
+            if id != 0 && !alive(id) {
+                let _ = o.compare_exchange(id, 0, Ordering::AcqRel, Ordering::Relaxed);
+            }
+        }
+    }
+}
+
+/// Values a device fills in while processing, published after each block.
+pub struct MeterTap {
+    pub values: [f32; METER_VALUES],
+    slot: Option<usize>,
+}
+
+impl Default for MeterTap {
+    fn default() -> Self {
+        Self { values: [0.0; METER_VALUES], slot: None }
+    }
+}
+
+impl MeterTap {
+    pub fn publish(&mut self, bank: &MeterBank, id: u64) {
+        let slot = match self.slot {
+            Some(s) if bank.owners[s].load(Ordering::Acquire) == id => s,
+            _ => match bank.claim(id) {
+                Some(s) => {
+                    self.slot = Some(s);
+                    s
+                }
+                None => return,
+            },
+        };
+        for (k, v) in self.values.iter().enumerate() {
+            bank.values[slot * METER_VALUES + k].store(v.to_bits(), Ordering::Relaxed);
+        }
+    }
+}
+
+/// What a device with a display sends to the UI: its input (optional), its
+/// output and meter values (optional).
+#[derive(Default)]
+pub struct DeviceTaps {
+    pub pre: Option<ScopeTap>,
+    pub post: ScopeTap,
+    pub meters: Option<MeterTap>,
+}
+
+impl DeviceTaps {
+    /// Taps before and after the device, with meters.
+    pub fn full() -> Self {
+        Self { pre: Some(ScopeTap::default()), post: ScopeTap::default(), meters: Some(MeterTap::default()) }
+    }
+
+    /// Audio thread, before the device runs.
+    pub fn before(&mut self, scopes: &ScopeBank, id: u64, l: &[f32], r: &[f32]) {
+        if let Some(t) = &mut self.pre {
+            t.write(scopes, id | PRE_KEY, l, r);
+        }
+    }
+
+    /// Audio thread, after the device ran.
+    pub fn after(&mut self, scopes: &ScopeBank, meters: &MeterBank, id: u64, l: &[f32], r: &[f32]) {
+        self.post.write(scopes, id, l, r);
+        if let Some(m) = &mut self.meters {
+            m.publish(meters, id);
+        }
+    }
+}
+
 /// Runtime state of an Oscilloscope device: which slot it writes to.
 #[derive(Default)]
 pub struct ScopeTap {
@@ -195,6 +312,13 @@ mod tests {
         assert!(bank.find(100 + MAX_SCOPES as u64).is_none(), "only MAX_SCOPES slots");
         // Device 100 is deleted; the extra device gets its slot.
         bank.release_unused(|id| id != 100);
+        let meters = MeterBank::new();
+        let mut m = MeterTap::default();
+        m.values[3] = -6.5;
+        m.publish(&meters, 42);
+        assert_eq!(meters.read(42).unwrap()[3], -6.5);
+        meters.release_unused(|_| false);
+        assert!(meters.read(42).is_none());
         taps[MAX_SCOPES].write(&bank, 100 + MAX_SCOPES as u64, &[0.25], &[0.25]);
         assert!(bank.find(100).is_none());
         assert!(bank.find(100 + MAX_SCOPES as u64).is_some());

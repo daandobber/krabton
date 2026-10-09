@@ -131,8 +131,11 @@ impl App {
 
     pub(crate) fn ui_devices(&mut self, ui: &mut Ui, body: Rect) {
         let sel = self.sel_track;
-        let scopes: Vec<u64> = self.project.all_devices().filter(|d| d.kind == EffectKind::Scope).map(|d| d.id).collect();
-        self.status().scopes.release_unused(|id| scopes.contains(&id));
+        // Free the display buffers of devices that are gone.
+        let shown: Vec<u64> = self.project.all_devices().filter(|d| d.kind.has_display()).map(|d| d.id).collect();
+        let status = self.status();
+        status.scopes.release_unused(|key| shown.contains(&(key & !krabton_engine::scope::PRE_KEY)));
+        status.meters.release_unused(|id| shown.contains(&id));
         let mut dui = ui.new_child(UiBuilder::new().max_rect(body.shrink(4.0)));
         dui.set_clip_rect(body);
         let h = (body.height() - 34.0).max(80.0);
@@ -217,6 +220,12 @@ impl App {
                     param_grid_mod(ui, id, kind.specs(), &mut params, accent, h - 24.0, mv.as_mut())
                 })
                 .inner
+            } else if kind == EffectKind::LensEq {
+                crate::ui::lens::eq_panel(ui, id, dev_id, &mut params, accent, h, mv.as_mut(), &status)
+            } else if kind == EffectKind::LensComp {
+                crate::ui::lens::comp_panel(ui, id, dev_id, &mut params, accent, h, mv.as_mut(), &status)
+            } else if kind == EffectKind::LensLimiter {
+                crate::ui::lens::limiter_panel(ui, id, dev_id, &mut params, accent, h, mv.as_mut(), &status)
             } else {
                 param_grid_mod(ui, id, kind.specs(), &mut params, accent, h - 24.0, mv.as_mut())
             }
@@ -679,11 +688,6 @@ impl App {
         if remove {
             t.instrument = None;
         } else if new_inst != inst {
-            if let (Instrument::Synth { preset: old, .. }, Instrument::Synth { preset: new, .. }) = (&inst, &new_inst) {
-                if old != new && t.name == *old {
-                    t.name = new.clone();
-                }
-            }
             t.instrument = Some(new_inst);
         }
         if let Some(note) = self.pending_pad_hit.take() {

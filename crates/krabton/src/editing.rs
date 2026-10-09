@@ -289,8 +289,8 @@ impl App {
             let bar = self.project.beats_per_bar_f();
             self.extend_clip(sel, (grow_to / bar - 1e-9).ceil() * bar);
         }
-        // Let the moved notes be heard.
-        if dy != 0 {
+        // Let the moved notes be heard (with Preview on).
+        if dy != 0 && self.prefs.note_preview {
             let track = sel.track();
             if let Some(top) = self.selected_notes(sel).iter().map(|n| n.pitch).max() {
                 let ids = self.preview_note_on(track, top, 0.7);

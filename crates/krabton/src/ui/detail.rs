@@ -37,7 +37,7 @@ impl App {
             DetailTab::Mod => format!("Modulation matrix · {} modulators · {} connections", self.project.modulators.len(), self.project.mod_routes.len()),
             DetailTab::Grid => match self.grid.monome.as_ref().and_then(|m| m.grid_id()) {
                 Some(id) => format!("monome grid {id}"),
-                None => "Virtual grid (connect a monome grid via serialosc)".into(),
+                None => "Virtual grid (plug in a monome grid)".into(),
             },
         };
         if self.mod_learn.is_some() {
@@ -231,6 +231,11 @@ impl App {
                     let dm = self.piano.draw_mode;
                     if ui.add(egui::Button::new(RichText::new("Draw").color(if dm { TEXT_DARK } else { TEXT })).fill(if dm { ACCENT } else { PANEL3 })).on_hover_text("Draw mode (B): click to add/remove notes").clicked() {
                         self.piano.draw_mode = !dm;
+                    }
+                    let pv = self.prefs.note_preview;
+                    if ui.add(egui::Button::new(RichText::new("Preview").color(if pv { TEXT_DARK } else { TEXT })).fill(if pv { ACCENT } else { PANEL3 })).on_hover_text("Hear notes while placing and moving them").clicked() {
+                        self.prefs.note_preview = !pv;
+                        self.prefs.save();
                     }
                 });
                 ui.horizontal(|ui| {

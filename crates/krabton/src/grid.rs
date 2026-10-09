@@ -59,8 +59,14 @@ impl GridState {
     pub fn new() -> Self {
         // KRABTON_SERIALOSC_PORT points at another serialosc (for tests).
         let port = std::env::var("KRABTON_SERIALOSC_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(krabton_monome::SERIALOSC_PORT);
+        // Grids serialosc does not see are opened on their serial port, except
+        // in test windows (they must never take over a real grid), unless
+        // KRABTON_SERIAL_GRID=1 asks for it.
+        let test = std::env::var_os("KRABTON_SERIALOSC_PORT").is_some() || std::env::var_os("KRABTON_TEST_WINDOW").is_some();
+        let serial = std::env::var("KRABTON_SERIAL_GRID").map(|v| v == "1").unwrap_or(!test);
         let (monome, error) = match Monome::with_serialosc_port(port) {
             Ok(mut m) => {
+                m.set_serial(serial);
                 m.discover();
                 (Some(m), None)
             }

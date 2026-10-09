@@ -145,8 +145,10 @@ pub struct EngineStatus {
     pub preview_active: AtomicBool,
     /// Output of each modulator (-1..1), by position in `Project::modulators`.
     pub mods: Vec<AtomicF32>,
-    /// Buffers of the Oscilloscope devices.
+    /// Audio taps of devices with a display.
     pub scopes: crate::scope::ScopeBank,
+    /// Numbers those devices publish (gain reduction, loudness, ...).
+    pub meters: crate::scope::MeterBank,
     /// Peak of each audio interface input since the UI last took it.
     pub input_peaks: Vec<AtomicF32>,
     /// Inputs the audio interface delivers (0 = no input open).
@@ -171,6 +173,7 @@ impl EngineStatus {
             preview_active: AtomicBool::new(false),
             mods: (0..MAX_MODS).map(|_| AtomicF32::new(0.0)).collect(),
             scopes: crate::scope::ScopeBank::new(),
+            meters: crate::scope::MeterBank::new(),
             input_peaks: (0..MAX_INPUTS).map(|_| AtomicF32::new(0.0)).collect(),
             input_channels: AtomicU32::new(0),
             capturing: AtomicBool::new(false),
@@ -825,8 +828,9 @@ impl Engine {
             Command::Stop => {
                 if self.playing {
                     self.playing = false;
+                    // Like Live, session clips stay launched: Play starts
+                    // them again. Stop All Clips (or a track's stop) clears them.
                     for rt in self.tracks.iter_mut() {
-                        rt.playing = None;
                         rt.queued = None;
                         rt.release(Clock::Session);
                         rt.release(Clock::Arrangement);
@@ -957,6 +961,13 @@ impl Engine {
         self.playing = true;
         self.song_pos = self.start_marker;
         self.session_pos = self.song_pos;
+        // Clips that were playing when the transport stopped start over.
+        let start = self.session_pos;
+        for rt in self.tracks.iter_mut() {
+            if let Some(pc) = &mut rt.playing {
+                pc.start = start;
+            }
+        }
     }
 
     fn slot_has_clip(&self, ti: usize, slot: usize) -> bool {
@@ -1378,10 +1389,7 @@ impl Engine {
             for (dev, (_, st)) in track.devices.iter().zip(devices.iter_mut()) {
                 if dev.enabled {
                     let params = mods.params(ModOwner::Device(dev.id)).unwrap_or(&dev.params);
-                    st.process(params, &mut l[..seg], &mut r[..seg], &ctx);
-                    if let EffectState::Scope(tap) = st {
-                        tap.write(&status.scopes, dev.id, &l[..seg], &r[..seg]);
-                    }
+                    run_device(st, dev.id, params, &mut l[..seg], &mut r[..seg], &ctx, status);
                 }
             }
             signal.level = l[..seg].iter().chain(&r[..seg]).fold(0.0f32, |m, x| m.max(x.abs()));
@@ -1428,10 +1436,7 @@ impl Engine {
             for (dev, (_, st)) in ret.devices.iter().zip(rt.devices.iter_mut()) {
                 if dev.enabled {
                     let params = mods.params(ModOwner::Device(dev.id)).unwrap_or(&dev.params);
-                    st.process(params, &mut rt.l[..seg], &mut rt.r[..seg], &ctx);
-                    if let EffectState::Scope(tap) = st {
-                        tap.write(&status.scopes, dev.id, &rt.l[..seg], &rt.r[..seg]);
-                    }
+                    run_device(st, dev.id, params, &mut rt.l[..seg], &mut rt.r[..seg], &ctx, status);
                 }
             }
             let mm = mods.return_mix(j);
@@ -1453,10 +1458,7 @@ impl Engine {
             for (dev, (_, st)) in project.master.devices.iter().zip(m.devices.iter_mut()) {
                 if dev.enabled {
                     let params = mods.params(ModOwner::Device(dev.id)).unwrap_or(&dev.params);
-                    st.process(params, &mut m.l[..seg], &mut m.r[..seg], &ctx);
-                    if let EffectState::Scope(tap) = st {
-                        tap.write(&status.scopes, dev.id, &m.l[..seg], &m.r[..seg]);
-                    }
+                    run_device(st, dev.id, params, &mut m.l[..seg], &mut m.r[..seg], &ctx, status);
                 }
             }
             let vol = fader_gain(project.master.volume_db);
@@ -1565,6 +1567,17 @@ fn sync_devices(devs: &[Device], rts: &mut Vec<(u64, EffectState)>, sr: f32, tra
     }
     for (_, st) in old {
         trash.push(GarbageInner::Effect(st));
+    }
+}
+
+/// Runs an audio effect, sending what goes in and out of it to its display.
+fn run_device(st: &mut EffectState, id: u64, params: &[f32], l: &mut [f32], r: &mut [f32], ctx: &FxCtx, status: &EngineStatus) {
+    if let Some(t) = st.taps() {
+        t.before(&status.scopes, id, l, r);
+    }
+    st.process(params, l, r, ctx);
+    if let Some(t) = st.taps() {
+        t.after(&status.scopes, &status.meters, id, l, r);
     }
 }
 
@@ -1703,7 +1716,8 @@ mod tests {
         h.send(Command::Stop);
         run(&mut e, 0.1);
         assert!(!e.is_playing());
-        assert_eq!(h.status.tracks[0].playing_slot.load(RELAXED), -1);
+        // The clip stays launched for the next Play, like in Live.
+        assert_eq!(h.status.tracks[0].playing_slot.load(RELAXED), 1);
     }
 
     #[test]
@@ -2141,6 +2155,32 @@ mod tests {
         let m = ts.wave.written();
         run(&mut e, 0.5);
         assert_eq!(ts.wave.written(), m, "stops when nobody watches");
+    }
+
+    #[test]
+    fn stop_and_play_resume_the_session_clips() {
+        let p = crate::demo::demo_project();
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        h.send(Command::LaunchScene(1));
+        run(&mut e, 0.5);
+        h.send(Command::Stop);
+        run(&mut e, 2.0);
+        // Still launched, but silent while stopped (once the release is over).
+        assert_eq!(h.status.tracks[1].playing_slot.load(RELAXED), 1);
+        h.status.tracks[1].take_peaks();
+        assert!(track_level(&mut e, &h, 1, 0.3) < 1e-6);
+        h.send(Command::Play);
+        run(&mut e, 0.1);
+        assert!(track_level(&mut e, &h, 1, 1.0) > 0.02, "Play brings the clips back");
+        // Stop All Clips (while stopped) does clear them.
+        h.send(Command::Stop);
+        h.send(Command::StopAllClips);
+        run(&mut e, 2.0);
+        assert_eq!(h.status.tracks[1].playing_slot.load(RELAXED), -1);
+        h.send(Command::Play);
+        run(&mut e, 0.1);
+        h.status.tracks[1].take_peaks();
+        assert!(track_level(&mut e, &h, 1, 0.5) < 1e-6);
     }
 
     #[test]

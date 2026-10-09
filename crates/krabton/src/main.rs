@@ -8,6 +8,7 @@ mod editing;
 mod grid;
 mod midi;
 mod plugins;
+mod prefs;
 mod recording;
 mod theme;
 mod ui;

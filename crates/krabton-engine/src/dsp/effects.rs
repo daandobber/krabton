@@ -17,6 +17,9 @@ pub enum EffectKind {
     Redux,
     Utility,
     Scope,
+    LensEq,
+    LensComp,
+    LensLimiter,
 }
 
 const FMODES: &[&str] = &["Lowpass", "Highpass", "Bandpass", "Notch"];
@@ -117,7 +120,7 @@ static UTILITY: &[ParamSpec] = &[
 ];
 
 impl EffectKind {
-    pub const ALL: [EffectKind; 10] = [
+    pub const ALL: [EffectKind; 13] = [
         EffectKind::Eq3,
         EffectKind::AutoFilter,
         EffectKind::Compressor,
@@ -128,7 +131,15 @@ impl EffectKind {
         EffectKind::Redux,
         EffectKind::Utility,
         EffectKind::Scope,
+        EffectKind::LensEq,
+        EffectKind::LensComp,
+        EffectKind::LensLimiter,
     ];
+
+    /// Devices with their own display (they send audio and meters to the UI).
+    pub fn has_display(self) -> bool {
+        matches!(self, EffectKind::Scope | EffectKind::LensEq | EffectKind::LensComp | EffectKind::LensLimiter)
+    }
 
     pub fn name(self) -> &'static str {
         match self {
@@ -142,6 +153,9 @@ impl EffectKind {
             EffectKind::Redux => "Redux",
             EffectKind::Utility => "Utility",
             EffectKind::Scope => "Oscilloscope",
+            EffectKind::LensEq => "Lens EQ",
+            EffectKind::LensComp => "Lens Comp",
+            EffectKind::LensLimiter => "Lens Limiter",
         }
     }
 
@@ -157,6 +171,9 @@ impl EffectKind {
             EffectKind::Redux => "Bit and sample rate reduction",
             EffectKind::Utility => "Gain, width, pan and phase",
             EffectKind::Scope => "See the waveform: locked to the pitch, triggered, or XY",
+            EffectKind::LensEq => "Twelve-band EQ with a big curve, spectrum analyzer, mid/side and dynamic bands",
+            EffectKind::LensComp => "Compressor with styles, lookahead and a scrolling level display",
+            EffectKind::LensLimiter => "True-peak limiter with styles and a loudness meter (LUFS)",
         }
     }
 
@@ -172,6 +189,9 @@ impl EffectKind {
             EffectKind::Redux => REDUX,
             EffectKind::Utility => UTILITY,
             EffectKind::Scope => SCOPE,
+            EffectKind::LensEq => super::lens_eq::SPECS,
+            EffectKind::LensComp => super::lens_comp::SPECS,
+            EffectKind::LensLimiter => super::lens_limiter::SPECS,
         }
     }
 }
@@ -193,7 +213,10 @@ pub enum EffectState {
     Redux { hold: [f32; 2], counter: u32 },
     Utility,
     /// Passes audio through; the engine copies it to a scope buffer.
-    Scope(crate::scope::ScopeTap),
+    Scope(crate::scope::DeviceTaps),
+    LensEq(Box<super::lens_eq::LensEqState>),
+    LensComp(Box<super::lens_comp::LensCompState>),
+    LensLimiter(Box<super::lens_limiter::LensLimiterState>),
 }
 
 pub struct DelayState {
@@ -235,6 +258,20 @@ impl EffectState {
             EffectKind::Redux => EffectState::Redux { hold: [0.0; 2], counter: 0 },
             EffectKind::Utility => EffectState::Utility,
             EffectKind::Scope => EffectState::Scope(Default::default()),
+            EffectKind::LensEq => EffectState::LensEq(Box::default()),
+            EffectKind::LensComp => EffectState::LensComp(Box::default()),
+            EffectKind::LensLimiter => EffectState::LensLimiter(Box::new(super::lens_limiter::LensLimiterState::new(sr))),
+        }
+    }
+
+    /// What the device sends to its display, if it has one.
+    pub fn taps(&mut self) -> Option<&mut crate::scope::DeviceTaps> {
+        match self {
+            EffectState::Scope(t) => Some(t),
+            EffectState::LensEq(s) => Some(&mut s.taps),
+            EffectState::LensComp(s) => Some(&mut s.taps),
+            EffectState::LensLimiter(s) => Some(&mut s.taps),
+            _ => None,
         }
     }
 
@@ -250,6 +287,9 @@ impl EffectState {
             EffectState::Redux { .. } => EffectKind::Redux,
             EffectState::Utility => EffectKind::Utility,
             EffectState::Scope(_) => EffectKind::Scope,
+            EffectState::LensEq(_) => EffectKind::LensEq,
+            EffectState::LensComp(_) => EffectKind::LensComp,
+            EffectState::LensLimiter(_) => EffectKind::LensLimiter,
         }
     }
 
@@ -452,6 +492,9 @@ impl EffectState {
                 }
             }
             EffectState::Scope(_) => {}
+            EffectState::LensEq(s) => s.process(p, l, r, sr),
+            EffectState::LensComp(s) => s.process(p, l, r, sr),
+            EffectState::LensLimiter(s) => s.process(p, l, r, sr),
         }
     }
 }

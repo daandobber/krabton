@@ -8,3 +8,6 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+# Talks to grids that serialosc does not see, straight over their serial port.
+# Without libudev, so it builds everywhere (Linux keeps using serialosc).
+serialport = { version = "4.10", default-features = false }

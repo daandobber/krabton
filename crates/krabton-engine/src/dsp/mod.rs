@@ -1,10 +1,15 @@
 //! DSP building blocks plus the instruments and effects built from them.
 
 pub mod analog;
+pub mod biquad;
+pub mod lens_comp;
+pub mod lens_eq;
+pub mod lens_limiter;
 pub mod braids_synth;
 pub mod drums;
 pub mod elements_synth;
 pub mod dx7;
+pub mod fft;
 pub mod fm;
 pub mod macro_osc;
 pub mod effects;
