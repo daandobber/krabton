@@ -268,7 +268,7 @@ impl Project {
         }
     }
 
-    fn all_devices(&self) -> impl Iterator<Item = &crate::project::Device> {
+    pub fn all_devices(&self) -> impl Iterator<Item = &crate::project::Device> {
         self.tracks.iter().flat_map(|t| &t.devices).chain(self.returns.iter().flat_map(|r| &r.devices)).chain(&self.master.devices)
     }
 

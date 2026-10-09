@@ -16,6 +16,7 @@ pub enum EffectKind {
     Chorus,
     Redux,
     Utility,
+    Scope,
 }
 
 const FMODES: &[&str] = &["Lowpass", "Highpass", "Bandpass", "Notch"];
@@ -84,6 +85,29 @@ static REDUX: &[ParamSpec] = &[
     ParamSpec::int("Downsample", "Crush", 1.0, 50.0, 4.0, Unit::None),
     ParamSpec::lin("Mix", "Output", 0.0, 1.0, 1.0, Unit::Percent),
 ];
+pub const SCOPE_MODES: &[&str] = &["Wave", "Time", "XY", "Vector"];
+pub const SCOPE_TRIGGERS: &[&str] = &["Rising", "Falling", "Free"];
+pub const SCOPE_CHANNELS: &[&str] = &["Mid", "Stereo", "Left", "Right"];
+pub const SCOPE_MODE: usize = 0;
+pub const SCOPE_CYCLES: usize = 1;
+pub const SCOPE_TIME: usize = 2;
+pub const SCOPE_TRIGGER: usize = 3;
+pub const SCOPE_CHANNEL: usize = 4;
+pub const SCOPE_AUTO: usize = 5;
+pub const SCOPE_GAIN: usize = 6;
+pub const SCOPE_GLOW: usize = 7;
+pub const SCOPE_FREEZE: usize = 8;
+static SCOPE: &[ParamSpec] = &[
+    ParamSpec::choice("Mode", "Scope", SCOPE_MODES, 0),
+    ParamSpec::int("Cycles", "Scope", 1.0, 8.0, 2.0, Unit::None),
+    ParamSpec::log("Time", "Scope", 1.0, 1000.0, 20.0, Unit::Ms),
+    ParamSpec::choice("Trigger", "Scope", SCOPE_TRIGGERS, 0),
+    ParamSpec::choice("Channel", "Display", SCOPE_CHANNELS, 0),
+    ParamSpec::toggle("Auto Gain", "Display", true),
+    ParamSpec::lin("Gain", "Display", -24.0, 36.0, 0.0, Unit::Db),
+    ParamSpec::lin("Glow", "Display", 0.0, 1.0, 0.5, Unit::Percent),
+    ParamSpec::toggle("Freeze", "Display", false),
+];
 static UTILITY: &[ParamSpec] = &[
     ParamSpec::lin("Gain", "Utility", -60.0, 24.0, 0.0, Unit::Db),
     ParamSpec::lin("Width", "Utility", 0.0, 2.0, 1.0, Unit::Percent),
@@ -93,7 +117,7 @@ static UTILITY: &[ParamSpec] = &[
 ];
 
 impl EffectKind {
-    pub const ALL: [EffectKind; 9] = [
+    pub const ALL: [EffectKind; 10] = [
         EffectKind::Eq3,
         EffectKind::AutoFilter,
         EffectKind::Compressor,
@@ -103,6 +127,7 @@ impl EffectKind {
         EffectKind::Chorus,
         EffectKind::Redux,
         EffectKind::Utility,
+        EffectKind::Scope,
     ];
 
     pub fn name(self) -> &'static str {
@@ -116,6 +141,7 @@ impl EffectKind {
             EffectKind::Chorus => "Chorus",
             EffectKind::Redux => "Redux",
             EffectKind::Utility => "Utility",
+            EffectKind::Scope => "Oscilloscope",
         }
     }
 
@@ -130,6 +156,7 @@ impl EffectKind {
             EffectKind::Chorus => "Stereo chorus / flanger",
             EffectKind::Redux => "Bit and sample rate reduction",
             EffectKind::Utility => "Gain, width, pan and phase",
+            EffectKind::Scope => "See the waveform: locked to the pitch, triggered, or XY",
         }
     }
 
@@ -144,6 +171,7 @@ impl EffectKind {
             EffectKind::Chorus => CHORUS,
             EffectKind::Redux => REDUX,
             EffectKind::Utility => UTILITY,
+            EffectKind::Scope => SCOPE,
         }
     }
 }
@@ -164,6 +192,8 @@ pub enum EffectState {
     Chorus(Box<ChorusState>),
     Redux { hold: [f32; 2], counter: u32 },
     Utility,
+    /// Passes audio through; the engine copies it to a scope buffer.
+    Scope(crate::scope::ScopeTap),
 }
 
 pub struct DelayState {
@@ -204,6 +234,7 @@ impl EffectState {
             }
             EffectKind::Redux => EffectState::Redux { hold: [0.0; 2], counter: 0 },
             EffectKind::Utility => EffectState::Utility,
+            EffectKind::Scope => EffectState::Scope(Default::default()),
         }
     }
 
@@ -218,6 +249,7 @@ impl EffectState {
             EffectState::Chorus(_) => EffectKind::Chorus,
             EffectState::Redux { .. } => EffectKind::Redux,
             EffectState::Utility => EffectKind::Utility,
+            EffectState::Scope(_) => EffectKind::Scope,
         }
     }
 
@@ -419,6 +451,7 @@ impl EffectState {
                     r[i] = (mid - side) * gain * pr;
                 }
             }
+            EffectState::Scope(_) => {}
         }
     }
 }

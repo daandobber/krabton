@@ -119,7 +119,12 @@
 - Krabton does not bundle these plugins: install them yourself (they keep their own licenses, mostly GPL-3)
 - Supported so far: CLAP instruments with note input; editors are embedded on Windows, other platforms use the plugin's floating window when available. Effect plugins and VST3 are on the roadmap
 
-**Audio effects**: EQ Three (with kills), Auto Filter (tempo-synced LFO), Compressor (parallel mix), Saturator (soft/hard/fold/tube), Delay (tempo-synced, ping-pong), Reverb, Chorus, Redux (bit crusher), Utility
+**Audio effects**: EQ Three (with kills), Auto Filter (tempo-synced LFO), Compressor (parallel mix), Saturator (soft/hard/fold/tube), Delay (tempo-synced, ping-pong), Reverb, Chorus, Redux (bit crusher), Utility, Oscilloscope
+
+**See the wave**
+- Every instrument panel shows the live wave of that instrument, locked to its pitch so it stands still while you turn knobs: a saw opening up through the filter, sync sweeps, the bow on an Elements string. Click it for 1, 2 or 4 cycles; the note it hears is shown below the wave, and the last wave stays on screen after the note ends
+- The **Oscilloscope** device goes anywhere in a chain (tracks, returns, master) and passes audio through. *Wave* locks to the pitch (period by a normalized square difference function, window started where the fundamental rises through zero, so even complex waves stand still), *Time* is a classic triggered time base (rising, falling or free, 1 ms to 1 s), *XY* draws left against right (Lissajous figures) and *Vector* draws mid up and side across. Mid, stereo, left or right; auto gain or a fixed gain; phosphor-style afterglow; freeze; a readout of frequency, note, cents and level
+- The audio thread writes into lock-free buffers that the UI reads; a track's wave is only captured while its panel is on screen
 
 **Audio clips**: drop WAV files on audio tracks. They are beat-locked in Re-Pitch mode, so they follow the project tempo. The original tempo is guessed automatically.
 
@@ -222,6 +227,7 @@ The first plays a chord straight into the plugin and checks its state save/resto
 - `KRABTON_NO_AUDIO=1` runs the engine on a silent real-time thread instead of the audio device.
 - `KRABTON_SCRIPT="30:scene=1;60:arrangement;90:devices;120:convert=0,0"` runs UI actions at the given frame numbers (see `run_script` in `app.rs`). Handy for screenshots and manual testing.
 - `KRABTON_SERIALOSC_PORT=12102` talks to a serialosc on another port, for example a simulated one.
+- Script action `fx=n` adds effect number `n` (in the order of the effect list) to the selected chain, for example `fx=9` for an Oscilloscope.
 - Script actions `click=x,y` and `drag=x1,y1,x2,y2` (in UI points) feed pointer events to the Krabton window only, so UI flows can be replayed without touching the desktop.
 
 ## Roadmap

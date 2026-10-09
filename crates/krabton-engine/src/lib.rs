@@ -17,6 +17,7 @@ pub mod render;
 pub mod sample;
 pub mod sequencers;
 pub mod scale;
+pub mod scope;
 
 pub use engine::{Command, Engine, EngineHandle, EngineStatus};
 pub use project::*;

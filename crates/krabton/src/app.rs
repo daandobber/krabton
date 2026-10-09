@@ -1562,6 +1562,15 @@ impl App {
                 }
                 "clipview" => self.detail = DetailTab::Clip,
                 "track" => self.sel_track = TrackSel::Track(nums.first().copied().unwrap_or(0)),
+                "fx" => {
+                    // Adds an effect (by its index in the effect list) to the selected chain.
+                    let all = krabton_engine::dsp::effects::EffectKind::ALL;
+                    let dev = self.project.make_device(all[nums.first().copied().unwrap_or(0).min(all.len() - 1)]);
+                    if let Some(chain) = self.chain_mut(self.sel_track) {
+                        chain.push(dev);
+                    }
+                    self.detail = DetailTab::Devices;
+                }
                 "clip" if nums.len() == 2 => self.select_clip(ClipSel::Slot { track: nums[0], scene: nums[1] }),
                 "s2a" => {
                     self.project.scenes_to_arrangement();

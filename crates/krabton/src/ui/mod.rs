@@ -10,6 +10,7 @@ pub mod fm_panel;
 pub mod grid_panel;
 pub mod modulation;
 pub mod piano_roll;
+pub mod scope;
 pub mod seq_view;
 pub mod session;
 pub mod transport;

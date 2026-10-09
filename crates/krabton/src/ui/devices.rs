@@ -121,7 +121,7 @@ enum ChainActionKind {
 }
 
 impl App {
-    fn chain_mut(&mut self, sel: TrackSel) -> Option<&mut Vec<Device>> {
+    pub(crate) fn chain_mut(&mut self, sel: TrackSel) -> Option<&mut Vec<Device>> {
         match sel {
             TrackSel::Track(i) => self.project.tracks.get_mut(i).map(|t| &mut t.devices),
             TrackSel::Return(j) => self.project.returns.get_mut(j).map(|t| &mut t.devices),
@@ -131,6 +131,8 @@ impl App {
 
     pub(crate) fn ui_devices(&mut self, ui: &mut Ui, body: Rect) {
         let sel = self.sel_track;
+        let scopes: Vec<u64> = self.project.all_devices().filter(|d| d.kind == EffectKind::Scope).map(|d| d.id).collect();
+        self.status().scopes.release_unused(|id| scopes.contains(&id));
         let mut dui = ui.new_child(UiBuilder::new().max_rect(body.shrink(4.0)));
         dui.set_clip_rect(body);
         let h = (body.height() - 34.0).max(80.0);
@@ -203,7 +205,22 @@ impl App {
         let mut params = dev.params.clone();
         let accent = if enabled { ACCENT } else { TEXT_DIM };
         let mut mv = self.mod_view(ModOwner::Device(dev_id));
-        let (changed, action) = device_frame(ui, kind.name(), Some(&mut enabled), h, |ui| param_grid_mod(ui, id, kind.specs(), &mut params, accent, h - 24.0, mv.as_mut()));
+        let status = self.status();
+        let (changed, action) = device_frame(ui, kind.name(), Some(&mut enabled), h, |ui| {
+            if kind == EffectKind::Scope {
+                ui.horizontal_top(|ui| {
+                    let (rect, _) = ui.allocate_exact_size(vec2(360.0, (h - 30.0).max(80.0)), Sense::hover());
+                    let opts = crate::ui::scope::ScopeOpts::from_params(&params);
+                    let resp = crate::ui::scope::scope_view(ui, rect, id.with("screen"), status.scopes.find(dev_id), status.sample_rate.load(), &opts);
+                    resp.on_hover_text("Wave: locked to the pitch. Time: triggered window. XY: left against right. Vector: mid up, side across.");
+                    ui.add_space(6.0);
+                    param_grid_mod(ui, id, kind.specs(), &mut params, accent, h - 24.0, mv.as_mut())
+                })
+                .inner
+            } else {
+                param_grid_mod(ui, id, kind.specs(), &mut params, accent, h - 24.0, mv.as_mut())
+            }
+        });
         self.apply_mod_view(mv);
         let dev = self.chain_mut(sel)?.get_mut(d)?;
         dev.enabled = enabled;
@@ -384,268 +401,275 @@ impl App {
         let title = inst.kind_name();
         let mut toggle_editor = false;
         let mut mv = self.mod_view(ModOwner::Instrument(track_id));
-        let (_, action) = device_frame(ui, title, None, h, |ui| match &mut new_inst {
-            Instrument::Fm { voice, op_mask, bank, params } => {
-                self.fm_panel(ui, track_id, voice, op_mask, bank, params, h, mv.as_mut());
-            }
-            Instrument::Plugin(p) => {
-                ui.set_min_width(300.0);
-                ui.label(RichText::new(&p.name).strong().size(16.0).color(ACCENT));
-                ui.label(RichText::new(format!("by {}  -  {}", p.vendor, p.plugin_id)).small().color(TEXT_DIM));
+        let status = self.status();
+        let (_, action) = device_frame(ui, title, None, h, |ui| {
+            ui.horizontal_top(|ui| {
+                crate::ui::scope::instrument_wave(ui, &status, i, track_id, h - 30.0);
                 ui.add_space(6.0);
-                match self.plugins.status(p.instance) {
-                    crate::plugins::PluginStatus::Loaded { has_editor, editor_open } => {
-                        if has_editor {
-                            let label = if editor_open { "Close Editor" } else { "Open Editor" };
-                            if ui.add(egui::Button::new(RichText::new(label).color(TEXT_DARK)).fill(ACCENT).min_size(vec2(140.0, 26.0))).clicked() {
-                                toggle_editor = true;
-                            }
-                        } else {
-                            ui.label("This plugin has no editor.");
-                        }
-                        ui.add_space(4.0);
-                        ui.label(RichText::new("Play it like any instrument. Its patch and settings are saved with your set.").small().color(TEXT_DIM));
+                ui.vertical(|ui| match &mut new_inst {
+                    Instrument::Fm { voice, op_mask, bank, params } => {
+                        self.fm_panel(ui, track_id, voice, op_mask, bank, params, h, mv.as_mut());
                     }
-                    crate::plugins::PluginStatus::Failed(e) => {
-                        ui.label(RichText::new(format!("Could not load the plugin: {e}")).color(REC));
-                        ui.label(RichText::new(p.path.display().to_string()).small().color(TEXT_DIM));
-                    }
-                    crate::plugins::PluginStatus::Loading => {
-                        ui.label("Loading...");
-                    }
-                }
-            }
-            Instrument::Synth { preset, params } => {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Preset").small().color(TEXT_DIM));
-                    egui::ComboBox::from_id_salt(("synth_preset", track_id)).width(110.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
-                        for name in synth::preset_names() {
-                            if ui.selectable_label(preset == name, *name).clicked() {
-                                *preset = name.to_string();
-                                *params = synth::preset(name);
-                            }
-                        }
-                    });
-                });
-                param_grid_mod(ui, Id::new(("synth", track_id)), synth::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
-            }
-            Instrument::Analog { preset, params } => {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Preset").small().color(TEXT_DIM));
-                    egui::ComboBox::from_id_salt(("analog_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
-                        for name in analog::preset_names() {
-                            if ui.selectable_label(preset == name, *name).clicked() {
-                                *preset = name.to_string();
-                                *params = analog::preset(name);
-                            }
-                        }
-                    });
-                    ui.label(RichText::new("classic analog polysynth").small().color(TEXT_DIM));
-                });
-                param_grid_mod(ui, Id::new(("analog", track_id)), analog::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
-            }
-            Instrument::Macro { preset, params } => {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Preset").small().color(TEXT_DIM));
-                    egui::ComboBox::from_id_salt(("macro_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
-                        for name in macro_osc::preset_names() {
-                            if ui.selectable_label(preset == name, *name).clicked() {
-                                *preset = name.to_string();
-                                *params = macro_osc::preset(name);
-                            }
-                        }
-                    });
-                    ui.label(RichText::new("models from Mutable Instruments Plaits (MIT)").small().color(TEXT_DIM));
-                });
-                ui.horizontal_top(|ui| {
-                    macro_model_picker(ui, track_id, params, h - 48.0);
-                    ui.add_space(6.0);
-                    // The three macro knobs are named after what they do in this model.
-                    let model = (params[MODEL].round().max(0.0) as usize).min(macro_osc::MODEL_KNOBS.len() - 1);
-                    let mut specs = macro_osc::SPECS.to_vec();
-                    for k in 0..3 {
-                        specs[HARMONICS + k].name = macro_osc::MODEL_KNOBS[model][k];
-                    }
-                    param_grid_mod(ui, Id::new(("macro", track_id)), &specs, params, ACCENT, h - 48.0, mv.as_mut());
-                });
-            }
-            Instrument::Braids { preset, params } => {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Preset").small().color(TEXT_DIM));
-                    egui::ComboBox::from_id_salt(("braids_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
-                        for name in braids_synth::preset_names() {
-                            if ui.selectable_label(preset == name, *name).clicked() {
-                                *preset = name.to_string();
-                                *params = braids_synth::preset(name);
-                            }
-                        }
-                    });
-                    ui.label(RichText::new("shapes from Mutable Instruments Braids (MIT)").small().color(TEXT_DIM));
-                });
-                ui.horizontal_top(|ui| {
-                    braids_shape_picker(ui, track_id, params, h - 48.0);
-                    ui.add_space(6.0);
-                    let shape = (params[braids_synth::SHAPE].round().max(0.0) as usize).min(braids_synth::SHAPE_COUNT - 1);
-                    let mut specs = braids_synth::SPECS.to_vec();
-                    specs[braids_synth::TIMBRE].name = braids_synth::SHAPE_KNOBS[shape][0];
-                    specs[braids_synth::COLOR].name = braids_synth::SHAPE_KNOBS[shape][1];
-                    param_grid_mod(ui, Id::new(("braids", track_id)), &specs, params, ACCENT, h - 48.0, mv.as_mut());
-                });
-            }
-            Instrument::Elements { preset, params } => {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Preset").small().color(TEXT_DIM));
-                    egui::ComboBox::from_id_salt(("elements_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
-                        for name in elements_synth::preset_names() {
-                            if ui.selectable_label(preset == name, *name).clicked() {
-                                *preset = name.to_string();
-                                *params = elements_synth::preset(name);
-                            }
-                        }
-                    });
-                    ui.label(RichText::new("modal synthesis from Mutable Instruments Elements (MIT)").small().color(TEXT_DIM));
-                });
-                ui.horizontal_top(|ui| {
-                    elements_model_picker(ui, track_id, params, h - 48.0);
-                    ui.add_space(6.0);
-                    let mut specs = elements_synth::SPECS.to_vec();
-                    specs[elements_synth::GEOMETRY].name = elements_synth::geometry_name(params[elements_synth::MODEL]);
-                    // MODEL (the last parameter) is the buttons on the left.
-                    let knobs = elements_synth::MODEL;
-                    param_grid_mod(ui, Id::new(("elements", track_id)), &specs[..knobs], &mut params[..knobs], ACCENT, h - 48.0, mv.as_mut());
-                });
-            }
-            Instrument::Sampler { params, sample } => {
-                ui.horizontal(|ui| {
-                    if ui.button("Load...").clicked() {
-                        if let Some(path) = rfd::FileDialog::new().add_filter("WAV", &["wav"]).pick_file() {
-                            match SampleRef::load(&path) {
-                                Ok(s) => *sample = Some(s),
-                                Err(e) => eprintln!("{e}"),
-                            }
-                        }
-                    }
-                    let name = sample.as_ref().map(|s| s.name.clone()).unwrap_or_else(|| "No sample".into());
-                    ui.label(RichText::new(name).color(TEXT_DIM));
-                });
-                ui.horizontal_top(|ui| {
-                    let (r, resp) = ui.allocate_exact_size(vec2(180.0, h - 56.0), Sense::click());
-                    draw_waveform(ui, r, sample.as_ref(), params[sampler::START]);
-                    if let Some(item) = drop_payload::<BrowserItem>(&resp) {
-                        if let BrowserItem::Sample(path) = &*item {
-                            if let Ok(s) = SampleRef::load(path) {
-                                *sample = Some(s);
-                            }
-                        }
-                    }
-                    if resp.dnd_hover_payload::<BrowserItem>().is_some() {
-                        rect_line(ui.painter(), r, 2.0, 2.0, ACCENT);
-                    }
-                    param_grid_mod(ui, Id::new(("sampler", track_id)), sampler::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
-                });
-            }
-            Instrument::Drums { kit, pads } => {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Kit").small().color(TEXT_DIM));
-                    egui::ComboBox::from_id_salt(("drum_kit", track_id)).width(110.0).selected_text(kit.as_str()).show_ui(ui, |ui| {
-                        for name in drums::kit_names() {
-                            if ui.selectable_label(kit == name, *name).clicked() {
-                                *kit = name.to_string();
-                                *pads = drums::kit(name);
-                            }
-                        }
-                    });
-                });
-                ui.horizontal_top(|ui| {
-                    // Pad grid: 4 x 2, lowest note bottom-left like a drum rack.
-                    let cell = vec2(70.0, ((h - 60.0) / 2.0).clamp(30.0, 60.0));
-                    let (grid, _) = ui.allocate_exact_size(vec2(cell.x * 4.0 + 6.0, cell.y * 2.0 + 4.0), Sense::hover());
-                    let mut order: Vec<usize> = (0..pads.len().min(8)).collect();
-                    order.sort_by_key(|&k| pads[k].note);
-                    for (slot, &k) in order.iter().enumerate() {
-                        let col = slot % 4;
-                        let row = 1 - (slot / 4).min(1);
-                        let r = Rect::from_min_size(pos2(grid.left() + col as f32 * (cell.x + 2.0), grid.top() + row as f32 * (cell.y + 2.0)), cell);
-                        let resp = ui.interact(r, Id::new(("pad", track_id, k)), Sense::click());
-                        let selected = self.sel_pad == k;
-                        let pad = &mut pads[k];
-                        let fill = if resp.is_pointer_button_down_on() {
-                            ACCENT
-                        } else if selected {
-                            PANEL3
-                        } else {
-                            KNOB
-                        };
-                        let p = ui.painter();
-                        rect_fill(p, r, 3.0, fill);
-                        if selected {
-                            rect_line(p, r, 3.0, 1.0, ACCENT);
-                        }
-                        let tc = if fill == ACCENT { TEXT_DARK } else { TEXT };
-                        p.with_clip_rect(r).text(pos2(r.left() + 5.0, r.top() + 10.0), Align2::LEFT_CENTER, &pad.name, small(), tc);
-                        let sub = if pad.sample.is_some() { format!("{}  sample", note_name(pad.note)) } else { note_name(pad.note) };
-                        p.text(pos2(r.left() + 5.0, r.bottom() - 9.0), Align2::LEFT_CENTER, sub, small(), shade(tc, 0.7));
-                        if resp.dnd_hover_payload::<BrowserItem>().is_some() {
-                            rect_line(p, r, 3.0, 2.0, ACCENT);
-                        }
-                        if let Some(item) = drop_payload::<BrowserItem>(&resp) {
-                            if let BrowserItem::Sample(path) = &*item {
-                                if let Ok(s) = SampleRef::load(path) {
-                                    pad.name = s.name.clone();
-                                    pad.sample = Some(s);
-                                }
-                            }
-                        }
-                        if resp.clicked() {
-                            self.sel_pad = k;
-                            let note = pad.note;
-                            self.pending_pad_hit = Some(note);
-                        }
-                    }
-                    ui.vertical(|ui| {
-                        let k = self.sel_pad.min(pads.len().saturating_sub(1));
-                        if let Some(pad) = pads.get_mut(k) {
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new(&pad.name).strong());
-                                egui::ComboBox::from_id_salt(("pad_voice", track_id, k)).width(86.0).selected_text(pad.voice.name()).show_ui(ui, |ui| {
-                                    for v in DrumVoice::ALL {
-                                        if ui.selectable_label(pad.voice == v, v.name()).clicked() {
-                                            pad.voice = v;
-                                            if pad.sample.is_none() {
-                                                pad.name = v.name().to_string();
-                                            }
-                                        }
+                    Instrument::Plugin(p) => {
+                        ui.set_min_width(300.0);
+                        ui.label(RichText::new(&p.name).strong().size(16.0).color(ACCENT));
+                        ui.label(RichText::new(format!("by {}  -  {}", p.vendor, p.plugin_id)).small().color(TEXT_DIM));
+                        ui.add_space(6.0);
+                        match self.plugins.status(p.instance) {
+                            crate::plugins::PluginStatus::Loaded { has_editor, editor_open } => {
+                                if has_editor {
+                                    let label = if editor_open { "Close Editor" } else { "Open Editor" };
+                                    if ui.add(egui::Button::new(RichText::new(label).color(TEXT_DARK)).fill(ACCENT).min_size(vec2(140.0, 26.0))).clicked() {
+                                        toggle_editor = true;
                                     }
-                                });
-                                let mut note = pad.note as i32;
-                                if ui.add(egui::DragValue::new(&mut note).range(0..=127).custom_formatter(|v, _| note_name(v as u8))).on_hover_text("MIDI note").changed() {
-                                    pad.note = note as u8;
+                                } else {
+                                    ui.label("This plugin has no editor.");
                                 }
-                                if ui.small_button("Sample...").clicked() {
-                                    if let Some(path) = rfd::FileDialog::new().add_filter("WAV", &["wav"]).pick_file() {
-                                        if let Ok(s) = SampleRef::load(&path) {
+                                ui.add_space(4.0);
+                                ui.label(RichText::new("Play it like any instrument. Its patch and settings are saved with your set.").small().color(TEXT_DIM));
+                            }
+                            crate::plugins::PluginStatus::Failed(e) => {
+                                ui.label(RichText::new(format!("Could not load the plugin: {e}")).color(REC));
+                                ui.label(RichText::new(p.path.display().to_string()).small().color(TEXT_DIM));
+                            }
+                            crate::plugins::PluginStatus::Loading => {
+                                ui.label("Loading...");
+                            }
+                        }
+                    }
+                    Instrument::Synth { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("synth_preset", track_id)).width(110.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in synth::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = synth::preset(name);
+                                    }
+                                }
+                            });
+                        });
+                        param_grid_mod(ui, Id::new(("synth", track_id)), synth::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
+                    }
+                    Instrument::Analog { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("analog_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in analog::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = analog::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("classic analog polysynth").small().color(TEXT_DIM));
+                        });
+                        param_grid_mod(ui, Id::new(("analog", track_id)), analog::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
+                    }
+                    Instrument::Macro { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("macro_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in macro_osc::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = macro_osc::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("models from Mutable Instruments Plaits (MIT)").small().color(TEXT_DIM));
+                        });
+                        ui.horizontal_top(|ui| {
+                            macro_model_picker(ui, track_id, params, h - 48.0);
+                            ui.add_space(6.0);
+                            // The three macro knobs are named after what they do in this model.
+                            let model = (params[MODEL].round().max(0.0) as usize).min(macro_osc::MODEL_KNOBS.len() - 1);
+                            let mut specs = macro_osc::SPECS.to_vec();
+                            for k in 0..3 {
+                                specs[HARMONICS + k].name = macro_osc::MODEL_KNOBS[model][k];
+                            }
+                            param_grid_mod(ui, Id::new(("macro", track_id)), &specs, params, ACCENT, h - 48.0, mv.as_mut());
+                        });
+                    }
+                    Instrument::Braids { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("braids_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in braids_synth::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = braids_synth::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("shapes from Mutable Instruments Braids (MIT)").small().color(TEXT_DIM));
+                        });
+                        ui.horizontal_top(|ui| {
+                            braids_shape_picker(ui, track_id, params, h - 48.0);
+                            ui.add_space(6.0);
+                            let shape = (params[braids_synth::SHAPE].round().max(0.0) as usize).min(braids_synth::SHAPE_COUNT - 1);
+                            let mut specs = braids_synth::SPECS.to_vec();
+                            specs[braids_synth::TIMBRE].name = braids_synth::SHAPE_KNOBS[shape][0];
+                            specs[braids_synth::COLOR].name = braids_synth::SHAPE_KNOBS[shape][1];
+                            param_grid_mod(ui, Id::new(("braids", track_id)), &specs, params, ACCENT, h - 48.0, mv.as_mut());
+                        });
+                    }
+                    Instrument::Elements { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("elements_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in elements_synth::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = elements_synth::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("modal synthesis from Mutable Instruments Elements (MIT)").small().color(TEXT_DIM));
+                        });
+                        ui.horizontal_top(|ui| {
+                            elements_model_picker(ui, track_id, params, h - 48.0);
+                            ui.add_space(6.0);
+                            let mut specs = elements_synth::SPECS.to_vec();
+                            specs[elements_synth::GEOMETRY].name = elements_synth::geometry_name(params[elements_synth::MODEL]);
+                            // MODEL (the last parameter) is the buttons on the left.
+                            let knobs = elements_synth::MODEL;
+                            param_grid_mod(ui, Id::new(("elements", track_id)), &specs[..knobs], &mut params[..knobs], ACCENT, h - 48.0, mv.as_mut());
+                        });
+                    }
+                    Instrument::Sampler { params, sample } => {
+                        ui.horizontal(|ui| {
+                            if ui.button("Load...").clicked() {
+                                if let Some(path) = rfd::FileDialog::new().add_filter("WAV", &["wav"]).pick_file() {
+                                    match SampleRef::load(&path) {
+                                        Ok(s) => *sample = Some(s),
+                                        Err(e) => eprintln!("{e}"),
+                                    }
+                                }
+                            }
+                            let name = sample.as_ref().map(|s| s.name.clone()).unwrap_or_else(|| "No sample".into());
+                            ui.label(RichText::new(name).color(TEXT_DIM));
+                        });
+                        ui.horizontal_top(|ui| {
+                            let (r, resp) = ui.allocate_exact_size(vec2(180.0, h - 56.0), Sense::click());
+                            draw_waveform(ui, r, sample.as_ref(), params[sampler::START]);
+                            if let Some(item) = drop_payload::<BrowserItem>(&resp) {
+                                if let BrowserItem::Sample(path) = &*item {
+                                    if let Ok(s) = SampleRef::load(path) {
+                                        *sample = Some(s);
+                                    }
+                                }
+                            }
+                            if resp.dnd_hover_payload::<BrowserItem>().is_some() {
+                                rect_line(ui.painter(), r, 2.0, 2.0, ACCENT);
+                            }
+                            param_grid_mod(ui, Id::new(("sampler", track_id)), sampler::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
+                        });
+                    }
+                    Instrument::Drums { kit, pads } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Kit").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("drum_kit", track_id)).width(110.0).selected_text(kit.as_str()).show_ui(ui, |ui| {
+                                for name in drums::kit_names() {
+                                    if ui.selectable_label(kit == name, *name).clicked() {
+                                        *kit = name.to_string();
+                                        *pads = drums::kit(name);
+                                    }
+                                }
+                            });
+                        });
+                        ui.horizontal_top(|ui| {
+                            // Pad grid: 4 x 2, lowest note bottom-left like a drum rack.
+                            let cell = vec2(70.0, ((h - 60.0) / 2.0).clamp(30.0, 60.0));
+                            let (grid, _) = ui.allocate_exact_size(vec2(cell.x * 4.0 + 6.0, cell.y * 2.0 + 4.0), Sense::hover());
+                            let mut order: Vec<usize> = (0..pads.len().min(8)).collect();
+                            order.sort_by_key(|&k| pads[k].note);
+                            for (slot, &k) in order.iter().enumerate() {
+                                let col = slot % 4;
+                                let row = 1 - (slot / 4).min(1);
+                                let r = Rect::from_min_size(pos2(grid.left() + col as f32 * (cell.x + 2.0), grid.top() + row as f32 * (cell.y + 2.0)), cell);
+                                let resp = ui.interact(r, Id::new(("pad", track_id, k)), Sense::click());
+                                let selected = self.sel_pad == k;
+                                let pad = &mut pads[k];
+                                let fill = if resp.is_pointer_button_down_on() {
+                                    ACCENT
+                                } else if selected {
+                                    PANEL3
+                                } else {
+                                    KNOB
+                                };
+                                let p = ui.painter();
+                                rect_fill(p, r, 3.0, fill);
+                                if selected {
+                                    rect_line(p, r, 3.0, 1.0, ACCENT);
+                                }
+                                let tc = if fill == ACCENT { TEXT_DARK } else { TEXT };
+                                p.with_clip_rect(r).text(pos2(r.left() + 5.0, r.top() + 10.0), Align2::LEFT_CENTER, &pad.name, small(), tc);
+                                let sub = if pad.sample.is_some() { format!("{}  sample", note_name(pad.note)) } else { note_name(pad.note) };
+                                p.text(pos2(r.left() + 5.0, r.bottom() - 9.0), Align2::LEFT_CENTER, sub, small(), shade(tc, 0.7));
+                                if resp.dnd_hover_payload::<BrowserItem>().is_some() {
+                                    rect_line(p, r, 3.0, 2.0, ACCENT);
+                                }
+                                if let Some(item) = drop_payload::<BrowserItem>(&resp) {
+                                    if let BrowserItem::Sample(path) = &*item {
+                                        if let Ok(s) = SampleRef::load(path) {
                                             pad.name = s.name.clone();
                                             pad.sample = Some(s);
                                         }
                                     }
                                 }
-                                if pad.sample.is_some() && ui.small_button("Synth").on_hover_text("Remove the sample, use the synthesized voice").clicked() {
-                                    pad.sample = None;
-                                    pad.name = pad.voice.name().to_string();
+                                if resp.clicked() {
+                                    self.sel_pad = k;
+                                    let note = pad.note;
+                                    self.pending_pad_hit = Some(note);
+                                }
+                            }
+                            ui.vertical(|ui| {
+                                let k = self.sel_pad.min(pads.len().saturating_sub(1));
+                                if let Some(pad) = pads.get_mut(k) {
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new(&pad.name).strong());
+                                        egui::ComboBox::from_id_salt(("pad_voice", track_id, k)).width(86.0).selected_text(pad.voice.name()).show_ui(ui, |ui| {
+                                            for v in DrumVoice::ALL {
+                                                if ui.selectable_label(pad.voice == v, v.name()).clicked() {
+                                                    pad.voice = v;
+                                                    if pad.sample.is_none() {
+                                                        pad.name = v.name().to_string();
+                                                    }
+                                                }
+                                            }
+                                        });
+                                        let mut note = pad.note as i32;
+                                        if ui.add(egui::DragValue::new(&mut note).range(0..=127).custom_formatter(|v, _| note_name(v as u8))).on_hover_text("MIDI note").changed() {
+                                            pad.note = note as u8;
+                                        }
+                                        if ui.small_button("Sample...").clicked() {
+                                            if let Some(path) = rfd::FileDialog::new().add_filter("WAV", &["wav"]).pick_file() {
+                                                if let Ok(s) = SampleRef::load(&path) {
+                                                    pad.name = s.name.clone();
+                                                    pad.sample = Some(s);
+                                                }
+                                            }
+                                        }
+                                        if pad.sample.is_some() && ui.small_button("Synth").on_hover_text("Remove the sample, use the synthesized voice").clicked() {
+                                            pad.sample = None;
+                                            pad.name = pad.voice.name().to_string();
+                                        }
+                                    });
+                                    let mut vals = [pad.level_db, pad.tune, pad.decay, pad.tone, pad.pan];
+                                    if param_grid(ui, Id::new(("pad_params", track_id, k)), PAD_SPECS, &mut vals, ACCENT, h - 60.0) {
+                                        pad.level_db = vals[0];
+                                        pad.tune = vals[1];
+                                        pad.decay = vals[2];
+                                        pad.tone = vals[3];
+                                        pad.pan = vals[4];
+                                    }
                                 }
                             });
-                            let mut vals = [pad.level_db, pad.tune, pad.decay, pad.tone, pad.pan];
-                            if param_grid(ui, Id::new(("pad_params", track_id, k)), PAD_SPECS, &mut vals, ACCENT, h - 60.0) {
-                                pad.level_db = vals[0];
-                                pad.tune = vals[1];
-                                pad.decay = vals[2];
-                                pad.tone = vals[3];
-                                pad.pan = vals[4];
-                            }
-                        }
-                    });
+                        });
+                    }
                 });
-            }
+            });
         });
         self.apply_mod_view(mv);
         if matches!(action, Some(ChainActionKind::Remove)) {

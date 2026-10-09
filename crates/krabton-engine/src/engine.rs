@@ -86,6 +86,11 @@ pub struct TrackStatus {
     pub peak_r: AtomicF32,
     /// Visual state of the track's first sequencer (see `sequencers`).
     pub seq: [AtomicU64; 4],
+    /// The track's source signal (instrument or clips, before effects),
+    /// written while `wave_watch` is above zero.
+    pub wave: crate::scope::ScopeBuffer,
+    /// Set by the UI while it shows the wave; counts down per block.
+    pub wave_watch: AtomicU32,
 }
 
 impl TrackStatus {
@@ -99,6 +104,21 @@ impl TrackStatus {
             peak_l: AtomicF32::new(0.0),
             peak_r: AtomicF32::new(0.0),
             seq: [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)],
+            wave: crate::scope::ScopeBuffer::new(crate::scope::WAVE_LEN, false),
+            wave_watch: AtomicU32::new(0),
+        }
+    }
+
+    /// UI: keep writing the wave for a while.
+    pub fn watch_wave(&self) {
+        self.wave_watch.store(200, Ordering::Relaxed);
+    }
+
+    fn tap_wave(&self, l: &[f32], r: &[f32]) {
+        let w = self.wave_watch.load(Ordering::Relaxed);
+        if w > 0 {
+            self.wave_watch.store(w - 1, Ordering::Relaxed);
+            self.wave.write(l, r);
         }
     }
 
@@ -120,6 +140,8 @@ pub struct EngineStatus {
     pub preview_active: AtomicBool,
     /// Output of each modulator (-1..1), by position in `Project::modulators`.
     pub mods: Vec<AtomicF32>,
+    /// Buffers of the Oscilloscope devices.
+    pub scopes: crate::scope::ScopeBank,
 }
 
 impl EngineStatus {
@@ -135,6 +157,7 @@ impl EngineStatus {
             master: TrackStatus::new(),
             preview_active: AtomicBool::new(false),
             mods: (0..MAX_MODS).map(|_| AtomicF32::new(0.0)).collect(),
+            scopes: crate::scope::ScopeBank::new(),
         }
     }
 }
@@ -1116,10 +1139,16 @@ impl Engine {
                 }
             }
 
+            if let Some(ts) = status.tracks.get(ti) {
+                ts.tap_wave(&l[..seg], &r[..seg]);
+            }
             for (dev, (_, st)) in track.devices.iter().zip(devices.iter_mut()) {
                 if dev.enabled {
                     let params = mods.params(ModOwner::Device(dev.id)).unwrap_or(&dev.params);
                     st.process(params, &mut l[..seg], &mut r[..seg], &ctx);
+                    if let EffectState::Scope(tap) = st {
+                        tap.write(&status.scopes, dev.id, &l[..seg], &r[..seg]);
+                    }
                 }
             }
             signal.level = l[..seg].iter().chain(&r[..seg]).fold(0.0f32, |m, x| m.max(x.abs()));
@@ -1160,6 +1189,9 @@ impl Engine {
                 if dev.enabled {
                     let params = mods.params(ModOwner::Device(dev.id)).unwrap_or(&dev.params);
                     st.process(params, &mut rt.l[..seg], &mut rt.r[..seg], &ctx);
+                    if let EffectState::Scope(tap) = st {
+                        tap.write(&status.scopes, dev.id, &rt.l[..seg], &rt.r[..seg]);
+                    }
                 }
             }
             let mm = mods.return_mix(j);
@@ -1182,6 +1214,9 @@ impl Engine {
                 if dev.enabled {
                     let params = mods.params(ModOwner::Device(dev.id)).unwrap_or(&dev.params);
                     st.process(params, &mut m.l[..seg], &mut m.r[..seg], &ctx);
+                    if let EffectState::Scope(tap) = st {
+                        tap.write(&status.scopes, dev.id, &m.l[..seg], &m.r[..seg]);
+                    }
                 }
             }
             let vol = fader_gain(project.master.volume_db);
@@ -1668,6 +1703,37 @@ mod tests {
         let level = track_level(&mut e, &h, 2, 1.0);
         assert!(level > 0.003, "Elements plays the chords: {level}");
         assert!(e.mods.params(ModOwner::Instrument(chords)).is_some(), "its parameters are modulated");
+    }
+
+    #[test]
+    fn scopes_and_waves_receive_audio() {
+        let mut p = crate::demo::demo_project();
+        let scope = p.make_device(crate::dsp::effects::EffectKind::Scope);
+        let scope_id = scope.id;
+        p.tracks[1].devices.push(scope);
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        h.send(Command::LaunchScene(1));
+        run(&mut e, 0.5);
+        // The Oscilloscope passes audio through and fills its buffer.
+        let buf = h.status.scopes.find(scope_id).expect("the scope claimed a buffer");
+        let (mut l, mut r) = (Vec::new(), Vec::new());
+        buf.read(4800, &mut l, &mut r);
+        assert_eq!(l.len(), 4800);
+        assert!(l.iter().chain(&r).any(|x| x.abs() > 0.01), "the scope sees the bass");
+        assert!(track_level(&mut e, &h, 1, 1.0) > 0.02, "and the bass still plays");
+        // The track wave is only written while the UI watches it.
+        let ts = &h.status.tracks[1];
+        assert_eq!(ts.wave.written(), 0);
+        ts.watch_wave();
+        run(&mut e, 0.2);
+        let n = ts.wave.written();
+        assert!(n >= 4800, "wave written while watched: {n}");
+        ts.wave.read(4800, &mut l, &mut r);
+        assert!(l.iter().any(|x| x.abs() > 0.01));
+        run(&mut e, 3.0);
+        let m = ts.wave.written();
+        run(&mut e, 0.5);
+        assert_eq!(ts.wave.written(), m, "stops when nobody watches");
     }
 
     #[test]
