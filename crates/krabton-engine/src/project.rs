@@ -4,7 +4,7 @@
 use crate::dsp::drums::{self, DrumVoice};
 use crate::dsp::effects::EffectKind;
 use crate::dsp::dx7::{self, Dx7Voice};
-use crate::dsp::{braids_synth, elements_synth, fm, macro_osc, sampler, synth};
+use crate::dsp::{analog, braids_synth, elements_synth, fm, macro_osc, sampler, synth};
 use crate::params;
 use crate::sample::{LoadCacheGuard, SampleRef};
 use crate::scale::{convert_pitch, Scale};
@@ -277,15 +277,17 @@ pub enum Instrument {
     Drums { kit: String, pads: Vec<DrumPad> },
     Sampler { params: Vec<f32>, sample: Option<SampleRef> },
     Plugin(PluginInstrument),
-    /// Krab FM: a DX7-compatible voice (155 bytes, VCED) plus engine settings.
+    /// FM: a DX7-compatible voice (155 bytes, VCED) plus engine settings.
     Fm { voice: Vec<u8>, op_mask: u8, bank: String, params: Vec<f32> },
-    /// Krab Macro: the Plaits macro-oscillator models, polyphonic.
+    /// Plaits: the Plaits macro-oscillator models, polyphonic.
     Macro { preset: String, params: Vec<f32> },
-    /// Krab Braids: the Braids macro-oscillator shapes, polyphonic.
+    /// Braids: the Braids macro-oscillator shapes, polyphonic.
     Braids { preset: String, params: Vec<f32> },
-    /// Krab Elements: the Elements modal voice (bow, blow, strike into a
+    /// Elements: the Elements modal voice (bow, blow, strike into a
     /// resonator), polyphonic.
     Elements { preset: String, params: Vec<f32> },
+    /// Analog: a virtual analog polysynth modelled on classic analog synths.
+    Analog { preset: String, params: Vec<f32> },
 }
 
 impl Instrument {
@@ -317,16 +319,21 @@ impl Instrument {
         Instrument::Elements { preset: preset.to_string(), params: elements_synth::preset(preset) }
     }
 
+    pub fn analog(preset: &str) -> Self {
+        Instrument::Analog { preset: preset.to_string(), params: analog::preset(preset) }
+    }
+
     pub fn kind_name(&self) -> &'static str {
         match self {
-            Instrument::Synth { .. } => "Krab Synth",
-            Instrument::Drums { .. } => "Krab Drums",
-            Instrument::Sampler { .. } => "Krab Sampler",
+            Instrument::Synth { .. } => "Synth",
+            Instrument::Drums { .. } => "Drums",
+            Instrument::Sampler { .. } => "Sampler",
             Instrument::Plugin(_) => "CLAP Plugin",
-            Instrument::Fm { .. } => "Krab FM",
-            Instrument::Macro { .. } => "Krab Macro",
-            Instrument::Braids { .. } => "Krab Braids",
-            Instrument::Elements { .. } => "Krab Elements",
+            Instrument::Fm { .. } => "FM",
+            Instrument::Macro { .. } => "Plaits",
+            Instrument::Braids { .. } => "Braids",
+            Instrument::Elements { .. } => "Elements",
+            Instrument::Analog { .. } => "Analog",
         }
     }
 
@@ -337,7 +344,7 @@ impl Instrument {
             Instrument::Sampler { sample, .. } => sample.as_ref().map(|s| s.name.clone()).unwrap_or_else(|| "Empty".into()),
             Instrument::Plugin(p) => p.name.clone(),
             Instrument::Fm { voice, .. } => Dx7Voice::from_slice(voice).map(|v| v.name()).unwrap_or_else(|| "FM".into()),
-            Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } => preset.clone(),
+            Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } => preset.clone(),
         }
     }
 
@@ -744,6 +751,7 @@ impl Project {
                 Some(Instrument::Macro { params, .. }) => params::fix_len(params, macro_osc::SPECS),
                 Some(Instrument::Braids { params, .. }) => params::fix_len(params, braids_synth::SPECS),
                 Some(Instrument::Elements { params, .. }) => params::fix_len(params, elements_synth::SPECS),
+                Some(Instrument::Analog { params, .. }) => params::fix_len(params, analog::SPECS),
                 Some(Instrument::Plugin(p)) => max_id = max_id.max(p.instance + 1),
                 Some(Instrument::Fm { voice, params, .. }) => {
                     params::fix_len(params, fm::SPECS);

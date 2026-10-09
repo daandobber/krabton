@@ -75,7 +75,7 @@ impl App {
                     });
                 }
                 ui.add_space(4.0);
-                ui.label(RichText::new("Krab Macro uses the Plaits DSP code by Emilie Gillet (Mutable Instruments, MIT) via mi-plaits-dsp by Oliver Rockstedt (MIT).").small().color(TEXT_DIM));
+                ui.label(RichText::new("Plaits uses the Plaits DSP code by Emilie Gillet (Mutable Instruments, MIT) via mi-plaits-dsp by Oliver Rockstedt (MIT). Braids and Elements are Rust ports of Emilie Gillet's Braids and Elements code (MIT).").small().color(TEXT_DIM));
                 ui.label(RichText::new("Not affiliated with Ableton or Mutable Instruments. MIT licensed.").small().color(TEXT_DIM));
             });
             self.show_about = open;

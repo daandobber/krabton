@@ -1,4 +1,4 @@
-//! Krab Macro: a polyphonic instrument around the Plaits macro-oscillator.
+//! Plaits: a polyphonic instrument around the Plaits macro-oscillator.
 //!
 //! The synthesis is the DSP code of Mutable Instruments Plaits by Emilie
 //! Gillet (MIT), through the Rust port `mi-plaits-dsp` by Oliver Rockstedt

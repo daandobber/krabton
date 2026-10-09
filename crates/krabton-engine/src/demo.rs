@@ -186,7 +186,7 @@ pub fn demo_project() -> Project {
     set_clip(&mut p, arp, 2, "Arp", 16.0, make_arp(0.75));
     set_clip(&mut p, arp, 3, "Arp Loud", 16.0, make_arp(0.95));
 
-    // --- FM Keys (Krab FM, DX7-style electric piano) -------------------------
+    // --- FM Keys (FM, DX7-style electric piano) -------------------------
     let keys = p.add_midi_track(Some(Instrument::fm(&crate::dsp::dx7::factory_bank()[0], "Krab Factory")));
     p.tracks[keys].name = "FM Keys".into();
     p.tracks[keys].color = PALETTE[3];

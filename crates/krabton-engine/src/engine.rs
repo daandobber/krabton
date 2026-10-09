@@ -8,6 +8,7 @@
 use crate::dsp::drums::DrumState;
 use crate::dsp::effects::{EffectState, FxCtx};
 use crate::dsp::fm::FmState;
+use crate::dsp::analog::AnalogState;
 use crate::dsp::braids_synth::BraidsSynthState;
 use crate::dsp::elements_synth::ElementsSynthState;
 use crate::dsp::macro_osc::MacroState;
@@ -230,6 +231,7 @@ enum InstState {
     Macro(Box<MacroState>),
     Braids(Box<BraidsSynthState>),
     Elements(Box<ElementsSynthState>),
+    Analog(Box<AnalogState>),
     Plugin { instance: u64, proc: Option<Box<dyn AudioProcessor>>, pending: Vec<PluginEvent> },
 }
 
@@ -245,6 +247,7 @@ impl InstState {
             Some(Instrument::Macro { .. }) => InstState::Macro(Box::new(MacroState::new(sr))),
             Some(Instrument::Braids { .. }) => InstState::Braids(Box::new(BraidsSynthState::new(sr))),
             Some(Instrument::Elements { .. }) => InstState::Elements(Box::new(ElementsSynthState::new(sr))),
+            Some(Instrument::Analog { .. }) => InstState::Analog(Box::new(AnalogState::new(sr))),
         }
     }
 
@@ -274,6 +277,7 @@ impl InstState {
                 | (InstState::Macro(_), Some(Instrument::Macro { .. }))
                 | (InstState::Braids(_), Some(Instrument::Braids { .. }))
                 | (InstState::Elements(_), Some(Instrument::Elements { .. }))
+                | (InstState::Analog(_), Some(Instrument::Analog { .. }))
         ) || matches!((self, i), (InstState::Plugin { instance, .. }, Some(Instrument::Plugin(p))) if *instance == p.instance)
     }
 
@@ -288,6 +292,7 @@ impl InstState {
             (InstState::Macro(s), Instrument::Macro { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Braids(s), Instrument::Braids { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Elements(s), Instrument::Elements { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Analog(s), Instrument::Analog { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             _ => {}
         }
     }
@@ -301,6 +306,7 @@ impl InstState {
             (InstState::Macro(s), Instrument::Macro { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Braids(s), Instrument::Braids { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Elements(s), Instrument::Elements { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Analog(s), Instrument::Analog { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             _ => {}
         }
     }
@@ -315,6 +321,7 @@ impl InstState {
             InstState::Macro(s) => s.all_off(),
             InstState::Braids(s) => s.all_off(),
             InstState::Elements(s) => s.all_off(),
+            InstState::Analog(s) => s.all_off(),
             InstState::None => {}
         }
     }
@@ -328,6 +335,7 @@ impl InstState {
             (InstState::Macro(s), Instrument::Macro { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Braids(s), Instrument::Braids { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Elements(s), Instrument::Elements { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Analog(s), Instrument::Analog { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Plugin { proc, pending, .. }, Instrument::Plugin(_)) => {
                 if let Some(p) = proc {
                     p.process(pending, l, r);
@@ -1640,7 +1648,7 @@ mod tests {
         h.send(Command::LaunchScene(1));
         run(&mut e, 0.3);
         let level = track_level(&mut e, &h, 1, 1.0);
-        assert!(level > 0.02, "Krab Macro bass plays the clip: {level}");
+        assert!(level > 0.02, "Plaits bass plays the clip: {level}");
         assert!(e.mods.params(ModOwner::Instrument(bass)).is_some(), "its parameters are modulated");
     }
 
@@ -1658,8 +1666,26 @@ mod tests {
         h.send(Command::LaunchScene(1));
         run(&mut e, 0.3);
         let level = track_level(&mut e, &h, 2, 1.0);
-        assert!(level > 0.003, "Krab Elements plays the chords: {level}");
+        assert!(level > 0.003, "Elements plays the chords: {level}");
         assert!(e.mods.params(ModOwner::Instrument(chords)).is_some(), "its parameters are modulated");
+    }
+
+    #[test]
+    fn analog_plays_clips_and_can_be_modulated() {
+        use crate::modulation::{ModKind, ModOwner, ModTarget};
+        let mut p = crate::demo::demo_project();
+        p.tracks[1].instrument = Some(Instrument::analog("Moog Bass"));
+        let lfo = p.make_modulator(ModKind::Lfo);
+        let lid = lfo.id;
+        p.modulators.push(lfo);
+        let bass = p.tracks[1].id;
+        p.add_route(lid, ModTarget::Param { owner: ModOwner::Instrument(bass), param: crate::dsp::analog::CUTOFF as u16 }, 0.5);
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        h.send(Command::LaunchScene(1));
+        run(&mut e, 0.3);
+        let level = track_level(&mut e, &h, 1, 1.0);
+        assert!(level > 0.02, "Analog bass plays the clip: {level}");
+        assert!(e.mods.params(ModOwner::Instrument(bass)).is_some(), "its parameters are modulated");
     }
 
     #[test]

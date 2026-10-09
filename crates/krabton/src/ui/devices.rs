@@ -7,6 +7,7 @@ use egui::{pos2, vec2, Align2, Color32, Id, Rect, RichText, Sense, Stroke, Ui, U
 use krabton_engine::dsp::drums::{self, DrumVoice};
 use krabton_engine::dsp::effects::EffectKind;
 use krabton_engine::midi_fx::MidiFxKind;
+use krabton_engine::dsp::analog;
 use krabton_engine::dsp::braids_synth;
 use krabton_engine::dsp::elements_synth;
 use krabton_engine::dsp::macro_osc::{self, HARMONICS, MODEL};
@@ -427,6 +428,21 @@ impl App {
                     });
                 });
                 param_grid_mod(ui, Id::new(("synth", track_id)), synth::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
+            }
+            Instrument::Analog { preset, params } => {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                    egui::ComboBox::from_id_salt(("analog_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                        for name in analog::preset_names() {
+                            if ui.selectable_label(preset == name, *name).clicked() {
+                                *preset = name.to_string();
+                                *params = analog::preset(name);
+                            }
+                        }
+                    });
+                    ui.label(RichText::new("classic analog polysynth").small().color(TEXT_DIM));
+                });
+                param_grid_mod(ui, Id::new(("analog", track_id)), analog::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
             }
             Instrument::Macro { preset, params } => {
                 ui.horizontal(|ui| {

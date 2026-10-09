@@ -36,7 +36,7 @@
 - Scale-aware tools above the piano roll: Snap to scale, move by scale steps, diatonic Chords and 7ths, Arpeggiate (up/down/up-down/random), Strum, Legato, Humanize, and *Seed* to generate a melody in the scale
 - Play in key: snap played notes (keyboard and MIDI) to the scale, or let the home row A S D F ... play consecutive scale steps so you can't hit a wrong note
 
-**MIDI effects** (in front of any instrument, including Krab FM and CLAP plugins)
+**MIDI effects** (in front of any instrument, including FM and CLAP plugins)
 - *Arpeggiator*: Up, Down, Up/Down, Down/Up, Converge, Diverge, Random, As Played and Chord styles; tempo-synced rate (1/32 to 1 bar, triplets), gate, octave range, swing and hold
 - *Chord*: one key plays a chord: diatonic triads or sevenths in the project key, major, minor, maj7, min7, dom7, sus2/4, power, octaves, add9 or custom intervals, with inversions
 - *Note Length*, *Pitch* (semitones or scale steps), *Scale* (snap or filter, project or custom scale), *Random* (optionally in key), *Velocity* (curve, range, randomize, fixed) and *Note Echo* (tempo-synced MIDI delay with feedback and pitch shift)
@@ -70,30 +70,40 @@
 - Varibright LEDs, 8x8, 16x8 and 16x16 grids. Tested against a simulated serialosc; reports from real hardware are welcome
 
 **Instruments**
-- **Krab Synth**: two PolyBLEP oscillators, sub, noise, unison detune, resonant multimode filter with envelope and key tracking, drive, two ADSRs, LFO, mono/legato with glide. Presets: Fat Bass, Acid, Sub Bass, Soft Pad, Pluck, Lead, Keys
-- **Krab Drums**: an 8-pad synthesized drum rack (kick, snare, hats with choke, clap, tom, rim, cowbell) on General MIDI notes, with 808/909/Lo-Fi kits. Every pad can also play a WAV sample
-- **Krab Sampler**: plays any WAV chromatically, with ADSR, filter, start offset and loop
+- **Analog**: a classic analog polysynth, see below
+- **Synth**: two PolyBLEP oscillators, sub, noise, unison detune, resonant multimode filter with envelope and key tracking, drive, two ADSRs, LFO, mono/legato with glide. Presets: Fat Bass, Acid, Sub Bass, Soft Pad, Pluck, Lead, Keys
+- **Drums**: an 8-pad synthesized drum rack (kick, snare, hats with choke, clap, tom, rim, cowbell) on General MIDI notes, with 808/909/Lo-Fi kits. Every pad can also play a WAV sample
+- **Sampler**: plays any WAV chromatically, with ADSR, filter, start offset and loop
 
-**Krab Macro: the Plaits engine, polyphonic**
+**Analog: a classic analog polysynth**
+- Two oscillators (saw, pulse, triangle, sine) with octave switches, hard sync, cross modulation, pulse-width modulation and a filter-envelope sweep of oscillator 2 (the classic sync lead), plus a sub oscillator and noise
+- A nonlinear 24 dB ladder filter that saturates and self-oscillates, or a 12 dB state-variable filter (low-pass, band-pass, high-pass), with drive, envelope, key tracking and velocity
+- RC-style envelopes whose attack overshoots like a capacitor circuit, one LFO (triangle, sine, saw, square, sample & hold) with delay to pitch, filter and pulse width
+- Up to 8 voices, unison up to 4 per note (16 voice slots), mono legato with glide, and a VINTAGE control: slowly drifting oscillators and a little spread of filter, tuning and envelope times per voice
+- A bucket-brigade-style stereo chorus with the classic I, II and I+II modes
+- Runs at twice the project rate with band-limited oscillators (PolyBLEP steps and BLAMP corners, also at sync resets) and a half-band decimator
+- 24 presets: Moog-style, sub, squelch and wobble basses, Juno pads and strings, sweep and warm pads, Prophet brass, rave stab, unison saws, keys, pluck, clav, organ, bell, sync/mono/square leads, laser zap, an analog kick, a noise hit and a wonky tape keys sound
+
+**Plaits: the Plaits engine, polyphonic**
 - The 24 synthesis models of [Mutable Instruments Plaits](https://pichenettes.github.io/mutable-instruments-documentation/modules/plaits/), built in through the Rust port [mi-plaits-dsp](https://github.com/sourcebox/mi-plaits-dsp-rs) (both MIT): *VA + Filter* (a classic analog voice with a resonant 2/4-pole filter and sub oscillator), *Virtual Analog* (two waveforms with hard sync), *Phase Distortion*, three banks of *6-op FM*, *Wave Terrain*, *String Machine*, *Chiptune*, *Waveshaper*, *FM*, *Formant*, *Additive*, *Wavetable*, *Chords*, *Speech*, *Swarm*, *Noise*, *Particles*, *Inharmonic String*, *Modal Resonator* and analog-style *Bass Drum*, *Snare* and *Hi-Hat*
 - Krabton makes it a playable instrument: up to 8 voices with stereo spread, mono legato with glide, an ADSR per voice or the original low-pass gate ("pluck"), and Plaits' own decay envelope routed to timbre, morph and pitch
 - The HARMONICS, TIMBRE and MORPH knobs are labelled with what they do in the selected model (resonance, cutoff, waveform, ...); every parameter can be modulated from the matrix
 - 22 presets, from Analog Poly, Analog Brass, Analog Bass and an Acid Line to DX Piano, String Machine, Talking Synth and a Plaits drum kit
 
-**Krab Braids: the Braids macro-oscillator, polyphonic**
+**Braids: the Braids macro-oscillator, polyphonic**
 - A complete Rust port of the DSP of Mutable Instruments Braids (MIT), in the `krabton-braids` crate: all 47 shapes, from CSaw, Morph, Sync, Fold and triple oscillators to ring mod, saw swarm, digital filters, VOSIM, vowels, additive harmonics, three FM flavours, plucked/bowed/blown/fluted physical models, bell, drum, kick, cymbal and snare, wavetables, wave maps, paraphonic chords, filtered/clocked/granular/particle noise and QPSK
 - Runs at 96 kHz like the module and is decimated to the project rate, in tune at 44.1 and 48 kHz
 - Up to 8 voices, mono legato with glide, ADSR, the module's AD envelope routed to TIMBRE, COLOR and pitch, analog-style VCO drift, and the BITS and RATE lo-fi settings
 - Shapes are picked by family with the module's four-letter codes; TIMBRE and COLOR are labelled with what they do in each shape. 32 presets
 
-**Krab Elements: modal synthesis, polyphonic**
+**Elements: modal synthesis, polyphonic**
 - A Rust port of the DSP of [Mutable Instruments Elements](https://pichenettes.github.io/mutable-instruments-documentation/modules/elements/) (MIT), in the `krabton-elements` crate: bow, blow and strike exciters (the blow exciter with its granular noise player and tube, the strike exciter morphing from samples to mallet, plectrum and particles) driving a resonator, followed by the module's reverb
 - Three resonator models like the module: *Modal* (52 band-pass modes, from strings and bars to plates and bells), *String* (a Karplus-Strong string with dispersion, down to a buzzing sitar bridge) and *Strings* (five sympathetic strings tuned to a chord picked by GEOMETRY)
 - Runs at 32 kHz like the module, resampled to the project rate with a windowed-sinc interpolator, in tune at 44.1 and 48 kHz
 - Up to 8 voices share the reverb (the module plays one); notes open the gate, velocity sets the strength (accent). Contour, Space with freeze, the stereo pickup LFO ("Shimmer") and the exciter signature are all on the panel
 - 26 presets: marimba, vibraphone, glockenspiel, kalimba, steel drum, bells, gong, wind chimes, rain stick, drums, plucked and bowed strings, harp, sitar, strummed and bowed chords, blown pipe, breath pad and an ambient drone
 
-**Krab FM: a MiniDexed-style DX7 engine, built in**
+**FM: a MiniDexed-style DX7 engine, built in**
 - 6-operator FM with all 32 DX7 algorithms, operator feedback, 4-stage envelopes with rate and level scaling, velocity sensitivity, LFO with delay and pitch envelope
 - Loads DX7 `.syx` banks and single voices, so the thousands of banks made for the DX7, Dexed and MiniDexed work (point *Folder...* at MiniDexed's `sysex/voice` folder); voices are stored inside your set
 - MiniDexed-style tone generator controls per track: unison (up to 4 voices) with detune and stereo spread, resonant filter, brightness/attack/release macros, transpose, mono with glide
@@ -182,16 +192,17 @@ How the threads talk:
 - Transport position, playing clips and meter peaks flow back to the UI through atomics.
 - Audio is processed in blocks of at most 256 frames, split exactly at loop points and launch-quantization boundaries, with sample-accurate note events inside each block.
 
-## Listening to Krab FM and Krab Macro without the GUI
+## Listening to the instruments without the GUI
 
 ```sh
 cargo run --release -p krabton-engine --example fm_voices -- out_dir            # factory voices
 cargo run --release -p krabton-engine --example fm_voices -- out_dir bank.syx   # any DX7 bank
 ```
 
-Renders a short chord phrase per voice to WAV files and prints their levels. The same for every Krab Macro preset:
+Renders a short chord phrase per voice to WAV files and prints their levels. The same for the presets of Analog, Plaits, Braids and Elements:
 
 ```sh
+cargo run --release -p krabton-engine --example analog_presets -- out_dir
 cargo run --release -p krabton-engine --example macro_presets -- out_dir
 cargo run --release -p krabton-engine --example braids_presets -- out_dir
 cargo run --release -p krabton-engine --example elements_presets -- out_dir
@@ -226,10 +237,10 @@ Ideas that would make Krabton even more Live-like (contributions welcome):
 
 ## Credits
 
-- Krab Braids is a port of the Mutable Instruments Braids DSP code by Emilie Gillet (MIT, <https://github.com/pichenettes/eurorack>), with the original copyright and license kept in [`crates/krabton-braids/LICENSE`](crates/krabton-braids/LICENSE).
-- Krab Elements is a port of the Mutable Instruments Elements DSP code, lookup tables and exciter samples by Emilie Gillet (MIT, <https://github.com/pichenettes/eurorack>), with the original copyright and license kept in [`crates/krabton-elements/LICENSE`](crates/krabton-elements/LICENSE).
-- Krab Macro runs the DSP code of Mutable Instruments Plaits by Emilie Gillet, in the Rust port `mi-plaits-dsp` by Oliver Rockstedt. Both are MIT licensed; their copyright and license notices travel with the crate. Krabton is not affiliated with Mutable Instruments.
-- Krab FM is an original implementation of DX7-style synthesis; it reads standard DX7 sysex files.
+- Braids is a port of the Mutable Instruments Braids DSP code by Emilie Gillet (MIT, <https://github.com/pichenettes/eurorack>), with the original copyright and license kept in [`crates/krabton-braids/LICENSE`](crates/krabton-braids/LICENSE).
+- Elements is a port of the Mutable Instruments Elements DSP code, lookup tables and exciter samples by Emilie Gillet (MIT, <https://github.com/pichenettes/eurorack>), with the original copyright and license kept in [`crates/krabton-elements/LICENSE`](crates/krabton-elements/LICENSE).
+- Plaits runs the DSP code of Mutable Instruments Plaits by Emilie Gillet, in the Rust port `mi-plaits-dsp` by Oliver Rockstedt. Both are MIT licensed; their copyright and license notices travel with the crate. Krabton is not affiliated with Mutable Instruments.
+- Analog, Synth and FM are original implementations; FM is DX7-style synthesis and reads standard DX7 sysex files.
 
 ## License
 

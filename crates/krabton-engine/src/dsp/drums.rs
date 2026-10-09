@@ -1,4 +1,4 @@
-//! "Krab Drums": a synthesized drum rack with optional per-pad samples.
+//! Drums: a synthesized drum rack with optional per-pad samples.
 
 use super::*;
 use crate::project::DrumPad;

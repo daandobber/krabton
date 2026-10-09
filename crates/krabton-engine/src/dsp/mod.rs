@@ -1,5 +1,6 @@
 //! DSP building blocks plus the instruments and effects built from them.
 
+pub mod analog;
 pub mod braids_synth;
 pub mod drums;
 pub mod elements_synth;

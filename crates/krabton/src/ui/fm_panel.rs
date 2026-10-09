@@ -1,4 +1,4 @@
-//! Device view for Krab FM: voice/bank selection, algorithm diagram,
+//! Device view for FM: voice/bank selection, algorithm diagram,
 //! operator table and the engine's macro controls.
 
 use crate::app::{App, FmBank};
@@ -317,7 +317,7 @@ impl App {
 
             // Engine macros (MiniDexed-style tone generator settings).
             ui.vertical(|ui| {
-                ui.label(RichText::new("Krab FM").small().color(TEXT_DIM));
+                ui.label(RichText::new("FM").small().color(TEXT_DIM));
                 crate::ui::devices::param_grid_mod(ui, Id::new(("fm_params", track_id)), fm::SPECS, params, ACCENT, h - 40.0, mv);
             });
         });

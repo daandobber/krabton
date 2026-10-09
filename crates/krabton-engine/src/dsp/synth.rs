@@ -1,4 +1,4 @@
-//! "Krab Synth": a two-oscillator virtual analog polysynth.
+//! Synth: a two-oscillator virtual analog polysynth.
 
 use super::*;
 use crate::params::{ParamSpec, Unit};

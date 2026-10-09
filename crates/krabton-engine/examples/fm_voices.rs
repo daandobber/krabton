@@ -1,4 +1,4 @@
-//! Renders a short phrase with every Krab FM factory voice (or a .syx bank)
+//! Renders a short phrase with every FM factory voice (or a .syx bank)
 //! to WAV files and prints their levels.
 //!
 //! ```sh

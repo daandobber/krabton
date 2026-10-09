@@ -72,18 +72,20 @@ pub enum BrowserItem {
     Effect(EffectKind),
     Sample(PathBuf),
     Plugin(krabton_clap::PluginInfo),
-    /// A Krab FM voice (155-byte DX7 voice) from a bank.
+    /// An FM voice (155-byte DX7 voice) from a bank.
     FmVoice { bank: String, voice: Vec<u8> },
     MidiFx(krabton_engine::midi_fx::MidiFxKind),
-    /// A Krab Macro (Plaits) preset.
+    /// A Plaits preset.
     Macro(&'static str),
-    /// A Krab Braids preset.
+    /// A Braids preset.
     Braids(&'static str),
-    /// A Krab Elements preset.
+    /// An Elements preset.
     Elements(&'static str),
+    /// An Analog preset.
+    Analog(&'static str),
 }
 
-/// A bank of DX7 voices for Krab FM.
+/// A bank of DX7 voices for FM.
 #[derive(Clone)]
 pub struct FmBank {
     pub name: String,
@@ -94,18 +96,19 @@ pub struct FmBank {
 impl BrowserItem {
     pub fn label(&self) -> String {
         match self {
-            BrowserItem::Synth(p) => format!("Krab Synth: {p}"),
-            BrowserItem::Macro(p) => format!("Krab Macro: {p}"),
-            BrowserItem::Braids(p) => format!("Krab Braids: {p}"),
-            BrowserItem::Elements(p) => format!("Krab Elements: {p}"),
-            BrowserItem::Drums(k) => format!("Krab Drums: {k}"),
-            BrowserItem::Sampler => "Krab Sampler".into(),
+            BrowserItem::Synth(p) => format!("Synth: {p}"),
+            BrowserItem::Macro(p) => format!("Plaits: {p}"),
+            BrowserItem::Braids(p) => format!("Braids: {p}"),
+            BrowserItem::Elements(p) => format!("Elements: {p}"),
+            BrowserItem::Analog(p) => format!("Analog: {p}"),
+            BrowserItem::Drums(k) => format!("Drums: {k}"),
+            BrowserItem::Sampler => "Sampler".into(),
             BrowserItem::Effect(k) => k.name().into(),
             BrowserItem::Sample(p) => p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default(),
             BrowserItem::Plugin(p) => p.name.clone(),
             BrowserItem::MidiFx(k) => k.name().into(),
             BrowserItem::FmVoice { voice, .. } => {
-                krabton_engine::dsp::dx7::Dx7Voice::from_slice(voice).map(|v| format!("Krab FM: {}", v.name())).unwrap_or_default()
+                krabton_engine::dsp::dx7::Dx7Voice::from_slice(voice).map(|v| format!("FM: {}", v.name())).unwrap_or_default()
             }
         }
     }
@@ -758,12 +761,13 @@ impl App {
                 }
                 self.toast(format!("Loading {} ...", info.name));
             }
-            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) => {
+            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) => {
                 let inst = match item {
                     BrowserItem::Synth(p) => Instrument::synth(p),
                     BrowserItem::Macro(p) => Instrument::macro_osc(p),
                     BrowserItem::Braids(p) => Instrument::braids(p),
                     BrowserItem::Elements(p) => Instrument::elements(p),
+                    BrowserItem::Analog(p) => Instrument::analog(p),
                     BrowserItem::Drums(k) => Instrument::drums(k),
                     _ => Instrument::sampler(None),
                 };
@@ -956,7 +960,7 @@ impl App {
         }
     }
 
-    /// Loads a DX7 .syx bank (or single voice) for Krab FM. Returns its index.
+    /// Loads a DX7 .syx bank (or single voice) for FM. Returns its index.
     pub fn load_fm_bank(&mut self, path: &Path) -> Result<usize, String> {
         if let Some(i) = self.fm_banks.iter().position(|b| b.path.as_deref() == Some(path)) {
             return Ok(i);
@@ -1452,6 +1456,12 @@ impl App {
                         },
                     };
                     self.script_input.extend(events);
+                }
+                "analog" => {
+                    let names = krabton_engine::dsp::analog::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Analog(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
                 }
                 "elements" => {
                     let names = krabton_engine::dsp::elements_synth::preset_names();

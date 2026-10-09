@@ -1,4 +1,4 @@
-//! Renders a short phrase with every Krab Macro preset to WAV files and
+//! Renders a short phrase with every Plaits preset to WAV files and
 //! prints their levels.
 //!
 //! ```sh

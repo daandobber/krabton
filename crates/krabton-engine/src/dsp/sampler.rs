@@ -1,4 +1,4 @@
-//! "Krab Sampler": plays one sample chromatically across the keyboard.
+//! Sampler: plays one sample chromatically across the keyboard.
 
 use super::*;
 use crate::params::{ParamSpec, Unit};

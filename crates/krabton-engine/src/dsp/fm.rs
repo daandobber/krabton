@@ -1,4 +1,4 @@
-//! "Krab FM": a 6-operator FM engine that plays DX7 voices, with
+//! FM: a 6-operator FM engine that plays DX7 voices, with
 //! MiniDexed-style extras (unison, filter, transpose, mono/glide).
 //! An original implementation based on the published DX7 behaviour.
 

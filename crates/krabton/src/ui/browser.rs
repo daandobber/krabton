@@ -62,38 +62,44 @@ impl App {
 
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             egui::CollapsingHeader::new(RichText::new("Instruments").color(ACCENT)).default_open(true).show(ui, |ui| {
-                ui.label(RichText::new("Krab Synth").small().color(TEXT_DIM));
+                ui.label(RichText::new("Analog").small().color(TEXT_DIM));
+                for p in krabton_engine::dsp::analog::preset_names() {
+                    if matches(p) || matches("analog") || matches("synth") {
+                        self.browser_item(ui, BrowserItem::Analog(p), p, "Classic analog polysynth: ladder filter, sync, cross mod, PWM, drift, unison and chorus");
+                    }
+                }
+                ui.label(RichText::new("Synth").small().color(TEXT_DIM));
                 for p in synth::preset_names() {
                     if matches(p) || matches("synth") {
                         self.browser_item(ui, BrowserItem::Synth(p), p, "Two-oscillator virtual analog synth");
                     }
                 }
-                ui.label(RichText::new("Krab Drums").small().color(TEXT_DIM));
+                ui.label(RichText::new("Drums").small().color(TEXT_DIM));
                 for k in drums::kit_names() {
                     if matches(k) || matches("drums") {
                         self.browser_item(ui, BrowserItem::Drums(k), k, "Synthesized drum rack (GM note mapping)");
                     }
                 }
-                ui.label(RichText::new("Krab Sampler").small().color(TEXT_DIM));
+                ui.label(RichText::new("Sampler").small().color(TEXT_DIM));
                 if matches("sampler") {
                     self.browser_item(ui, BrowserItem::Sampler, "Empty Sampler", "Plays one sample across the keyboard. Drop a WAV on it.");
                 }
             });
-            egui::CollapsingHeader::new(RichText::new("Krab Macro (Plaits)").color(ACCENT)).default_open(true).show(ui, |ui| {
+            egui::CollapsingHeader::new(RichText::new("Plaits").color(ACCENT)).default_open(true).show(ui, |ui| {
                 for p in krabton_engine::dsp::macro_osc::preset_names() {
                     if matches(p) || matches("macro") || matches("plaits") || matches("analog") {
                         self.browser_item(ui, BrowserItem::Macro(p), p, "24 synthesis models from Mutable Instruments Plaits: analog, FM, speech, strings, drums");
                     }
                 }
             });
-            egui::CollapsingHeader::new(RichText::new("Krab Braids").color(ACCENT)).default_open(true).show(ui, |ui| {
+            egui::CollapsingHeader::new(RichText::new("Braids").color(ACCENT)).default_open(true).show(ui, |ui| {
                 for p in krabton_engine::dsp::braids_synth::preset_names() {
                     if matches(p) || matches("braids") || matches("analog") {
                         self.browser_item(ui, BrowserItem::Braids(p), p, "47 shapes from Mutable Instruments Braids: analog, FM, physical models, wavetables, noise");
                     }
                 }
             });
-            egui::CollapsingHeader::new(RichText::new("Krab Elements").color(ACCENT)).default_open(true).show(ui, |ui| {
+            egui::CollapsingHeader::new(RichText::new("Elements").color(ACCENT)).default_open(true).show(ui, |ui| {
                 for p in krabton_engine::dsp::elements_synth::preset_names() {
                     if matches(p) || matches("elements") || matches("modal") || matches("physical") {
                         self.browser_item(ui, BrowserItem::Elements(p), p, "Modal synthesis from Mutable Instruments Elements: bow, blow and strike a resonator or strings");
@@ -114,7 +120,7 @@ impl App {
                     }
                 }
             });
-            egui::CollapsingHeader::new(RichText::new("Krab FM (DX7)").color(ACCENT)).default_open(true).show(ui, |ui| {
+            egui::CollapsingHeader::new(RichText::new("FM (DX7)").color(ACCENT)).default_open(true).show(ui, |ui| {
                 ui.horizontal(|ui| {
                     if ui.button("Load .syx...").on_hover_text("Load DX7 banks or voices (Dexed / MiniDexed .syx files)").clicked() {
                         if let Some(files) = rfd::FileDialog::new().add_filter("DX7 sysex", &["syx", "SYX"]).pick_files() {
@@ -144,7 +150,7 @@ impl App {
                             let name = v.name();
                             if matches(&name) || matches(&bank.name) || matches("fm") {
                                 let item = BrowserItem::FmVoice { bank: bank.name.clone(), voice: v.0.to_vec() };
-                                app.browser_item(ui, item, &name, "Krab FM voice: double-click or drag onto a track");
+                                app.browser_item(ui, item, &name, "FM voice: double-click or drag onto a track");
                             }
                         }
                     };

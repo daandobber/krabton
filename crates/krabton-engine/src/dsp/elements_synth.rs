@@ -1,4 +1,4 @@
-//! Krab Elements: a polyphonic instrument around the Elements modal voice
+//! Elements: a polyphonic instrument around the Elements modal voice
 //! (Mutable Instruments, Emilie Gillet, MIT; ported to Rust in the
 //! `krabton-elements` crate).
 //!

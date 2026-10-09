@@ -1,4 +1,4 @@
-//! Krab Braids: a polyphonic instrument around the Braids macro-oscillator
+//! Braids: a polyphonic instrument around the Braids macro-oscillator
 //! (Mutable Instruments, Emilie Gillet, MIT; ported to Rust in the
 //! `krabton-braids` crate).
 //!
