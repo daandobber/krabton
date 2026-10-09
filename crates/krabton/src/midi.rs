@@ -6,7 +6,7 @@ use midir::{Ignore, MidiInput, MidiInputConnection};
 
 #[derive(Clone, Copy, Debug)]
 pub enum MidiMsg {
-    NoteOn { pitch: u8, velocity: f32 },
+    NoteOn { pitch: u8, velocity: f32, channel: u8 },
     NoteOff { pitch: u8 },
 }
 
@@ -57,9 +57,9 @@ impl Midi {
                     if msg.len() < 3 {
                         return;
                     }
-                    let (status, d1, d2) = (msg[0] & 0xf0, msg[1], msg[2]);
+                    let (status, channel, d1, d2) = (msg[0] & 0xf0, msg[0] & 0x0f, msg[1], msg[2]);
                     let m = match status {
-                        0x90 if d2 > 0 => MidiMsg::NoteOn { pitch: d1, velocity: d2 as f32 / 127.0 },
+                        0x90 if d2 > 0 => MidiMsg::NoteOn { pitch: d1, velocity: d2 as f32 / 127.0, channel },
                         0x90 | 0x80 => MidiMsg::NoteOff { pitch: d1 },
                         _ => return,
                     };

@@ -14,7 +14,9 @@ use crate::dsp::elements_synth::ElementsSynthState;
 use crate::dsp::macro_osc::MacroState;
 use crate::dsp::sampler::SamplerState;
 use crate::dsp::synth::SynthState;
+use crate::audio_in::{InputRing, MAX_INPUTS};
 use crate::dsp::pan_gains;
+use crate::routing::{AudioInput, AudioOutput, Monitor, Tap};
 use crate::midi_fx::{MidiCtx, MidiEvent, MidiFxState};
 use crate::modulation::{ModClock, ModOwner, ModRuntime, TrackSignal, MAX_MODS, MOD_BLOCK};
 use crate::plugin::{AudioProcessor, PluginEvent, PluginEventKind};
@@ -91,6 +93,8 @@ pub struct TrackStatus {
     pub wave: crate::scope::ScopeBuffer,
     /// Set by the UI while it shows the wave; counts down per block.
     pub wave_watch: AtomicU32,
+    /// Peak of the track's audio input since the UI last took it.
+    pub in_peak: AtomicF32,
 }
 
 impl TrackStatus {
@@ -106,6 +110,7 @@ impl TrackStatus {
             seq: [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)],
             wave: crate::scope::ScopeBuffer::new(crate::scope::WAVE_LEN, false),
             wave_watch: AtomicU32::new(0),
+            in_peak: AtomicF32::new(0.0),
         }
     }
 
@@ -142,6 +147,14 @@ pub struct EngineStatus {
     pub mods: Vec<AtomicF32>,
     /// Buffers of the Oscilloscope devices.
     pub scopes: crate::scope::ScopeBank,
+    /// Peak of each audio interface input since the UI last took it.
+    pub input_peaks: Vec<AtomicF32>,
+    /// Inputs the audio interface delivers (0 = no input open).
+    pub input_channels: AtomicU32,
+    /// True while armed audio tracks are being captured.
+    pub capturing: AtomicBool,
+    /// Recorded blocks that did not fit in the channel to the UI.
+    pub rec_dropped: AtomicU64,
 }
 
 impl EngineStatus {
@@ -158,6 +171,10 @@ impl EngineStatus {
             preview_active: AtomicBool::new(false),
             mods: (0..MAX_MODS).map(|_| AtomicF32::new(0.0)).collect(),
             scopes: crate::scope::ScopeBank::new(),
+            input_peaks: (0..MAX_INPUTS).map(|_| AtomicF32::new(0.0)).collect(),
+            input_channels: AtomicU32::new(0),
+            capturing: AtomicBool::new(false),
+            rec_dropped: AtomicU64::new(0),
         }
     }
 }
@@ -185,6 +202,26 @@ pub enum Command {
     /// Gives the audio half of a hosted plugin to the track whose instrument
     /// is `Instrument::Plugin` with this instance id.
     AttachProcessor { instance: u64, processor: Box<dyn AudioProcessor> },
+    /// The audio interface input (or none).
+    SetInput(Option<Arc<InputRing>>),
+    /// Start or stop sending the input of armed audio tracks to the UI.
+    SetCapture(bool),
+}
+
+/// Frames per recorded block.
+pub const REC_FRAMES: usize = MAX_BLOCK;
+
+/// A block of the input of an armed audio track, captured while recording.
+/// Blocks of one track arrive in order and without gaps.
+#[derive(Clone)]
+pub struct RecChunk {
+    pub track: u64,
+    /// Session and arrangement position of the first frame, in beats.
+    pub session_beat: f64,
+    pub song_beat: f64,
+    pub frames: usize,
+    pub l: [f32; REC_FRAMES],
+    pub r: [f32; REC_FRAMES],
 }
 
 /// Something the audio thread no longer needs. Drop it on another thread.
@@ -198,6 +235,7 @@ enum GarbageInner {
     Instrument(InstState),
     Sample(SampleRef),
     Processor(Box<dyn AudioProcessor>),
+    Input(Arc<InputRing>),
 }
 
 /// The UI side of the engine.
@@ -205,6 +243,8 @@ pub struct EngineHandle {
     pub commands: Sender<Command>,
     pub garbage: Receiver<Garbage>,
     pub status: Arc<EngineStatus>,
+    /// Recorded audio of armed tracks (see `Command::SetCapture`).
+    pub recorded: Receiver<RecChunk>,
 }
 
 impl EngineHandle {
@@ -396,6 +436,26 @@ struct TrackRt {
     gain_l: f32,
     gain_r: f32,
     sends: [f32; MAX_RETURNS],
+    /// The track's audio before the effects, after them, and after the mixer,
+    /// for tracks that listen to it.
+    pre_l: Vec<f32>,
+    pre_r: Vec<f32>,
+    post_l: Vec<f32>,
+    post_r: Vec<f32>,
+    out_l: Vec<f32>,
+    out_r: Vec<f32>,
+    /// What this (audio) track hears: its input and tracks sent to it.
+    sources: Vec<Source>,
+    /// False when the track's output goes into another track.
+    to_master: bool,
+}
+
+/// One thing an audio track hears.
+#[derive(Clone, Copy, Debug)]
+enum Source {
+    Ext { channel: usize, stereo: bool },
+    Track { index: usize, tap: Tap },
+    Resampling,
 }
 
 impl TrackRt {
@@ -420,6 +480,14 @@ impl TrackRt {
             gain_l: 0.0,
             gain_r: 0.0,
             sends: [0.0; MAX_RETURNS],
+            pre_l: vec![0.0; MAX_BLOCK],
+            pre_r: vec![0.0; MAX_BLOCK],
+            post_l: vec![0.0; MAX_BLOCK],
+            post_r: vec![0.0; MAX_BLOCK],
+            out_l: vec![0.0; MAX_BLOCK],
+            out_r: vec![0.0; MAX_BLOCK],
+            sources: Vec::with_capacity(8),
+            to_master: true,
         }
     }
 
@@ -461,6 +529,75 @@ struct BusRt {
 impl BusRt {
     fn new(id: u64) -> Self {
         Self { id, devices: Vec::new(), l: vec![0.0; MAX_BLOCK], r: vec![0.0; MAX_BLOCK], gain_l: 0.0, gain_r: 0.0 }
+    }
+}
+
+/// The master output, kept for tracks that record it ("Resampling"). It is
+/// read one block late, so a track can listen while the master is mixed.
+struct ResampleRing {
+    l: Vec<f32>,
+    r: Vec<f32>,
+    pos: usize,
+}
+
+const RESAMPLE_LEN: usize = 4 * MAX_BLOCK;
+
+impl ResampleRing {
+    fn new() -> Self {
+        Self { l: vec![0.0; RESAMPLE_LEN], r: vec![0.0; RESAMPLE_LEN], pos: 0 }
+    }
+
+    fn write(&mut self, l: &[f32], r: &[f32]) {
+        for (a, b) in l.iter().zip(r) {
+            self.l[self.pos] = *a;
+            self.r[self.pos] = *b;
+            self.pos = (self.pos + 1) % RESAMPLE_LEN;
+        }
+    }
+
+    /// Frame `i` of the current block, one block late.
+    #[inline]
+    fn read(&self, i: usize) -> (f32, f32) {
+        let k = (self.pos + RESAMPLE_LEN - MAX_BLOCK + i) % RESAMPLE_LEN;
+        (self.l[k], self.r[k])
+    }
+}
+
+/// Sums what audio track `ti` hears into `out_l`/`out_r`.
+fn gather_input(tracks: &[Box<TrackRt>], ti: usize, ext: &[f32], resample: &ResampleRing, seg: usize, out_l: &mut [f32], out_r: &mut [f32]) {
+    out_l[..seg].fill(0.0);
+    out_r[..seg].fill(0.0);
+    let Some(rt) = tracks.get(ti) else { return };
+    for src in &rt.sources {
+        match *src {
+            Source::Ext { channel, stereo } => {
+                let a = &ext[channel * MAX_BLOCK..channel * MAX_BLOCK + seg];
+                let b = if stereo && channel + 1 < MAX_INPUTS { &ext[(channel + 1) * MAX_BLOCK..(channel + 1) * MAX_BLOCK + seg] } else { a };
+                for i in 0..seg {
+                    out_l[i] += a[i];
+                    out_r[i] += b[i];
+                }
+            }
+            Source::Track { index, tap } => {
+                let Some(s) = tracks.get(index) else { continue };
+                let (sl, sr) = match tap {
+                    Tap::PreFx => (&s.pre_l, &s.pre_r),
+                    Tap::PostFx => (&s.post_l, &s.post_r),
+                    Tap::PostMixer => (&s.out_l, &s.out_r),
+                };
+                for i in 0..seg {
+                    out_l[i] += sl[i];
+                    out_r[i] += sr[i];
+                }
+            }
+            Source::Resampling => {
+                for i in 0..seg {
+                    let (a, b) = resample.read(i);
+                    out_l[i] += a;
+                    out_r[i] += b;
+                }
+            }
+        }
     }
 }
 
@@ -551,12 +688,25 @@ pub struct Engine {
     mods: ModRuntime,
     /// Per-track signals handed to the modulators each control block.
     signals: Vec<TrackSignal>,
+    /// Track indices in processing order (sources before listeners).
+    order: Vec<usize>,
+    input: Option<Arc<InputRing>>,
+    /// The interface inputs of the current block, channel-major.
+    in_buf: Vec<f32>,
+    /// What the current track hears.
+    in_l: Vec<f32>,
+    in_r: Vec<f32>,
+    resample: ResampleRing,
+    capture: bool,
+    rec_tx: Sender<RecChunk>,
 }
 
 impl Engine {
     pub fn new(sample_rate: f32, project: Arc<Project>) -> (Engine, EngineHandle) {
         let (cmd_tx, cmd_rx) = bounded(8192);
         let (garbage_tx, garbage_rx) = bounded(8192);
+        // About 20 seconds of one recording track; the UI drains it every frame.
+        let (rec_tx, rec_rx) = bounded(4096);
         let status = Arc::new(EngineStatus::new());
         status.sample_rate.store(sample_rate);
         let mut e = Engine {
@@ -580,9 +730,17 @@ impl Engine {
             clock: 0,
             mods: ModRuntime::new(),
             signals: Vec::with_capacity(MAX_TRACKS),
+            order: Vec::with_capacity(MAX_TRACKS),
+            input: None,
+            in_buf: vec![0.0; MAX_INPUTS * MAX_BLOCK],
+            in_l: vec![0.0; MAX_BLOCK],
+            in_r: vec![0.0; MAX_BLOCK],
+            resample: ResampleRing::new(),
+            capture: false,
+            rec_tx,
         };
         e.reconcile();
-        (e, EngineHandle { commands: cmd_tx, garbage: garbage_rx, status })
+        (e, EngineHandle { commands: cmd_tx, garbage: garbage_rx, status, recorded: rec_rx })
     }
 
     pub fn sample_rate(&self) -> f32 {
@@ -782,6 +940,16 @@ impl Engine {
                 }
                 self.preview = s.map(|s| (s, 0.0));
             }
+            Command::SetInput(input) => {
+                self.status.input_channels.store(input.as_ref().map(|i| i.channels() as u32).unwrap_or(0), RELAXED);
+                if let Some(old) = std::mem::replace(&mut self.input, input) {
+                    self.trash(GarbageInner::Input(old));
+                }
+            }
+            Command::SetCapture(on) => {
+                self.capture = on;
+                self.status.capturing.store(on, RELAXED);
+            }
         }
     }
 
@@ -927,6 +1095,26 @@ impl Engine {
         for g in trash {
             self.trash(g);
         }
+        // Routing: processing order, what each audio track hears, where it goes.
+        self.order.clear();
+        self.order.extend(project.routing_order());
+        for (ti, (t, rt)) in project.tracks.iter().zip(self.tracks.iter_mut()).enumerate() {
+            rt.sources.clear();
+            if t.kind == TrackKind::Audio {
+                match t.input {
+                    AudioInput::Ext { channel, stereo } => rt.sources.push(Source::Ext { channel: (channel as usize).min(MAX_INPUTS - 1), stereo }),
+                    AudioInput::Resampling => rt.sources.push(Source::Resampling),
+                    AudioInput::None | AudioInput::Track { .. } => {}
+                }
+                for (index, tap) in project.audio_sources(ti) {
+                    rt.sources.push(Source::Track { index, tap });
+                }
+            }
+            rt.to_master = match t.output {
+                AudioOutput::Master => true,
+                AudioOutput::Track(id) => !project.tracks.iter().any(|d| d.id == id && d.id != t.id && d.kind == TrackKind::Audio),
+            };
+        }
         self.mods.rebuild(&project);
     }
 
@@ -1002,9 +1190,27 @@ impl Engine {
         self.master.l[..seg].fill(0.0);
         self.master.r[..seg].fill(0.0);
 
-        for (ti, track) in project.tracks.iter().enumerate() {
-            let Some(rt) = self.tracks.get_mut(ti) else { break };
-            let TrackRt { instrument, devices, playing: pc, overridden, offs, events, fx_buf, live, midi_fx, fx_sig, sounding, signal, l, r, gain_l, gain_r, sends, .. } = &mut **rt;
+        // The audio interface input of this block.
+        match &self.input {
+            Some(input) => {
+                input.pop(seg, &mut self.in_buf, MAX_BLOCK);
+                for (c, pk) in status.input_peaks.iter().enumerate().take(input.channels()) {
+                    pk.store_max(self.in_buf[c * MAX_BLOCK..c * MAX_BLOCK + seg].iter().fold(0.0f32, |m, x| m.max(x.abs())));
+                }
+            }
+            None => self.in_buf.fill(0.0),
+        }
+
+        for oi in 0..self.order.len() {
+            let ti = self.order[oi];
+            let Some(track) = project.tracks.get(ti) else { continue };
+            // What an audio track hears, from tracks processed before it.
+            let listens = self.tracks.get(ti).is_some_and(|rt| !rt.sources.is_empty());
+            if listens {
+                gather_input(&self.tracks, ti, &self.in_buf, &self.resample, seg, &mut self.in_l, &mut self.in_r);
+            }
+            let Some(rt) = self.tracks.get_mut(ti) else { continue };
+            let TrackRt { instrument, devices, playing: pc, overridden, offs, events, fx_buf, live, midi_fx, fx_sig, sounding, signal, l, r, gain_l, gain_r, sends, pre_l, pre_r, post_l, post_r, out_l, out_r, to_master, .. } = &mut **rt;
             l[..seg].fill(0.0);
             r[..seg].fill(0.0);
             events.clear();
@@ -1139,6 +1345,33 @@ impl Engine {
                 }
             }
 
+            if listens {
+                let (in_l, in_r) = (&self.in_l[..seg], &self.in_r[..seg]);
+                if let Some(ts) = status.tracks.get(ti) {
+                    ts.in_peak.store_max(in_l.iter().chain(in_r).fold(0.0f32, |m, x| m.max(x.abs())));
+                }
+                // Hearing the master inside the master would feed back.
+                let monitor = track.input != AudioInput::Resampling
+                    && match track.monitor {
+                        Monitor::In => true,
+                        Monitor::Auto => track.arm && pc.is_none(),
+                        Monitor::Off => false,
+                    };
+                if monitor {
+                    l[..seg].copy_from_slice(in_l);
+                    r[..seg].copy_from_slice(in_r);
+                }
+                if self.capture && playing && track.arm {
+                    let mut chunk = RecChunk { track: track.id, session_beat: s0, song_beat: a0, frames: seg, l: [0.0; REC_FRAMES], r: [0.0; REC_FRAMES] };
+                    chunk.l[..seg].copy_from_slice(in_l);
+                    chunk.r[..seg].copy_from_slice(in_r);
+                    if self.rec_tx.try_send(chunk).is_err() {
+                        status.rec_dropped.fetch_add(1, RELAXED);
+                    }
+                }
+            }
+            pre_l[..seg].copy_from_slice(&l[..seg]);
+            pre_r[..seg].copy_from_slice(&r[..seg]);
             if let Some(ts) = status.tracks.get(ti) {
                 ts.tap_wave(&l[..seg], &r[..seg]);
             }
@@ -1152,6 +1385,8 @@ impl Engine {
                 }
             }
             signal.level = l[..seg].iter().chain(&r[..seg]).fold(0.0f32, |m, x| m.max(x.abs()));
+            post_l[..seg].copy_from_slice(&l[..seg]);
+            post_r[..seg].copy_from_slice(&r[..seg]);
 
             let mm = mods.track_mix(ti);
             let muted = track.mixer.mute || (any_solo && !track.mixer.solo);
@@ -1162,9 +1397,14 @@ impl Engine {
                 ts.peak_l.store_max(pk_l);
                 ts.peak_r.store_max(pk_r);
             }
-            for i in 0..seg {
-                self.master.l[i] += l[i];
-                self.master.r[i] += r[i];
+            out_l[..seg].copy_from_slice(&l[..seg]);
+            out_r[..seg].copy_from_slice(&r[..seg]);
+            // A track sent to another track reaches the master through it.
+            if *to_master {
+                for i in 0..seg {
+                    self.master.l[i] += l[i];
+                    self.master.r[i] += r[i];
+                }
             }
             for (j, ret) in self.returns.iter_mut().enumerate().take(MAX_RETURNS) {
                 let send = track.mixer.sends.get(j).copied().unwrap_or(0.0) + mm.sends.get(j).copied().unwrap_or(0.0);
@@ -1223,6 +1463,7 @@ impl Engine {
             let (pk_l, pk_r) = apply_gain_ramp(&mut m.l[..seg], &mut m.r[..seg], &mut m.gain_l, &mut m.gain_r, vol, vol);
             status.master.peak_l.store_max(pk_l);
             status.master.peak_r.store_max(pk_r);
+            self.resample.write(&m.l[..seg], &m.r[..seg]);
         }
 
         // Metronome and preview go straight to the output, after the master.
@@ -1703,6 +1944,172 @@ mod tests {
         let level = track_level(&mut e, &h, 2, 1.0);
         assert!(level > 0.003, "Elements plays the chords: {level}");
         assert!(e.mods.params(ModOwner::Instrument(chords)).is_some(), "its parameters are modulated");
+    }
+
+    fn drain(h: &EngineHandle, track: u64) -> Vec<RecChunk> {
+        let mut v = Vec::new();
+        while let Ok(c) = h.recorded.try_recv() {
+            if c.track == track {
+                v.push(c);
+            }
+        }
+        v
+    }
+
+    fn rms(chunks: &[RecChunk]) -> f32 {
+        let (mut s, mut n) = (0.0f32, 0usize);
+        for c in chunks {
+            for i in 0..c.frames {
+                s += c.l[i] * c.l[i] + c.r[i] * c.r[i];
+                n += 2;
+            }
+        }
+        (s / n.max(1) as f32).sqrt()
+    }
+
+    /// The demo with an extra audio track listening to the bass.
+    fn bass_into_audio_track(tap: Tap, monitor: Monitor) -> (Project, usize, u64) {
+        let mut p = crate::demo::demo_project();
+        let bass = p.tracks[1].id;
+        let ai = p.add_audio_track();
+        let t = &mut p.tracks[ai];
+        t.input = AudioInput::Track { id: bass, tap };
+        t.monitor = monitor;
+        t.arm = true;
+        let id = t.id;
+        (p, ai, id)
+    }
+
+    #[test]
+    fn a_track_records_another_track_without_gaps() {
+        let (p, ai, id) = bass_into_audio_track(Tap::PostFx, Monitor::Off);
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        h.send(Command::SetCapture(true));
+        h.send(Command::LaunchScene(1));
+        run(&mut e, 1.0);
+        let chunks = drain(&h, id);
+        let frames: usize = chunks.iter().map(|c| c.frames).sum();
+        assert!((47000..=48100).contains(&frames), "one second recorded: {frames}");
+        assert!(rms(&chunks) > 0.01, "the bass is in the recording: {}", rms(&chunks));
+        // Blocks follow each other on the session clock.
+        let spb = 48000.0 * 60.0 / e.project.bpm;
+        for w in chunks.windows(2) {
+            let expect = w[0].session_beat + w[0].frames as f64 / spb;
+            assert!((w[1].session_beat - expect).abs() < 1e-6, "gap between blocks");
+        }
+        // Monitoring Off: the recording track itself stays silent.
+        let lvl = track_level(&mut e, &h, ai, 0.5);
+        assert!(lvl < 1e-6, "monitor off is silent: {lvl}");
+        // Nothing is captured once recording stops.
+        h.send(Command::SetCapture(false));
+        run(&mut e, 0.1);
+        drain(&h, id);
+        run(&mut e, 0.2);
+        assert!(drain(&h, id).is_empty());
+    }
+
+    #[test]
+    fn monitoring_follows_in_auto_and_arm() {
+        let (mut p, ai, _) = bass_into_audio_track(Tap::PostMixer, Monitor::In);
+        p.tracks[ai].arm = false;
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p.clone()));
+        h.send(Command::LaunchScene(1));
+        run(&mut e, 0.3);
+        assert!(track_level(&mut e, &h, ai, 1.0) > 0.02, "monitor In hears the bass");
+        // Auto, not armed: silent; armed: hears it.
+        p.tracks[ai].monitor = Monitor::Auto;
+        h.send(Command::SetProject(Arc::new(p.clone())));
+        run(&mut e, 0.1);
+        assert!(track_level(&mut e, &h, ai, 0.5) < 1e-6);
+        p.tracks[ai].arm = true;
+        h.send(Command::SetProject(Arc::new(p.clone())));
+        run(&mut e, 0.1);
+        assert!(track_level(&mut e, &h, ai, 1.0) > 0.02);
+        h.collect_garbage();
+    }
+
+    #[test]
+    fn audio_to_sends_a_track_through_another() {
+        let mut p = crate::demo::demo_project();
+        let ai = p.add_audio_track();
+        let dest = p.tracks[ai].id;
+        p.tracks[ai].input = AudioInput::None;
+        p.tracks[ai].monitor = Monitor::In;
+        p.tracks[1].output = AudioOutput::Track(dest);
+        // Only the bass plays, so the master hears exactly what goes through.
+        for (i, t) in p.tracks.iter_mut().enumerate() {
+            if i != 1 {
+                t.mixer.mute = i != ai;
+            }
+        }
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p.clone()));
+        h.send(Command::LaunchScene(1));
+        run(&mut e, 0.3);
+        assert!(track_level(&mut e, &h, ai, 1.0) > 0.02, "the bass comes out of the audio track");
+        let master = |e: &mut Engine| {
+            let out = run(e, 1.0);
+            out.iter().fold(0.0f32, |m, x| m.max(x.abs()))
+        };
+        assert!(master(&mut e) > 0.02);
+        // Turning the destination off silences the bass: it no longer goes
+        // to the master directly.
+        p.tracks[ai].mixer.mute = true;
+        h.send(Command::SetProject(Arc::new(p.clone())));
+        run(&mut e, 0.1);
+        assert!(master(&mut e) < 1e-4);
+        h.collect_garbage();
+    }
+
+    #[test]
+    fn interface_input_is_monitored_and_recorded() {
+        let mut p = Project::blank();
+        let ai = p.add_audio_track();
+        p.tracks[ai].arm = true;
+        let id = p.tracks[ai].id;
+        p.tracks[ai].input = AudioInput::Ext { channel: 1, stereo: false };
+        let ring = Arc::new(InputRing::new(1 << 16, 2));
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        h.send(Command::SetInput(Some(ring.clone())));
+        h.send(Command::SetCapture(true));
+        h.send(Command::Play);
+        // Input 2 carries a 440 Hz tone, input 1 silence.
+        let mut t = 0usize;
+        let mut feed = |frames: usize| {
+            let x: Vec<f32> = (0..frames).flat_map(|_| {
+                t += 1;
+                [0.0, 0.5 * (2.0 * std::f32::consts::PI * 440.0 * t as f32 / 48000.0).sin()]
+            }).collect();
+            ring.push(&x, 2);
+        };
+        let mut out = vec![0.0; 2048];
+        for _ in 0..40 {
+            feed(1024);
+            e.process(&mut out);
+        }
+        assert_eq!(h.status.input_channels.load(RELAXED), 2);
+        let chunks = drain(&h, id);
+        assert!(rms(&chunks) > 0.2, "the tone is recorded: {}", rms(&chunks));
+        // Mono input lands on both sides; the armed track monitors it (Auto).
+        let c = chunks.last().unwrap();
+        assert_eq!(c.l[..c.frames], c.r[..c.frames]);
+        assert!(out.iter().any(|x| x.abs() > 0.1), "monitored to the output");
+        h.collect_garbage();
+    }
+
+    #[test]
+    fn resampling_records_the_master_without_feedback() {
+        let mut p = crate::demo::demo_project();
+        let ai = p.add_audio_track();
+        p.tracks[ai].input = AudioInput::Resampling;
+        p.tracks[ai].monitor = Monitor::In;
+        p.tracks[ai].arm = true;
+        let id = p.tracks[ai].id;
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        h.send(Command::SetCapture(true));
+        h.send(Command::LaunchScene(1));
+        run(&mut e, 1.0);
+        assert!(rms(&drain(&h, id)) > 0.02, "the mix is recorded");
+        assert!(track_level(&mut e, &h, ai, 0.3) < 1e-6, "but not played back into itself");
     }
 
     #[test]

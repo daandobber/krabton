@@ -14,6 +14,10 @@ const HEADER_H: f32 = 24.0;
 const SLOT_H: f32 = 24.0;
 const STOP_H: f32 = 24.0;
 const MIXER_H: f32 = 226.0;
+/// A shorter mixer drops the send and pan knobs.
+const MIXER_MIN: f32 = 100.0;
+const COMPACT_BELOW: f32 = 176.0;
+use crate::ui::io_section::IO_H;
 const MASTER_W: f32 = 132.0;
 const DROP_W: f32 = 150.0;
 const TRI_W: f32 = 20.0;
@@ -23,6 +27,8 @@ pub struct SessionState {
     pub scroll_x: f32,
     pub scroll_y: f32,
     pub taps: Vec<Instant>,
+    /// The In/Out section under the clip slots is hidden.
+    pub hide_io: bool,
 }
 
 fn child(ui: &mut Ui, rect: Rect) -> Ui {
@@ -75,9 +81,17 @@ impl App {
         let nr = self.project.returns.len();
         let ns = self.project.scenes.len();
 
-        let mixer_h = MIXER_H.min(full.height() * 0.62);
-        let grid = Rect::from_min_max(full.min, pos2(full.right(), full.bottom() - mixer_h));
-        let mixer = Rect::from_min_max(pos2(full.left(), grid.bottom()), full.max);
+        // The In/Out section sits between the clip slots and the mixer; when
+        // space is short the mixer gives way (it turns compact).
+        let mut mixer_h = MIXER_H.min(full.height() * 0.62);
+        let grid_min = HEADER_H + SLOT_H;
+        if !self.session.hide_io {
+            mixer_h = mixer_h.min(full.height() - IO_H - grid_min).max(MIXER_MIN);
+        }
+        let io_h = if self.session.hide_io { 0.0 } else { IO_H.min((full.height() - mixer_h - grid_min).max(0.0)) };
+        let grid = Rect::from_min_max(full.min, pos2(full.right(), full.bottom() - mixer_h - io_h));
+        let io = Rect::from_min_max(pos2(full.left(), grid.bottom()), pos2(full.right(), grid.bottom() + io_h));
+        let mixer = Rect::from_min_max(pos2(full.left(), io.bottom()), full.max);
         let cols_right = full.right() - MASTER_W;
         let header = Rect::from_min_max(grid.min, pos2(cols_right, grid.top() + HEADER_H));
         let slots = Rect::from_min_max(pos2(grid.left(), header.bottom()), pos2(cols_right, grid.bottom()));
@@ -161,6 +175,12 @@ impl App {
             let p = mui.painter().clone();
             rect_fill(&p, master_header.shrink(0.5), 0.0, PANEL3);
             text(&p, master_header.center(), Align2::CENTER_CENTER, "Master", body(), TEXT);
+            // Shows or hides the In/Out section, like Live's I-O button.
+            let b = Rect::from_min_size(pos2(master_header.right() - 30.0, master_header.top() + 4.0), vec2(26.0, master_header.height() - 8.0));
+            let shown = !self.session.hide_io;
+            if button(&mut mui, b, Id::new("io_toggle"), "I/O", shown, ACCENT).on_hover_text("Show or hide In/Out (Ctrl+Alt+I)").clicked() {
+                self.session.hide_io = shown;
+            }
             let mut mui = child(&mut mui, master_slots);
             for s in 0..ns {
                 let r = Rect::from_min_size(pos2(master_slots.left() + 2.0, row_y(s) + 1.0), vec2(MASTER_W - 4.0, SLOT_H - 2.0));
@@ -186,6 +206,27 @@ impl App {
             }
         }
 
+        // In/Out section.
+        if io_h >= IO_H - 0.5 {
+            let io_cols = Rect::from_min_max(io.min, pos2(cols_right, io.bottom()));
+            let mut iui = child(ui, io_cols);
+            for i in 0..nt {
+                let r = Rect::from_min_size(pos2(col_x(i), io.top()), vec2(COL_W - 1.0, io_h));
+                if r.intersects(io_cols) {
+                    self.track_io(&mut iui, i, r, &status);
+                }
+            }
+            for j in 0..nr {
+                let r = Rect::from_min_size(pos2(col_x(nt + j), io.top()), vec2(COL_W - 1.0, io_h));
+                if r.intersects(io_cols) {
+                    self.return_io(&mut iui, r);
+                }
+            }
+            let mut mi = child(ui, Rect::from_min_max(pos2(cols_right, io.top()), pos2(full.right(), io.bottom())));
+            self.master_io(&mut mi, Rect::from_min_max(pos2(cols_right + 1.0, io.top()), pos2(full.right(), io.bottom())));
+            ui.painter().line_segment([pos2(full.left(), io.top()), pos2(full.right(), io.top())], Stroke::new(1.0_f32, LINE));
+        }
+
         // Mixer strips.
         {
             let mut xui = child(ui, mixer_cols);
@@ -207,7 +248,7 @@ impl App {
 
         // Horizontal scrollbar.
         if content_w > slots.width() {
-            let bar = Rect::from_min_max(pos2(slots.left(), mixer.top() - 6.0), pos2(cols_right, mixer.top() - 1.0));
+            let bar = Rect::from_min_max(pos2(slots.left(), grid.bottom() - 6.0), pos2(cols_right, grid.bottom() - 1.0));
             let frac = slots.width() / content_w;
             let w = (bar.width() * frac).max(30.0);
             let x = bar.left() + (bar.width() - w) * (sx / (content_w - slots.width()).max(1.0));
@@ -258,6 +299,10 @@ impl App {
             }
             if ui.button("Duplicate").clicked() {
                 self.deferred.push(Deferred::DuplicateTrack(i));
+                ui.close();
+            }
+            if ui.button("Record into new audio track").on_hover_text("Adds an armed audio track that listens to this track, ready to record it").clicked() {
+                self.deferred.push(Deferred::RecordIntoAudio(i));
                 ui.close();
             }
             if ui.button("Delete").clicked() {
@@ -334,6 +379,8 @@ impl App {
         let clip_info = track.slots[s].as_ref().map(|c| (c.name.clone(), c.color, c.length, c.is_midi()));
         let armed = track.arm;
         let kind = track.kind;
+        let spb = status.sample_rate.load() as f64 * 60.0 / self.project.bpm.max(1.0);
+        let take = self.take_on(track.id, crate::recording::TakeTarget::Slot(s)).map(|t| (t.beats(spb), t.end.is_some(), t.start));
 
         if let Some((name, color, length, _)) = &clip_info {
             let base = rgb(*color);
@@ -367,7 +414,17 @@ impl App {
             }
         } else {
             rect_fill(&p, r, 2.0, if resp.hovered() { shade(SLOT, 1.2) } else { SLOT });
-            if armed && kind == TrackKind::Midi {
+            if let Some((beats, stopping, start)) = take {
+                // Recording into this slot.
+                rect_fill(&p, r, 2.0, shade(REC, 0.35));
+                rec_icon(&p, tri_center, 8.0, if blink() || stopping { REC } else { shade(REC, 0.6) });
+                let label = if start.is_none_or(|s| status.session_pos.load() < s) && beats == 0.0 {
+                    "Waiting...".to_string()
+                } else {
+                    format!("{} {:.1}", if stopping { "Stopping" } else { "Recording" }, beats / self.project.beats_per_bar_f())
+                };
+                text_in(&p, Rect::from_min_max(pos2(r.left() + TRI_W, r.top()), r.max), &label, small(), egui::Color32::WHITE);
+            } else if armed && (kind == TrackKind::Midi || kind == TrackKind::Audio) {
                 rec_icon(&p, tri_center, 8.0, if resp.hovered() && in_tri { REC } else { shade(REC, 0.5) });
             } else {
                 stop_icon(&p, tri_center, 6.0, if resp.hovered() && in_tri { TEXT } else { LINE });
@@ -419,7 +476,11 @@ impl App {
                     self.sel_scene = s;
                     self.sel_clip = None;
                     if in_tri {
-                        if armed && kind == TrackKind::Midi {
+                        if take.is_some() {
+                            self.stop_slot_take(i);
+                        } else if armed && kind == TrackKind::Audio {
+                            self.start_slot_take(i, s);
+                        } else if armed && kind == TrackKind::Midi {
                             self.create_midi_clip(i, s);
                             if let Some(Some(c)) = self.project.tracks[i].slots.get_mut(s) {
                                 c.length = self.project.beats_per_bar as f64 * 4.0;
@@ -608,8 +669,9 @@ impl App {
             self.apply_item(&item, DropTarget::Track(i));
         }
 
-        // Sends.
-        let n_ret = self.project.returns.len().min(4);
+        // Sends (left out when the mixer is short).
+        let compact = r.height() < COMPACT_BELOW;
+        let n_ret = if compact { 0 } else { self.project.returns.len().min(4) };
         let knob = 24.0;
         for j in 0..n_ret {
             let c = pos2(r.left() + 16.0 + j as f32 * 27.0, r.top() + 22.0);
@@ -626,18 +688,20 @@ impl App {
         }
 
         // Pan.
-        let pan_c = pos2(r.center().x, r.top() + 66.0);
-        let pr = Rect::from_center_size(pan_c, vec2(26.0, 26.0));
-        let pan = self.project.tracks[i].mixer.pan;
-        let (resp, new) = knob_widget(ui, pr, Id::new(("pan", id)), (pan + 1.0) * 0.5, 0.5, true, ACCENT);
-        if let Some(n) = new {
-            self.project.tracks[i].mixer.pan = (n * 2.0 - 1.0).clamp(-1.0, 1.0);
+        if !compact {
+            let pan_c = pos2(r.center().x, r.top() + 66.0);
+            let pr = Rect::from_center_size(pan_c, vec2(26.0, 26.0));
+            let pan = self.project.tracks[i].mixer.pan;
+            let (resp, new) = knob_widget(ui, pr, Id::new(("pan", id)), (pan + 1.0) * 0.5, 0.5, true, ACCENT);
+            if let Some(n) = new {
+                self.project.tracks[i].mixer.pan = (n * 2.0 - 1.0).clamp(-1.0, 1.0);
+            }
+            resp.on_hover_text(pan_text(pan));
+            text(&p, pos2(pan_c.x, pr.bottom() + 6.0), Align2::CENTER_CENTER, pan_text(pan), small(), TEXT_DIM);
         }
-        resp.on_hover_text(pan_text(pan));
-        text(&p, pos2(pan_c.x, pr.bottom() + 6.0), Align2::CENTER_CENTER, pan_text(pan), small(), TEXT_DIM);
 
         // Fader + meter.
-        let area = Rect::from_min_max(pos2(r.left() + 6.0, r.top() + 94.0), pos2(r.right() - 6.0, r.bottom() - 30.0));
+        let area = Rect::from_min_max(pos2(r.left() + 6.0, r.top() + if compact { 8.0 } else { 94.0 }), pos2(r.right() - 6.0, r.bottom() - 30.0));
         let mut vol = self.project.tracks[i].mixer.volume_db;
         let fr = Rect::from_min_size(pos2(area.center().x - 22.0, area.top()), vec2(22.0, area.height()));
         if fader(ui, fr, Id::new(("vol", id)), &mut vol, color) {
@@ -671,7 +735,8 @@ impl App {
             self.project.tracks[i].mixer.solo = !solo;
         }
         let b3 = Rect::from_min_size(pos2(b2.right() + 3.0, by), vec2(bw, 18.0));
-        if kind == TrackKind::Midi {
+        // MIDI tracks record notes, audio tracks record their input.
+        if kind == TrackKind::Midi || kind == TrackKind::Audio {
             let resp = button(ui, b3, Id::new(("arm", id)), "", arm, REC).on_hover_text("Arm for recording (Ctrl+click for multiple)");
             rec_icon(ui.painter(), b3.center(), 8.0, if arm { TEXT_DARK } else { REC });
             if resp.clicked() {
@@ -707,15 +772,18 @@ impl App {
         if let Some(item) = drop_payload::<BrowserItem>(&bg) {
             self.apply_item(&item, DropTarget::Chain(TrackSel::Return(j)));
         }
-        let pan_c = pos2(r.center().x, r.top() + 66.0);
-        let pr = Rect::from_center_size(pan_c, vec2(26.0, 26.0));
-        let pan = self.project.returns[j].mixer.pan;
-        let (_, new) = knob_widget(ui, pr, Id::new(("rpan", ret_id)), (pan + 1.0) * 0.5, 0.5, true, ACCENT);
-        if let Some(n) = new {
-            self.project.returns[j].mixer.pan = n * 2.0 - 1.0;
+        let compact = r.height() < COMPACT_BELOW;
+        if !compact {
+            let pan_c = pos2(r.center().x, r.top() + 66.0);
+            let pr = Rect::from_center_size(pan_c, vec2(26.0, 26.0));
+            let pan = self.project.returns[j].mixer.pan;
+            let (_, new) = knob_widget(ui, pr, Id::new(("rpan", ret_id)), (pan + 1.0) * 0.5, 0.5, true, ACCENT);
+            if let Some(n) = new {
+                self.project.returns[j].mixer.pan = n * 2.0 - 1.0;
+            }
+            text(&p, pos2(pan_c.x, pr.bottom() + 6.0), Align2::CENTER_CENTER, pan_text(pan), small(), TEXT_DIM);
         }
-        text(&p, pos2(pan_c.x, pr.bottom() + 6.0), Align2::CENTER_CENTER, pan_text(pan), small(), TEXT_DIM);
-        let area = Rect::from_min_max(pos2(r.left() + 6.0, r.top() + 94.0), pos2(r.right() - 6.0, r.bottom() - 30.0));
+        let area = Rect::from_min_max(pos2(r.left() + 6.0, r.top() + if compact { 8.0 } else { 94.0 }), pos2(r.right() - 6.0, r.bottom() - 30.0));
         let mut vol = self.project.returns[j].mixer.volume_db;
         let fr = Rect::from_min_size(pos2(area.center().x - 22.0, area.top()), vec2(22.0, area.height()));
         if fader(ui, fr, Id::new(("rvol", ret_id)), &mut vol, color) {

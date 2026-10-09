@@ -78,10 +78,10 @@ impl App {
                 self.cmd(Command::Stop);
             }
             let (r, resp) = ui.allocate_exact_size(vec2(28.0, 24.0), Sense::click());
-            let rec = self.recording;
+            let rec = self.recording || !self.takes.is_empty();
             rect_fill(ui.painter(), r, 2.0, if rec { shade(REC, 0.4) } else { PANEL3 });
             rec_icon(ui.painter(), r.center(), 11.0, if rec { REC } else { TEXT_DIM });
-            if resp.on_hover_text("Session Record (F9): arm a MIDI track, press record, play notes").clicked() {
+            if resp.on_hover_text("Record (F9): armed audio tracks record into session slots, or onto the arrangement in Arrangement view; armed MIDI tracks overdub notes").clicked() {
                 self.toggle_record();
             }
             let overridden = self.project.tracks.iter().enumerate().any(|(i, _)| status.tracks.get(i).map(|t| t.overridden.load(Ordering::Relaxed)).unwrap_or(false));

@@ -6,6 +6,7 @@ use crate::dsp::effects::EffectKind;
 use crate::dsp::dx7::{self, Dx7Voice};
 use crate::dsp::{analog, braids_synth, elements_synth, fm, macro_osc, sampler, synth};
 use crate::params;
+use crate::routing::{AudioInput, AudioOutput, MidiInput, Monitor};
 use crate::sample::{LoadCacheGuard, SampleRef};
 use crate::scale::{convert_pitch, Scale};
 use serde::{Deserialize, Serialize};
@@ -416,6 +417,20 @@ pub struct Track {
     pub arm: bool,
     pub slots: Vec<Option<Clip>>,
     pub arrangement: Vec<ArrangementClip>,
+    /// Where an audio track's input comes from ("Audio From").
+    #[serde(default)]
+    pub input: AudioInput,
+    #[serde(default)]
+    pub monitor: Monitor,
+    /// Where the track's audio goes ("Audio To").
+    #[serde(default)]
+    pub output: AudioOutput,
+    /// Which live notes a MIDI track takes ("MIDI From").
+    #[serde(default)]
+    pub midi_in: MidiInput,
+    /// MIDI channel (0-15) to listen to; `None` is all channels.
+    #[serde(default)]
+    pub midi_channel: Option<u8>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -567,6 +582,12 @@ impl Project {
             arm: false,
             slots: vec![None; self.scenes.len()],
             arrangement: Vec::new(),
+            // Like Live, a new audio track listens to the first two inputs.
+            input: if kind == TrackKind::Audio { AudioInput::Ext { channel: 0, stereo: true } } else { AudioInput::None },
+            monitor: Monitor::Auto,
+            output: AudioOutput::Master,
+            midi_in: MidiInput::AllIns,
+            midi_channel: None,
         }
     }
 
@@ -770,6 +791,7 @@ impl Project {
                 max_id = max_id.max(a.id + 1).max(a.clip.id + 1);
             }
         }
+        self.fix_routing();
         for r in &mut self.returns {
             max_id = max_id.max(r.id + 1);
             fix_devices(&mut r.devices, &mut max_id);

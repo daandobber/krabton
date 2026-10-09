@@ -425,6 +425,18 @@ impl App {
             let r = Rect::from_min_max(pos2(x0, lane.top() + 1.0), pos2(x1.max(x0 + 3.0), lane.bottom() - 1.0));
             self.arr_clip(ui, i, cid, r, lane, color, free);
         }
+        // A recording in progress grows from where it started.
+        let spb = self.engine.status.sample_rate.load() as f64 * 60.0 / self.project.bpm.max(1.0);
+        if let Some(take) = self.take_on(tid, crate::recording::TakeTarget::Arrangement) {
+            if let Some(start) = take.start {
+                let (x0, x1) = (bx(start), bx(start + take.beats(spb)));
+                let r = Rect::from_min_max(pos2(x0, lane.top() + 1.0), pos2(x1.max(x0 + 3.0), lane.bottom() - 1.0));
+                let p = ui.painter();
+                p.rect_filled(r, 2.0, shade(REC, 0.45));
+                p.rect_stroke(r, 2.0, Stroke::new(1.0_f32, REC), egui::StrokeKind::Inside);
+                p.text(r.left_top() + vec2(4.0, 3.0), Align2::LEFT_TOP, "Recording", small(), egui::Color32::WHITE);
+            }
+        }
     }
 
     #[allow(clippy::too_many_arguments)]

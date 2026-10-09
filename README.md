@@ -29,6 +29,17 @@
 - Session record: arm a track, press record (F9), play; notes are overdubbed into the looping clip with optional 1/16 quantization
 - Undo/redo for every edit
 
+**Audio recording and routing** (Live's In/Out section)
+- Audio tracks record their input: arm the track and click a slot's record button (it starts and stops on the launch quantization grid, then the new clip plays on), or press Record (F9) to record every armed audio track into the session, or onto the arrangement from the play position in Arrangement view
+- An In/Out section under the clip slots of the session view, laid out like Live's: *Audio From* with a second chooser for the input channel or tap point (and an input meter), *Monitor* In/Auto/Off, and *Audio To*. Show or hide it with the I/O button next to Master or Ctrl+Alt+I; when space runs short the mixer turns compact
+- *Audio From*: *Ext. In* (channel 1, 2, ... or the pair 1/2, 3/4, ...), another track taken *Pre FX*, *Post FX* or *Post Mixer*, *Resampling* (the master output) or *No Input*. So track 1 can be sent into track 2 and recorded there as audio
+- *MIDI From* on MIDI tracks: All Ins, Computer Keyboard, the MIDI device or No Input, and All Channels or one channel; with Monitor In a track always plays what you play, with Auto when it is armed (or selected, if nothing is armed)
+- *Monitor*: In (always hear the input), Auto (while armed and no clip plays) or Off (record without hearing it)
+- *Audio To*: the master or another audio track, which then plays it through its own effects and mixer (a bus)
+- Right-click a track header and choose *Record into new audio track* for an armed audio track that listens to it, ready to record
+- Tracks are processed so that every track comes after the tracks it listens to, which makes track-to-track routing sample exact; routing that would loop back is not offered. Resampling hears the master one block late and is never monitored, so it cannot feed back
+- Recordings are WAV files (24-bit) in a *Recorded* folder next to the saved set, or in Documents/Krabton/Recorded for an unsaved one. The audio interface input opens when a track that listens to it is armed or monitoring, at the output's sample rate; input and output on different clocks are kept in step with a small buffer
+
 **Key, scales and MIDI tools** (Live 12 style)
 - A project-wide key and scale (18 scales: major/minor modes, harmonic and melodic minor, pentatonics, blues, whole tone, In Sen, Hirajoshi, ...) shown in the transport bar
 - Scale mode highlights the scale in the piano roll (root brighter); *Fold* shows only the notes of the scale
@@ -163,7 +174,7 @@ cargo test -p krabton-engine -p krabton-monome -p krabton-braids -p krabton-elem
 | A W S E D F T G Y H U J K O L P | Play notes on the armed (or selected) MIDI track |
 | Z / X, C / V | Octave down/up, velocity down/up |
 | M | Computer MIDI keyboard on/off |
-| F9 | Session record |
+| F9 | Record (session, or the arrangement in Arrangement view) |
 | Enter | Launch the selected scene |
 | B | Draw mode in the piano roll |
 | Click / right-click the key in the transport | Key & Scale dialog / scale mode on-off |
@@ -176,6 +187,7 @@ cargo test -p krabton-engine -p krabton-monome -p krabton-braids -p krabton-elem
 | Ctrl+Z, Ctrl+Y | Undo, redo |
 | Ctrl+S, Ctrl+Shift+S, Ctrl+O, Ctrl+N | Save, save as, open, new |
 | Ctrl+T, Ctrl+Shift+T, Ctrl+I | New audio track, MIDI track, scene |
+| Ctrl+Alt+I | Show or hide the In/Out section |
 | Ctrl+R | Export audio |
 
 ## Architecture
@@ -227,6 +239,7 @@ The first plays a chord straight into the plugin and checks its state save/resto
 - `KRABTON_NO_AUDIO=1` runs the engine on a silent real-time thread instead of the audio device.
 - `KRABTON_SCRIPT="30:scene=1;60:arrangement;90:devices;120:convert=0,0"` runs UI actions at the given frame numbers (see `run_script` in `app.rs`). Handy for screenshots and manual testing.
 - `KRABTON_SERIALOSC_PORT=12102` talks to a serialosc on another port, for example a simulated one.
+- Script actions `routetrack=i` (a new audio track listening to track `i`) and `recslot=t,s` (start or stop recording track `t` into slot `s`) drive audio recording.
 - Script action `fx=n` adds effect number `n` (in the order of the effect list) to the selected chain, for example `fx=9` for an Oscilloscope.
 - Script actions `click=x,y` and `drag=x1,y1,x2,y2` (in UI points) feed pointer events to the Krabton window only, so UI flows can be replayed without touching the desktop.
 

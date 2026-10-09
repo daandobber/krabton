@@ -3,6 +3,7 @@
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, Sample, SizedSample};
+use krabton_engine::audio_in::InputRing;
 use krabton_engine::Engine;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -114,6 +115,72 @@ pub fn start_null(mut engine: Engine) -> AudioOutput {
         })
         .ok();
     AudioOutput::Null { stop }
+}
+
+/// The audio interface input, kept open while tracks listen to it.
+pub struct AudioInputDevice {
+    _stream: cpal::Stream,
+    pub name: String,
+    pub channels: usize,
+}
+
+/// Opens the default input device at the engine's sample rate. The
+/// samples go into `InputRing` for the engine to read.
+pub fn start_input(sample_rate: u32) -> Result<(AudioInputDevice, Arc<InputRing>), String> {
+    let host = cpal::default_host();
+    let device = host.default_input_device().ok_or("no audio input device")?;
+    let name = device.name().unwrap_or_else(|_| "Audio input".into());
+    let mut chosen: Option<cpal::SupportedStreamConfig> = None;
+    for range in device.supported_input_configs().map_err(|e| e.to_string())? {
+        if range.min_sample_rate().0 <= sample_rate && range.max_sample_rate().0 >= sample_rate {
+            let c = range.with_sample_rate(cpal::SampleRate(sample_rate));
+            let better = match &chosen {
+                None => true,
+                Some(old) => c.sample_format() == cpal::SampleFormat::F32 && old.sample_format() != cpal::SampleFormat::F32,
+            };
+            if better {
+                chosen = Some(c);
+            }
+        }
+    }
+    let config = chosen.ok_or_else(|| format!("{name} cannot run at {sample_rate} Hz like the output"))?;
+    let channels = config.channels() as usize;
+    let ring = Arc::new(InputRing::new(16384, channels));
+    let stream = match config.sample_format() {
+        cpal::SampleFormat::F32 => build_input::<f32>(&device, &config.clone().into(), ring.clone()),
+        cpal::SampleFormat::I16 => build_input::<i16>(&device, &config.clone().into(), ring.clone()),
+        cpal::SampleFormat::U16 => build_input::<u16>(&device, &config.clone().into(), ring.clone()),
+        cpal::SampleFormat::I32 => build_input::<i32>(&device, &config.clone().into(), ring.clone()),
+        other => return Err(format!("unsupported input sample format {other:?}")),
+    }?;
+    stream.play().map_err(|e| e.to_string())?;
+    Ok((AudioInputDevice { _stream: stream, name, channels }, ring))
+}
+
+fn build_input<T>(device: &cpal::Device, config: &cpal::StreamConfig, ring: Arc<InputRing>) -> Result<cpal::Stream, String>
+where
+    T: SizedSample,
+    f32: FromSample<T>,
+{
+    let channels = (config.channels as usize).max(1);
+    // Converted in fixed chunks, so the callback never allocates.
+    let mut scratch = [0.0f32; 4096];
+    let chunk = (scratch.len() / channels) * channels;
+    device
+        .build_input_stream(
+            config,
+            move |data: &[T], _: &cpal::InputCallbackInfo| {
+                for part in data.chunks(chunk) {
+                    for (d, s) in scratch.iter_mut().zip(part) {
+                        *d = f32::from_sample_(*s);
+                    }
+                    ring.push(&scratch[..part.len()], channels);
+                }
+            },
+            |err| eprintln!("audio input error: {err}"),
+            None,
+        )
+        .map_err(|e| e.to_string())
 }
 
 // Silence an unused-import warning on targets where `Sample` is only used via bounds.

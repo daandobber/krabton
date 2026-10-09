@@ -136,6 +136,8 @@ pub enum Deferred {
     DuplicateScene(usize),
     DeleteScene(usize),
     DeleteReturn(usize),
+    /// A new armed audio track listening to this track.
+    RecordIntoAudio(usize),
 }
 
 /// Drag payload: an arrangement clip being dragged (it can be dropped on a
@@ -278,6 +280,12 @@ pub struct App {
     pub scale_keys: bool,
     pub scale_dialog: Option<ScaleDialog>,
     pub recording: bool,
+    /// Audio recordings in progress.
+    pub takes: Vec<crate::recording::Take>,
+    /// The audio interface input, opened when a track needs it.
+    pub input_dev: Option<crate::audio::AudioInputDevice>,
+    pub input_error: Option<String>,
+    pub rec_counter: u32,
     pub rec_quantize: bool,
     rec_notes: HashMap<(u64, u8), RecNote>,
 
@@ -305,7 +313,7 @@ pub struct App {
     /// Pointer events from script actions, one batch per frame. They are fed
     /// to this window only (never to the desktop).
     script_input: std::collections::VecDeque<Vec<egui::Event>>,
-    frame: u64,
+    pub(crate) frame: u64,
 }
 
 impl App {
@@ -376,6 +384,10 @@ impl App {
             scale_keys: false,
             scale_dialog: None,
             recording: false,
+            takes: Vec::new(),
+            input_dev: None,
+            input_error: None,
+            rec_counter: 0,
             rec_quantize: true,
             rec_notes: HashMap::new(),
             meters: Vec::new(),
@@ -891,16 +903,17 @@ impl App {
         }
     }
 
+    /// The MIDI tracks that hear a live note (see `Project::live_note_targets`).
+    fn note_targets_from(&self, channel: Option<u8>) -> Vec<usize> {
+        let selected = match self.sel_track {
+            TrackSel::Track(i) => Some(i),
+            _ => None,
+        };
+        self.project.live_note_targets(selected, channel)
+    }
+
     fn note_targets(&self) -> Vec<usize> {
-        let armed: Vec<usize> =
-            self.project.tracks.iter().enumerate().filter(|(_, t)| t.arm && t.kind == TrackKind::Midi).map(|(i, _)| i).collect();
-        if !armed.is_empty() {
-            return armed;
-        }
-        match self.sel_track {
-            TrackSel::Track(i) if self.project.tracks.get(i).map(|t| t.kind == TrackKind::Midi).unwrap_or(false) => vec![i],
-            _ => Vec::new(),
-        }
+        self.note_targets_from(None)
     }
 
     /// Auditions a note on one specific track (piano roll keys, drum pads).
@@ -913,8 +926,14 @@ impl App {
     /// Plays a note on the armed/selected tracks. Returns the pitch that was
     /// actually played (it may be snapped to the scale) and the track ids.
     pub fn note_on(&mut self, pitch: u8, vel: f32) -> (u8, Vec<u64>) {
+        self.note_on_from(None, pitch, vel)
+    }
+
+    /// A live note from the computer keyboard (`channel` None) or a MIDI
+    /// device.
+    pub fn note_on_from(&mut self, channel: Option<u8>, pitch: u8, vel: f32) -> (u8, Vec<u64>) {
         let pitch = if self.snap_input && self.project.scale_mode { self.project.scale.snap(pitch) } else { pitch };
-        let targets = self.note_targets();
+        let targets = self.note_targets_from(channel);
         let status = self.status();
         let playing = self.is_playing();
         let mut ids = Vec::new();
@@ -995,8 +1014,15 @@ impl App {
     fn apply_deferred(&mut self) {
         for d in std::mem::take(&mut self.deferred) {
             match d {
-                Deferred::DeleteTrack(i) => self.delete_track(i),
+                Deferred::DeleteTrack(i) => {
+                    self.delete_track(i);
+                    // Tracks that listened to it lose that input.
+                    self.project.fix_routing();
+                }
                 Deferred::DuplicateTrack(i) => self.duplicate_track(i),
+                Deferred::RecordIntoAudio(i) => {
+                    self.route_into_new_audio_track(i);
+                }
                 Deferred::MoveTrack { from, to } => {
                     let n = self.project.tracks.len();
                     if from < n && to < n {
@@ -1072,9 +1098,17 @@ impl App {
     }
 
     pub fn toggle_record(&mut self) {
-        self.recording = !self.recording;
-        if !self.recording {
+        if self.recording || !self.takes.is_empty() {
+            self.recording = false;
+            self.stop_takes();
             return;
+        }
+        self.recording = true;
+        let audio = if self.view == View::Arrangement { self.start_arrangement_takes() } else { self.start_session_takes() };
+        if audio > 0 {
+            self.recording = true;
+            let place = if self.view == View::Arrangement { "on the arrangement" } else { "into session slots" };
+            self.toast(format!("Recording {audio} audio track{} {place}", if audio == 1 { "" } else { "s" }));
         }
         let status = self.status();
         let bars = self.project.beats_per_bar_f() * 4.0;
@@ -1099,14 +1133,16 @@ impl App {
             self.cmd(Command::LaunchClip { track: tid, slot });
             self.select_clip(ClipSel::Slot { track: ti, scene: slot });
         }
-        self.toast("Session record: play notes to overdub into the playing clip");
+        if self.takes.is_empty() {
+            self.toast("Session record: play notes to overdub into the playing clip");
+        }
     }
 
     fn poll_midi(&mut self) {
         while let Ok(msg) = self.midi.rx.try_recv() {
             match msg {
-                MidiMsg::NoteOn { pitch, velocity } => {
-                    let played = self.note_on(pitch, velocity);
+                MidiMsg::NoteOn { pitch, velocity, channel } => {
+                    let played = self.note_on_from(Some(channel), pitch, velocity);
                     self.midi_held.insert(pitch, played);
                 }
                 MidiMsg::NoteOff { pitch } => {
@@ -1171,6 +1207,7 @@ impl App {
                 Key::T => {
                     self.add_audio_track();
                 }
+                Key::I if m.alt => self.session.hide_io = !self.session.hide_io,
                 Key::I => {
                     let at = self.sel_scene + 1;
                     self.project.add_scene(at);
@@ -1562,6 +1599,18 @@ impl App {
                 }
                 "clipview" => self.detail = DetailTab::Clip,
                 "track" => self.sel_track = TrackSel::Track(nums.first().copied().unwrap_or(0)),
+                "routetrack" => {
+                    self.route_into_new_audio_track(nums.first().copied().unwrap_or(0));
+                }
+                "recslot" if nums.len() == 2 => {
+                    let (t, s) = (nums[0], nums[1]);
+                    let id = self.project.tracks.get(t).map(|t| t.id).unwrap_or(0);
+                    if self.takes.iter().any(|k| k.track == id && k.end.is_none()) {
+                        self.stop_slot_take(t);
+                    } else {
+                        self.start_slot_take(t, s);
+                    }
+                }
                 "fx" => {
                     // Adds an effect (by its index in the effect list) to the selected chain.
                     let all = krabton_engine::dsp::effects::EffectKind::ALL;
@@ -1606,7 +1655,8 @@ impl App {
                     }
                 }
                 "savepath" => match self.project.save(std::path::Path::new(arg)) {
-                    Ok(()) => {}
+                    // Recordings then go next to this set.
+                    Ok(()) => self.file_path = Some(std::path::PathBuf::from(arg)),
                     Err(e) => eprintln!("save failed: {e}"),
                 },
                 "savestates" => {
@@ -1691,6 +1741,7 @@ impl eframe::App for App {
         self.frame += 1;
         self.run_script();
         self.poll_midi();
+        self.poll_recording();
         self.poll_export();
         self.handle_keys(ctx);
         self.validate_selection();
