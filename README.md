@@ -103,12 +103,12 @@
 
 **Instruments**
 - **Analog**: a classic analog polysynth, see below
+- **Shakers**: Perry Cook's PhISEM shakers played with notes in the piano roll: maraca, cabasa, sekere, tambourine, sleigh bells, bamboo chimes, sandpaper, a can, crunch, rocks and gravel. The key tunes the resonances (Key Track, Transpose); a note shakes once, a number of times at a rate, or for as long as it is held (Hold), with Humanize, Swell (shakes that come in slowly) and Fade (each shake softer or louder). Objects, Length, Grain, Ring and Scatter shape the shaker itself; a second shaker can be layered on top; Brightness, Low Cut, Drive and a stereo Spread that throws each collision somewhere else; Damp stops a released note. Presets from Maraca Roll and Tambourine Roll to Rain Stick, Bell Tree, Popcorn, Footsteps, Gravel Walk and Shaker Pad
 - **Synth**: two PolyBLEP oscillators, sub, noise, unison detune, resonant multimode filter with envelope and key tracking, drive, two ADSRs, LFO, mono/legato with glide. Presets: Fat Bass, Acid, Sub Bass, Soft Pad, Pluck, Lead, Keys
 - **Drum instruments**: each is an 8-pad instrument on General MIDI notes with its own voices and kits (presets). Every pad has level, tune, decay, tone and pan plus the knobs of its voice, choke groups (a closed hat stops the open one), and can play a WAV or FLAC sample instead
   - **808**, **909** and **CR-78**: voices after the classic drum machines, built from how their circuits work (no samples). 808: kick, snare, tom, conga, rim, clap, claves, maracas, cowbell, cymbal, hats; kits 808 Classic, Boom, Electro, Latin. 909: swept kick with its attack, snare with snappy, tom, rim, clap, hats; kits 909 Classic, House, Techno, Toms. CR-78: kick, snare, hat, cymbal, bongo, guiro, tambourine, metal; kits CR-78 Classic, Disco, Bossa. Velocity works as accent
   - **Mutable Drums**: the drum models of Mutable Instruments Plaits: an analog and a synthetic kick, an analog and a synthetic snare, a metallic and a ring-modulated hi-hat, with their knobs (Punch, Dirt, FM, Snappy, Noise); kits Mutable Analog, Synthetic, Industrial
-  - **Shakers**: Perry Cook's PhISEM model of shaken objects: maraca, cabasa, sekere, tambourine, sleigh bells, bamboo chimes, sandpaper, a can, crunch, rocks and gravel, with the number of objects as a knob; kits Shaker Kit, Hand Percussion, Found Sounds
-  - **Drum Rack**: any of these voices side by side, Krabton's own Classic drums and a bending electronic tom, and samples. *From folder...* turns a folder of drum samples into a kit: kick, snare, clap, rim, hats and toms go to their pads by name, the rest fill the free pads
+  - **Drum Rack**: any of these voices side by side, Krabton's own Classic drums and a bending electronic tom, the shakers (one shake per hit, the number of objects as a knob; kits Shaker Kit, Hand Percussion, Found Sounds), and samples. *From folder...* turns a folder of drum samples into a kit: kick, snare, clap, rim, hats and toms go to their pads by name, the rest fill the free pads
 - **Sampler**: one sample across the keyboard, or a multi-sampled instrument
   - Zones: samples over ranges of keys and velocities, each with its root key, tuning, level, pan, start and end. A zone map shows them over keys and velocities; click one to edit it
   - Load several WAV or FLAC files (or a folder) and they are laid out by the notes in their names (`Piano C4 mf.wav`), with velocity layers from `pp`...`ff` or `v1`, `v2`; files without notes go one per key from C1
@@ -153,13 +153,14 @@
 - Ships with Krabton's own 16 voices (E-piano, basses, brass, bells, organ, pads, ...); the original Yamaha ROM banks are not included
 - An original implementation written from the published DX7 behaviour, not a port of the GPL Dexed/MiniDexed code, so it stays MIT
 
-**Plugin instruments (CLAP)**
+**Plugins (CLAP)**
 - Host any CLAP instrument, such as [Dexed](https://asb2m10.github.io/dexed/) (DX7 FM), [Surge XT](https://surge-synthesizer.github.io/) or [Odin 2](https://thewavewarden.com/odin2), with its own editor window
-- Plugins are scanned from the standard CLAP folders (and `CLAP_PATH`); add more folders in the browser
+- And CLAP audio effects (LSP, Dragonfly Reverb, Airwindows, ChowDSP, ...) in the device chain of any track, return or the master, next to the built-in effects
+- Plugins are scanned at startup from the standard CLAP folders: `~/.clap`, `/usr/lib/clap` and `/usr/local/lib/clap` on Linux, `Common Files/CLAP` on Windows, `Library/Audio/Plug-Ins/CLAP` on macOS, plus `CLAP_PATH`; add more folders in the browser. The browser lists them by vendor under *Plug-ins* (effects also under *Audio Effects > Plug-ins*), and files that would not load with the reason why
 - Drag a plugin onto a track (or double-click it), open its editor from the device view, play and record it like the built-in instruments
 - The plugin's patch and settings are stored in the `.krab` set, and plugins are included in *Export Audio*
 - Krabton does not bundle these plugins: install them yourself (they keep their own licenses, mostly GPL-3)
-- Supported so far: CLAP instruments with note input; editors are embedded on Windows, other platforms use the plugin's floating window when available. Effect plugins and VST3 are on the roadmap
+- Supported so far: CLAP instruments with note input and stereo (or mono) audio effects; editors are embedded on Windows, other platforms use the plugin's floating window when available. Sidechains, latency compensation and VST3 are on the roadmap
 
 **Audio effects**: EQ Three (with kills), Auto Filter (tempo-synced LFO), Compressor (parallel mix), Saturator (soft/hard/fold/tube), Delay (tempo-synced, ping-pong), Reverb, Chorus, Redux (bit crusher), Utility, Oscilloscope, Lens EQ, Lens Comp, Lens Limiter
 
@@ -283,6 +284,14 @@ cargo run -p krabton-clap --example engine_probe -- "C:/Program Files/Common Fil
 
 The first plays a chord straight into the plugin and checks its state save/restore; the second runs it through the whole engine (live notes, a launched clip and an offline render).
 
+For an effect plugin, `fx_probe` runs a test signal through it and then puts it on the master of the demo set:
+
+```sh
+cargo run -p krabton-clap --example fx_probe -- /usr/lib/clap/lsp-plugins.clap
+```
+
+`swap_fx` is a tiny CLAP effect for testing the host (it swaps left and right at half level): `cargo build -p krabton-clap --example swap_fx` builds `target/debug/examples/swap_fx.dll` (`libswap_fx.so` on Linux); rename it to `.clap` or pass it to `fx_probe` as it is.
+
 ## Debugging helpers
 
 - `KRABTON_NO_AUDIO=1` runs the engine on a silent real-time thread instead of the audio device.
@@ -313,7 +322,7 @@ Ideas that would make Krabton even more Live-like (contributions welcome):
 - The Mutable voices of Drums use the drum models of Plaits from the same `mi-plaits-dsp` crate.
 - The Machine voices of Drums are original implementations after the published workings of the drum machines' circuits; no samples are used. 808, 909 and CR-78 refer to the instruments they imitate; Krabton is not affiliated with their makers.
 - FLAC files are decoded with [claxon](https://github.com/ruuda/claxon) (Apache-2.0). SFZ is an open format for sampled instruments (<https://sfzformat.com>).
-- The Shakers of Drums are an implementation of Perry Cook's PhISEM (Physically Informed Stochastic Event Modeling, Computer Music Journal 21:3, 1997), with instrument settings after the Shakers of his Synthesis ToolKit (STK).
+- Shakers (and the shakers of the Drum Rack) are an implementation of Perry Cook's PhISEM (Physically Informed Stochastic Event Modeling, Computer Music Journal 21:3, 1997), with instrument settings after the Shakers of his Synthesis ToolKit (STK).
 - Analog, Synth and FM are original implementations; FM is DX7-style synthesis and reads standard DX7 sysex files.
 
 ## License

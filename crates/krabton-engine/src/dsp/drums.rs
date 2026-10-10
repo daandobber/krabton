@@ -326,7 +326,9 @@ static GMUTABLE: [(&str, &[DrumVoice]); 1] = [("Mutable", &DrumVoice::MUTABLE)];
 static GSHAKERS: [(&str, &[DrumVoice]); 1] = [("Shakers", &DrumVoice::SHAKERS)];
 
 impl DrumEngine {
-    pub const ALL: [DrumEngine; 6] = [DrumEngine::M808, DrumEngine::M909, DrumEngine::Cr78, DrumEngine::Mutable, DrumEngine::Shakers, DrumEngine::Rack];
+    /// The engines to choose from. `Shakers` is only kept for old projects:
+    /// its kits are the Drum Rack's now, and Shakers is an instrument.
+    pub const ALL: [DrumEngine; 5] = [DrumEngine::M808, DrumEngine::M909, DrumEngine::Cr78, DrumEngine::Mutable, DrumEngine::Rack];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -368,8 +370,8 @@ impl DrumEngine {
             DrumEngine::M909 => &["909 Classic", "909 House", "909 Techno", "909 Toms"],
             DrumEngine::Cr78 => &["CR-78 Classic", "CR-78 Disco", "CR-78 Bossa"],
             DrumEngine::Mutable => &["Mutable Analog", "Mutable Synthetic", "Mutable Industrial"],
-            DrumEngine::Shakers => &["Shaker Kit", "Hand Percussion", "Found Sounds"],
-            DrumEngine::Rack => &["Classic 808", "Classic 909", "Classic Lo-Fi", "Hybrid", "Electro"],
+            DrumEngine::Shakers => &[],
+            DrumEngine::Rack => &["Classic 808", "Classic 909", "Classic Lo-Fi", "Hybrid", "Electro", "Shaker Kit", "Hand Percussion", "Found Sounds"],
         }
     }
 }
@@ -1071,7 +1073,8 @@ impl PadVoice {
             return y;
         }
         if pad.voice.family() == Family::Shaker {
-            let y = self.shaker.tick(&mut self.rng);
+            let (sl, sr2) = self.shaker.tick(&mut self.rng);
+            let y = 0.5 * (sl + sr2);
             self.t = self.t.saturating_add(1);
             if self.shaker.is_done() {
                 self.active = false;

@@ -9,6 +9,7 @@ use crate::dsp::drums::DrumState;
 use crate::dsp::effects::{EffectState, FxCtx};
 use crate::dsp::fm::FmState;
 use crate::dsp::analog::AnalogState;
+use crate::dsp::shaker_synth::ShakerSynthState;
 use crate::dsp::braids_synth::BraidsSynthState;
 use crate::dsp::elements_synth::ElementsSynthState;
 use crate::dsp::macro_osc::MacroState;
@@ -182,8 +183,8 @@ pub enum Command {
     NoteOff { track: u64, pitch: u8 },
     AllNotesOff,
     Preview(Option<SampleRef>),
-    /// Gives the audio half of a hosted plugin to the track whose instrument
-    /// is `Instrument::Plugin` with this instance id.
+    /// Gives the audio half of a hosted plugin to the instrument or effect
+    /// device with this instance id.
     AttachProcessor { instance: u64, processor: Box<dyn AudioProcessor> },
     /// The audio interface input (or none).
     SetInput(Option<Arc<InputRing>>),
@@ -278,6 +279,7 @@ enum InstState {
     Braids(Box<BraidsSynthState>),
     Elements(Box<ElementsSynthState>),
     Analog(Box<AnalogState>),
+    Shakers(Box<ShakerSynthState>),
     Plugin { instance: u64, proc: Option<Box<dyn AudioProcessor>>, pending: Vec<PluginEvent> },
 }
 
@@ -294,6 +296,7 @@ impl InstState {
             Some(Instrument::Braids { .. }) => InstState::Braids(Box::new(BraidsSynthState::new(sr))),
             Some(Instrument::Elements { .. }) => InstState::Elements(Box::new(ElementsSynthState::new(sr))),
             Some(Instrument::Analog { .. }) => InstState::Analog(Box::new(AnalogState::new(sr))),
+            Some(Instrument::Shakers { .. }) => InstState::Shakers(Box::new(ShakerSynthState::new(sr))),
         }
     }
 
@@ -324,6 +327,7 @@ impl InstState {
                 | (InstState::Braids(_), Some(Instrument::Braids { .. }))
                 | (InstState::Elements(_), Some(Instrument::Elements { .. }))
                 | (InstState::Analog(_), Some(Instrument::Analog { .. }))
+                | (InstState::Shakers(_), Some(Instrument::Shakers { .. }))
         ) || matches!((self, i), (InstState::Plugin { instance, .. }, Some(Instrument::Plugin(p))) if *instance == p.instance)
     }
 
@@ -339,6 +343,7 @@ impl InstState {
             (InstState::Braids(s), Instrument::Braids { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Elements(s), Instrument::Elements { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Analog(s), Instrument::Analog { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Shakers(s), Instrument::Shakers { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             _ => {}
         }
     }
@@ -353,6 +358,7 @@ impl InstState {
             (InstState::Braids(s), Instrument::Braids { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Elements(s), Instrument::Elements { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Analog(s), Instrument::Analog { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Shakers(s), Instrument::Shakers { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             _ => {}
         }
     }
@@ -368,6 +374,7 @@ impl InstState {
             InstState::Braids(s) => s.all_off(),
             InstState::Elements(s) => s.all_off(),
             InstState::Analog(s) => s.all_off(),
+            InstState::Shakers(s) => s.all_off(),
             InstState::None => {}
         }
     }
@@ -382,6 +389,7 @@ impl InstState {
             (InstState::Braids(s), Instrument::Braids { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Elements(s), Instrument::Elements { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Analog(s), Instrument::Analog { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Shakers(s), Instrument::Shakers { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Plugin { proc, pending, .. }, Instrument::Plugin(_)) => {
                 if let Some(p) = proc {
                     p.process(pending, l, r);
@@ -750,6 +758,17 @@ impl Engine {
                 }
             }
         }
+        let chains = self.tracks.iter_mut().map(|t| &mut t.devices).chain(self.returns.iter_mut().map(|r| &mut r.devices)).chain(std::iter::once(&mut self.master.devices));
+        for devs in chains {
+            for (_, st) in devs.iter_mut() {
+                if let EffectState::Plugin { proc, .. } = st {
+                    if let Some(mut p) = proc.take() {
+                        p.suspend();
+                        out.push(p);
+                    }
+                }
+            }
+        }
         for (_, mut p) in self.parked.drain(..) {
             p.suspend();
             out.push(p);
@@ -909,6 +928,23 @@ impl Engine {
                         }
                     }
                 }
+                if slot.is_some() {
+                    let chains = self.tracks.iter_mut().map(|t| &mut t.devices).chain(self.returns.iter_mut().map(|r| &mut r.devices)).chain(std::iter::once(&mut self.master.devices));
+                    'found: for devs in chains {
+                        for (_, st) in devs.iter_mut() {
+                            if let EffectState::Plugin { instance: i, proc } = st {
+                                if *i == instance {
+                                    if let Some(mut old) = proc.take() {
+                                        old.suspend();
+                                        let _ = self.garbage_tx.try_send(Garbage(GarbageInner::Processor(old)));
+                                    }
+                                    *proc = slot.take();
+                                    break 'found;
+                                }
+                            }
+                        }
+                    }
+                }
                 if let Some(p) = slot {
                     if self.parked.len() >= 16 {
                         let (_, mut old) = self.parked.remove(0);
@@ -1023,6 +1059,9 @@ impl Engine {
             }
             for mut rt in old {
                 rt.instrument.suspend();
+                for (_, st) in rt.devices.iter_mut() {
+                    st.suspend();
+                }
                 self.trash(GarbageInner::Track(rt));
             }
             self.tracks = fresh;
@@ -1040,7 +1079,7 @@ impl Engine {
                     }
                 }
             }
-            sync_devices(&t.devices, &mut rt.devices, sr, &mut trash);
+            sync_devices(&t.devices, &mut rt.devices, sr, &mut trash, &mut self.parked);
             let same_fx = t.midi_devices.len() == rt.midi_fx.len() && t.midi_devices.iter().zip(&rt.midi_fx).all(|(d, (id, st))| d.id == *id && st.matches(d.kind));
             if !same_fx {
                 let mut old = std::mem::take(&mut rt.midi_fx);
@@ -1074,15 +1113,16 @@ impl Engine {
                 }
             }
             for b in old {
-                for (_, st) in b.devices {
+                for (_, mut st) in b.devices {
+                    st.suspend();
                     trash.push(GarbageInner::Effect(st));
                 }
             }
         }
         for (ret, rt) in project.returns.iter().zip(self.returns.iter_mut()) {
-            sync_devices(&ret.devices, &mut rt.devices, sr, &mut trash);
+            sync_devices(&ret.devices, &mut rt.devices, sr, &mut trash, &mut self.parked);
         }
-        sync_devices(&project.master.devices, &mut self.master.devices, sr, &mut trash);
+        sync_devices(&project.master.devices, &mut self.master.devices, sr, &mut trash, &mut self.parked);
         for g in trash {
             self.trash(g);
         }
@@ -1530,7 +1570,7 @@ impl Engine {
     }
 }
 
-fn sync_devices(devs: &[Device], rts: &mut Vec<(u64, EffectState)>, sr: f32, trash: &mut Vec<GarbageInner>) {
+fn sync_devices(devs: &[Device], rts: &mut Vec<(u64, EffectState)>, sr: f32, trash: &mut Vec<GarbageInner>, parked: &mut Vec<(u64, Box<dyn AudioProcessor>)>) {
     let same = devs.len() == rts.len() && devs.iter().zip(rts.iter()).all(|(d, (id, st))| d.id == *id && st.kind() == d.kind);
     if same {
         return;
@@ -1539,10 +1579,21 @@ fn sync_devices(devs: &[Device], rts: &mut Vec<(u64, EffectState)>, sr: f32, tra
     for d in devs {
         match old.iter().position(|(id, st)| *id == d.id && st.kind() == d.kind) {
             Some(pos) => rts.push(old.swap_remove(pos)),
-            None => rts.push((d.id, EffectState::new(d.kind, sr))),
+            None => {
+                let mut st = EffectState::new(d.kind, sr);
+                if let (EffectState::Plugin { instance, proc }, Some(p)) = (&mut st, &d.plugin) {
+                    // Its processor may have arrived before the device did.
+                    *instance = p.instance;
+                    if let Some(pos) = parked.iter().position(|(i, _)| *i == p.instance) {
+                        *proc = Some(parked.swap_remove(pos).1);
+                    }
+                }
+                rts.push((d.id, st));
+            }
         }
     }
-    for (_, st) in old {
+    for (_, mut st) in old {
+        st.suspend();
         trash.push(GarbageInner::Effect(st));
     }
 }
@@ -1841,6 +1892,50 @@ mod tests {
         assert!(notes.load(RELAXED) >= 4, "bass notes should reach the plugin");
         assert!(peak(&out) > 0.1);
         assert_eq!(e.take_processors().len(), 1);
+    }
+
+    /// An effect plug-in that scales what goes through it.
+    struct FakeEffect {
+        gain: f32,
+        calls: Arc<AtomicU32>,
+    }
+
+    impl AudioProcessor for FakeEffect {
+        fn process(&mut self, _: &[PluginEvent], _: &mut [f32], _: &mut [f32]) {}
+
+        fn process_effect(&mut self, left: &mut [f32], right: &mut [f32]) {
+            self.calls.fetch_add(1, RELAXED);
+            for (l, r) in left.iter_mut().zip(right.iter_mut()) {
+                *l *= self.gain;
+                *r *= self.gain;
+            }
+        }
+    }
+
+    #[test]
+    fn effect_plugins_process_the_master() {
+        let mut p = crate::demo::demo_project();
+        let fake = PluginInstrument { instance: 0, format: "clap".into(), plugin_id: "test.fx".into(), name: "Fake FX".into(), vendor: "Test".into(), path: "fake.clap".into(), state: None };
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p.clone()));
+        h.send(Command::LaunchScene(0));
+        assert!(peak(&run(&mut e, 0.5)) > 0.05, "the demo plays");
+        // The processor arrives before the device does (it waits, parked).
+        let dev = p.make_plugin_device(fake);
+        let instance = dev.plugin.as_ref().unwrap().instance;
+        let calls = Arc::new(AtomicU32::new(0));
+        h.send(Command::AttachProcessor { instance, processor: Box::new(FakeEffect { gain: 0.0, calls: calls.clone() }) });
+        run(&mut e, 0.05);
+        p.master.devices.push(dev);
+        h.send(Command::SetProject(Arc::new(p.clone())));
+        run(&mut e, 0.05);
+        assert_eq!(peak(&run(&mut e, 0.5)), 0.0, "the effect silences the master");
+        assert!(calls.load(RELAXED) > 10);
+        // Taken out of the chain, its processor goes to the bin and the sound comes back.
+        p.master.devices.clear();
+        h.send(Command::SetProject(Arc::new(p.clone())));
+        assert!(peak(&run(&mut e, 0.5)) > 0.05);
+        assert_eq!(e.take_processors().len(), 0);
+        assert_eq!(p.plugins().len(), 0);
     }
 
     #[test]

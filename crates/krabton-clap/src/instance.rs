@@ -543,8 +543,9 @@ impl ClapProcessor {
         }
     }
 
-    /// Processes at most `self.max` frames.
-    fn run(&mut self, events: &[PluginEvent], from: usize, left: &mut [f32], right: &mut [f32], last: bool) {
+    /// Processes at most `self.max` frames. An instrument adds what it plays
+    /// to `left`/`right`; an `effect` gets them as its input and replaces them.
+    fn run(&mut self, events: &[PluginEvent], from: usize, left: &mut [f32], right: &mut [f32], last: bool, effect: bool) {
         let n = left.len();
         let plugin_ptr = self.shared.plugin;
         let (start_fn, process_fn) = {
@@ -579,6 +580,21 @@ impl ClapProcessor {
         for b in self.out_data.iter_mut() {
             b[..n].fill(0.0);
         }
+        if effect {
+            // The first input port gets the track's audio (mono: both sides).
+            match self.shared.in_channels.first() {
+                Some(&c) if c >= 2 => {
+                    self.in_data[0][..n].copy_from_slice(left);
+                    self.in_data[1][..n].copy_from_slice(right);
+                }
+                Some(_) => {
+                    for i in 0..n {
+                        self.in_data[0][i] = 0.5 * (left[i] + right[i]);
+                    }
+                }
+                None => return,
+            }
+        }
         let process = clap_process {
             steady_time: self.steady,
             frames_count: n as u32,
@@ -602,8 +618,13 @@ impl ClapProcessor {
         for i in 0..n {
             let (x, y) = (self.out_data[a][i], self.out_data[b][i]);
             if x.is_finite() && y.is_finite() {
-                left[i] += x;
-                right[i] += y;
+                if effect {
+                    left[i] = x;
+                    right[i] = y;
+                } else {
+                    left[i] += x;
+                    right[i] += y;
+                }
             }
         }
     }
@@ -619,7 +640,20 @@ impl AudioProcessor for ClapProcessor {
         while done < total {
             let n = (total - done).min(self.max);
             let last = done + n >= total;
-            self.run(events, done, &mut left[done..done + n], &mut right[done..done + n], last);
+            self.run(events, done, &mut left[done..done + n], &mut right[done..done + n], last, false);
+            done += n;
+        }
+    }
+
+    fn process_effect(&mut self, left: &mut [f32], right: &mut [f32]) {
+        if self.failed || self.shared.in_channels.is_empty() {
+            return;
+        }
+        let total = left.len().min(right.len());
+        let mut done = 0;
+        while done < total {
+            let n = (total - done).min(self.max);
+            self.run(&[], done, &mut left[done..done + n], &mut right[done..done + n], done + n >= total, true);
             done += n;
         }
     }

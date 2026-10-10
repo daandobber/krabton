@@ -20,6 +20,8 @@ pub enum EffectKind {
     LensEq,
     LensComp,
     LensLimiter,
+    /// A hosted effect plug-in (`Device::plugin`), not in `ALL`.
+    Plugin,
 }
 
 const FMODES: &[&str] = &["Lowpass", "Highpass", "Bandpass", "Notch"];
@@ -167,6 +169,7 @@ impl EffectKind {
             EffectKind::LensEq => "Lens EQ",
             EffectKind::LensComp => "Lens Comp",
             EffectKind::LensLimiter => "Lens Limiter",
+            EffectKind::Plugin => "Plug-in",
         }
     }
 
@@ -185,6 +188,7 @@ impl EffectKind {
             EffectKind::LensEq => "Twelve-band EQ with a big curve, spectrum analyzer, mid/side and dynamic bands",
             EffectKind::LensComp => "Compressor with styles, lookahead and a scrolling level display",
             EffectKind::LensLimiter => "True-peak limiter with styles and a loudness meter (LUFS)",
+            EffectKind::Plugin => "A CLAP effect plug-in",
         }
     }
 
@@ -203,6 +207,7 @@ impl EffectKind {
             EffectKind::LensEq => super::lens_eq::SPECS,
             EffectKind::LensComp => super::lens_comp::SPECS,
             EffectKind::LensLimiter => super::lens_limiter::SPECS,
+            EffectKind::Plugin => &[],
         }
     }
 }
@@ -228,6 +233,8 @@ pub enum EffectState {
     LensEq(Box<super::lens_eq::LensEqState>),
     LensComp(Box<super::lens_comp::LensCompState>),
     LensLimiter(Box<super::lens_limiter::LensLimiterState>),
+    /// A hosted plug-in; passes audio through until its processor arrives.
+    Plugin { instance: u64, proc: Option<Box<dyn crate::plugin::AudioProcessor>> },
 }
 
 pub struct DelayState {
@@ -272,6 +279,15 @@ impl EffectState {
             EffectKind::LensEq => EffectState::LensEq(Box::default()),
             EffectKind::LensComp => EffectState::LensComp(Box::default()),
             EffectKind::LensLimiter => EffectState::LensLimiter(Box::new(super::lens_limiter::LensLimiterState::new(sr))),
+            EffectKind::Plugin => EffectState::Plugin { instance: 0, proc: None },
+        }
+    }
+
+    /// Stops a plug-in's processing (on the audio thread) before the state
+    /// is handed away to be dropped.
+    pub fn suspend(&mut self) {
+        if let EffectState::Plugin { proc: Some(p), .. } = self {
+            p.suspend();
         }
     }
 
@@ -301,6 +317,7 @@ impl EffectState {
             EffectState::LensEq(_) => EffectKind::LensEq,
             EffectState::LensComp(_) => EffectKind::LensComp,
             EffectState::LensLimiter(_) => EffectKind::LensLimiter,
+            EffectState::Plugin { .. } => EffectKind::Plugin,
         }
     }
 
@@ -506,6 +523,11 @@ impl EffectState {
             EffectState::LensEq(s) => s.process(p, l, r, sr),
             EffectState::LensComp(s) => s.process(p, l, r, sr),
             EffectState::LensLimiter(s) => s.process(p, l, r, sr),
+            EffectState::Plugin { proc, .. } => {
+                if let Some(pr) = proc {
+                    pr.process_effect(&mut l[..n], &mut r[..n]);
+                }
+            }
         }
     }
 }

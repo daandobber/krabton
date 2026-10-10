@@ -13,7 +13,7 @@ use crate::theme::*;
 use egui::{pos2, vec2, Align2, Color32, Key, Pos2, Rect, RichText, Sense, Shape, Stroke, StrokeKind, Ui};
 use krabton_engine::dsp::dx7::{self, Dx7Voice};
 use krabton_engine::dsp::effects::EffectKind;
-use krabton_engine::dsp::{analog, braids_synth, drums, elements_synth, macro_osc, synth};
+use krabton_engine::dsp::{analog, braids_synth, drums, elements_synth, macro_osc, shaker_synth, synth};
 use krabton_engine::midi_fx::MidiFxKind;
 use krabton_engine::{Command, SampleRef};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -336,35 +336,48 @@ struct Dev {
     hint: &'static str,
     presets: &'static [&'static str],
     make: fn(&'static str) -> BrowserItem,
+    /// The kind of sound all its presets make (else from each name).
+    kind: Option<&'static str>,
 }
 
-fn devices() -> [Dev; 5] {
+fn devices() -> [Dev; 6] {
     [
         Dev {
             name: "Analog",
             hint: "Classic analog polysynth: ladder filter, sync, cross mod, PWM, drift, unison and chorus",
             presets: analog::preset_names(),
             make: BrowserItem::Analog,
+            kind: None,
         },
         Dev {
             name: "Braids",
             hint: "47 shapes from Mutable Instruments Braids: analog, FM, physical models, wavetables, noise",
             presets: braids_synth::preset_names(),
             make: BrowserItem::Braids,
+            kind: None,
         },
         Dev {
             name: "Elements",
             hint: "Modal synthesis from Mutable Instruments Elements: bow, blow and strike a resonator or strings",
             presets: elements_synth::preset_names(),
             make: BrowserItem::Elements,
+            kind: None,
         },
         Dev {
             name: "Plaits",
             hint: "24 synthesis models from Mutable Instruments Plaits: analog, FM, speech, strings, drums",
             presets: macro_osc::preset_names(),
             make: BrowserItem::Macro,
+            kind: None,
         },
-        Dev { name: "Synth", hint: "Two-oscillator virtual analog synth", presets: synth::preset_names(), make: BrowserItem::Synth },
+        Dev {
+            name: "Shakers",
+            hint: "Perry Cook's PhISEM shakers played with notes: maraca, cabasa, tambourine, sleigh bells, bamboo, cans, rocks; shake once, a few times or while held",
+            presets: shaker_synth::preset_names(),
+            make: BrowserItem::Shakers,
+            kind: Some("Drums"),
+        },
+        Dev { name: "Synth", hint: "Two-oscillator virtual analog synth", presets: synth::preset_names(), make: BrowserItem::Synth, kind: None },
     ]
 }
 
@@ -384,6 +397,11 @@ fn drum_engine_nodes() -> Vec<Node> {
             Node::Folder { tag: None, label: e.name().into(), icon: Icon::Device, hint: e.description().into(), load: Some(BrowserItem::Drums(e.kits()[0])), kids: Kids::Nodes(kids) }
         })
         .collect()
+}
+
+fn plugin_effect_node(info: &krabton_clap::PluginInfo) -> Node {
+    let hint = format!("{} by {} (audio effect)\n{}\n{}", info.name, info.vendor, info.description, info.path.display());
+    Node::item(format!("plugin/{}", info.id), &info.name, Icon::Plugin, hint, BrowserItem::PluginEffect(info.clone()))
 }
 
 fn effect_nodes() -> Vec<Node> {
@@ -569,7 +587,14 @@ impl App {
                 out
             }
             Category::Instruments => self.instrument_nodes(),
-            Category::AudioEffects => effect_nodes(),
+            Category::AudioEffects => {
+                let mut out = effect_nodes();
+                let fx = self.plugin_effect_nodes();
+                if !fx.is_empty() {
+                    out.push(Node::folder("Plug-ins", Icon::Folder, fx));
+                }
+                out
+            }
             Category::MidiEffects => midi_nodes(),
             Category::Plugins => self.plugin_nodes(),
             Category::Clips => self.clip_nodes(),
@@ -592,7 +617,7 @@ impl App {
         let mut out = Vec::new();
         for d in devices() {
             for p in d.presets {
-                if let Some(kind) = sound_type(p) {
+                if let Some(kind) = sound_type(p).map(|k| d.kind.unwrap_or(k)) {
                     out.push((kind, Node::item(format!("inst/{}/{p}", d.name), *p, Icon::Preset, d.hint, (d.make)(p)).detail(d.name)));
                 }
             }
@@ -652,27 +677,36 @@ impl App {
             },
             Node::Action { label: "Add a plug-in folder...".into(), hint: "Add a folder with .clap files".into(), act: Act::AddPluginFolder },
         ];
+        // By vendor, instruments and effects together (as in Live).
         let mut vendors: BTreeMap<String, Vec<Node>> = BTreeMap::new();
+        let vendor = |info: &krabton_clap::PluginInfo| if info.vendor.trim().is_empty() { "Unknown".to_string() } else { info.vendor.clone() };
         for info in self.plugins.instruments() {
-            let vendor = if info.vendor.trim().is_empty() { "Unknown".to_string() } else { info.vendor.clone() };
-            let hint = format!("{} by {}\n{}\n{}", info.name, info.vendor, info.description, info.path.display());
-            vendors.entry(vendor).or_default().push(Node::item(format!("plugin/{}", info.id), &info.name, Icon::Plugin, hint, BrowserItem::Plugin(info.clone())));
+            let hint = format!("{} by {} (instrument)\n{}\n{}", info.name, info.vendor, info.description, info.path.display());
+            vendors.entry(vendor(info)).or_default().push(Node::item(format!("plugin/{}", info.id), &info.name, Icon::Plugin, hint, BrowserItem::Plugin(info.clone())));
+        }
+        for info in self.plugins.effects() {
+            vendors.entry(vendor(info)).or_default().push(plugin_effect_node(info));
         }
         if vendors.is_empty() {
-            out.push(Node::Note("No CLAP instruments found. Install e.g. Dexed, Surge XT or Odin 2 (CLAP version), or add a folder.".into()));
+            let folders: Vec<String> = self.plugins.folders().iter().map(|f| f.display().to_string()).collect();
+            out.push(Node::Note(format!("No CLAP plug-ins found in {}. Install some (e.g. Surge XT, Dexed, LSP, Dragonfly Reverb, CLAP versions), or add a folder.", folders.join(", "))));
         }
         for (vendor, mut kids) in vendors {
             kids.sort_by(|a, b| a.label().to_lowercase().cmp(&b.label().to_lowercase()));
             out.push(Node::folder(vendor, Icon::Folder, kids));
         }
-        let fx = self.plugins.effect_count();
-        if fx > 0 {
-            out.push(Node::Note(format!("{fx} effect plug-in(s) found (effects are not supported yet)")));
-        }
         if !self.plugins.scan_errors.is_empty() {
-            out.push(Node::Note(format!("{} file(s) could not be loaded", self.plugins.scan_errors.len())));
+            let errors = self.plugins.scan_errors.iter().map(|e| Node::Note(e.clone())).collect();
+            out.push(Node::folder(format!("{} file(s) could not be loaded", self.plugins.scan_errors.len()), Icon::Folder, errors));
         }
         out
+    }
+
+    /// The effect plug-ins, for the Audio Effects category.
+    fn plugin_effect_nodes(&self) -> Vec<Node> {
+        let mut v: Vec<Node> = self.plugins.effects().map(plugin_effect_node).collect();
+        v.sort_by(|a, b| a.label().to_lowercase().cmp(&b.label().to_lowercase()));
+        v
     }
 
     /// The clips in this project, per track.
@@ -1162,8 +1196,8 @@ impl App {
         match act {
             Act::ScanPlugins => {
                 self.plugins.scan();
-                let n = self.plugins.instruments().count();
-                self.toast(format!("Found {n} CLAP instrument(s)"));
+                let (n, fx) = (self.plugins.instruments().count(), self.plugins.effects().count());
+                self.toast(format!("Found {n} CLAP instrument(s) and {fx} effect(s)"));
             }
             Act::AddPluginFolder => {
                 if let Some(dir) = rfd::FileDialog::new().pick_folder() {

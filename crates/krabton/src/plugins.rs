@@ -1,12 +1,12 @@
-//! CLAP plugin instruments: scanning, one live instance per placed plugin,
-//! and their state.
+//! CLAP plugins, instruments and effects: scanning, one live instance per
+//! placed plugin, and their state.
 
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
 use krabton_clap::{ClapHost, PluginInfo, PluginInstance};
 use krabton_engine::engine::MAX_BLOCK;
 use krabton_engine::plugin::AudioProcessor;
-use krabton_engine::{Command, Instrument, PluginInstrument, Project};
+use krabton_engine::{Command, PluginInstrument, Project};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -66,8 +66,9 @@ impl PluginManager {
         self.available.iter().filter(|p| p.is_instrument())
     }
 
-    pub fn effect_count(&self) -> usize {
-        self.available.iter().filter(|p| p.is_effect() && !p.is_instrument()).count()
+    /// Audio effects (an instrument that also takes audio counts as an instrument).
+    pub fn effects(&self) -> impl Iterator<Item = &PluginInfo> {
+        self.available.iter().filter(|p| p.is_effect() && !p.is_instrument())
     }
 
     pub fn make_instrument(info: &PluginInfo, instance: u64) -> PluginInstrument {
@@ -107,12 +108,7 @@ impl PluginManager {
     /// tracks, loaded sets, undo) and drops the ones that disappeared.
     /// Returns commands for the engine and error messages for the user.
     pub fn sync(&mut self, project: &Project, sample_rate: f64) -> (Vec<Command>, Vec<String>) {
-        let mut wanted: HashMap<u64, &PluginInstrument> = HashMap::new();
-        for t in &project.tracks {
-            if let Some(Instrument::Plugin(p)) = &t.instrument {
-                wanted.insert(p.instance, p);
-            }
-        }
+        let wanted: HashMap<u64, &PluginInstrument> = project.plugins().into_iter().map(|p| (p.instance, p)).collect();
         self.instances.retain(|id, _| wanted.contains_key(id));
         self.failed.retain(|id, _| wanted.contains_key(id));
         let mut cmds = Vec::new();
@@ -170,13 +166,11 @@ impl PluginManager {
     /// Writes every plugin's current state into the project, so it gets
     /// saved (or copied, when duplicating a track).
     pub fn store_states(&self, project: &mut Project) {
-        for t in &mut project.tracks {
-            if let Some(Instrument::Plugin(p)) = &mut t.instrument {
-                if let Some(bytes) = self.instances.get(&p.instance).and_then(|i| i.save_state()) {
-                    let encoded: Arc<str> = Arc::from(B64.encode(bytes));
-                    if p.state.as_deref() != Some(&*encoded) {
-                        p.state = Some(encoded);
-                    }
+        for p in project.plugins_mut() {
+            if let Some(bytes) = self.instances.get(&p.instance).and_then(|i| i.save_state()) {
+                let encoded: Arc<str> = Arc::from(B64.encode(bytes));
+                if p.state.as_deref() != Some(&*encoded) {
+                    p.state = Some(encoded);
                 }
             }
         }
@@ -189,8 +183,7 @@ impl PluginManager {
         let mut keep = Vec::new();
         let mut procs = Vec::new();
         let mut errors = Vec::new();
-        for t in &project.tracks {
-            let Some(Instrument::Plugin(p)) = &t.instrument else { continue };
+        for p in project.plugins() {
             let state = self.instances.get(&p.instance).and_then(|i| i.save_state());
             match self.create(p, sample_rate, state.as_deref()) {
                 Ok(inst) => {

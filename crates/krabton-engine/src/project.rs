@@ -4,7 +4,7 @@
 use crate::dsp::drums::{self, DrumVoice};
 use crate::dsp::effects::EffectKind;
 use crate::dsp::dx7::{self, Dx7Voice};
-use crate::dsp::{analog, braids_synth, elements_synth, fm, macro_osc, sampler, synth};
+use crate::dsp::{analog, braids_synth, elements_synth, fm, macro_osc, sampler, shaker_synth, synth};
 use crate::params;
 use crate::routing::{AudioInput, AudioOutput, MidiInput, Monitor};
 use crate::sample::{LoadCacheGuard, SampleRef};
@@ -423,6 +423,8 @@ pub enum Instrument {
     Elements { preset: String, params: Vec<f32> },
     /// Analog: a virtual analog polysynth modelled on classic analog synths.
     Analog { preset: String, params: Vec<f32> },
+    /// Shakers: PhISEM shakers played with notes.
+    Shakers { preset: String, params: Vec<f32> },
 }
 
 impl Instrument {
@@ -458,6 +460,10 @@ impl Instrument {
         Instrument::Analog { preset: preset.to_string(), params: analog::preset(preset) }
     }
 
+    pub fn shakers(preset: &str) -> Self {
+        Instrument::Shakers { preset: preset.to_string(), params: shaker_synth::preset(preset) }
+    }
+
     pub fn kind_name(&self) -> &'static str {
         match self {
             Instrument::Synth { .. } => "Synth",
@@ -469,6 +475,7 @@ impl Instrument {
             Instrument::Braids { .. } => "Braids",
             Instrument::Elements { .. } => "Elements",
             Instrument::Analog { .. } => "Analog",
+            Instrument::Shakers { .. } => "Shakers",
         }
     }
 
@@ -481,7 +488,7 @@ impl Instrument {
             Instrument::Sampler { sample, .. } => sample.as_ref().map(|s| s.name.clone()).unwrap_or_else(|| "Empty".into()),
             Instrument::Plugin(p) => p.name.clone(),
             Instrument::Fm { voice, .. } => Dx7Voice::from_slice(voice).map(|v| v.name()).unwrap_or_else(|| "FM".into()),
-            Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } => preset.clone(),
+            Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } => preset.clone(),
         }
     }
 
@@ -505,6 +512,19 @@ pub struct Device {
     pub kind: EffectKind,
     pub enabled: bool,
     pub params: Vec<f32>,
+    /// The plug-in of an `EffectKind::Plugin`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin: Option<PluginInstrument>,
+}
+
+impl Device {
+    /// The name to show: the plug-in's, or the kind of effect.
+    pub fn name(&self) -> &str {
+        match &self.plugin {
+            Some(p) => &p.name,
+            None => self.kind.name(),
+        }
+    }
 }
 
 /// A MIDI effect in front of a track's instrument.
@@ -852,7 +872,43 @@ impl Project {
     }
 
     pub fn make_device(&mut self, kind: EffectKind) -> Device {
-        Device { id: self.alloc_id(), kind, enabled: true, params: params::defaults(kind.specs()) }
+        Device { id: self.alloc_id(), kind, enabled: true, params: params::defaults(kind.specs()), plugin: None }
+    }
+
+    /// A device for an effect plug-in; `plugin.instance` is set here.
+    pub fn make_plugin_device(&mut self, mut plugin: PluginInstrument) -> Device {
+        plugin.instance = self.alloc_id();
+        Device { id: self.alloc_id(), kind: EffectKind::Plugin, enabled: true, params: Vec::new(), plugin: Some(plugin) }
+    }
+
+    /// Every hosted plug-in (instruments and effects) by instance.
+    pub fn plugins(&self) -> Vec<&PluginInstrument> {
+        let mut v = Vec::new();
+        for t in &self.tracks {
+            if let Some(Instrument::Plugin(p)) = &t.instrument {
+                v.push(p);
+            }
+        }
+        let chains = self.tracks.iter().map(|t| &t.devices).chain(self.returns.iter().map(|r| &r.devices)).chain(std::iter::once(&self.master.devices));
+        for devs in chains {
+            v.extend(devs.iter().filter_map(|d| d.plugin.as_ref()));
+        }
+        v
+    }
+
+    /// The same, to change (e.g. to store their state).
+    pub fn plugins_mut(&mut self) -> Vec<&mut PluginInstrument> {
+        let mut v = Vec::new();
+        for t in &mut self.tracks {
+            if let Some(Instrument::Plugin(p)) = &mut t.instrument {
+                v.push(p);
+            }
+            v.extend(t.devices.iter_mut().filter_map(|d| d.plugin.as_mut()));
+        }
+        for devs in self.returns.iter_mut().map(|r| &mut r.devices).chain(std::iter::once(&mut self.master.devices)) {
+            v.extend(devs.iter_mut().filter_map(|d| d.plugin.as_mut()));
+        }
+        v
     }
 
     pub fn make_midi_device(&mut self, kind: crate::midi_fx::MidiFxKind) -> MidiDevice {
@@ -1053,9 +1109,14 @@ impl Project {
         let n_returns = self.returns.len();
         let mut max_id = self.next_id;
         let fix_devices = |devs: &mut Vec<Device>, max_id: &mut u64| {
+            // A plug-in device without its plug-in has nothing to play.
+            devs.retain(|d| (d.kind == EffectKind::Plugin) == d.plugin.is_some());
             for d in devs.iter_mut() {
                 params::fix_len(&mut d.params, d.kind.specs());
                 *max_id = (*max_id).max(d.id + 1);
+                if let Some(p) = &d.plugin {
+                    *max_id = (*max_id).max(p.instance + 1);
+                }
             }
         };
         for t in &mut self.tracks {
@@ -1074,6 +1135,9 @@ impl Project {
                 Some(Instrument::Braids { params, .. }) => params::fix_len(params, braids_synth::SPECS),
                 Some(Instrument::Elements { params, .. }) => params::fix_len(params, elements_synth::SPECS),
                 Some(Instrument::Analog { params, .. }) => params::fix_len(params, analog::SPECS),
+                Some(Instrument::Shakers { params, .. }) => params::fix_len(params, shaker_synth::SPECS),
+                // Shakers became an instrument; their kits are the Drum Rack's.
+                Some(Instrument::Drums { engine, .. }) if *engine == drums::DrumEngine::Shakers => *engine = drums::DrumEngine::Rack,
                 Some(Instrument::Plugin(p)) => max_id = max_id.max(p.instance + 1),
                 Some(Instrument::Fm { voice, params, .. }) => {
                     params::fix_len(params, fm::SPECS);
@@ -1248,6 +1312,42 @@ mod tests {
         // The second half (from beat 16, 8 beats into the clip) moved to the front.
         assert_eq!((v[0].start, v[0].length, v[0].offset), (0.0, 8.0, 8.0));
         assert_eq!((v[1].start, v[1].length, v[1].offset), (16.0, 8.0, 0.0));
+    }
+
+
+    #[test]
+    fn old_shaker_drum_tracks_open_in_the_drum_rack() {
+        let mut p = Project::blank();
+        let t = p.add_midi_track(None);
+        p.tracks[t].instrument = Some(Instrument::Drums { kit: "Shakers".into(), pads: drums::kit("Shakers"), engine: drums::DrumEngine::Shakers });
+        p.sanitize();
+        assert!(matches!(&p.tracks[t].instrument, Some(Instrument::Drums { engine: drums::DrumEngine::Rack, pads, .. }) if pads.len() == 8));
+        // And the Shakers instrument keeps its parameters in shape.
+        p.tracks[t].instrument = Some(Instrument::Shakers { preset: "Maraca".into(), params: vec![0.0; 3] });
+        p.sanitize();
+        assert!(matches!(&p.tracks[t].instrument, Some(Instrument::Shakers { params, .. }) if params.len() == crate::dsp::shaker_synth::SPECS.len()));
+    }
+
+
+    #[test]
+    fn a_plugin_device_saves_and_loads() {
+        let mut p = Project::blank();
+        let t = p.add_midi_track(None);
+        let fx = PluginInstrument { instance: 0, format: "clap".into(), plugin_id: "org.example.verb".into(), name: "Verb".into(), vendor: "Example".into(), path: "/usr/lib/clap/verb.clap".into(), state: Some("c3RhdGU=".into()) };
+        let dev = p.make_plugin_device(fx);
+        assert_eq!(dev.name(), "Verb");
+        p.tracks[t].devices.push(dev);
+        p.master.devices.push(Device { id: 999, kind: EffectKind::Plugin, enabled: true, params: Vec::new(), plugin: None });
+        let json = serde_json::to_string(&p).unwrap();
+        let mut back: Project = serde_json::from_str(&json).unwrap();
+        back.sanitize();
+        assert_eq!(back.tracks[t].devices, p.tracks[t].devices);
+        // A plug-in device that lost its plug-in is dropped.
+        assert!(back.master.devices.is_empty());
+        assert_eq!(back.plugins().len(), 1);
+        // Built-in effects do not write a plugin field.
+        let eq = p.make_device(EffectKind::Eq3);
+        assert!(!serde_json::to_string(&eq).unwrap().contains("plugin"));
     }
 
 }

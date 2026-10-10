@@ -16,6 +16,7 @@ pub mod macro_osc;
 pub mod effects;
 pub mod reverb;
 pub mod sampler;
+pub mod shaker_synth;
 pub mod shakers;
 pub mod synth;
 

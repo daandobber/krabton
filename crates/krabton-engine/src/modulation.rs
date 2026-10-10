@@ -7,7 +7,7 @@
 //! [`MOD_BLOCK`] frames): modulators advance, then each modulated parameter
 //! set is recomputed from the project value plus the routed offsets.
 
-use crate::dsp::{analog, braids_synth, elements_synth, fm, macro_osc, sampler, synth, Rng};
+use crate::dsp::{analog, braids_synth, elements_synth, fm, macro_osc, sampler, shaker_synth, synth, Rng};
 use crate::params::{ParamKind, ParamSpec, Unit};
 use crate::project::{Instrument, Project};
 use serde::{Deserialize, Serialize};
@@ -201,13 +201,14 @@ pub fn instrument_specs(i: &Instrument) -> Option<&'static [ParamSpec]> {
         Instrument::Braids { .. } => Some(braids_synth::SPECS),
         Instrument::Elements { .. } => Some(elements_synth::SPECS),
         Instrument::Analog { .. } => Some(analog::SPECS),
+        Instrument::Shakers { .. } => Some(shaker_synth::SPECS),
         _ => None,
     }
 }
 
 fn instrument_params(i: &Instrument) -> Option<&[f32]> {
     match i {
-        Instrument::Synth { params, .. } | Instrument::Sampler { params, .. } | Instrument::Fm { params, .. } | Instrument::Macro { params, .. } | Instrument::Braids { params, .. } | Instrument::Elements { params, .. } | Instrument::Analog { params, .. } => Some(params),
+        Instrument::Synth { params, .. } | Instrument::Sampler { params, .. } | Instrument::Fm { params, .. } | Instrument::Macro { params, .. } | Instrument::Braids { params, .. } | Instrument::Elements { params, .. } | Instrument::Analog { params, .. } | Instrument::Shakers { params, .. } => Some(params),
         _ => None,
     }
 }

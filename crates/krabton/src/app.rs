@@ -74,6 +74,8 @@ pub enum BrowserItem {
     Effect(EffectKind),
     Sample(PathBuf),
     Plugin(krabton_clap::PluginInfo),
+    /// A CLAP audio effect.
+    PluginEffect(krabton_clap::PluginInfo),
     /// An FM voice (155-byte DX7 voice) from a bank.
     FmVoice { bank: String, voice: Vec<u8> },
     MidiFx(krabton_engine::midi_fx::MidiFxKind),
@@ -85,6 +87,8 @@ pub enum BrowserItem {
     Elements(&'static str),
     /// An Analog preset.
     Analog(&'static str),
+    /// A Shakers preset.
+    Shakers(&'static str),
     /// A copy of a clip in this project.
     Clip { id: u64, name: String },
     /// An SFZ instrument, played by the Sampler.
@@ -107,11 +111,12 @@ impl BrowserItem {
             BrowserItem::Braids(p) => format!("Braids: {p}"),
             BrowserItem::Elements(p) => format!("Elements: {p}"),
             BrowserItem::Analog(p) => format!("Analog: {p}"),
+            BrowserItem::Shakers(p) => format!("Shakers: {p}"),
             BrowserItem::Drums(k) => k.to_string(),
             BrowserItem::Sampler => "Sampler".into(),
             BrowserItem::Effect(k) => k.name().into(),
             BrowserItem::Sample(p) => p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default(),
-            BrowserItem::Plugin(p) => p.name.clone(),
+            BrowserItem::Plugin(p) | BrowserItem::PluginEffect(p) => p.name.clone(),
             BrowserItem::MidiFx(k) => k.name().into(),
             BrowserItem::FmVoice { voice, .. } => {
                 krabton_engine::dsp::dx7::Dx7Voice::from_slice(voice).map(|v| format!("FM: {}", v.name())).unwrap_or_default()
@@ -832,13 +837,14 @@ impl App {
                 }
                 self.toast(format!("Loading {} ...", info.name));
             }
-            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) => {
+            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Shakers(_) => {
                 let inst = match item {
                     BrowserItem::Synth(p) => Instrument::synth(p),
                     BrowserItem::Macro(p) => Instrument::macro_osc(p),
                     BrowserItem::Braids(p) => Instrument::braids(p),
                     BrowserItem::Elements(p) => Instrument::elements(p),
                     BrowserItem::Analog(p) => Instrument::analog(p),
+                    BrowserItem::Shakers(p) => Instrument::shakers(p),
                     BrowserItem::Drums(k) => Instrument::drums(k),
                     _ => Instrument::sampler(None),
                 };
@@ -859,8 +865,12 @@ impl App {
                     }
                 }
             }
-            BrowserItem::Effect(kind) => {
-                let dev = self.project.make_device(*kind);
+            BrowserItem::Effect(_) | BrowserItem::PluginEffect(_) => {
+                let dev = match item {
+                    BrowserItem::PluginEffect(info) => self.project.make_plugin_device(PluginManager::make_instrument(info, 0)),
+                    BrowserItem::Effect(kind) => self.project.make_device(*kind),
+                    _ => return,
+                };
                 match target {
                     DropTarget::Chain(TrackSel::Return(r)) => {
                         if let Some(ret) = self.project.returns.get_mut(r) {
@@ -1106,6 +1116,13 @@ impl App {
         let Some(Instrument::Plugin(p)) = &t.instrument else { return };
         let title = format!("{} - {} - Krabton", t.name, p.name);
         if let Err(e) = self.plugins.toggle_editor(p.instance, &title) {
+            self.toast(e);
+        }
+    }
+
+    /// Opens or closes the editor of an effect plug-in.
+    pub fn toggle_effect_editor(&mut self, instance: u64, title: &str) {
+        if let Err(e) = self.plugins.toggle_editor(instance, &format!("{title} - Krabton")) {
             self.toast(e);
         }
     }
@@ -1686,6 +1703,12 @@ impl App {
                     self.apply_item(&BrowserItem::Analog(p), DropTarget::NewTrack);
                     self.detail = DetailTab::Devices;
                 }
+                "shakers" => {
+                    let names = krabton_engine::dsp::shaker_synth::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Shakers(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
                 "elements" => {
                     let names = krabton_engine::dsp::elements_synth::preset_names();
                     let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
@@ -1801,6 +1824,7 @@ impl App {
                 }
                 "clipview" => self.detail = DetailTab::Clip,
                 "track" => self.sel_track = TrackSel::Track(nums.first().copied().unwrap_or(0)),
+                "master" => self.sel_track = TrackSel::Master,
                 "routetrack" => {
                     self.route_into_new_audio_track(nums.first().copied().unwrap_or(0));
                 }
@@ -1864,6 +1888,18 @@ impl App {
                         self.apply_item(&BrowserItem::Plugin(info), DropTarget::NewTrack);
                     } else {
                         eprintln!("no plugin #{n}");
+                    }
+                }
+                "pluginfx" => {
+                    // An effect plug-in on the selected track's chain.
+                    let n = nums.first().copied().unwrap_or(0);
+                    let info = self.plugins.effects().nth(n).cloned();
+                    match info {
+                        Some(info) => {
+                            let sel = self.sel_track;
+                            self.apply_item(&BrowserItem::PluginEffect(info), DropTarget::Chain(sel));
+                        }
+                        None => eprintln!("no effect plugin #{n}"),
                     }
                 }
                 "savepath" => match self.project.save(std::path::Path::new(arg)) {

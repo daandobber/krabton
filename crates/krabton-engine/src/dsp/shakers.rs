@@ -109,10 +109,50 @@ impl Reson {
     }
 }
 
+/// How a shaker is played: everything but the model.
+#[derive(Clone, Copy, Debug)]
+pub struct ShakeSettings {
+    /// The resonances' frequencies are multiplied by this.
+    pub tune: f32,
+    /// How long each shake lasts (1 = as modeled).
+    pub decay: f32,
+    /// How sharply the resonances ring (0.5 = as modeled).
+    pub tone: f32,
+    /// How many objects (0.5 = as modeled, 0 a quarter, 1 four times as many).
+    pub objects: f32,
+    /// How long each collision rings (0.5 = as modeled).
+    pub grain: f32,
+    /// How much each collision detunes the resonances (0.5 = as modeled).
+    pub scatter: f32,
+    /// Shakes per hit, `rate` per second.
+    pub shakes: u32,
+    pub rate: f32,
+    /// Keep shaking at `rate` until released.
+    pub hold: bool,
+    /// Randomness of the shake timing (0..1).
+    pub humanize: f32,
+    /// Seconds over which a shake's energy comes in (0: at once).
+    pub swell: f32,
+    /// How far the collisions wander across the stereo field (0..1).
+    pub spread: f32,
+    /// Each next shake softer (up to 1) or louder (down to -1); 0: all alike.
+    pub fade: f32,
+}
+
+impl Default for ShakeSettings {
+    fn default() -> Self {
+        Self { tune: 1.0, decay: 1.0, tone: 0.5, objects: 0.5, grain: 0.5, scatter: 0.5, shakes: 1, rate: 8.0, hold: false, humanize: 0.0, swell: 0.0, spread: 0.0, fade: 0.0 }
+    }
+}
+
 /// A playing shaker.
 #[derive(Clone, Copy, Default)]
 pub struct Shaker {
     energy: f32,
+    /// Energy still coming in (a swelling shake).
+    incoming: f32,
+    /// Share of `incoming` that arrives per sample (1: all at once).
+    swell_coef: f32,
     level: f32,
     system_decay: f32,
     sound_decay: f32,
@@ -123,62 +163,150 @@ pub struct Shaker {
     trim: f32,
     sr: f32,
     res: [Reson; 5],
+    /// The right channel's resonances (when spread).
+    res_r: [Reson; 5],
     n: usize,
+    spread: f32,
+    gain_l: f32,
+    gain_r: f32,
+    /// Energy the next shake adds, at most `shake_cap` (the velocity).
+    shake_energy: f32,
+    shake_cap: f32,
+    /// `shake_energy` is multiplied by this after every shake.
+    fade: f32,
+    shakes_left: u32,
+    holding: bool,
+    /// Samples to the next shake.
+    countdown: f32,
+    interval: f32,
+    humanize: f32,
 }
 
+/// Shaking energy never goes over this, however often it is shaken (as in STK).
+const MAX_ENERGY: f32 = 1.0;
+
 impl Shaker {
-    /// Shakes model `m` once. `tune` scales the resonances, `decay` how
-    /// long the shaking lasts (1 = as modeled), `tone` how sharply they
-    /// ring (0.5 = as modeled) and `objects` how many there are (0.5 = as
-    /// modeled, 0 a quarter, 1 four times as many).
+    /// Shakes model `m` once (drum pads). `tune` scales the resonances,
+    /// `decay` how long the shaking lasts (1 = as modeled), `tone` how
+    /// sharply they ring (0.5 = as modeled) and `objects` how many there are
+    /// (0.5 = as modeled, 0 a quarter, 1 four times as many).
     pub fn trigger(&mut self, m: &ShakerModel, vel: f32, tune: f32, decay: f32, tone: f32, objects: f32, sr: f32) {
+        self.start(m, vel, &ShakeSettings { tune, decay, tone, objects, ..Default::default() }, sr);
+    }
+
+    /// Starts shaking model `m` as `s` says.
+    pub fn start(&mut self, m: &ShakerModel, vel: f32, s: &ShakeSettings, sr: f32) {
         let k = REF_RATE / sr;
         let per_sample = |d: f32, stretch: f32| d.powf(k / stretch.max(0.01));
-        self.system_decay = per_sample(m.system_decay, decay);
-        self.sound_decay = per_sample(m.sound_decay, 1.0);
-        let n_objects = m.objects * 4f32.powf((objects - 0.5) * 2.0);
+        self.system_decay = per_sample(m.system_decay, s.decay);
+        self.sound_decay = per_sample(m.sound_decay, 4f32.powf((s.grain - 0.5) * 2.0));
+        let n_objects = m.objects * 4f32.powf((s.objects - 0.5) * 2.0);
         self.chance = (n_objects / 1024.0 * k).min(1.0);
         // Fewer objects hit harder (Cook's gain rule).
         self.collision_gain = (n_objects + 1.0).ln() / 4f32.ln() * 40.0 / n_objects.max(0.5);
-        self.vary = m.vary;
+        let scatter = s.scatter.clamp(0.0, 1.0);
+        self.vary = m.vary * (2.0 * scatter).min(1.0) + (scatter - 0.5).max(0.0) * 0.4;
         self.trim = m.level;
         self.sr = sr;
         self.n = m.resonances.len().min(5);
-        let sharp = 2f32.powf((0.5 - tone) * 2.0);
+        let sharp = 2f32.powf((0.5 - s.tone) * 2.0);
         for (r, &(freq, radius, gain)) in self.res.iter_mut().zip(m.resonances) {
             r.radius = (1.0 - (1.0 - radius) * sharp).clamp(0.3, 0.9995);
-            r.freq = freq * tune;
+            r.freq = freq * s.tune;
             r.gain = gain;
             r.tune(r.freq, sr);
         }
-        self.energy += vel.clamp(0.0, 1.0);
-        // A hit starts with a collision, however few objects there are.
-        self.level = self.collision_gain * self.energy;
+        self.res_r = self.res;
+        self.spread = s.spread.clamp(0.0, 1.0);
+        self.gain_l = 1.0;
+        self.gain_r = 1.0;
+        let fade = s.fade.clamp(-1.0, 1.0);
+        self.shake_cap = vel.clamp(0.0, 1.0);
+        // Growing shakes start soft.
+        self.shake_energy = self.shake_cap * (1.0 + 0.8 * fade.min(0.0));
+        self.fade = 1.0 - 0.3 * fade;
+        self.shakes_left = s.shakes.max(1) - 1;
+        self.holding = s.hold;
+        self.interval = sr / s.rate.max(0.1);
+        self.countdown = self.interval;
+        self.humanize = s.humanize.clamp(0.0, 1.0);
+        self.swell_coef = if s.swell > 1e-3 { 1.0 - (-1.0 / (s.swell * sr)).exp() } else { 1.0 };
+        self.shake();
+    }
+
+    /// One shake: its energy comes in, at once with a first collision, or
+    /// swelling.
+    fn shake(&mut self) {
+        if self.swell_coef < 1.0 {
+            self.incoming += self.shake_energy;
+        } else {
+            self.energy = (self.energy + self.shake_energy).min(MAX_ENERGY);
+            // A shake starts with a collision, however few objects there are.
+            self.level += self.collision_gain * self.energy;
+        }
+    }
+
+    /// The note was let go: no more shakes (what is shaking dies away).
+    pub fn release(&mut self) {
+        self.holding = false;
+        self.shakes_left = 0;
     }
 
     pub fn is_done(&self) -> bool {
-        self.energy < 1e-5 && self.level < 1e-5
+        !self.holding && self.shakes_left == 0 && self.incoming < 1e-4 && self.energy < 1e-4 && self.level < 1e-4
     }
 
+    /// The next sample, left and right.
     #[inline]
-    pub fn tick(&mut self, rng: &mut Rng) -> f32 {
+    pub fn tick(&mut self, rng: &mut Rng) -> (f32, f32) {
+        if self.shakes_left > 0 || self.holding {
+            self.countdown -= 1.0;
+            if self.countdown <= 0.0 {
+                self.shakes_left = self.shakes_left.saturating_sub(1);
+                self.countdown += self.interval * (1.0 + 0.6 * self.humanize * rng.bipolar());
+                self.shake_energy = (self.shake_energy * self.fade).min(self.shake_cap);
+                self.shake();
+            }
+        }
+        if self.incoming > 0.0 {
+            let d = self.incoming * self.swell_coef;
+            self.energy = (self.energy + d).min(MAX_ENERGY);
+            self.incoming = if self.incoming - d < 1e-6 { 0.0 } else { self.incoming - d };
+        }
         self.energy *= self.system_decay;
         if rng.unipolar() < self.chance {
             self.level += self.collision_gain * self.energy;
+            if self.spread > 0.0 {
+                let pan = self.spread * rng.bipolar();
+                self.gain_l = 1.0 - pan.max(0.0);
+                self.gain_r = 1.0 + pan.min(0.0);
+            }
             if self.vary > 0.0 {
-                for r in self.res[..self.n].iter_mut() {
-                    let f = r.freq * (1.0 + self.vary * rng.bipolar());
-                    r.tune(f, self.sr);
+                for i in 0..self.n {
+                    let f = self.res[i].freq * (1.0 + self.vary * rng.bipolar());
+                    self.res[i].tune(f, self.sr);
+                    let (a1, a2, b0) = (self.res[i].a1, self.res[i].a2, self.res[i].b0);
+                    let rr = &mut self.res_r[i];
+                    (rr.a1, rr.a2, rr.b0) = (a1, a2, b0);
                 }
             }
         }
         let input = self.level * rng.bipolar();
         self.level *= self.sound_decay;
-        let mut out = 0.0;
-        for r in self.res[..self.n].iter_mut() {
-            out += r.tick(input) * r.gain;
+        let scale = self.trim * 0.05;
+        if self.spread <= 0.0 {
+            let mut out = 0.0;
+            for r in self.res[..self.n].iter_mut() {
+                out += r.tick(input) * r.gain;
+            }
+            return (out * scale, out * scale);
         }
-        out * self.trim * 0.05
+        let (mut l, mut r) = (0.0, 0.0);
+        for i in 0..self.n {
+            l += self.res[i].tick(input * self.gain_l) * self.res[i].gain;
+            r += self.res_r[i].tick(input * self.gain_r) * self.res_r[i].gain;
+        }
+        (l * scale, r * scale)
     }
 }
 
@@ -191,7 +319,7 @@ mod tests {
         let mut s = Shaker::default();
         let mut rng = Rng::new(12345);
         s.trigger(m, 1.0, 1.0, 1.0, 0.5, 0.5, sr);
-        (0..(secs * sr) as usize).map(|_| s.tick(&mut rng)).collect()
+        (0..(secs * sr) as usize).map(|_| s.tick(&mut rng).0).collect()
     }
 
     #[test]
@@ -231,4 +359,61 @@ mod tests {
         };
         assert!(crossings(1.0) > crossings(0.0) * 4, "{} vs {}", crossings(1.0), crossings(0.0));
     }
+
+    /// The loudest sample from `from` seconds to the end of `secs`, and
+    /// whether the shaker had stopped.
+    fn tail(s: &ShakeSettings, secs: f32, from: f32, release_at: Option<f32>) -> (f32, bool) {
+        let sr = 48000.0;
+        let mut sh = Shaker::default();
+        let mut rng = Rng::new(9);
+        sh.start(&MODELS[0], 1.0, s, sr);
+        let mut peak = 0.0f32;
+        for i in 0..(secs * sr) as usize {
+            if release_at.is_some_and(|t| i == (t * sr) as usize) {
+                sh.release();
+            }
+            let (l, r) = sh.tick(&mut rng);
+            if i >= (from * sr) as usize {
+                peak = peak.max(l.abs().max(r.abs()));
+            }
+        }
+        (peak, sh.is_done())
+    }
+
+    #[test]
+    fn more_shakes_and_holding_keep_it_going() {
+        let one = ShakeSettings::default();
+        let four = ShakeSettings { shakes: 4, rate: 4.0, ..Default::default() };
+        let held = ShakeSettings { hold: true, rate: 6.0, ..Default::default() };
+        // Around 0.8 s one shake is long gone; the fourth of four is sounding.
+        assert!(tail(&one, 0.9, 0.8, None).0 < 0.01);
+        assert!(tail(&four, 0.9, 0.8, None).0 > 0.05);
+        // Held, it keeps going; let go, it stops.
+        assert!(tail(&held, 3.0, 2.8, None).0 > 0.05);
+        let (peak, done) = tail(&held, 6.0, 5.8, Some(1.0));
+        assert!(peak < 0.01 && done, "{peak} {done}");
+    }
+
+    #[test]
+    fn a_swell_comes_in_slowly() {
+        let at_once = tail(&ShakeSettings::default(), 0.03, 0.0, None).0;
+        let swelling = tail(&ShakeSettings { swell: 0.5, ..Default::default() }, 0.03, 0.0, None).0;
+        assert!(swelling < at_once * 0.5, "{swelling} vs {at_once}");
+    }
+
+    #[test]
+    fn spread_puts_collisions_apart() {
+        let sr = 48000.0;
+        let mut sh = Shaker::default();
+        let mut rng = Rng::new(4);
+        sh.start(&MODELS[1], 1.0, &ShakeSettings { spread: 1.0, ..Default::default() }, sr);
+        let (mut diff, mut sum) = (0.0f32, 0.0f32);
+        for _ in 0..24000 {
+            let (l, r) = sh.tick(&mut rng);
+            diff += (l - r).abs();
+            sum += l.abs() + r.abs();
+        }
+        assert!(diff > 0.2 * sum, "left and right differ: {diff} of {sum}");
+    }
+
 }

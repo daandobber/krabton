@@ -97,13 +97,13 @@ fn describe_track(a: &Track, b: &Track) -> String {
     }
     if a.devices != b.devices {
         if a.devices.len() < b.devices.len() {
-            return format!("{t}: add {}", b.devices.last().map(|d| d.kind.name()).unwrap_or("effect"));
+            return format!("{t}: add {}", b.devices.last().map(|d| d.name()).unwrap_or("effect"));
         }
         if a.devices.len() > b.devices.len() {
             return format!("{t}: remove effect");
         }
         if let Some(d) = a.devices.iter().zip(&b.devices).find(|(x, y)| x != y).map(|(_, y)| y) {
-            return format!("{t}: {}", d.kind.name());
+            return format!("{t}: {}", d.name());
         }
     }
     if a.midi_devices != b.midi_devices {

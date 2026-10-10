@@ -8,6 +8,7 @@ use krabton_engine::dsp::drums::{self, DrumVoice};
 use krabton_engine::dsp::effects::EffectKind;
 use krabton_engine::midi_fx::MidiFxKind;
 use krabton_engine::dsp::analog;
+use krabton_engine::dsp::shaker_synth;
 use krabton_engine::dsp::braids_synth;
 use krabton_engine::dsp::elements_synth;
 use krabton_engine::dsp::macro_osc::{self, HARMONICS, MODEL};
@@ -203,6 +204,8 @@ impl App {
         let dev = chain.get_mut(d)?;
         let kind = dev.kind;
         let dev_id = dev.id;
+        let title = dev.name().to_string();
+        let plugin = dev.plugin.clone();
         let id = Id::new(("device", dev.id));
         let mut enabled = dev.enabled;
         let mut params = dev.params.clone();
@@ -218,8 +221,38 @@ impl App {
         };
         let mut width = self.prefs.layout.display(kind.name(), default_w);
         let width_before = width;
-        let (changed, action) = device_frame(ui, kind.name(), Some(&mut enabled), h, |ui| {
-            if kind == EffectKind::Scope {
+        let plugin_status = plugin.as_ref().map(|p| self.plugins.status(p.instance));
+        let mut toggle_editor = false;
+        let (changed, action) = device_frame(ui, &title, Some(&mut enabled), h, |ui| {
+            if let (Some(p), Some(st)) = (&plugin, &plugin_status) {
+                ui.vertical(|ui| {
+                    ui.set_min_width(240.0);
+                    ui.label(RichText::new(&p.name).strong().size(15.0).color(accent));
+                    ui.label(RichText::new(format!("by {}", p.vendor)).small().color(TEXT_DIM));
+                    ui.add_space(6.0);
+                    match st {
+                        crate::plugins::PluginStatus::Loaded { has_editor: true, editor_open } => {
+                            let label = if *editor_open { "Close Editor" } else { "Open Editor" };
+                            if ui.add(egui::Button::new(RichText::new(label).color(TEXT_DARK)).fill(ACCENT).min_size(vec2(130.0, 26.0))).clicked() {
+                                toggle_editor = true;
+                            }
+                        }
+                        crate::plugins::PluginStatus::Loaded { .. } => {
+                            ui.label("This plug-in has no editor.");
+                        }
+                        crate::plugins::PluginStatus::Failed(e) => {
+                            ui.label(RichText::new(format!("Could not load it: {e}")).color(REC));
+                            ui.label(RichText::new(p.path.display().to_string()).small().color(TEXT_DIM));
+                        }
+                        crate::plugins::PluginStatus::Loading => {
+                            ui.label("Loading...");
+                        }
+                    }
+                    ui.add_space(4.0);
+                    ui.label(RichText::new("Its settings are saved with your set.").small().color(TEXT_DIM));
+                });
+                false
+            } else if kind == EffectKind::Scope {
                 ui.horizontal_top(|ui| {
                     let opts = crate::ui::scope::ScopeOpts::from_params(&params);
                     let (rect, _) = ui.allocate_exact_size(vec2(width, (h - 30.0).max(80.0)), Sense::hover());
@@ -241,6 +274,9 @@ impl App {
             }
         });
         self.apply_mod_view(mv);
+        if let (true, Some(p)) = (toggle_editor, &plugin) {
+            self.toggle_effect_editor(p.instance, &p.name);
+        }
         if width != width_before {
             self.prefs.layout.displays.insert(kind.name().to_string(), width);
             self.layout_dirty = true;
@@ -370,6 +406,11 @@ impl App {
                 if let Some(c) = self.chain_mut(sel) {
                     c.push(dev);
                 }
+            } else if let BrowserItem::PluginEffect(info) = &*item {
+                let dev = self.project.make_plugin_device(crate::plugins::PluginManager::make_instrument(info, 0));
+                if let Some(c) = self.chain_mut(sel) {
+                    c.push(dev);
+                }
             } else {
                 let t = self.default_target();
                 self.apply_item(&item, t);
@@ -394,6 +435,21 @@ impl App {
                             }
                             close = true;
                         }
+                    }
+                    let plugins: Vec<krabton_clap::PluginInfo> = self.plugins.effects().cloned().collect();
+                    if !plugins.is_empty() {
+                        ui.separator();
+                        egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+                            for info in &plugins {
+                                if ui.button(&info.name).on_hover_text(format!("{} (CLAP)", info.vendor)).clicked() {
+                                    let dev = self.project.make_plugin_device(crate::plugins::PluginManager::make_instrument(info, 0));
+                                    if let Some(c) = self.chain_mut(sel) {
+                                        c.push(dev);
+                                    }
+                                    close = true;
+                                }
+                            }
+                        });
                     }
                     if ui.button("Cancel").clicked() {
                         close = true;
@@ -485,6 +541,21 @@ impl App {
                             ui.label(RichText::new("classic analog polysynth").small().color(TEXT_DIM));
                         });
                         param_grid_mod(ui, Id::new(("analog", track_id)), analog::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
+                    }
+                    Instrument::Shakers { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("shakers_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in shaker_synth::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = shaker_synth::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("PhISEM shakers: the key tunes them, Hold keeps shaking").small().color(TEXT_DIM));
+                        });
+                        param_grid_mod(ui, Id::new(("shakers", track_id)), shaker_synth::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
                     }
                     Instrument::Macro { preset, params } => {
                         ui.horizontal(|ui| {
