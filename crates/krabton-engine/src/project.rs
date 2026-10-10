@@ -234,6 +234,18 @@ pub struct DrumPad {
     pub tone: f32,
     pub pan: f32,
     pub sample: Option<SampleRef>,
+    /// The voice's extra knobs (see `DrumVoice::macros`).
+    #[serde(default = "half")]
+    pub a: f32,
+    #[serde(default = "half")]
+    pub b: f32,
+    /// Pads in the same group (1-4) cut each other off; 0: none.
+    #[serde(default)]
+    pub choke: u8,
+}
+
+fn half() -> f32 {
+    0.5
 }
 
 impl DrumPad {
@@ -243,9 +255,20 @@ impl DrumPad {
             voice,
             note: voice.gm_note(),
             level_db: match voice {
-                DrumVoice::Kick => 0.0,
-                DrumVoice::ClosedHat | DrumVoice::OpenHat => -6.0,
-                DrumVoice::Cowbell | DrumVoice::Rim => -8.0,
+                DrumVoice::Kick | DrumVoice::AnalogKick | DrumVoice::SynthKick | DrumVoice::M808Kick | DrumVoice::M909Kick | DrumVoice::Cr78Kick => 0.0,
+                DrumVoice::ClosedHat
+                | DrumVoice::OpenHat
+                | DrumVoice::MetalHat
+                | DrumVoice::RingHat
+                | DrumVoice::M808ClosedHat
+                | DrumVoice::M808OpenHat
+                | DrumVoice::M909ClosedHat
+                | DrumVoice::M909OpenHat
+                | DrumVoice::Cr78Hat
+                | DrumVoice::M808Cymbal
+                | DrumVoice::Cr78Cymbal => -6.0,
+                DrumVoice::Cowbell | DrumVoice::Rim | DrumVoice::M808Cowbell | DrumVoice::M808Rim | DrumVoice::M909Rim | DrumVoice::M808Claves | DrumVoice::Cr78Metal => -8.0,
+                v if v.family() == drums::Family::Shaker => -2.0,
                 _ => -3.0,
             },
             tune: 0.0,
@@ -253,8 +276,44 @@ impl DrumPad {
             tone: 0.5,
             pan: 0.0,
             sample: None,
+            a: 0.5,
+            b: 0.5,
+            choke: 0,
         }
     }
+}
+
+/// One sample of a Sampler, played over a range of keys and velocities.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SampleZone {
+    pub sample: SampleRef,
+    pub lo_key: u8,
+    pub hi_key: u8,
+    /// The key that plays the sample at its own pitch.
+    pub root: u8,
+    #[serde(default)]
+    pub lo_vel: u8,
+    #[serde(default = "max_vel")]
+    pub hi_vel: u8,
+    /// Cents.
+    #[serde(default)]
+    pub tune: f32,
+    #[serde(default)]
+    pub gain_db: f32,
+    #[serde(default)]
+    pub pan: f32,
+    /// Where it starts and ends, in frames (end 0: the end of the sample).
+    #[serde(default)]
+    pub start: u32,
+    #[serde(default)]
+    pub end: u32,
+    /// A loop it always plays (from an SFZ), in frames.
+    #[serde(default)]
+    pub loop_range: Option<(u32, u32)>,
+}
+
+fn max_vel() -> u8 {
+    127
 }
 
 /// A hosted plugin instrument (currently CLAP).
@@ -275,8 +334,20 @@ pub struct PluginInstrument {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Instrument {
     Synth { preset: String, params: Vec<f32> },
-    Drums { kit: String, pads: Vec<DrumPad> },
-    Sampler { params: Vec<f32>, sample: Option<SampleRef> },
+    /// A drum instrument: an engine's pads (808, 909, ... or a rack).
+    Drums {
+        kit: String,
+        pads: Vec<DrumPad>,
+        #[serde(default)]
+        engine: drums::DrumEngine,
+    },
+    /// One sample on every key, or `zones` (when there are any).
+    Sampler {
+        params: Vec<f32>,
+        sample: Option<SampleRef>,
+        #[serde(default)]
+        zones: Vec<SampleZone>,
+    },
     Plugin(PluginInstrument),
     /// FM: a DX7-compatible voice (155 bytes, VCED) plus engine settings.
     Fm { voice: Vec<u8>, op_mask: u8, bank: String, params: Vec<f32> },
@@ -297,11 +368,11 @@ impl Instrument {
     }
 
     pub fn drums(kit: &str) -> Self {
-        Instrument::Drums { kit: kit.to_string(), pads: drums::kit(kit) }
+        Instrument::Drums { kit: kit.to_string(), pads: drums::kit(kit), engine: drums::engine_of(kit) }
     }
 
     pub fn sampler(sample: Option<SampleRef>) -> Self {
-        Instrument::Sampler { params: params::defaults(sampler::SPECS), sample }
+        Instrument::Sampler { params: params::defaults(sampler::SPECS), sample, zones: Vec::new() }
     }
 
     pub fn fm(voice: &Dx7Voice, bank: &str) -> Self {
@@ -327,7 +398,7 @@ impl Instrument {
     pub fn kind_name(&self) -> &'static str {
         match self {
             Instrument::Synth { .. } => "Synth",
-            Instrument::Drums { .. } => "Drums",
+            Instrument::Drums { engine, .. } => engine.name(),
             Instrument::Sampler { .. } => "Sampler",
             Instrument::Plugin(_) => "CLAP Plugin",
             Instrument::Fm { .. } => "FM",
@@ -342,6 +413,8 @@ impl Instrument {
         match self {
             Instrument::Synth { preset, .. } => preset.clone(),
             Instrument::Drums { kit, .. } => kit.clone(),
+            Instrument::Sampler { zones, .. } if zones.len() > 1 => format!("{} zones", zones.len()),
+            Instrument::Sampler { zones, .. } if zones.len() == 1 => zones[0].sample.name.clone(),
             Instrument::Sampler { sample, .. } => sample.as_ref().map(|s| s.name.clone()).unwrap_or_else(|| "Empty".into()),
             Instrument::Plugin(p) => p.name.clone(),
             Instrument::Fm { voice, .. } => Dx7Voice::from_slice(voice).map(|v| v.name()).unwrap_or_else(|| "FM".into()),
@@ -539,7 +612,7 @@ impl Project {
     /// The default "new set": a drum track, a synth track and an audio track.
     pub fn new_default() -> Self {
         let mut p = Self::blank();
-        p.add_midi_track(Some(Instrument::drums("909 Krab")));
+        p.add_midi_track(Some(Instrument::drums("Classic 909")));
         p.add_midi_track(Some(Instrument::synth("Fat Bass")));
         p.add_audio_track();
         p

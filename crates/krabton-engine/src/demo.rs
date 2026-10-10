@@ -56,7 +56,7 @@ pub fn demo_project() -> Project {
     }
 
     // --- Drums -----------------------------------------------------------
-    let drums = p.add_midi_track(Some(Instrument::drums("909 Krab")));
+    let drums = p.add_midi_track(Some(Instrument::drums("Classic 909")));
     p.tracks[drums].color = PALETTE[1];
     let mut comp = p.make_device(EffectKind::Compressor);
     comp.params[0] = -16.0;

@@ -1,7 +1,19 @@
-//! Drums: a synthesized drum rack with optional per-pad samples.
+//! Drums: a drum rack. Every pad plays one voice: Krabton's own drum
+//! synthesis (Classic), a voice after a classic drum machine (808, 909,
+//! CR-78, electronic toms; see `machines`), a Mutable Instruments drum model (the 808-style and
+//! synthetic kicks, snares and hi-hats of Plaits, MIT licensed, through
+//! mi-plaits-dsp), a PhISEM shaker (see `shakers`), or a sample.
 
+use super::machines::MachineVoice;
+use super::shakers::{self, Shaker, ShakerModel};
 use super::*;
 use crate::project::DrumPad;
+use mi_plaits_dsp::drums::analog_bass_drum::AnalogBassDrum;
+use mi_plaits_dsp::drums::analog_snare_drum::AnalogSnareDrum;
+use mi_plaits_dsp::drums::hihat::{Hihat, NoiseType, VcaType};
+use mi_plaits_dsp::drums::synthetic_bass_drum::SyntheticBassDrum;
+use mi_plaits_dsp::drums::synthetic_snare_drum::SyntheticSnareDrum;
+use mi_plaits_dsp::fx::overdrive::Overdrive;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -14,10 +26,64 @@ pub enum DrumVoice {
     Tom,
     Rim,
     Cowbell,
+    AnalogKick,
+    SynthKick,
+    AnalogSnare,
+    SynthSnare,
+    MetalHat,
+    RingHat,
+    Maraca,
+    Cabasa,
+    Sekere,
+    Tambourine,
+    SleighBells,
+    Bamboo,
+    Sandpaper,
+    Can,
+    Crunch,
+    Rocks,
+    Gravel,
+    M808Kick,
+    M808Snare,
+    M808Tom,
+    M808Conga,
+    M808Rim,
+    M808Clap,
+    M808Claves,
+    M808Maracas,
+    M808Cowbell,
+    M808Cymbal,
+    M808ClosedHat,
+    M808OpenHat,
+    M909Kick,
+    M909Snare,
+    M909Tom,
+    M909Rim,
+    M909Clap,
+    M909ClosedHat,
+    M909OpenHat,
+    Cr78Kick,
+    Cr78Snare,
+    Cr78Hat,
+    Cr78Cymbal,
+    Cr78Bongo,
+    Cr78Guiro,
+    Cr78Tambourine,
+    Cr78Metal,
+    ElectroTom,
+}
+
+/// Where a voice comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Family {
+    Classic,
+    Machine,
+    Mutable,
+    Shaker,
 }
 
 impl DrumVoice {
-    pub const ALL: [DrumVoice; 8] = [
+    pub const CLASSIC: [DrumVoice; 8] = [
         DrumVoice::Kick,
         DrumVoice::Snare,
         DrumVoice::ClosedHat,
@@ -27,8 +93,78 @@ impl DrumVoice {
         DrumVoice::Rim,
         DrumVoice::Cowbell,
     ];
+    pub const MUTABLE: [DrumVoice; 6] = [DrumVoice::AnalogKick, DrumVoice::SynthKick, DrumVoice::AnalogSnare, DrumVoice::SynthSnare, DrumVoice::MetalHat, DrumVoice::RingHat];
+    /// In the order of `shakers::MODELS`.
+    pub const SHAKERS: [DrumVoice; 11] = [
+        DrumVoice::Maraca,
+        DrumVoice::Cabasa,
+        DrumVoice::Sekere,
+        DrumVoice::Tambourine,
+        DrumVoice::SleighBells,
+        DrumVoice::Bamboo,
+        DrumVoice::Sandpaper,
+        DrumVoice::Can,
+        DrumVoice::Crunch,
+        DrumVoice::Rocks,
+        DrumVoice::Gravel,
+    ];
+    pub const M808: [DrumVoice; 12] = [
+        DrumVoice::M808Kick,
+        DrumVoice::M808Snare,
+        DrumVoice::M808Tom,
+        DrumVoice::M808Conga,
+        DrumVoice::M808Rim,
+        DrumVoice::M808Clap,
+        DrumVoice::M808Claves,
+        DrumVoice::M808Maracas,
+        DrumVoice::M808Cowbell,
+        DrumVoice::M808Cymbal,
+        DrumVoice::M808ClosedHat,
+        DrumVoice::M808OpenHat,
+    ];
+    pub const M909: [DrumVoice; 7] = [DrumVoice::M909Kick, DrumVoice::M909Snare, DrumVoice::M909Tom, DrumVoice::M909Rim, DrumVoice::M909Clap, DrumVoice::M909ClosedHat, DrumVoice::M909OpenHat];
+    pub const CR78: [DrumVoice; 8] = [
+        DrumVoice::Cr78Kick,
+        DrumVoice::Cr78Snare,
+        DrumVoice::Cr78Hat,
+        DrumVoice::Cr78Cymbal,
+        DrumVoice::Cr78Bongo,
+        DrumVoice::Cr78Guiro,
+        DrumVoice::Cr78Tambourine,
+        DrumVoice::Cr78Metal,
+    ];
+    pub const ELECTRO: [DrumVoice; 1] = [DrumVoice::ElectroTom];
+    /// The voices as the pad menu groups them.
+    pub const GROUPS: [(&'static str, &'static [DrumVoice]); 7] = [
+        ("Classic", &Self::CLASSIC),
+        ("808", &Self::M808),
+        ("909", &Self::M909),
+        ("CR-78", &Self::CR78),
+        ("Electronic", &Self::ELECTRO),
+        ("Mutable", &Self::MUTABLE),
+        ("Shakers", &Self::SHAKERS),
+    ];
+
+    pub fn family(self) -> Family {
+        if Self::M808.contains(&self) || Self::M909.contains(&self) || Self::CR78.contains(&self) || Self::ELECTRO.contains(&self) {
+            Family::Machine
+        } else if Self::MUTABLE.contains(&self) {
+            Family::Mutable
+        } else if Self::SHAKERS.contains(&self) {
+            Family::Shaker
+        } else {
+            Family::Classic
+        }
+    }
+
+    fn shaker(self) -> Option<&'static ShakerModel> {
+        Self::SHAKERS.iter().position(|v| *v == self).map(|i| &shakers::MODELS[i])
+    }
 
     pub fn name(self) -> &'static str {
+        if let Some(m) = self.shaker() {
+            return m.name;
+        }
         match self {
             DrumVoice::Kick => "Kick",
             DrumVoice::Snare => "Snare",
@@ -38,29 +174,601 @@ impl DrumVoice {
             DrumVoice::Tom => "Tom",
             DrumVoice::Rim => "Rim",
             DrumVoice::Cowbell => "Cowbell",
+            DrumVoice::AnalogKick => "Analog Kick",
+            DrumVoice::SynthKick => "Synth Kick",
+            DrumVoice::AnalogSnare => "Analog Snare",
+            DrumVoice::SynthSnare => "Synth Snare",
+            DrumVoice::MetalHat => "Metal Hat",
+            DrumVoice::RingHat => "Ring Hat",
+            DrumVoice::M808Kick => "808 Kick",
+            DrumVoice::M808Snare => "808 Snare",
+            DrumVoice::M808Tom => "808 Tom",
+            DrumVoice::M808Conga => "808 Conga",
+            DrumVoice::M808Rim => "808 Rim",
+            DrumVoice::M808Clap => "808 Clap",
+            DrumVoice::M808Claves => "808 Claves",
+            DrumVoice::M808Maracas => "808 Maracas",
+            DrumVoice::M808Cowbell => "808 Cowbell",
+            DrumVoice::M808Cymbal => "808 Cymbal",
+            DrumVoice::M808ClosedHat => "808 Closed Hat",
+            DrumVoice::M808OpenHat => "808 Open Hat",
+            DrumVoice::M909Kick => "909 Kick",
+            DrumVoice::M909Snare => "909 Snare",
+            DrumVoice::M909Tom => "909 Tom",
+            DrumVoice::M909Rim => "909 Rim",
+            DrumVoice::M909Clap => "909 Clap",
+            DrumVoice::M909ClosedHat => "909 Closed Hat",
+            DrumVoice::M909OpenHat => "909 Open Hat",
+            DrumVoice::Cr78Kick => "CR-78 Kick",
+            DrumVoice::Cr78Snare => "CR-78 Snare",
+            DrumVoice::Cr78Hat => "CR-78 Hat",
+            DrumVoice::Cr78Cymbal => "CR-78 Cymbal",
+            DrumVoice::Cr78Bongo => "CR-78 Bongo",
+            DrumVoice::Cr78Guiro => "CR-78 Guiro",
+            DrumVoice::Cr78Tambourine => "CR-78 Tambourine",
+            DrumVoice::Cr78Metal => "CR-78 Metal",
+            DrumVoice::ElectroTom => "Electro Tom",
+            _ => "",
         }
     }
 
     /// General MIDI note for this voice, so MIDI drum controllers just work.
     pub fn gm_note(self) -> u8 {
         match self {
-            DrumVoice::Kick => 36,
+            DrumVoice::Kick | DrumVoice::AnalogKick => 36,
+            DrumVoice::SynthKick => 35,
             DrumVoice::Rim => 37,
-            DrumVoice::Snare => 38,
+            DrumVoice::Snare | DrumVoice::AnalogSnare => 38,
+            DrumVoice::SynthSnare => 40,
             DrumVoice::Clap => 39,
-            DrumVoice::ClosedHat => 42,
+            DrumVoice::ClosedHat | DrumVoice::MetalHat => 42,
             DrumVoice::Tom => 45,
-            DrumVoice::OpenHat => 46,
+            DrumVoice::OpenHat | DrumVoice::RingHat => 46,
             DrumVoice::Cowbell => 56,
+            DrumVoice::Tambourine => 54,
+            DrumVoice::Cabasa => 69,
+            DrumVoice::Maraca => 70,
+            DrumVoice::Sandpaper => 74,
+            DrumVoice::Rocks => 75,
+            DrumVoice::Can => 76,
+            DrumVoice::Crunch => 77,
+            DrumVoice::Gravel => 79,
+            DrumVoice::Sekere => 82,
+            DrumVoice::SleighBells => 83,
+            DrumVoice::Bamboo => 84,
+            DrumVoice::M808Kick | DrumVoice::M909Kick | DrumVoice::Cr78Kick => 36,
+            DrumVoice::M808Rim | DrumVoice::M909Rim => 37,
+            DrumVoice::M808Snare | DrumVoice::M909Snare | DrumVoice::Cr78Snare => 38,
+            DrumVoice::M808Clap | DrumVoice::M909Clap => 39,
+            DrumVoice::M808ClosedHat | DrumVoice::M909ClosedHat | DrumVoice::Cr78Hat => 42,
+            DrumVoice::M808Tom | DrumVoice::M909Tom | DrumVoice::ElectroTom => 45,
+            DrumVoice::M808OpenHat | DrumVoice::M909OpenHat => 46,
+            DrumVoice::M808Cymbal | DrumVoice::Cr78Cymbal => 49,
+            DrumVoice::Cr78Tambourine => 54,
+            DrumVoice::M808Cowbell | DrumVoice::Cr78Metal => 56,
+            DrumVoice::Cr78Bongo => 60,
+            DrumVoice::M808Conga => 63,
+            DrumVoice::M808Maracas => 70,
+            DrumVoice::Cr78Guiro => 73,
+            DrumVoice::M808Claves => 75,
+        }
+    }
+
+    /// Names of the pad's two extra knobs for this voice (None: not used).
+    pub fn macros(self) -> [Option<&'static str>; 2] {
+        match self.family() {
+            Family::Classic => [None, None],
+            Family::Machine => match self {
+                DrumVoice::M808Snare | DrumVoice::M909Snare | DrumVoice::Cr78Snare => [Some("Snappy"), None],
+                DrumVoice::M909Kick => [Some("Attack"), None],
+                DrumVoice::ElectroTom => [Some("Bend"), None],
+                _ => [None, None],
+            },
+            Family::Shaker => [Some("Objects"), None],
+            Family::Mutable => match self {
+                DrumVoice::AnalogKick => [Some("Punch"), None],
+                DrumVoice::SynthKick => [Some("Dirt"), Some("FM")],
+                DrumVoice::AnalogSnare | DrumVoice::SynthSnare => [Some("Snappy"), None],
+                _ => [Some("Noise"), None],
+            },
+        }
+    }
+
+    /// Pitch of a Mutable model at Tune 0, in Hz.
+    fn base_hz(self) -> f32 {
+        match self {
+            DrumVoice::AnalogKick => 52.0,
+            DrumVoice::SynthKick => 50.0,
+            DrumVoice::AnalogSnare => 190.0,
+            DrumVoice::SynthSnare => 200.0,
+            // The metallic oscillators sit around 400 Hz (an 808's).
+            _ => 207.0,
+        }
+    }
+
+    /// Output trim so the Mutable models play at similar levels.
+    fn trim(self) -> f32 {
+        if self == DrumVoice::RingHat {
+            0.75
+        } else {
+            1.0
         }
     }
 }
 
-pub fn kit_names() -> &'static [&'static str] {
-    &["808 Krab", "909 Krab", "Lo-Fi Krab"]
+/// The pad's Decay (0.1..4, 1 = as designed) as a Mutable model's decay
+/// (0..1).
+fn model_decay(voice: DrumVoice, decay: f32) -> f32 {
+    let base = match voice {
+        DrumVoice::AnalogKick | DrumVoice::SynthKick => 0.55,
+        _ => 0.45,
+    };
+    (base + 0.22 * decay.max(0.01).log2()).clamp(0.0, 1.0)
+}
+
+/// A drum instrument: which voices its pads can play, and its kits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum DrumEngine {
+    /// Every voice, and samples.
+    #[default]
+    Rack,
+    M808,
+    M909,
+    Cr78,
+    Mutable,
+    Shakers,
+}
+
+static G808: [(&str, &[DrumVoice]); 1] = [("808", &DrumVoice::M808)];
+static G909: [(&str, &[DrumVoice]); 1] = [("909", &DrumVoice::M909)];
+static GCR78: [(&str, &[DrumVoice]); 1] = [("CR-78", &DrumVoice::CR78)];
+static GMUTABLE: [(&str, &[DrumVoice]); 1] = [("Mutable", &DrumVoice::MUTABLE)];
+static GSHAKERS: [(&str, &[DrumVoice]); 1] = [("Shakers", &DrumVoice::SHAKERS)];
+
+impl DrumEngine {
+    pub const ALL: [DrumEngine; 6] = [DrumEngine::M808, DrumEngine::M909, DrumEngine::Cr78, DrumEngine::Mutable, DrumEngine::Shakers, DrumEngine::Rack];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            DrumEngine::Rack => "Drum Rack",
+            DrumEngine::M808 => "808",
+            DrumEngine::M909 => "909",
+            DrumEngine::Cr78 => "CR-78",
+            DrumEngine::Mutable => "Mutable Drums",
+            DrumEngine::Shakers => "Shakers",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            DrumEngine::Rack => "A rack of pads: every drum voice of Krabton, and samples (drop them on the pads, or make a kit from a folder)",
+            DrumEngine::M808 => "The 808, rebuilt from its circuits: bridged-T kick, toms and congas, snare, clap, six-square hats, cymbal and cowbell",
+            DrumEngine::M909 => "The 909, rebuilt from its circuits: swept kick with its attack, snare with snappy, toms, rim, clap and hats",
+            DrumEngine::Cr78 => "The CR-78, rebuilt from its circuits: soft kick and snare, gated-noise hats and cymbal, bongo, guiro, tambourine and metal",
+            DrumEngine::Mutable => "The drum models of Mutable Instruments Plaits: analog and synthetic kicks and snares, metallic and ring-modulated hats",
+            DrumEngine::Shakers => "Perry Cook's PhISEM shakers: maraca, cabasa, tambourine, sleigh bells, bamboo, cans, rocks and more",
+        }
+    }
+
+    /// The voices its pads can play, grouped as in the pad menu.
+    pub fn groups(self) -> &'static [(&'static str, &'static [DrumVoice])] {
+        match self {
+            DrumEngine::Rack => &DrumVoice::GROUPS,
+            DrumEngine::M808 => &G808,
+            DrumEngine::M909 => &G909,
+            DrumEngine::Cr78 => &GCR78,
+            DrumEngine::Mutable => &GMUTABLE,
+            DrumEngine::Shakers => &GSHAKERS,
+        }
+    }
+
+    pub fn kits(self) -> &'static [&'static str] {
+        match self {
+            DrumEngine::M808 => &["808 Classic", "808 Boom", "808 Electro", "808 Latin"],
+            DrumEngine::M909 => &["909 Classic", "909 House", "909 Techno", "909 Toms"],
+            DrumEngine::Cr78 => &["CR-78 Classic", "CR-78 Disco", "CR-78 Bossa"],
+            DrumEngine::Mutable => &["Mutable Analog", "Mutable Synthetic", "Mutable Industrial"],
+            DrumEngine::Shakers => &["Shaker Kit", "Hand Percussion", "Found Sounds"],
+            DrumEngine::Rack => &["Classic 808", "Classic 909", "Classic Lo-Fi", "Hybrid", "Electro"],
+        }
+    }
+}
+
+/// Kit names from before the engines existed.
+fn current_name(name: &str) -> &str {
+    match name {
+        "808" => "808 Classic",
+        "909" => "909 Classic",
+        "CR-78" => "CR-78 Classic",
+        "Shakers" => "Shaker Kit",
+        "808 Krab" => "Classic 808",
+        "909 Krab" => "Classic 909",
+        "Lo-Fi Krab" => "Classic Lo-Fi",
+        n => n,
+    }
+}
+
+/// The engine a kit belongs to.
+pub fn engine_of(kit: &str) -> DrumEngine {
+    let kit = current_name(kit);
+    DrumEngine::ALL.into_iter().find(|e| e.kits().contains(&kit)).unwrap_or_default()
+}
+
+/// Every kit of every engine.
+pub fn kit_names() -> Vec<&'static str> {
+    DrumEngine::ALL.iter().flat_map(|e| e.kits().iter().copied()).collect()
+}
+
+/// A pad playing `voice` on `note`, named `name`, set up by `f`.
+fn pad(name: &str, voice: DrumVoice, note: u8, f: impl FnOnce(&mut DrumPad)) -> DrumPad {
+    let mut p = DrumPad::new(voice);
+    p.name = name.to_string();
+    p.note = note;
+    f(&mut p);
+    p
 }
 
 pub fn kit(name: &str) -> Vec<DrumPad> {
+    use DrumVoice::*;
+    let closed = |p: &mut DrumPad| {
+        p.decay = 0.35;
+        p.choke = 1;
+    };
+    let open = |p: &mut DrumPad| {
+        p.decay = 2.5;
+        p.choke = 1;
+    };
+    let hat = |p: &mut DrumPad| p.choke = 1;
+    match current_name(name) {
+        // ---------------------------------------------------------- 808
+        "808 Classic" => vec![
+            pad("Kick", M808Kick, 36, |_| {}),
+            pad("Rim", M808Rim, 37, |_| {}),
+            pad("Snare", M808Snare, 38, |_| {}),
+            pad("Clap", M808Clap, 39, |_| {}),
+            pad("Closed Hat", M808ClosedHat, 42, hat),
+            pad("Tom", M808Tom, 45, |_| {}),
+            pad("Open Hat", M808OpenHat, 46, hat),
+            pad("Cowbell", M808Cowbell, 56, |_| {}),
+        ],
+        "808 Boom" => vec![
+            pad("Kick", M808Kick, 36, |p| {
+                p.decay = 3.0;
+                p.tune = -2.0;
+                p.tone = 0.3;
+            }),
+            pad("Rim", M808Rim, 37, |_| {}),
+            pad("Snare", M808Snare, 38, |p| {
+                p.a = 0.7;
+                p.tone = 0.4;
+            }),
+            pad("Clap", M808Clap, 39, |_| {}),
+            pad("Closed Hat", M808ClosedHat, 42, hat),
+            pad("Low Tom", M808Tom, 45, |p| p.tune = -5.0),
+            pad("Open Hat", M808OpenHat, 46, hat),
+            pad("Cymbal", M808Cymbal, 49, |_| {}),
+        ],
+        "808 Electro" => vec![
+            pad("Kick", M808Kick, 36, |p| {
+                p.decay = 0.5;
+                p.tone = 0.8;
+            }),
+            pad("Snare", M808Snare, 38, |p| {
+                p.tone = 0.7;
+                p.a = 0.9;
+                p.decay = 0.7;
+            }),
+            pad("Clap", M808Clap, 39, |p| p.decay = 0.7),
+            pad("Closed Hat", M808ClosedHat, 42, |p| {
+                p.choke = 1;
+                p.decay = 0.6;
+                p.tone = 0.7;
+            }),
+            pad("Open Hat", M808OpenHat, 46, |p| {
+                p.choke = 1;
+                p.decay = 0.8;
+            }),
+            pad("Cowbell", M808Cowbell, 56, |_| {}),
+            pad("Conga", M808Conga, 63, |_| {}),
+            pad("Claves", M808Claves, 75, |_| {}),
+        ],
+        "808 Latin" => vec![
+            pad("Kick", M808Kick, 36, |_| {}),
+            pad("Rim", M808Rim, 37, |_| {}),
+            pad("Tom", M808Tom, 45, |p| p.tune = 3.0),
+            pad("Cowbell", M808Cowbell, 56, |_| {}),
+            pad("High Conga", M808Conga, 63, |_| {}),
+            pad("Low Conga", M808Conga, 64, |p| p.tune = -5.0),
+            pad("Maracas", M808Maracas, 70, |_| {}),
+            pad("Claves", M808Claves, 75, |_| {}),
+        ],
+        // ---------------------------------------------------------- 909
+        "909 Classic" => vec![
+            pad("Kick", M909Kick, 36, |_| {}),
+            pad("Rim", M909Rim, 37, |_| {}),
+            pad("Snare", M909Snare, 38, |_| {}),
+            pad("Clap", M909Clap, 39, |_| {}),
+            pad("Closed Hat", M909ClosedHat, 42, hat),
+            pad("Low Tom", M909Tom, 45, |_| {}),
+            pad("Open Hat", M909OpenHat, 46, hat),
+            pad("High Tom", M909Tom, 50, |p| p.tune = 7.0),
+        ],
+        "909 House" => vec![
+            pad("Kick", M909Kick, 36, |p| {
+                p.a = 0.4;
+                p.decay = 1.2;
+            }),
+            pad("Rim", M909Rim, 37, |_| {}),
+            pad("Snare", M909Snare, 38, |p| p.a = 0.5),
+            pad("Clap", M909Clap, 39, |p| p.decay = 1.3),
+            pad("Closed Hat", M909ClosedHat, 42, hat),
+            pad("Low Tom", M909Tom, 45, |_| {}),
+            pad("Open Hat", M909OpenHat, 46, |p| {
+                p.choke = 1;
+                p.decay = 0.8;
+            }),
+            pad("High Tom", M909Tom, 50, |p| p.tune = 7.0),
+        ],
+        "909 Techno" => vec![
+            pad("Kick", M909Kick, 36, |p| {
+                p.tune = -2.0;
+                p.decay = 1.6;
+                p.a = 0.85;
+                p.tone = 0.8;
+            }),
+            pad("Rim", M909Rim, 37, |p| p.tone = 0.8),
+            pad("Snare", M909Snare, 38, |p| {
+                p.a = 0.7;
+                p.tone = 0.6;
+            }),
+            pad("Clap", M909Clap, 39, |_| {}),
+            pad("Closed Hat", M909ClosedHat, 42, |p| {
+                p.choke = 1;
+                p.decay = 0.6;
+                p.tone = 0.7;
+            }),
+            pad("Low Tom", M909Tom, 45, |p| {
+                p.tune = -3.0;
+                p.decay = 1.4;
+            }),
+            pad("Open Hat", M909OpenHat, 46, |p| {
+                p.choke = 1;
+                p.decay = 1.4;
+            }),
+            pad("Mid Tom", M909Tom, 47, |p| p.tune = 2.0),
+        ],
+        "909 Toms" => vec![
+            pad("Kick", M909Kick, 36, |_| {}),
+            pad("Snare", M909Snare, 38, |_| {}),
+            pad("Floor Tom", M909Tom, 41, |p| p.tune = -7.0),
+            pad("Closed Hat", M909ClosedHat, 42, hat),
+            pad("Low Tom", M909Tom, 45, |_| {}),
+            pad("Open Hat", M909OpenHat, 46, hat),
+            pad("Mid Tom", M909Tom, 48, |p| p.tune = 5.0),
+            pad("High Tom", M909Tom, 50, |p| p.tune = 9.0),
+        ],
+        // ---------------------------------------------------------- CR-78
+        "CR-78 Classic" => vec![
+            pad("Kick", Cr78Kick, 36, |_| {}),
+            pad("Snare", Cr78Snare, 38, |_| {}),
+            pad("Hat", Cr78Hat, 42, hat),
+            pad("Open Hat", Cr78Hat, 46, |p| {
+                p.decay = 4.0;
+                p.choke = 1;
+            }),
+            pad("Cymbal", Cr78Cymbal, 49, |_| {}),
+            pad("Tambourine", Cr78Tambourine, 54, |_| {}),
+            pad("Metal", Cr78Metal, 56, |_| {}),
+            pad("Guiro", Cr78Guiro, 73, |_| {}),
+        ],
+        "CR-78 Disco" => vec![
+            pad("Kick", Cr78Kick, 36, |p| {
+                p.decay = 1.5;
+                p.tone = 0.3;
+            }),
+            pad("Snare", Cr78Snare, 38, |p| p.a = 0.7),
+            pad("Hat", Cr78Hat, 42, |p| {
+                p.choke = 1;
+                p.decay = 0.8;
+            }),
+            pad("Open Hat", Cr78Hat, 46, |p| {
+                p.decay = 4.0;
+                p.choke = 1;
+            }),
+            pad("Cymbal", Cr78Cymbal, 49, |_| {}),
+            pad("Tambourine", Cr78Tambourine, 54, |_| {}),
+            pad("Metal", Cr78Metal, 56, |_| {}),
+            pad("Bongo", Cr78Bongo, 60, |_| {}),
+        ],
+        "CR-78 Bossa" => vec![
+            pad("Kick", Cr78Kick, 36, |p| p.decay = 0.8),
+            pad("Rim", Cr78Snare, 38, |p| {
+                p.tune = 7.0;
+                p.decay = 0.4;
+                p.a = 0.2;
+            }),
+            pad("Hat", Cr78Hat, 42, hat),
+            pad("Tambourine", Cr78Tambourine, 54, |_| {}),
+            pad("Metal", Cr78Metal, 56, |_| {}),
+            pad("High Bongo", Cr78Bongo, 60, |_| {}),
+            pad("Low Bongo", Cr78Bongo, 61, |p| p.tune = -5.0),
+            pad("Guiro", Cr78Guiro, 73, |_| {}),
+        ],
+        // ---------------------------------------------------------- Mutable
+        "Mutable Analog" => vec![
+            pad("Kick", AnalogKick, 36, |p| {
+                p.tone = 0.45;
+                p.a = 0.35;
+            }),
+            pad("Rim", AnalogSnare, 37, |p| {
+                p.tune = 12.0;
+                p.decay = 0.25;
+                p.a = 0.1;
+                p.level_db = -6.0;
+            }),
+            pad("Snare", AnalogSnare, 38, |p| p.a = 0.6),
+            pad("Clap", SynthSnare, 39, |p| {
+                p.tune = 5.0;
+                p.decay = 0.5;
+                p.a = 1.0;
+                p.tone = 0.2;
+            }),
+            pad("Closed Hat", MetalHat, 42, |p| {
+                closed(p);
+                p.tone = 0.6;
+                p.a = 0.25;
+            }),
+            pad("Tom", AnalogKick, 45, |p| {
+                p.tune = 12.0;
+                p.decay = 0.6;
+                p.a = 0.1;
+                p.level_db = -3.0;
+            }),
+            pad("Open Hat", MetalHat, 46, |p| {
+                open(p);
+                p.tone = 0.6;
+                p.a = 0.25;
+            }),
+            pad("Bell", MetalHat, 56, |p| {
+                p.tune = 12.0;
+                p.tone = 0.9;
+                p.decay = 1.5;
+                p.a = 0.0;
+            }),
+        ],
+        "Mutable Synthetic" => vec![
+            pad("Kick", SynthKick, 36, |p| {
+                p.a = 0.3;
+                p.b = 0.5;
+            }),
+            pad("Rim", SynthSnare, 37, |p| {
+                p.tune = 12.0;
+                p.decay = 0.25;
+                p.a = 0.2;
+                p.level_db = -8.0;
+            }),
+            pad("Snare", SynthSnare, 38, |p| {
+                p.tone = 0.4;
+                p.a = 0.6;
+            }),
+            pad("Clap", SynthSnare, 39, |p| {
+                p.tune = 3.0;
+                p.decay = 0.45;
+                p.a = 1.0;
+                p.tone = 0.1;
+            }),
+            pad("Closed Hat", RingHat, 42, |p| {
+                closed(p);
+                p.a = 0.4;
+            }),
+            pad("Tom", SynthKick, 45, |p| {
+                p.tune = 10.0;
+                p.decay = 0.6;
+                p.b = 0.3;
+                p.level_db = -3.0;
+            }),
+            pad("Open Hat", RingHat, 46, |p| {
+                open(p);
+                p.a = 0.4;
+            }),
+            pad("Bell", RingHat, 56, |p| {
+                p.tune = 12.0;
+                p.decay = 1.4;
+                p.a = 0.0;
+            }),
+        ],
+        "Mutable Industrial" => vec![
+            pad("Kick", SynthKick, 36, |p| {
+                p.a = 0.95;
+                p.b = 0.8;
+                p.tone = 0.6;
+            }),
+            pad("Snap", AnalogSnare, 37, |p| {
+                p.tune = 7.0;
+                p.decay = 0.4;
+                p.a = 1.0;
+            }),
+            pad("Snare", SynthSnare, 38, |p| {
+                p.tone = 0.9;
+                p.a = 0.95;
+            }),
+            pad("Clap", AnalogSnare, 39, |p| {
+                p.a = 1.0;
+                p.tone = 0.8;
+                p.decay = 0.6;
+            }),
+            pad("Closed Hat", RingHat, 42, |p| {
+                closed(p);
+                p.a = 0.95;
+                p.tone = 0.8;
+            }),
+            pad("Tom", AnalogKick, 45, |p| {
+                p.tune = 7.0;
+                p.a = 1.0;
+                p.decay = 0.7;
+            }),
+            pad("Open Hat", RingHat, 46, |p| {
+                open(p);
+                p.a = 0.95;
+            }),
+            pad("Metal", MetalHat, 56, |p| {
+                p.tune = 12.0;
+                p.decay = 1.2;
+                p.tone = 0.9;
+            }),
+        ],
+        // ---------------------------------------------------------- Shakers
+        "Shaker Kit" => [Tambourine, Cabasa, Maraca, Can, Gravel, Sekere, SleighBells, Bamboo].iter().map(|&v| pad(v.name(), v, v.gm_note(), |_| {})).collect(),
+        "Hand Percussion" => vec![
+            pad("Shaker", Maraca, 44, |p| {
+                p.a = 0.9;
+                p.decay = 2.0;
+            }),
+            pad("Tambourine", Tambourine, 54, |_| {}),
+            pad("Cabasa", Cabasa, 69, |_| {}),
+            pad("Maraca", Maraca, 70, |_| {}),
+            pad("Soft Maraca", Maraca, 71, |p| p.a = 0.2),
+            pad("Sekere", Sekere, 82, |_| {}),
+            pad("Sleigh Bells", SleighBells, 83, |_| {}),
+            pad("Bamboo", Bamboo, 84, |_| {}),
+        ],
+        "Found Sounds" => vec![
+            pad("Sandpaper", Sandpaper, 74, |_| {}),
+            pad("Rocks", Rocks, 75, |_| {}),
+            pad("Can", Can, 76, |_| {}),
+            pad("Low Can", Can, 77, |p| p.tune = -12.0),
+            pad("Crunch", Crunch, 78, |_| {}),
+            pad("Gravel", Gravel, 79, |_| {}),
+            pad("Snap", Crunch, 80, |p| p.tune = 7.0),
+            pad("Bamboo", Bamboo, 84, |_| {}),
+        ],
+        // ---------------------------------------------------------- Rack
+        "Hybrid" => vec![
+            pad("Kick", AnalogKick, 36, |p| p.a = 0.6),
+            pad("Rim", Rim, 37, |_| {}),
+            pad("Snare", SynthSnare, 38, |p| p.a = 0.7),
+            pad("Clap", Clap, 39, |_| {}),
+            pad("Closed Hat", MetalHat, 42, closed),
+            pad("Shaker", Maraca, 44, |_| {}),
+            pad("Open Hat", RingHat, 46, open),
+            pad("Tambourine", Tambourine, 54, |_| {}),
+        ],
+        "Electro" => vec![
+            pad("Kick", M909Kick, 36, |p| p.a = 0.7),
+            pad("Snare", M909Snare, 38, |_| {}),
+            pad("Clap", M808Clap, 39, |_| {}),
+            pad("Closed Hat", M808ClosedHat, 42, hat),
+            pad("Low Tom", ElectroTom, 45, |p| p.tune = -5.0),
+            pad("Open Hat", M808OpenHat, 46, hat),
+            pad("Mid Tom", ElectroTom, 47, |_| {}),
+            pad("High Tom", ElectroTom, 50, |p| p.tune = 5.0),
+        ],
+        other => classic_kit(other),
+    }
+}
+
+/// Krabton's own drums (Classic 808, Classic 909, Classic Lo-Fi).
+fn classic_kit(name: &str) -> Vec<DrumPad> {
     let order = [
         DrumVoice::Kick,
         DrumVoice::Rim,
@@ -73,24 +781,27 @@ pub fn kit(name: &str) -> Vec<DrumPad> {
     ];
     let mut pads: Vec<DrumPad> = order.iter().map(|&v| DrumPad::new(v)).collect();
     for pad in pads.iter_mut() {
+        if matches!(pad.voice, DrumVoice::ClosedHat | DrumVoice::OpenHat) {
+            pad.choke = 1;
+        }
         match (name, pad.voice) {
-            ("808 Krab", DrumVoice::Kick) => {
+            ("Classic 808", DrumVoice::Kick) => {
                 pad.decay = 1.8;
                 pad.tone = 0.15;
             }
-            ("808 Krab", DrumVoice::Snare) => pad.tone = 0.35,
-            ("808 Krab", DrumVoice::ClosedHat | DrumVoice::OpenHat) => pad.tone = 0.4,
-            ("909 Krab", DrumVoice::Kick) => {
+            ("Classic 808", DrumVoice::Snare) => pad.tone = 0.35,
+            ("Classic 808", DrumVoice::ClosedHat | DrumVoice::OpenHat) => pad.tone = 0.4,
+            ("Classic 909", DrumVoice::Kick) => {
                 pad.decay = 0.8;
                 pad.tune = 2.0;
                 pad.tone = 0.65;
             }
-            ("909 Krab", DrumVoice::Snare) => {
+            ("Classic 909", DrumVoice::Snare) => {
                 pad.tone = 0.75;
                 pad.tune = 1.0;
             }
-            ("909 Krab", DrumVoice::ClosedHat | DrumVoice::OpenHat) => pad.tone = 0.8,
-            ("Lo-Fi Krab", _) => {
+            ("Classic 909", DrumVoice::ClosedHat | DrumVoice::OpenHat) => pad.tone = 0.8,
+            ("Classic Lo-Fi", _) => {
                 pad.tune -= 3.0;
                 pad.tone = (pad.tone - 0.25).max(0.0);
                 pad.decay *= 0.8;
@@ -104,7 +815,65 @@ pub fn kit(name: &str) -> Vec<DrumPad> {
 const MAX_PADS: usize = 16;
 const METAL: [f32; 6] = [205.3, 304.4, 369.6, 522.7, 540.0, 800.0];
 
-#[derive(Clone, Copy)]
+/// A Mutable Instruments drum model, made when a pad first plays it.
+enum Model {
+    None,
+    AnalogKick(AnalogBassDrum, Overdrive),
+    SynthKick(SyntheticBassDrum),
+    AnalogSnare(AnalogSnareDrum),
+    SynthSnare(SyntheticSnareDrum),
+    Hat(Hihat),
+}
+
+impl Model {
+    fn for_voice(voice: DrumVoice, sr: f32) -> Self {
+        match voice {
+            DrumVoice::AnalogKick => {
+                let mut d = AnalogBassDrum::new();
+                d.init(sr);
+                let mut o = Overdrive::new();
+                o.init();
+                Model::AnalogKick(d, o)
+            }
+            DrumVoice::SynthKick => {
+                let mut d = SyntheticBassDrum::new();
+                d.init(sr);
+                Model::SynthKick(d)
+            }
+            DrumVoice::AnalogSnare => {
+                let mut d = AnalogSnareDrum::new();
+                d.init(sr);
+                Model::AnalogSnare(d)
+            }
+            DrumVoice::SynthSnare => {
+                let mut d = SyntheticSnareDrum::new();
+                d.init(sr);
+                Model::SynthSnare(d)
+            }
+            DrumVoice::MetalHat | DrumVoice::RingHat => {
+                let mut d = Hihat::new();
+                d.init(sr);
+                Model::Hat(d)
+            }
+            _ => Model::None,
+        }
+    }
+
+    fn plays(&self, voice: DrumVoice) -> bool {
+        matches!(
+            (self, voice),
+            (Model::AnalogKick(..), DrumVoice::AnalogKick)
+                | (Model::SynthKick(_), DrumVoice::SynthKick)
+                | (Model::AnalogSnare(_), DrumVoice::AnalogSnare)
+                | (Model::SynthSnare(_), DrumVoice::SynthSnare)
+                | (Model::Hat(_), DrumVoice::MetalHat | DrumVoice::RingHat)
+        )
+    }
+}
+
+/// Longest block a Mutable model renders at once.
+const MODEL_BLOCK: usize = 256;
+
 struct PadVoice {
     active: bool,
     t: u32,
@@ -122,6 +891,14 @@ struct PadVoice {
     choke: f32,
     choking: bool,
     sample_pos: f64,
+    model: Model,
+    model_sr: f32,
+    /// Tell the model it was hit, on its next block.
+    model_hit: bool,
+    /// Samples the model has been silent.
+    quiet: u32,
+    shaker: Shaker,
+    machine: MachineVoice,
 }
 
 impl PadVoice {
@@ -143,6 +920,12 @@ impl PadVoice {
             choke: 1.0,
             choking: false,
             sample_pos: 0.0,
+            model: Model::None,
+            model_sr: 0.0,
+            model_hit: false,
+            quiet: 0,
+            shaker: Shaker::default(),
+            machine: MachineVoice::default(),
         }
     }
 
@@ -165,6 +948,25 @@ impl PadVoice {
         let tr = 2f32.powf(pad.tune / 12.0);
         let tone = pad.tone;
         self.env3_coef = decay_coef(0.004, sr);
+        self.amp_coef = 1.0;
+        self.env2_coef = 0.0;
+        match pad.voice.family() {
+            Family::Mutable => {
+                if !self.model.plays(pad.voice) || self.model_sr != sr {
+                    self.model = Model::for_voice(pad.voice, sr);
+                    self.model_sr = sr;
+                }
+                self.model_hit = true;
+                self.quiet = 0;
+            }
+            Family::Shaker => {
+                if let Some(m) = pad.voice.shaker() {
+                    self.shaker.trigger(m, 1.0, tr, d, tone, pad.a, sr);
+                }
+            }
+            Family::Machine => self.machine.trigger(pad.voice, vel, tr, d, tone, pad.a, sr),
+            Family::Classic => {}
+        }
         match pad.voice {
             DrumVoice::Kick => {
                 self.amp_coef = decay_coef(0.5 * d, sr);
@@ -202,6 +1004,7 @@ impl PadVoice {
                 self.env2_coef = decay_coef(0.04, sr);
                 self.f1.set_q(2640.0 * tr, 2.5, sr);
             }
+            _ => {}
         }
         if let Some(s) = &pad.sample {
             // Samples fade out over their length times the decay setting.
@@ -210,8 +1013,71 @@ impl PadVoice {
         }
     }
 
+    /// Renders a block of a Mutable model into `out` (`t1`, `t2`: scratch
+    /// of the same length).
+    fn render_model(&mut self, pad: &DrumPad, tr: f32, sr: f32, out: &mut [f32], t1: &mut [f32], t2: &mut [f32]) {
+        let hit = std::mem::take(&mut self.model_hit);
+        let voice = pad.voice;
+        let f0 = (voice.base_hz() * tr / sr).clamp(1e-5, 0.4);
+        let tone = pad.tone.clamp(0.0, 1.0);
+        let decay = model_decay(voice, pad.decay);
+        let (a, b) = (pad.a.clamp(0.0, 1.0), pad.b.clamp(0.0, 1.0));
+        let accent = self.vel.clamp(0.0, 1.0);
+        // The knobs map as on Plaits' drum engines.
+        match &mut self.model {
+            Model::AnalogKick(d, drive) => {
+                let attack_fm = (a * 4.0).min(1.0);
+                let self_fm = (a * 4.0 - 1.0).clamp(0.0, 1.0);
+                let amount = (a * 2.0 - 1.0).max(0.0) * (1.0 - 16.0 * f0).max(0.0);
+                d.render(false, hit, accent, f0, tone, decay, attack_fm, self_fm, out);
+                drive.process(0.5 + 0.5 * amount, out);
+            }
+            Model::SynthKick(d) => d.render(false, hit, accent, f0, tone, decay, a, (b * 2.0).min(1.0), (b * 2.0 - 1.0).max(0.0), out),
+            Model::AnalogSnare(d) => d.render(false, hit, accent, f0, tone, decay, a, out),
+            Model::SynthSnare(d) => d.render(false, hit, accent, f0, tone, decay, a, out),
+            Model::Hat(d) => {
+                let ring = voice == DrumVoice::RingHat;
+                let (noise, vca) = if ring { (NoiseType::RingMod, VcaType::Linear) } else { (NoiseType::Square, VcaType::Swing) };
+                d.render(false, hit, accent, f0, tone, decay, a, t1, t2, out, noise, vca, !ring, ring);
+            }
+            Model::None => out.fill(0.0),
+        }
+        let trim = voice.trim();
+        let mut peak = 0.0f32;
+        for v in out.iter_mut() {
+            *v *= trim;
+            peak = peak.max(v.abs());
+        }
+        // Done once it has been quiet for a while.
+        let n = out.len() as u32;
+        self.t = self.t.saturating_add(n);
+        if self.t as f32 > 0.02 * sr && peak < 1e-4 {
+            self.quiet += n;
+        } else {
+            self.quiet = 0;
+        }
+        if self.quiet as f32 > 0.05 * sr || !out.iter().all(|v| v.is_finite()) {
+            self.active = false;
+        }
+    }
+
     #[inline]
     fn tick(&mut self, pad: &DrumPad, tr: f32, sr: f32) -> f32 {
+        if pad.voice.family() == Family::Machine {
+            let y = self.machine.tick(pad.voice, tr, &mut self.rng);
+            if !self.machine.is_active() {
+                self.active = false;
+            }
+            return y;
+        }
+        if pad.voice.family() == Family::Shaker {
+            let y = self.shaker.tick(&mut self.rng);
+            self.t = self.t.saturating_add(1);
+            if self.shaker.is_done() {
+                self.active = false;
+            }
+            return y;
+        }
         let tone = pad.tone;
         let out = match pad.voice {
             DrumVoice::Kick => {
@@ -275,6 +1141,7 @@ impl PadVoice {
                 let y = self.f1.process((a + b) * 0.5, FilterMode::Band);
                 y * (self.amp * 0.6 + self.env2 * 0.5) * 1.5
             }
+            _ => 0.0,
         };
         self.amp *= self.amp_coef;
         self.env2 *= self.env2_coef;
@@ -297,12 +1164,21 @@ impl Default for DrumState {
     }
 }
 
+/// The choke group of a pad (0: none). Hats of projects from before choke
+/// groups existed still cut each other.
+fn choke_group(pad: &DrumPad) -> u8 {
+    if pad.choke > 0 {
+        pad.choke
+    } else if matches!(pad.voice, DrumVoice::ClosedHat | DrumVoice::OpenHat) {
+        1
+    } else {
+        0
+    }
+}
+
 impl DrumState {
     pub fn new() -> Self {
-        let mut voices = [PadVoice::new(1); MAX_PADS];
-        for (i, v) in voices.iter_mut().enumerate() {
-            v.rng = Rng::new(0xC0FF_EE00 ^ (i as u32 * 104_729 + 7));
-        }
+        let voices = std::array::from_fn(|i| PadVoice::new(0xC0FF_EE00 ^ (i as u32 * 104_729 + 7)));
         Self { voices }
     }
 
@@ -311,9 +1187,11 @@ impl DrumState {
             if pad.note != note {
                 continue;
             }
-            if pad.voice == DrumVoice::ClosedHat {
+            // A hit cuts off the other pads of its choke group.
+            let group = choke_group(pad);
+            if group > 0 {
                 for (j, other) in pads.iter().enumerate().take(MAX_PADS) {
-                    if other.voice == DrumVoice::OpenHat && self.voices[j].active {
+                    if j != i && choke_group(other) == group && self.voices[j].active {
                         self.voices[j].choking = true;
                     }
                 }
@@ -366,6 +1244,27 @@ impl DrumState {
                 }
                 continue;
             }
+            if pad.voice.family() == Family::Mutable {
+                let (mut buf, mut t1, mut t2) = ([0.0f32; MODEL_BLOCK], [0.0f32; MODEL_BLOCK], [0.0f32; MODEL_BLOCK]);
+                let mut off = 0;
+                while off < n && v.active {
+                    let m = (n - off).min(MODEL_BLOCK);
+                    v.render_model(pad, tr, sr, &mut buf[..m], &mut t1[..m], &mut t2[..m]);
+                    for k in 0..m {
+                        let y = buf[k] * gain * v.choke;
+                        l[off + k] += y * pl;
+                        r[off + k] += y * pr;
+                        if v.choking {
+                            v.choke *= choke_coef;
+                        }
+                    }
+                    if v.choke < 1e-4 {
+                        v.active = false;
+                    }
+                    off += m;
+                }
+                continue;
+            }
             for i in 0..n {
                 let y = v.tick(pad, tr, sr) * gain * v.choke;
                 l[i] += y * pl;
@@ -388,9 +1287,104 @@ impl DrumState {
 mod tests {
     use super::*;
 
+    /// Plays `pad` once and returns the left channel for `secs` seconds.
+    fn hit(pad: &DrumPad, secs: f32) -> (Vec<f32>, bool) {
+        let sr = 48000.0;
+        let pads = vec![pad.clone()];
+        let mut d = DrumState::new();
+        d.note_on(&pads, pad.note, 1.0, sr);
+        let mut out = Vec::new();
+        for _ in 0..(secs * sr / 256.0) as usize {
+            let (mut l, mut r) = ([0.0f32; 256], [0.0f32; 256]);
+            d.render(&pads, &mut l, &mut r, sr);
+            out.extend_from_slice(&l);
+        }
+        (out, d.voices[0].active)
+    }
+
+    #[test]
+    fn every_voice_sounds_and_ends() {
+        for (_, voices) in DrumVoice::GROUPS {
+            for &v in voices {
+                let pad = DrumPad::new(v);
+                let (out, still) = hit(&pad, 8.0);
+                let peak = out.iter().fold(0.0f32, |m, x| m.max(x.abs()));
+                let rms = (out[..4800].iter().map(|x| x * x).sum::<f32>() / 4800.0).sqrt();
+                eprintln!("{:<13} peak {peak:.3} rms {rms:.4}", v.name());
+                assert!(out.iter().all(|x| x.is_finite()), "{}", v.name());
+                if std::env::var_os("DRUM_CAL").is_some() {
+                    continue;
+                }
+                assert!(peak > 0.05 && peak < 1.5, "{}: peak {peak}", v.name());
+                assert!(!still, "{} still plays after 8 s", v.name());
+            }
+        }
+    }
+
+    #[test]
+    fn every_kit_loads_and_plays() {
+        for name in kit_names() {
+            let pads = kit(name);
+            assert_eq!(pads.len(), 8, "{name}");
+            let mut d = DrumState::new();
+            for pad in &pads {
+                d.note_on(&pads, pad.note, 0.9, 48000.0);
+            }
+            let (mut l, mut r) = (vec![0.0; 4800], vec![0.0; 4800]);
+            d.render(&pads, &mut l, &mut r, 48000.0);
+            let peak = l.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+            assert!(peak > 0.05 && peak < 4.0, "{name}: {peak}");
+        }
+    }
+
+    #[test]
+    fn every_kit_belongs_to_one_engine_and_uses_its_voices() {
+        for e in DrumEngine::ALL {
+            let allowed: Vec<DrumVoice> = e.groups().iter().flat_map(|g| g.1.iter().copied()).collect();
+            for name in e.kits() {
+                assert_eq!(engine_of(name), e, "{name}");
+                for p in kit(name) {
+                    assert!(allowed.contains(&p.voice), "{name}: {} plays {:?}", p.name, p.voice);
+                }
+            }
+        }
+        // Old names still load.
+        assert_eq!(engine_of("909 Krab"), DrumEngine::Rack);
+        assert_eq!(kit("909 Krab"), kit("Classic 909"));
+        assert_eq!(engine_of("808"), DrumEngine::M808);
+    }
+
+    #[test]
+    fn a_choke_group_cuts_its_other_pads() {
+        let pads = kit("Mutable Analog");
+        let open = pads.iter().position(|p| p.name == "Open Hat").unwrap();
+        let closed = pads.iter().position(|p| p.name == "Closed Hat").unwrap();
+        let mut d = DrumState::new();
+        let sr = 48000.0;
+        d.note_on(&pads, pads[open].note, 1.0, sr);
+        let (mut l, mut r) = (vec![0.0; 2400], vec![0.0; 2400]);
+        d.render(&pads, &mut l, &mut r, sr);
+        assert!(d.voices[open].active);
+        d.note_on(&pads, pads[closed].note, 1.0, sr);
+        for _ in 0..4 {
+            d.render(&pads, &mut l, &mut r, sr);
+        }
+        assert!(!d.voices[open].active, "the open hat was choked");
+    }
+
+    #[test]
+    fn velocity_and_tune_change_a_mutable_kick() {
+        let mut pad = DrumPad::new(DrumVoice::AnalogKick);
+        let (loud, _) = hit(&pad, 0.5);
+        pad.tune = 12.0;
+        let (high, _) = hit(&pad, 0.5);
+        let crossings = |x: &[f32]| x.windows(2).filter(|w| w[0] <= 0.0 && w[1] > 0.0).count();
+        assert!(crossings(&high[2400..12000]) > crossings(&loud[2400..12000]) * 3 / 2, "{} vs {}", crossings(&high[2400..12000]), crossings(&loud[2400..12000]));
+    }
+
     #[test]
     fn every_pad_makes_sound_and_ends() {
-        let pads = kit("909 Krab");
+        let pads = kit("Classic 909");
         let mut d = DrumState::new();
         for pad in &pads {
             d.note_on(&pads, pad.note, 1.0, 48000.0);

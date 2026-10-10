@@ -1,4 +1,4 @@
-//! Audio sample storage and WAV loading.
+//! Audio sample storage and loading (WAV and FLAC).
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::RefCell;
@@ -38,6 +38,23 @@ impl SampleData {
         self.frames() as f64 / self.sample_rate as f64
     }
 
+    /// Loads a WAV or FLAC file (by its extension).
+    pub fn load(path: &Path) -> Result<Self, String> {
+        if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("flac")) {
+            Self::from_flac(path)
+        } else {
+            Self::from_wav(path)
+        }
+    }
+
+    pub fn from_flac(path: &Path) -> Result<Self, String> {
+        let mut reader = claxon::FlacReader::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let info = reader.streaminfo();
+        let scale = 1.0 / (1u64 << (info.bits_per_sample.max(1) - 1)) as f32;
+        let interleaved: Vec<f32> = reader.samples().map(|s| s.unwrap_or(0) as f32 * scale).collect();
+        Self::from_interleaved(path, info.sample_rate, info.channels.max(1) as usize, interleaved)
+    }
+
     pub fn from_wav(path: &Path) -> Result<Self, String> {
         let mut reader = hound::WavReader::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let spec = reader.spec();
@@ -49,6 +66,10 @@ impl SampleData {
                 reader.samples::<i32>().map(|s| s.unwrap_or(0) as f32 * scale).collect()
             }
         };
+        Self::from_interleaved(path, spec.sample_rate, channels, interleaved)
+    }
+
+    fn from_interleaved(path: &Path, sample_rate: u32, channels: usize, interleaved: Vec<f32>) -> Result<Self, String> {
         let frames = interleaved.len() / channels;
         let mut left = Vec::with_capacity(frames);
         let mut right = Vec::with_capacity(frames);
@@ -62,7 +83,7 @@ impl SampleData {
             return Err(format!("{}: empty file", path.display()));
         }
         let name = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "sample".into());
-        Ok(Self::from_buffers(name, Some(path.to_path_buf()), spec.sample_rate, left, right))
+        Ok(Self::from_buffers(name, Some(path.to_path_buf()), sample_rate, left, right))
     }
 
     /// Linear-interpolated stereo read at a fractional frame position.
@@ -113,7 +134,7 @@ impl SampleRef {
     }
 
     pub fn load(path: &Path) -> Result<Self, String> {
-        SampleData::from_wav(path).map(Self::new)
+        SampleData::load(path).map(Self::new)
     }
 }
 

@@ -546,46 +546,172 @@ impl App {
                             param_grid_mod(ui, Id::new(("elements", track_id)), &specs[..knobs], &mut params[..knobs], ACCENT, h - 48.0, mv.as_mut());
                         });
                     }
-                    Instrument::Sampler { params, sample } => {
+                    Instrument::Sampler { params, sample, zones } => {
+                        let mut load: Option<Vec<std::path::PathBuf>> = None;
+                        let sel = self.sel_zone.min(zones.len().saturating_sub(1));
                         ui.horizontal(|ui| {
-                            if ui.button("Load...").clicked() {
-                                if let Some(path) = rfd::FileDialog::new().add_filter("WAV", &["wav"]).pick_file() {
-                                    match SampleRef::load(&path) {
-                                        Ok(s) => *sample = Some(s),
-                                        Err(e) => eprintln!("{e}"),
-                                    }
+                            if ui.button("Load...").on_hover_text("WAV or FLAC files (several are laid out by the notes in their names), or an SFZ instrument").clicked() {
+                                if let Some(files) = rfd::FileDialog::new().add_filter("Samples and SFZ", &["wav", "flac", "sfz", "WAV", "FLAC", "SFZ"]).pick_files() {
+                                    load = Some(files);
                                 }
                             }
-                            let name = sample.as_ref().map(|s| s.name.clone()).unwrap_or_else(|| "No sample".into());
+                            if ui.button("Folder...").on_hover_text("Every sample in a folder, laid out by the notes in their names (or the SFZ in it)").clicked() {
+                                if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+                                    load = Some(vec![dir]);
+                                }
+                            }
+                            let source = zones.get(sel).map(|z| z.sample.clone()).or_else(|| sample.clone());
+                            if ui.add_enabled(source.is_some(), egui::Button::new("Slice")).on_hover_text("Cut the sample at its hits: one slice per key from C1, played One-Shot").clicked() {
+                                if let Some(s) = source {
+                                    *zones = krabton_engine::sample_map::slice_zones(&s, 64);
+                                    params[sampler::MODE] = 1.0;
+                                    *sample = Some(s);
+                                    self.sel_zone = 0;
+                                    self.toast(format!("{} slices, from C1 up", zones.len()));
+                                }
+                            }
+                            if !zones.is_empty() && ui.button("Clear").on_hover_text("Back to one sample on every key").clicked() {
+                                if sample.is_none() {
+                                    *sample = zones.first().map(|z| z.sample.clone());
+                                }
+                                zones.clear();
+                            }
+                            let name = match zones.len() {
+                                0 => sample.as_ref().map(|s| s.name.clone()).unwrap_or_else(|| "No sample".into()),
+                                1 => zones[0].sample.name.clone(),
+                                n => format!("{n} zones"),
+                            };
                             ui.label(RichText::new(name).color(TEXT_DIM));
                         });
                         ui.horizontal_top(|ui| {
-                            let (r, resp) = ui.allocate_exact_size(vec2(180.0, h - 56.0), Sense::click());
-                            draw_waveform(ui, r, sample.as_ref(), params[sampler::START]);
-                            if let Some(item) = drop_payload::<BrowserItem>(&resp) {
-                                if let BrowserItem::Sample(path) = &*item {
-                                    if let Ok(s) = SampleRef::load(path) {
-                                        *sample = Some(s);
+                            ui.vertical(|ui| {
+                                // Loop mode, next to the editor.
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("Loop").small().color(TEXT_DIM));
+                                    for (k, name) in sampler::LOOP_MODES.iter().enumerate() {
+                                        if ui.selectable_label(params[sampler::LOOP].round() as usize == k, *name).clicked() {
+                                            params[sampler::LOOP] = k as f32;
+                                        }
+                                    }
+                                    ui.label(RichText::new("drag S/E and the loop; Ctrl+wheel zooms").small().color(TEXT_DIM));
+                                });
+                                let map_h = if zones.is_empty() { 0.0 } else { 84.0 };
+                                let size = vec2(380.0, (h - 80.0 - map_h).max(40.0));
+                                let wid = Id::new(("sampler_wave", track_id, sel, zones.len()));
+                                let resp = match zones.get_mut(sel) {
+                                    Some(z) => {
+                                        let s = z.sample.clone();
+                                        wave_editor(ui, wid, size, &s, sampler::zone_region(z), params, Some(&mut z.loop_range))
+                                    }
+                                    None => match sample.clone() {
+                                        Some(s) => {
+                                            let region = (0.0, (s.frames() as f64 - 1.0).max(1.0));
+                                            wave_editor(ui, wid, size, &s, region, params, None)
+                                        }
+                                        None => {
+                                            let (r, resp) = ui.allocate_exact_size(size, Sense::click());
+                                            draw_waveform(ui, r, None, -1.0);
+                                            resp
+                                        }
+                                    },
+                                };
+                                let r = resp.rect;
+                                if let Some(item) = drop_payload::<BrowserItem>(&resp) {
+                                    match &*item {
+                                        BrowserItem::Sample(path) => match SampleRef::load(path) {
+                                            Ok(s) => {
+                                                *sample = Some(s);
+                                                zones.clear();
+                                            }
+                                            Err(e) => self.toast(e),
+                                        },
+                                        BrowserItem::SamplerPatch(path) => load = Some(vec![path.clone()]),
+                                        _ => {}
                                     }
                                 }
-                            }
-                            if resp.dnd_hover_payload::<BrowserItem>().is_some() {
-                                rect_line(ui.painter(), r, 2.0, 2.0, ACCENT);
-                            }
+                                if resp.dnd_hover_payload::<BrowserItem>().is_some() {
+                                    rect_line(ui.painter(), r, 2.0, 2.0, ACCENT);
+                                }
+                                if !zones.is_empty() {
+                                    let (zr, zresp) = ui.allocate_exact_size(vec2(380.0, 34.0), Sense::click());
+                                    let hit = draw_zone_map(ui, zr, zones, sel, zresp.hover_pos());
+                                    if let (true, Some(k)) = (zresp.clicked(), hit) {
+                                        self.sel_zone = k;
+                                    }
+                                    if let Some(k) = hit {
+                                        let z = &zones[k];
+                                        zresp.on_hover_text(format!("{}: {} to {}, root {}, velocity {} to {}", z.sample.name, note_name(z.lo_key), note_name(z.hi_key), note_name(z.root), z.lo_vel, z.hi_vel));
+                                    }
+                                    if let Some(z) = zones.get_mut(sel) {
+                                        zone_editor(ui, z, sel);
+                                    }
+                                }
+                            });
                             param_grid_mod(ui, Id::new(("sampler", track_id)), sampler::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
                         });
+                        if let Some(paths) = load {
+                            match krabton_engine::sample_map::load_zones(&paths) {
+                                Ok(lz) => {
+                                    let n = lz.zones.len();
+                                    if n == 1 && lz.zones[0].lo_key == 0 && lz.zones[0].hi_key == 127 {
+                                        // One file: the plain single sample.
+                                        params[sampler::ROOT] = lz.zones[0].root as f32;
+                                        *sample = Some(lz.zones[0].sample.clone());
+                                        zones.clear();
+                                    } else {
+                                        *zones = lz.zones;
+                                        *sample = None;
+                                    }
+                                    for (k, v) in [sampler::ATTACK, sampler::DECAY, sampler::SUSTAIN, sampler::RELEASE].into_iter().zip(lz.envelope) {
+                                        if let Some(v) = v {
+                                            params[k] = sampler::SPECS[k].clamp(v);
+                                        }
+                                    }
+                                    params[sampler::MODE] = 0.0;
+                                    // SFZ loops play with Loop on.
+                                    params[sampler::LOOP] = if zones.iter().any(|z| z.loop_range.is_some()) { 1.0 } else { 0.0 };
+                                    self.sel_zone = 0;
+                                    let mut msg = format!("Loaded {n} zone(s)");
+                                    if !lz.failed.is_empty() {
+                                        msg += &format!(", {} file(s) could not be read (only WAV and FLAC)", lz.failed.len());
+                                    }
+                                    if lz.skipped > 0 {
+                                        msg += &format!(", {} release or round-robin region(s) left out", lz.skipped);
+                                    }
+                                    self.toast(msg);
+                                }
+                                Err(e) => self.toast(e),
+                            }
+                        }
                     }
-                    Instrument::Drums { kit, pads } => {
+                    Instrument::Drums { kit, pads, engine } => {
+                        let engine = *engine;
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Kit").small().color(TEXT_DIM));
-                            egui::ComboBox::from_id_salt(("drum_kit", track_id)).width(110.0).selected_text(kit.as_str()).show_ui(ui, |ui| {
-                                for name in drums::kit_names() {
+                            egui::ComboBox::from_id_salt(("drum_kit", track_id)).width(130.0).height(360.0).selected_text(kit.as_str()).show_ui(ui, |ui| {
+                                for name in engine.kits() {
                                     if ui.selectable_label(kit == name, *name).clicked() {
                                         *kit = name.to_string();
                                         *pads = drums::kit(name);
                                     }
                                 }
-                            });
+                            })
+                            .response
+                            .on_hover_text(engine.description());
+                            if engine == drums::DrumEngine::Rack && ui.button("From folder...").on_hover_text("A kit from a folder of drum samples: kick, snare, hats, ... go to their pads by name").clicked() {
+                                if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+                                    let files = krabton_engine::sample_map::files_in(&dir);
+                                    let (new_pads, failed) = krabton_engine::sample_map::drum_kit_from(&files);
+                                    let n = new_pads.iter().filter(|p| p.sample.is_some()).count();
+                                    if n == 0 {
+                                        self.toast("No WAV or FLAC files in that folder");
+                                    } else {
+                                        *pads = new_pads;
+                                        *kit = dir.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "Samples".into());
+                                        self.toast(if failed.is_empty() { format!("{n} samples on the pads") } else { format!("{n} samples on the pads, {} could not be read", failed.len()) });
+                                    }
+                                }
+                            }
                         });
                         ui.horizontal_top(|ui| {
                             // Pad grid: 4 x 2, lowest note bottom-left like a drum rack.
@@ -638,16 +764,22 @@ impl App {
                                 if let Some(pad) = pads.get_mut(k) {
                                     ui.horizontal(|ui| {
                                         ui.label(RichText::new(&pad.name).strong());
-                                        egui::ComboBox::from_id_salt(("pad_voice", track_id, k)).width(86.0).selected_text(pad.voice.name()).show_ui(ui, |ui| {
-                                            for v in DrumVoice::ALL {
-                                                if ui.selectable_label(pad.voice == v, v.name()).clicked() {
-                                                    pad.voice = v;
-                                                    if pad.sample.is_none() {
-                                                        pad.name = v.name().to_string();
+                                        egui::ComboBox::from_id_salt(("pad_voice", track_id, k)).width(96.0).height(420.0).selected_text(pad.voice.name()).show_ui(ui, |ui| {
+                                            for &(group, voices) in engine.groups() {
+                                                ui.label(RichText::new(group).small().color(TEXT_DIM));
+                                                for &v in voices.iter() {
+                                                    if ui.selectable_label(pad.voice == v, format!("  {}", v.name())).clicked() {
+                                                        // A name the kit or Krabton gave follows the voice.
+                                                        if pad.sample.is_none() && DrumVoice::GROUPS.iter().flat_map(|g| g.1.iter()).any(|o| o.name() == pad.name) {
+                                                            pad.name = v.name().to_string();
+                                                        }
+                                                        pad.voice = v;
                                                     }
                                                 }
                                             }
-                                        });
+                                        })
+                                        .response
+                                        .on_hover_text("Classic: Krabton's own drums. Mutable: the drum models of Mutable Instruments Plaits. Shakers: Perry Cook's PhISEM shakers.");
                                         let mut note = pad.note as i32;
                                         if ui.add(egui::DragValue::new(&mut note).range(0..=127).custom_formatter(|v, _| note_name(v as u8))).on_hover_text("MIDI note").changed() {
                                             pad.note = note as u8;
@@ -665,13 +797,38 @@ impl App {
                                             pad.name = pad.voice.name().to_string();
                                         }
                                     });
-                                    let mut vals = [pad.level_db, pad.tune, pad.decay, pad.tone, pad.pan];
-                                    if param_grid(ui, Id::new(("pad_params", track_id, k)), PAD_SPECS, &mut vals, ACCENT, h - 60.0) {
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new("Choke").small().color(TEXT_DIM));
+                                        let label = |g: u8| if g == 0 { "-".to_string() } else { g.to_string() };
+                                        egui::ComboBox::from_id_salt(("pad_choke", track_id, k)).width(36.0).selected_text(label(pad.choke)).show_ui(ui, |ui| {
+                                            for g in 0..=4u8 {
+                                                ui.selectable_value(&mut pad.choke, g, label(g));
+                                            }
+                                        })
+                                        .response
+                                        .on_hover_text("Pads in the same choke group cut each other off, like a closed hat stops an open one");
+                                    });
+                                    // Level, Tune, Decay, Tone, Pan and the voice's own knobs.
+                                    let mut specs = PAD_SPECS.to_vec();
+                                    let macros = pad.voice.macros();
+                                    for name in macros.iter().flatten() {
+                                        specs.push(ParamSpec::lin(name, "Pad", 0.0, 1.0, 0.5, Unit::Percent));
+                                    }
+                                    let mut vals = vec![pad.level_db, pad.tune, pad.decay, pad.tone, pad.pan];
+                                    vals.extend(macros.iter().zip([pad.a, pad.b]).filter(|(m, _)| m.is_some()).map(|(_, v)| v));
+                                    if param_grid(ui, Id::new(("pad_params", track_id, k)), &specs, &mut vals, ACCENT, h - 80.0) {
                                         pad.level_db = vals[0];
                                         pad.tune = vals[1];
                                         pad.decay = vals[2];
                                         pad.tone = vals[3];
                                         pad.pan = vals[4];
+                                        let mut extra = vals[5..].iter();
+                                        if macros[0].is_some() {
+                                            pad.a = *extra.next().unwrap_or(&pad.a);
+                                        }
+                                        if macros[1].is_some() {
+                                            pad.b = *extra.next().unwrap_or(&pad.b);
+                                        }
                                     }
                                 }
                             });
@@ -804,11 +961,288 @@ fn effect_menu(app: &mut App, ui: &mut Ui, sel: TrackSel) {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Marker {
+    Start,
+    End,
+    LoopStart,
+    LoopEnd,
+}
+
+/// The nearest frame to `f` where the left channel crosses zero (within
+/// about 4 ms), so loops do not click.
+fn snap_to_zero(s: &SampleRef, f: f64) -> f64 {
+    let x = &s.left;
+    let c = (f as usize).min(x.len().saturating_sub(2));
+    let reach = (s.sample_rate as usize / 250).max(8);
+    (0..reach)
+        .flat_map(|d| [c.saturating_sub(d), (c + d).min(x.len() - 2)])
+        .find(|&i| x[i] <= 0.0 && x[i + 1] > 0.0)
+        .map(|i| i as f64)
+        .unwrap_or(f)
+}
+
+/// The Sampler's sample editor: the waveform of the part a zone plays (or
+/// the whole sample) with Start (S), End (E) and loop markers to drag.
+/// Start, End and the loop points are the fractions in `params`, or the
+/// zone's own loop (`own_loop`, from an SFZ) when it has one. Shift drags
+/// finely, Ctrl+wheel zooms, Shift+wheel scrolls, double-click shows all.
+fn wave_editor(ui: &mut Ui, id: Id, size: egui::Vec2, s: &SampleRef, region: (f64, f64), params: &mut [f32], mut own_loop: Option<&mut Option<(u32, u32)>>) -> egui::Response {
+    let (full, resp) = ui.allocate_exact_size(size, Sense::click_and_drag());
+    // The waveform, with a line of times under it.
+    let r = Rect::from_min_max(full.min, pos2(full.right(), full.bottom() - 15.0));
+    let (r0, r1) = region;
+    let len = (r1 - r0).max(1.0);
+    let mut view: (f64, f64) = ui.ctx().memory_mut(|m| m.data.get_temp(id)).unwrap_or((r0, r1));
+    let mut drag: Option<Marker> = ui.ctx().memory_mut(|m| m.data.get_temp(id.with("drag"))).unwrap_or(None);
+    // Zoom and scroll.
+    if resp.hovered() {
+        let (zoom, scroll, ptr) = ui.input(|i| (i.zoom_delta(), i.raw_scroll_delta, i.pointer.hover_pos()));
+        let span = view.1 - view.0;
+        if (zoom - 1.0).abs() > 1e-3 {
+            let at = ptr.map(|p| view.0 + ((p.x - r.left()) / r.width()) as f64 * span).unwrap_or(view.0 + span * 0.5);
+            let new_span = (span / zoom as f64).clamp(64.0f64.min(len), len);
+            let t = (at - view.0) / span;
+            view.0 = at - t * new_span;
+            view.1 = view.0 + new_span;
+        }
+        let pan = if ui.input(|i| i.modifiers.shift) { scroll.y + scroll.x } else { scroll.x };
+        if pan.abs() > 0.0 {
+            let shift = -(pan / r.width()) as f64 * (view.1 - view.0);
+            view.0 += shift;
+            view.1 += shift;
+        }
+        let span = view.1 - view.0;
+        if view.0 < r0 {
+            view = (r0, r0 + span);
+        }
+        if view.1 > r1 {
+            view = ((r1 - span).max(r0), r1);
+        }
+    }
+    if resp.double_clicked() {
+        view = (r0, r1);
+    }
+    let span = (view.1 - view.0).max(1.0);
+    let fx = |f: f64| r.left() + (((f - view.0) / span) as f32) * r.width();
+    let xf = |x: f32| view.0 + ((x - r.left()) / r.width()) as f64 * span;
+
+    // The waveform: peaks when zoomed out, the samples themselves when in.
+    let p = ui.painter_at(r);
+    rect_fill(&p, r, 3.0, BG);
+    let mid = r.center().y;
+    let half = r.height() * 0.45;
+    let frames = s.frames();
+    let block = krabton_engine::sample::PEAK_BLOCK as f64;
+    for col in 0..r.width() as usize {
+        let f0 = xf(r.left() + col as f32).max(0.0);
+        let f1 = xf(r.left() + col as f32 + 1.0).max(f0 + 1.0);
+        let (mut mn, mut mx) = (0.0f32, 0.0f32);
+        if f1 - f0 >= block {
+            let (a, b) = ((f0 / block) as usize, ((f1 / block) as usize).max((f0 / block) as usize + 1));
+            for pk in s.peaks.get(a.min(s.peaks.len())..b.min(s.peaks.len())).unwrap_or(&[]) {
+                mn = mn.min(pk.0);
+                mx = mx.max(pk.1);
+            }
+        } else {
+            let (a, b) = (f0 as usize, (f1.ceil() as usize).min(frames));
+            for i in a.min(frames)..b.max(a + 1).min(frames) {
+                let v = 0.5 * (s.left[i] + s.right[i]);
+                mn = mn.min(v);
+                mx = mx.max(v);
+            }
+        }
+        let x = r.left() + col as f32 + 0.5;
+        p.line_segment([pos2(x, mid - mx * half), pos2(x, mid - mn * half + 0.5)], Stroke::new(1.0_f32, ACCENT));
+    }
+
+    // Markers.
+    let own = own_loop.as_deref().copied().flatten();
+    let (start, end, looped) = sampler::bounds(params, r0, r1, own);
+    let dim = Color32::from_black_alpha(150);
+    p.rect_filled(Rect::from_min_max(r.min, pos2(fx(start).max(r.left()), r.bottom())), 0.0, dim);
+    p.rect_filled(Rect::from_min_max(pos2(fx(end).min(r.right()), r.top()), r.max), 0.0, dim);
+    let loop_col = Color32::from_rgb(0x7f, 0xb6, 0xe8);
+    if let Some((a, b)) = looped {
+        let band = Rect::from_min_max(pos2(fx(a), r.bottom() - 12.0), pos2(fx(b), r.bottom()));
+        p.rect_filled(band, 0.0, loop_col.gamma_multiply(0.35));
+        for (x, left) in [(fx(a), true), (fx(b), false)] {
+            p.line_segment([pos2(x, r.top()), pos2(x, r.bottom())], Stroke::new(1.0_f32, loop_col));
+            let tip = if left { vec![pos2(x, r.bottom() - 12.0), pos2(x + 8.0, r.bottom() - 6.0), pos2(x, r.bottom())] } else { vec![pos2(x, r.bottom() - 12.0), pos2(x - 8.0, r.bottom() - 6.0), pos2(x, r.bottom())] };
+            p.add(egui::Shape::convex_polygon(tip, loop_col, Stroke::NONE));
+        }
+    }
+    for (x, label) in [(fx(start), "S"), (fx(end), "E")] {
+        p.line_segment([pos2(x, r.top()), pos2(x, r.bottom())], Stroke::new(1.5_f32, Color32::WHITE));
+        let flag = if label == "S" { Rect::from_min_size(pos2(x, r.top()), vec2(11.0, 11.0)) } else { Rect::from_min_size(pos2(x - 11.0, r.top()), vec2(11.0, 11.0)) };
+        p.rect_filled(flag, 1.0, Color32::WHITE);
+        p.text(flag.center(), Align2::CENTER_CENTER, label, small(), TEXT_DARK);
+    }
+    let secs = |f: f64| f / s.sample_rate.max(1) as f64;
+    let mut info = format!("Start {:.3} s   End {:.3} s", secs(start), secs(end));
+    if let Some((a, b)) = looped {
+        info += &format!("   Loop {:.3} - {:.3} s", secs(a), secs(b));
+    }
+    let below = ui.painter_at(full);
+    below.text(pos2(full.left() + 2.0, full.bottom()), Align2::LEFT_BOTTOM, info, small(), TEXT_DIM);
+    if span < len - 1.0 {
+        below.text(pos2(full.right() - 2.0, full.bottom()), Align2::RIGHT_BOTTOM, format!("zoom {:.0}x", len / span), small(), TEXT_DIM);
+    }
+
+    // Dragging the markers.
+    let near = |x: f32, y: f32| -> Option<Marker> {
+        let mut c = vec![(Marker::Start, fx(start)), (Marker::End, fx(end))];
+        if let Some((a, b)) = looped {
+            // Loop handles sit at the bottom: there they win.
+            let bottom = y > r.bottom() - 18.0;
+            let loops = [(Marker::LoopStart, fx(a)), (Marker::LoopEnd, fx(b))];
+            if bottom {
+                c.splice(0..0, loops);
+            } else {
+                c.extend(loops);
+            }
+        }
+        // The closest; on a tie the first in the list (min_by keeps the first).
+        c.into_iter().filter(|(_, mx)| (mx - x).abs() < 9.0).min_by(|a, b| (a.1 - x).abs().total_cmp(&(b.1 - x).abs())).map(|(m, _)| m)
+    };
+    if let Some(hp) = resp.hover_pos() {
+        if drag.is_some() || near(hp.x, hp.y).is_some() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+        }
+    }
+    if resp.drag_started() {
+        drag = ui.input(|i| i.pointer.press_origin()).and_then(|o| near(o.x, o.y));
+    }
+    if let (Some(m), true) = (drag, resp.dragged()) {
+        let fine = ui.input(|i| i.modifiers.shift);
+        let current = match m {
+            Marker::Start => start,
+            Marker::End => end,
+            Marker::LoopStart => looped.map(|l| l.0).unwrap_or(start),
+            Marker::LoopEnd => looped.map(|l| l.1).unwrap_or(end),
+        };
+        let mut f = if fine {
+            current + resp.drag_delta().x as f64 * span / r.width() as f64 * 0.1
+        } else {
+            resp.interact_pointer_pos().map(|p| xf(p.x)).unwrap_or(current)
+        };
+        f = f.clamp(r0, r1);
+        let frac = |f: f64| ((f - r0) / len) as f32;
+        let gap = (32.0 / len) as f32;
+        match m {
+            Marker::Start => params[sampler::START] = frac(f).clamp(0.0, (params[sampler::END] - gap).max(0.0)).min(0.99),
+            Marker::End => params[sampler::END] = frac(f).clamp((params[sampler::START] + gap).max(0.01), 1.0),
+            Marker::LoopStart | Marker::LoopEnd => {
+                let f = if fine { f } else { snap_to_zero(s, f) };
+                match own_loop.as_deref_mut() {
+                    Some(Some(range)) => {
+                        if m == Marker::LoopStart {
+                            range.0 = (f as u32).min(range.1.saturating_sub(32));
+                        } else {
+                            range.1 = (f as u32).max(range.0 + 32);
+                        }
+                    }
+                    _ => {
+                        if m == Marker::LoopStart {
+                            params[sampler::LOOP_START] = frac(f).clamp(0.0, (params[sampler::LOOP_END] - gap).max(0.0)).min(0.99);
+                        } else {
+                            params[sampler::LOOP_END] = frac(f).clamp((params[sampler::LOOP_START] + gap).max(0.01), 1.0);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if resp.drag_stopped() {
+        drag = None;
+    }
+    ui.ctx().memory_mut(|m| {
+        m.data.insert_temp(id, view);
+        m.data.insert_temp(id.with("drag"), drag);
+    });
+    resp
+}
+
+/// Zones over the keys (x) and velocities (y). Returns the zone under
+/// `hover`.
+fn draw_zone_map(ui: &mut Ui, r: Rect, zones: &[krabton_engine::SampleZone], sel: usize, hover: Option<egui::Pos2>) -> Option<usize> {
+    let p = ui.painter();
+    rect_fill(p, r, 3.0, BG);
+    // Show the keys in use (at least two octaves), whole octaves.
+    let lo = zones.iter().map(|z| z.lo_key).min().unwrap_or(0) as f32;
+    let hi = zones.iter().map(|z| z.hi_key).max().unwrap_or(127) as f32 + 1.0;
+    let mut from = (lo / 12.0).floor() * 12.0;
+    let mut to = ((hi / 12.0).ceil() * 12.0).max(from + 24.0);
+    if to > 128.0 {
+        from = (from - (to - 128.0)).max(0.0);
+        to = 128.0;
+    }
+    let x = move |k: f32| r.left() + (k - from) / (to - from) * r.width();
+    let mut c = from;
+    while c <= to {
+        let xx = x(c);
+        p.line_segment([pos2(xx, r.top()), pos2(xx, r.bottom())], Stroke::new(1.0_f32, LINE_SOFT));
+        if c < to {
+            p.text(pos2(xx + 2.0, r.bottom() - 1.0), Align2::LEFT_BOTTOM, note_name(c as u8), small(), TEXT_DIM);
+        }
+        c += 12.0;
+    }
+    let rect_of = |z: &krabton_engine::SampleZone| {
+        Rect::from_min_max(pos2(x(z.lo_key as f32), r.bottom() - (z.hi_vel as f32 + 1.0) / 128.0 * r.height()), pos2(x(z.hi_key as f32 + 1.0), r.bottom() - z.lo_vel as f32 / 128.0 * r.height()))
+    };
+    let palette = [ACCENT, SELECT, PLAY, SOLO, REC];
+    for (k, z) in zones.iter().enumerate() {
+        let zr = rect_of(z).shrink2(vec2(0.0, 0.5));
+        let c = palette[k % palette.len()];
+        p.rect_filled(zr, 1.0, if k == sel { c } else { shade(c, 0.45) });
+        let rx = x(z.root as f32 + 0.5);
+        p.line_segment([pos2(rx, zr.top()), pos2(rx, zr.bottom())], Stroke::new(1.0_f32, Color32::WHITE.gamma_multiply(0.7)));
+    }
+    if let Some(z) = zones.get(sel) {
+        p.rect_stroke(rect_of(z), 1.0, Stroke::new(1.0_f32, Color32::WHITE), egui::StrokeKind::Inside);
+    }
+    let hp = hover?;
+    (0..zones.len()).rev().find(|&k| rect_of(&zones[k]).contains(hp))
+}
+
+/// Keys, root, velocities, tuning and gain of one zone, in two rows.
+fn zone_editor(ui: &mut Ui, z: &mut krabton_engine::SampleZone, k: usize) {
+    let key = |ui: &mut Ui, v: &mut u8, tip: &str| {
+        let mut n = *v as i32;
+        if ui.add(egui::DragValue::new(&mut n).range(0..=127).custom_formatter(|v, _| note_name(v as u8))).on_hover_text(tip).changed() {
+            *v = n as u8;
+        }
+    };
+    let dim = |ui: &mut Ui, t: &str| ui.label(RichText::new(t).small().color(TEXT_DIM));
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 3.0;
+        dim(ui, &format!("Zone {}  keys", k + 1));
+        key(ui, &mut z.lo_key, "Lowest key");
+        key(ui, &mut z.hi_key, "Highest key");
+        dim(ui, "root");
+        key(ui, &mut z.root, "The key that plays the sample at its own pitch");
+    });
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 3.0;
+        dim(ui, "velocity");
+        ui.add(egui::DragValue::new(&mut z.lo_vel).range(0..=127)).on_hover_text("Lowest velocity");
+        ui.add(egui::DragValue::new(&mut z.hi_vel).range(0..=127)).on_hover_text("Highest velocity");
+        ui.add(egui::DragValue::new(&mut z.tune).range(-1200.0..=1200.0).suffix(" ct").speed(1.0)).on_hover_text("Tuning in cents");
+        ui.add(egui::DragValue::new(&mut z.gain_db).range(-36.0..=12.0).suffix(" dB").speed(0.1)).on_hover_text("Level");
+    });
+    if z.hi_key < z.lo_key {
+        z.hi_key = z.lo_key;
+    }
+    if z.hi_vel < z.lo_vel {
+        z.hi_vel = z.lo_vel;
+    }
+}
+
 fn draw_waveform(ui: &mut Ui, r: Rect, sample: Option<&SampleRef>, start: f32) {
     let p = ui.painter();
     rect_fill(p, r, 3.0, BG);
     let Some(s) = sample else {
-        p.text(r.center(), Align2::CENTER_CENTER, "Drop a WAV here", small(), TEXT_DIM);
+        p.text(r.center(), Align2::CENTER_CENTER, "Drop a sample or an SFZ here", small(), TEXT_DIM);
         return;
     };
     let n = s.peaks.len().max(1);
@@ -825,6 +1259,8 @@ fn draw_waveform(ui: &mut Ui, r: Rect, sample: Option<&SampleRef>, start: f32) {
         let xx = r.left() + x as f32;
         p.line_segment([pos2(xx, mid - mx * half), pos2(xx, mid - mn * half + 0.5)], Stroke::new(1.0_f32, ACCENT));
     }
-    let sx = r.left() + start * r.width();
-    p.line_segment([pos2(sx, r.top()), pos2(sx, r.bottom())], Stroke::new(1.5_f32, Color32::WHITE));
+    if start >= 0.0 {
+        let sx = r.left() + start * r.width();
+        p.line_segment([pos2(sx, r.top()), pos2(sx, r.bottom())], Stroke::new(1.5_f32, Color32::WHITE));
+    }
 }

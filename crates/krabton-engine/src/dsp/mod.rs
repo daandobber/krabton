@@ -5,6 +5,7 @@ pub mod biquad;
 pub mod lens_comp;
 pub mod lens_eq;
 pub mod lens_limiter;
+pub mod machines;
 pub mod braids_synth;
 pub mod drums;
 pub mod elements_synth;
@@ -15,6 +16,7 @@ pub mod macro_osc;
 pub mod effects;
 pub mod reverb;
 pub mod sampler;
+pub mod shakers;
 pub mod synth;
 
 use std::f32::consts::PI;
@@ -87,6 +89,12 @@ impl Rng {
     #[inline]
     pub fn bipolar(&mut self) -> f32 {
         (self.next_u32() >> 8) as f32 * (2.0 / 16_777_216.0) - 1.0
+    }
+
+    /// Uniform in [0, 1).
+    #[inline]
+    pub fn unipolar(&mut self) -> f32 {
+        (self.next_u32() >> 8) as f32 * (1.0 / 16_777_216.0)
     }
 }
 

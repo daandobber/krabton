@@ -85,6 +85,8 @@ pub enum BrowserItem {
     Analog(&'static str),
     /// A copy of a clip in this project.
     Clip { id: u64, name: String },
+    /// An SFZ instrument, played by the Sampler.
+    SamplerPatch(PathBuf),
 }
 
 /// A bank of DX7 voices for FM.
@@ -103,7 +105,7 @@ impl BrowserItem {
             BrowserItem::Braids(p) => format!("Braids: {p}"),
             BrowserItem::Elements(p) => format!("Elements: {p}"),
             BrowserItem::Analog(p) => format!("Analog: {p}"),
-            BrowserItem::Drums(k) => format!("Drums: {k}"),
+            BrowserItem::Drums(k) => k.to_string(),
             BrowserItem::Sampler => "Sampler".into(),
             BrowserItem::Effect(k) => k.name().into(),
             BrowserItem::Sample(p) => p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default(),
@@ -113,6 +115,7 @@ impl BrowserItem {
                 krabton_engine::dsp::dx7::Dx7Voice::from_slice(voice).map(|v| format!("FM: {}", v.name())).unwrap_or_default()
             }
             BrowserItem::Clip { name, .. } => name.clone(),
+            BrowserItem::SamplerPatch(p) => p.file_stem().map(|f| f.to_string_lossy().to_string()).unwrap_or_default(),
         }
     }
 }
@@ -304,6 +307,8 @@ pub struct App {
     /// Settings kept between sessions.
     pub prefs: crate::prefs::Prefs,
     pub sel_pad: usize,
+    /// The selected zone of a Sampler.
+    pub sel_zone: usize,
     pub pending_pad_hit: Option<u8>,
     sample_cache: HashMap<PathBuf, SampleRef>,
 
@@ -407,6 +412,7 @@ impl App {
             browser: BrowserState::new(),
             prefs: crate::prefs::Prefs::load(),
             sel_pad: 0,
+            sel_zone: 0,
             pending_pad_hit: None,
             sample_cache: HashMap::new(),
             renaming: None,
@@ -709,7 +715,7 @@ impl App {
                         use krabton_engine::midi_fx::MidiFxKind as K;
                         // A fitting instrument for each sequencer.
                         let inst = match kind {
-                            K::Euclid | K::DrumGrid => Instrument::drums("909 Krab"),
+                            K::Euclid | K::DrumGrid => Instrument::drums("909 Classic"),
                             K::Acid => Instrument::synth("Acid"),
                             K::Progression => Instrument::synth("Soft Pad"),
                             _ => Instrument::synth("Pluck"),
@@ -833,6 +839,44 @@ impl App {
                 }
                 self.detail = DetailTab::Devices;
             }
+            BrowserItem::SamplerPatch(path) => {
+                let lz = match krabton_engine::sample_map::load_zones(std::slice::from_ref(path)) {
+                    Ok(lz) => lz,
+                    Err(e) => {
+                        self.toast(e);
+                        return;
+                    }
+                };
+                let mut params = krabton_engine::params::defaults(krabton_engine::dsp::sampler::SPECS);
+                use krabton_engine::dsp::sampler as smp;
+                for (k, v) in [smp::ATTACK, smp::DECAY, smp::SUSTAIN, smp::RELEASE].into_iter().zip(lz.envelope) {
+                    if let Some(v) = v {
+                        params[k] = smp::SPECS[k].clamp(v);
+                    }
+                }
+                if lz.zones.iter().any(|z| z.loop_range.is_some()) {
+                    params[smp::LOOP] = 1.0;
+                }
+                let n = lz.zones.len();
+                let name = item.label();
+                let inst = Instrument::Sampler { params, sample: None, zones: lz.zones };
+                match target_track {
+                    Some(t) if is_midi(self, t) => {
+                        let tr = &mut self.project.tracks[t];
+                        tr.instrument = Some(inst);
+                        tr.name = name.clone();
+                        self.sel_track = TrackSel::Track(t);
+                        self.detail = DetailTab::Devices;
+                    }
+                    _ => {
+                        let t = self.add_midi_track(Some(inst));
+                        self.project.tracks[t].name = name.clone();
+                    }
+                }
+                self.sel_zone = 0;
+                let failed = if lz.failed.is_empty() { String::new() } else { format!(", {} file(s) could not be read", lz.failed.len()) };
+                self.toast(format!("{name}: {n} zone(s){failed}"));
+            }
             BrowserItem::Clip { id, .. } => {
                 let found = self.project.tracks.iter().flat_map(|t| t.slots.iter().flatten()).find(|c| c.id == *id).cloned();
                 let Some(mut clip) = found else { return };
@@ -886,7 +930,10 @@ impl App {
                         Some(t) if is_midi(self, t) => {
                             let tr = &mut self.project.tracks[t];
                             match &mut tr.instrument {
-                                Some(Instrument::Sampler { sample: s, .. }) => *s = Some(sample),
+                                Some(Instrument::Sampler { sample: s, zones, .. }) => {
+                                    *s = Some(sample);
+                                    zones.clear();
+                                }
                                 Some(Instrument::Drums { pads, .. }) => {
                                     if let Some(pad) = pads.get_mut(self.sel_pad) {
                                         pad.name = sample.name.clone();

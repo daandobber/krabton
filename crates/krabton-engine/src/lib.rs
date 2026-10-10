@@ -16,6 +16,7 @@ pub mod plugin;
 pub mod project;
 pub mod render;
 pub mod sample;
+pub mod sample_map;
 pub mod sequencers;
 pub mod routing;
 pub mod scale;

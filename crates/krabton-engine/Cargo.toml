@@ -12,6 +12,8 @@ serde.workspace = true
 serde_json.workspace = true
 crossbeam-channel.workspace = true
 hound.workspace = true
+# FLAC decoding for samples (pure Rust, Apache-2.0).
+claxon = "0.4.3"
 krabton-braids = { path = "../krabton-braids" }
 krabton-elements = { path = "../krabton-elements" }
 # Mutable Instruments Plaits DSP (MIT), pinned to a reviewed commit.

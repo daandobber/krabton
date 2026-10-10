@@ -96,8 +96,18 @@
 **Instruments**
 - **Analog**: a classic analog polysynth, see below
 - **Synth**: two PolyBLEP oscillators, sub, noise, unison detune, resonant multimode filter with envelope and key tracking, drive, two ADSRs, LFO, mono/legato with glide. Presets: Fat Bass, Acid, Sub Bass, Soft Pad, Pluck, Lead, Keys
-- **Drums**: an 8-pad synthesized drum rack (kick, snare, hats with choke, clap, tom, rim, cowbell) on General MIDI notes, with 808/909/Lo-Fi kits. Every pad can also play a WAV sample
-- **Sampler**: plays any WAV chromatically, with ADSR, filter, start offset and loop
+- **Drum instruments**: each is an 8-pad instrument on General MIDI notes with its own voices and kits (presets). Every pad has level, tune, decay, tone and pan plus the knobs of its voice, choke groups (a closed hat stops the open one), and can play a WAV or FLAC sample instead
+  - **808**, **909** and **CR-78**: voices after the classic drum machines, built from how their circuits work (no samples). 808: kick, snare, tom, conga, rim, clap, claves, maracas, cowbell, cymbal, hats; kits 808 Classic, Boom, Electro, Latin. 909: swept kick with its attack, snare with snappy, tom, rim, clap, hats; kits 909 Classic, House, Techno, Toms. CR-78: kick, snare, hat, cymbal, bongo, guiro, tambourine, metal; kits CR-78 Classic, Disco, Bossa. Velocity works as accent
+  - **Mutable Drums**: the drum models of Mutable Instruments Plaits: an analog and a synthetic kick, an analog and a synthetic snare, a metallic and a ring-modulated hi-hat, with their knobs (Punch, Dirt, FM, Snappy, Noise); kits Mutable Analog, Synthetic, Industrial
+  - **Shakers**: Perry Cook's PhISEM model of shaken objects: maraca, cabasa, sekere, tambourine, sleigh bells, bamboo chimes, sandpaper, a can, crunch, rocks and gravel, with the number of objects as a knob; kits Shaker Kit, Hand Percussion, Found Sounds
+  - **Drum Rack**: any of these voices side by side, Krabton's own Classic drums and a bending electronic tom, and samples. *From folder...* turns a folder of drum samples into a kit: kick, snare, clap, rim, hats and toms go to their pads by name, the rest fill the free pads
+- **Sampler**: one sample across the keyboard, or a multi-sampled instrument
+  - Zones: samples over ranges of keys and velocities, each with its root key, tuning, level, pan, start and end. A zone map shows them over keys and velocities; click one to edit it
+  - Load several WAV or FLAC files (or a folder) and they are laid out by the notes in their names (`Piano C4 mf.wav`), with velocity layers from `pp`...`ff` or `v1`, `v2`; files without notes go one per key from C1
+  - Plays SFZ instruments (regions, groups, key and velocity ranges, tuning, volume, pan, offsets, loops, amp envelope, `#define` and `#include`; release triggers and extra round robins are left out), so the many free SFZ libraries work. SFZ files show up in the browser
+  - *Slice* cuts a loop at its hits, one slice per key from C1, and *One-Shot* mode plays every note to the end (for drums)
+  - A sample editor: drag Start (S), End (E) and the loop points on the waveform (Shift for fine moves; loop points snap to zero crossings), Ctrl+wheel to zoom. Loop off, forward (with a crossfade) or back and forth. Start, End and the loop are also knobs, so they can be modulated, and they apply to every zone (a slice keeps its own start and end)
+  - ADSR, filter and velocity
 
 **Analog: a classic analog polysynth**
 - Two oscillators (saw, pulse, triangle, sine) with octave switches, hard sync, cross modulation, pulse-width modulation and a filter-envelope sweep of oscillator 2 (the classic sync lead), plus a sub oscillator and noise
@@ -275,13 +285,17 @@ Ideas that would make Krabton even more Live-like (contributions welcome):
 - Effect plugins and VST3 hosting, plugin parameter automation
 - Time-stretching warp modes (Beats, Complex)
 - Groove pool, follow actions, MIDI output, MIDI mapping of controls
-- More file formats for samples (FLAC, MP3, OGG)
+- More file formats for samples (AIFF, MP3, OGG), and streaming large sample libraries from disk instead of loading them into memory
 
 ## Credits
 
 - Braids is a port of the Mutable Instruments Braids DSP code by Emilie Gillet (MIT, <https://github.com/pichenettes/eurorack>), with the original copyright and license kept in [`crates/krabton-braids/LICENSE`](crates/krabton-braids/LICENSE).
 - Elements is a port of the Mutable Instruments Elements DSP code, lookup tables and exciter samples by Emilie Gillet (MIT, <https://github.com/pichenettes/eurorack>), with the original copyright and license kept in [`crates/krabton-elements/LICENSE`](crates/krabton-elements/LICENSE).
 - Plaits runs the DSP code of Mutable Instruments Plaits by Emilie Gillet, in the Rust port `mi-plaits-dsp` by Oliver Rockstedt. Both are MIT licensed; their copyright and license notices travel with the crate. Krabton is not affiliated with Mutable Instruments.
+- The Mutable voices of Drums use the drum models of Plaits from the same `mi-plaits-dsp` crate.
+- The Machine voices of Drums are original implementations after the published workings of the drum machines' circuits; no samples are used. 808, 909 and CR-78 refer to the instruments they imitate; Krabton is not affiliated with their makers.
+- FLAC files are decoded with [claxon](https://github.com/ruuda/claxon) (Apache-2.0). SFZ is an open format for sampled instruments (<https://sfzformat.com>).
+- The Shakers of Drums are an implementation of Perry Cook's PhISEM (Physically Informed Stochastic Event Modeling, Computer Music Journal 21:3, 1997), with instrument settings after the Shakers of his Synthesis ToolKit (STK).
 - Analog, Synth and FM are original implementations; FM is DX7-style synthesis and reads standard DX7 sysex files.
 
 ## License

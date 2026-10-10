@@ -278,7 +278,7 @@ fn list_dir(dir: &Path) -> Vec<(PathBuf, bool)> {
                 continue;
             }
             let is_dir = path.is_dir();
-            if is_dir || has_ext(&path, "wav") || has_ext(&path, "syx") {
+            if is_dir || has_ext(&path, "wav") || has_ext(&path, "flac") || has_ext(&path, "syx") || has_ext(&path, "sfz") {
                 v.push((path, is_dir));
             }
         }
@@ -338,7 +338,7 @@ struct Dev {
     make: fn(&'static str) -> BrowserItem,
 }
 
-fn devices() -> [Dev; 6] {
+fn devices() -> [Dev; 5] {
     [
         Dev {
             name: "Analog",
@@ -352,7 +352,6 @@ fn devices() -> [Dev; 6] {
             presets: braids_synth::preset_names(),
             make: BrowserItem::Braids,
         },
-        Dev { name: "Drums", hint: "Synthesized drum rack (GM note mapping)", presets: drums::kit_names(), make: BrowserItem::Drums },
         Dev {
             name: "Elements",
             hint: "Modal synthesis from Mutable Instruments Elements: bow, blow and strike a resonator or strings",
@@ -374,6 +373,17 @@ const SAMPLE_HINT: &str = "Click to hear it, double-click to load it, or drag it
 
 fn fm_voice(bank: &crate::app::FmBank, i: usize, v: &Dx7Voice) -> Node {
     Node::item(format!("inst/FM/{}/{i}", bank.name), v.name(), Icon::Preset, FM_HINT, BrowserItem::FmVoice { bank: bank.name.clone(), voice: v.0.to_vec() })
+}
+
+/// The drum instruments (808, 909, CR-78, ...), each opening into its kits.
+fn drum_engine_nodes() -> Vec<Node> {
+    drums::DrumEngine::ALL
+        .into_iter()
+        .map(|e| {
+            let kids = e.kits().iter().map(|k| Node::item(format!("inst/{}/{k}", e.name()), *k, Icon::Preset, e.description(), BrowserItem::Drums(k))).collect();
+            Node::Folder { tag: None, label: e.name().into(), icon: Icon::Device, hint: e.description().into(), load: Some(BrowserItem::Drums(e.kits()[0])), kids: Kids::Nodes(kids) }
+        })
+        .collect()
 }
 
 fn effect_nodes() -> Vec<Node> {
@@ -552,10 +562,11 @@ impl App {
                 groups.into_iter().map(|(kind, kids)| Node::folder(kind, Icon::Folder, kids)).collect()
             }
             Category::Drums => {
-                let kits = drums::kit_names().iter().map(|k| Node::item(format!("inst/Drums/{k}"), *k, Icon::Preset, "Synthesized drum rack (GM note mapping)", BrowserItem::Drums(k)).detail("Drums")).collect();
                 let mut hits: Vec<Node> = self.sounds().into_iter().filter(|(kind, _)| *kind == "Drums").map(|(_, n)| n).collect();
                 hits.sort_by(|a, b| a.label().cmp(b.label()));
-                vec![Node::folder("Drum Kits", Icon::Folder, kits), Node::folder("Drum Hits", Icon::Folder, hits)]
+                let mut out = drum_engine_nodes();
+                out.push(Node::folder("Drum Hits", Icon::Folder, hits));
+                out
             }
             Category::Instruments => self.instrument_nodes(),
             Category::AudioEffects => effect_nodes(),
@@ -579,7 +590,7 @@ impl App {
     /// with the kind of sound it makes.
     fn sounds(&self) -> Vec<(&'static str, Node)> {
         let mut out = Vec::new();
-        for d in devices().into_iter().filter(|d| d.name != "Drums") {
+        for d in devices() {
             for p in d.presets {
                 if let Some(kind) = sound_type(p) {
                     out.push((kind, Node::item(format!("inst/{}/{p}", d.name), *p, Icon::Preset, d.hint, (d.make)(p)).detail(d.name)));
@@ -626,7 +637,8 @@ impl App {
             load: first,
             kids: Kids::Nodes(fm),
         });
-        out.push(Node::item("inst/Sampler", "Sampler", Icon::Device, "Plays one sample across the keyboard. Drop a WAV on it.", BrowserItem::Sampler));
+        out.extend(drum_engine_nodes());
+        out.push(Node::item("inst/Sampler", "Sampler", Icon::Device, "Plays samples: one across the keyboard, a multi-sampled instrument or SFZ, or slices of a loop", BrowserItem::Sampler));
         out.sort_by(|a, b| a.label().cmp(b.label()));
         out
     }
@@ -724,6 +736,8 @@ impl App {
                 } else if let Some(p) = t.key.strip_prefix("file/").map(PathBuf::from).filter(|p| p.is_file()) {
                     if has_ext(&p, "syx") {
                         Node::Folder { tag: Some(t.key.clone()), label: t.label, icon: Icon::Bank, hint: p.display().to_string(), load: None, kids: Kids::Syx(p) }
+                    } else if has_ext(&p, "sfz") {
+                        Node::item(t.key.clone(), t.label, Icon::Device, "SFZ instrument", BrowserItem::SamplerPatch(p))
                     } else {
                         Node::item(t.key.clone(), t.label, Icon::Sample, SAMPLE_HINT, BrowserItem::Sample(p))
                     }
@@ -741,8 +755,10 @@ impl App {
             let name = file_name(&path);
             if is_dir {
                 out.push(Node::Folder { tag: Some(dir_tag(&path)), label: name, icon: Icon::Folder, hint: String::new(), load: None, kids: Kids::Dir { path, samples_only } });
-            } else if has_ext(&path, "wav") {
+            } else if has_ext(&path, "wav") || has_ext(&path, "flac") {
                 out.push(Node::item(file_tag(&path), name, Icon::Sample, SAMPLE_HINT, BrowserItem::Sample(path)));
+            } else if has_ext(&path, "sfz") {
+                out.push(Node::item(file_tag(&path), name, Icon::Device, "SFZ instrument: double-click or drag onto a track to play it with the Sampler", BrowserItem::SamplerPatch(path)));
             } else if !samples_only && has_ext(&path, "syx") {
                 out.push(Node::Folder { tag: Some(file_tag(&path)), label: name, icon: Icon::Bank, hint: "DX7 bank: open it for its voices".into(), load: None, kids: Kids::Syx(path) });
             }

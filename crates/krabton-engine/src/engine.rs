@@ -352,7 +352,7 @@ impl InstState {
         match (self, inst) {
             (InstState::Synth(s), Instrument::Synth { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Drums(s), Instrument::Drums { pads, .. }) => s.note_on(pads, pitch, vel, sr),
-            (InstState::Sampler(s), Instrument::Sampler { params, sample }) => s.note_on(ov.unwrap_or(params), sample.as_ref(), pitch, vel),
+            (InstState::Sampler(s), Instrument::Sampler { params, sample, zones }) => s.note_on(ov.unwrap_or(params), sample.as_ref(), zones, pitch, vel),
             (st @ InstState::Plugin { .. }, Instrument::Plugin(_)) => st.push_plugin_event(pitch, PluginEventKind::NoteOn { velocity: vel }),
             (InstState::Fm(s), Instrument::Fm { voice, op_mask, params, .. }) => s.note_on(ov.unwrap_or(params), voice, *op_mask, pitch, vel),
             (InstState::Macro(s), Instrument::Macro { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
@@ -366,7 +366,7 @@ impl InstState {
     fn note_off(&mut self, inst: &Instrument, ov: Option<&[f32]>, pitch: u8) {
         match (self, inst) {
             (InstState::Synth(s), Instrument::Synth { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
-            (InstState::Sampler(s), Instrument::Sampler { .. }) => s.note_off(pitch),
+            (InstState::Sampler(s), Instrument::Sampler { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (st @ InstState::Plugin { .. }, Instrument::Plugin(_)) => st.push_plugin_event(pitch, PluginEventKind::NoteOff),
             (InstState::Fm(s), Instrument::Fm { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Macro(s), Instrument::Macro { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
@@ -396,7 +396,7 @@ impl InstState {
         match (self, inst) {
             (InstState::Synth(s), Instrument::Synth { params, .. }) => s.render(ov.unwrap_or(params), l, r, sr),
             (InstState::Drums(s), Instrument::Drums { pads, .. }) => s.render(pads, l, r, sr),
-            (InstState::Sampler(s), Instrument::Sampler { params, sample }) => s.render(ov.unwrap_or(params), sample.as_ref(), l, r, sr),
+            (InstState::Sampler(s), Instrument::Sampler { params, sample, zones }) => s.render(ov.unwrap_or(params), sample.as_ref(), zones, l, r, sr),
             (InstState::Fm(s), Instrument::Fm { voice, params, .. }) => s.render(ov.unwrap_or(params), voice, l, r, sr),
             (InstState::Macro(s), Instrument::Macro { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Braids(s), Instrument::Braids { params, .. }) => s.render(ov.unwrap_or(params), l, r),
