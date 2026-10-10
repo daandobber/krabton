@@ -1579,6 +1579,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "krabton-airwindows"
+version = "0.1.0"
+
+[[package]]
 name = "krabton-braids"
 version = "0.1.0"
 
@@ -1593,6 +1597,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "krabton-clouds"
+version = "0.1.0"
+
+[[package]]
 name = "krabton-elements"
 version = "0.1.0"
 
@@ -1603,8 +1611,12 @@ dependencies = [
  "claxon",
  "crossbeam-channel",
  "hound",
+ "krabton-airwindows",
  "krabton-braids",
+ "krabton-clouds",
  "krabton-elements",
+ "krabton-rings",
+ "krabton-stk",
  "mi-plaits-dsp",
  "serde",
  "serde_json",
@@ -1616,6 +1628,14 @@ version = "0.1.0"
 dependencies = [
  "serialport",
 ]
+
+[[package]]
+name = "krabton-rings"
+version = "0.1.0"
+
+[[package]]
+name = "krabton-stk"
+version = "0.1.0"
 
 [[package]]
 name = "libc"

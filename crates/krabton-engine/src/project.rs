@@ -4,7 +4,7 @@
 use crate::dsp::drums::{self, DrumVoice};
 use crate::dsp::effects::EffectKind;
 use crate::dsp::dx7::{self, Dx7Voice};
-use crate::dsp::{analog, braids_synth, elements_synth, fm, macro_osc, sampler, shaker_synth, synth};
+use crate::dsp::{analog, braids_synth, elements_synth, fm, macro_osc, sampler, shaker_synth, synth, stk_voice, stk_mallets, stk_strings, stk_winds, organ, rings_synth};
 use crate::params;
 use crate::routing::{AudioInput, AudioOutput, MidiInput, Monitor};
 use crate::sample::{LoadCacheGuard, SampleRef};
@@ -425,6 +425,18 @@ pub enum Instrument {
     Analog { preset: String, params: Vec<f32> },
     /// Shakers: PhISEM shakers played with notes.
     Shakers { preset: String, params: Vec<f32> },
+    /// Voice: A singing voice from formant filters, 32 vowels and consonants, from the Synthesis ToolKit.
+    Voice { preset: String, params: Vec<f32> },
+    /// Mallets: Marimba, vibraphone, agogo, woods, glass harmonica and Tibetan bowl: struck physical models from the Synthesis ToolKit.
+    Mallets { preset: String, params: Vec<f32> },
+    /// Strings: Bowed, plucked, mandolin, sitar and stiff strings: string physical models from the Synthesis ToolKit.
+    Strings { preset: String, params: Vec<f32> },
+    /// Winds: Flute, clarinet, saxophone, brass, blown bottle, blow hole and whistle: blown physical models from the Synthesis ToolKit.
+    Winds { preset: String, params: Vec<f32> },
+    /// Organ: Tonewheel organ: nine drawbars, percussion, key click, scanner vibrato and chorus, drive and a rotating speaker.
+    Organ { preset: String, params: Vec<f32> },
+    /// Rings: Resonator after Mutable Instruments Rings: modal, sympathetic and inharmonic strings, FM voice, chords, and the Disastrous Peace string synth.
+    Rings { preset: String, params: Vec<f32> },
 }
 
 impl Instrument {
@@ -464,6 +476,30 @@ impl Instrument {
         Instrument::Shakers { preset: preset.to_string(), params: shaker_synth::preset(preset) }
     }
 
+    pub fn voice(preset: &str) -> Self {
+        Instrument::Voice { preset: preset.to_string(), params: stk_voice::preset(preset) }
+    }
+
+    pub fn mallets(preset: &str) -> Self {
+        Instrument::Mallets { preset: preset.to_string(), params: stk_mallets::preset(preset) }
+    }
+
+    pub fn strings(preset: &str) -> Self {
+        Instrument::Strings { preset: preset.to_string(), params: stk_strings::preset(preset) }
+    }
+
+    pub fn winds(preset: &str) -> Self {
+        Instrument::Winds { preset: preset.to_string(), params: stk_winds::preset(preset) }
+    }
+
+    pub fn organ(preset: &str) -> Self {
+        Instrument::Organ { preset: preset.to_string(), params: organ::preset(preset) }
+    }
+
+    pub fn rings(preset: &str) -> Self {
+        Instrument::Rings { preset: preset.to_string(), params: rings_synth::preset(preset) }
+    }
+
     pub fn kind_name(&self) -> &'static str {
         match self {
             Instrument::Synth { .. } => "Synth",
@@ -476,6 +512,12 @@ impl Instrument {
             Instrument::Elements { .. } => "Elements",
             Instrument::Analog { .. } => "Analog",
             Instrument::Shakers { .. } => "Shakers",
+            Instrument::Voice { .. } => "Voice",
+            Instrument::Mallets { .. } => "Mallets",
+            Instrument::Strings { .. } => "Strings",
+            Instrument::Winds { .. } => "Winds",
+            Instrument::Organ { .. } => "Organ",
+            Instrument::Rings { .. } => "Rings",
         }
     }
 
@@ -488,7 +530,7 @@ impl Instrument {
             Instrument::Sampler { sample, .. } => sample.as_ref().map(|s| s.name.clone()).unwrap_or_else(|| "Empty".into()),
             Instrument::Plugin(p) => p.name.clone(),
             Instrument::Fm { voice, .. } => Dx7Voice::from_slice(voice).map(|v| v.name()).unwrap_or_else(|| "FM".into()),
-            Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } => preset.clone(),
+            Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } => preset.clone(),
         }
     }
 
@@ -1136,6 +1178,12 @@ impl Project {
                 Some(Instrument::Elements { params, .. }) => params::fix_len(params, elements_synth::SPECS),
                 Some(Instrument::Analog { params, .. }) => params::fix_len(params, analog::SPECS),
                 Some(Instrument::Shakers { params, .. }) => params::fix_len(params, shaker_synth::SPECS),
+                Some(Instrument::Voice { params, .. }) => params::fix_len(params, stk_voice::SPECS),
+                Some(Instrument::Mallets { params, .. }) => params::fix_len(params, stk_mallets::SPECS),
+                Some(Instrument::Strings { params, .. }) => params::fix_len(params, stk_strings::SPECS),
+                Some(Instrument::Winds { params, .. }) => params::fix_len(params, stk_winds::SPECS),
+                Some(Instrument::Organ { params, .. }) => params::fix_len(params, organ::SPECS),
+                Some(Instrument::Rings { params, .. }) => params::fix_len(params, rings_synth::SPECS),
                 // Shakers became an instrument; their kits are the Drum Rack's.
                 Some(Instrument::Drums { engine, .. }) if *engine == drums::DrumEngine::Shakers => *engine = drums::DrumEngine::Rack,
                 Some(Instrument::Plugin(p)) => max_id = max_id.max(p.instance + 1),

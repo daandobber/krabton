@@ -1,0 +1,10 @@
+[package]
+name = "krabton-stk"
+description = "Rust ports of physical models from the Synthesis ToolKit (STK) by Perry Cook and Gary Scavone, for Krabton"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license = "MIT"
+authors = ["Krabton contributors", "Perry R. Cook and Gary P. Scavone (original STK code)"]
+
+[dependencies]

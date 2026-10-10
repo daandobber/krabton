@@ -531,7 +531,7 @@ mod tests {
         let blocks = (beats * spb / 256.0) as u64;
         for b in 0..blocks {
             let now = b * 256;
-            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true };
+            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0 };
             let mut out = Vec::new();
             st.process(kind, p, data, &[], &mut out, &ctx);
             for e in out.iter().filter(|e| e.on) {
@@ -616,7 +616,7 @@ mod tests {
     #[test]
     fn silent_when_stopped() {
         let mut st = MidiFxState::new(MidiFxKind::Euclid);
-        let ctx = MidiCtx { now: 0, len: 256, samples_per_beat: 24000.0, scale: Scale::default(), scale_on: true, beat: 0.0, playing: false };
+        let ctx = MidiCtx { now: 0, len: 256, samples_per_beat: 24000.0, scale: Scale::default(), scale_on: true, beat: 0.0, playing: false, sr: 48000.0 };
         let mut out = Vec::new();
         st.process(MidiFxKind::Euclid, &defaults(EUCLID), &[], &[], &mut out, &ctx);
         assert!(out.is_empty());

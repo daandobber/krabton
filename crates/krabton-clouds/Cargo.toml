@@ -1,0 +1,10 @@
+[package]
+name = "krabton-clouds"
+description = "Rust port of the Mutable Instruments Clouds granular processor, for Krabton"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license = "MIT"
+authors = ["Krabton contributors", "Emilie Gillet (original Clouds code)"]
+
+[dependencies]

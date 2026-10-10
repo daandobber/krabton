@@ -9,6 +9,12 @@ use krabton_engine::dsp::effects::EffectKind;
 use krabton_engine::midi_fx::MidiFxKind;
 use krabton_engine::dsp::analog;
 use krabton_engine::dsp::shaker_synth;
+use krabton_engine::dsp::stk_voice;
+use krabton_engine::dsp::stk_mallets;
+use krabton_engine::dsp::stk_strings;
+use krabton_engine::dsp::stk_winds;
+use krabton_engine::dsp::organ;
+use krabton_engine::dsp::rings_synth;
 use krabton_engine::dsp::braids_synth;
 use krabton_engine::dsp::elements_synth;
 use krabton_engine::dsp::macro_osc::{self, HARMONICS, MODEL};
@@ -427,14 +433,27 @@ impl App {
             let mut close = false;
             area.show(ui.ctx(), |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    for k in EffectKind::ALL {
-                        if ui.button(k.name()).clicked() {
-                            let dev = self.project.make_device(k);
-                            if let Some(c) = self.chain_mut(sel) {
-                                c.push(dev);
+                    // A column per category, four to a row.
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                    for row in EffectKind::CATEGORIES.chunks(4) {
+                        ui.horizontal_top(|ui| {
+                            for &cat in row {
+                                ui.vertical(|ui| {
+                                    ui.set_min_width(130.0);
+                                    ui.label(RichText::new(cat).small().color(TEXT_DIM));
+                                    for k in EffectKind::ALL.into_iter().filter(|k| k.category() == cat) {
+                                        if ui.button(k.name()).on_hover_text(k.description()).clicked() {
+                                            let dev = self.project.make_device(k);
+                                            if let Some(c) = self.chain_mut(sel) {
+                                                c.push(dev);
+                                            }
+                                            close = true;
+                                        }
+                                    }
+                                });
                             }
-                            close = true;
-                        }
+                        });
+                        ui.add_space(4.0);
                     }
                     let plugins: Vec<krabton_clap::PluginInfo> = self.plugins.effects().cloned().collect();
                     if !plugins.is_empty() {
@@ -541,6 +560,96 @@ impl App {
                             ui.label(RichText::new("classic analog polysynth").small().color(TEXT_DIM));
                         });
                         param_grid_mod(ui, Id::new(("analog", track_id)), analog::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
+                    }
+                    Instrument::Rings { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("rings_synth_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in rings_synth::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = rings_synth::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("struck resonator: modal, strings, FM, chords").small().color(TEXT_DIM));
+                        });
+                        param_grid_mod(ui, Id::new(("rings_synth", track_id)), rings_synth::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
+                    }
+                    Instrument::Organ { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("organ_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in organ::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = organ::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("tonewheel organ: drawbars, percussion, vibrato, rotary").small().color(TEXT_DIM));
+                        });
+                        param_grid_mod(ui, Id::new(("organ", track_id)), organ::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
+                    }
+                    Instrument::Winds { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("stk_winds_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in stk_winds::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = stk_winds::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("blown physical models (STK)").small().color(TEXT_DIM));
+                        });
+                        stk_controls(ui, track_id, krabton_engine::dsp::stk_synth::Family::Winds, params, h, mv.as_mut());
+                    }
+                    Instrument::Strings { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("stk_strings_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in stk_strings::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = stk_strings::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("string physical models (STK)").small().color(TEXT_DIM));
+                        });
+                        stk_controls(ui, track_id, krabton_engine::dsp::stk_synth::Family::Strings, params, h, mv.as_mut());
+                    }
+                    Instrument::Mallets { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("stk_mallets_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in stk_mallets::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = stk_mallets::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("struck physical models (STK)").small().color(TEXT_DIM));
+                        });
+                        stk_controls(ui, track_id, krabton_engine::dsp::stk_synth::Family::Mallets, params, h, mv.as_mut());
+                    }
+                    Instrument::Voice { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("stk_voice_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in stk_voice::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = stk_voice::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("formant voice (STK)").small().color(TEXT_DIM));
+                        });
+                        stk_controls(ui, track_id, krabton_engine::dsp::stk_synth::Family::Voice, params, h, mv.as_mut());
                     }
                     Instrument::Shakers { preset, params } => {
                         ui.horizontal(|ui| {
@@ -1038,15 +1147,53 @@ fn macro_model_picker(ui: &mut Ui, track_id: u64, params: &mut [f32], height: f3
     }
 }
 
-fn effect_menu(app: &mut App, ui: &mut Ui, sel: TrackSel) {
-    for k in EffectKind::ALL {
-        if ui.button(k.name()).on_hover_text(k.description()).clicked() {
-            let dev = app.project.make_device(k);
-            if let Some(c) = app.chain_mut(sel) {
-                c.push(dev);
+/// The model and controls of an STK instrument: the knobs carry the
+/// current model's own control names.
+fn stk_controls(ui: &mut Ui, track_id: u64, family: krabton_engine::dsp::stk_synth::Family, params: &mut Vec<f32>, h: f32, mv: Option<&mut ModView>) {
+    use krabton_engine::dsp::stk_synth as stk;
+    let specs = stk::specs(family);
+    if params.len() < specs.len() {
+        return;
+    }
+    let models = stk::models(family);
+    let k = stk::model_of(family, params);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Model").small().color(TEXT_DIM));
+        egui::ComboBox::from_id_salt(("stk_model", track_id)).width(130.0).selected_text(models[k].name).show_ui(ui, |ui| {
+            for (i, m) in models.iter().enumerate() {
+                if ui.selectable_label(i == k, m.name).clicked() && i != k {
+                    // A new model starts from its own defaults; voices and volume stay.
+                    let (voices, volume) = (params[stk::VOICES], params[stk::VOLUME]);
+                    *params = stk::defaults_for(family, i);
+                    params[stk::VOICES] = voices;
+                    params[stk::VOLUME] = volume;
+                }
             }
-            ui.close();
-        }
+        });
+    });
+    let ctl = stk::controls(&models[stk::model_of(family, params)]);
+    let used = ctl.iter().take_while(|c| c.is_some()).count();
+    let mut view: Vec<ParamSpec> = specs[..stk::CTL0 + used].to_vec();
+    for (s, c) in view[stk::CTL0..].iter_mut().zip(ctl.iter().flatten()) {
+        s.name = stk::short_name(c.name);
+        s.default = c.default / 128.0;
+    }
+    param_grid_mod(ui, Id::new(("stk", track_id)), &view, &mut params[..stk::CTL0 + used], ACCENT, h - 72.0, mv);
+}
+
+fn effect_menu(app: &mut App, ui: &mut Ui, sel: TrackSel) {
+    for cat in EffectKind::CATEGORIES {
+        ui.menu_button(cat, |ui| {
+            for k in EffectKind::ALL.into_iter().filter(|k| k.category() == cat) {
+                if ui.button(k.name()).on_hover_text(k.description()).clicked() {
+                    let dev = app.project.make_device(k);
+                    if let Some(c) = app.chain_mut(sel) {
+                        c.push(dev);
+                    }
+                    ui.close();
+                }
+            }
+        });
     }
 }
 

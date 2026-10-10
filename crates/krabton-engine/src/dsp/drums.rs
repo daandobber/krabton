@@ -71,6 +71,21 @@ pub enum DrumVoice {
     Cr78Tambourine,
     Cr78Metal,
     ElectroTom,
+    M606Kick,
+    M606Snare,
+    M606LowTom,
+    M606HighTom,
+    M606ClosedHat,
+    M606OpenHat,
+    M606Cymbal,
+    FmKick,
+    FmSnare,
+    FmTom,
+    FmHat,
+    FmBell,
+    FmZap,
+    FmPerc,
+    FmNoise,
 }
 
 /// Where a voice comes from.
@@ -134,11 +149,15 @@ impl DrumVoice {
         DrumVoice::Cr78Metal,
     ];
     pub const ELECTRO: [DrumVoice; 1] = [DrumVoice::ElectroTom];
+    pub const M606: [DrumVoice; 7] = [DrumVoice::M606Kick, DrumVoice::M606Snare, DrumVoice::M606LowTom, DrumVoice::M606HighTom, DrumVoice::M606ClosedHat, DrumVoice::M606OpenHat, DrumVoice::M606Cymbal];
+    pub const FM: [DrumVoice; 8] = [DrumVoice::FmKick, DrumVoice::FmSnare, DrumVoice::FmTom, DrumVoice::FmHat, DrumVoice::FmBell, DrumVoice::FmZap, DrumVoice::FmPerc, DrumVoice::FmNoise];
     /// The voices as the pad menu groups them.
-    pub const GROUPS: [(&'static str, &'static [DrumVoice]); 7] = [
+    pub const GROUPS: [(&'static str, &'static [DrumVoice]); 9] = [
         ("Classic", &Self::CLASSIC),
         ("808", &Self::M808),
         ("909", &Self::M909),
+        ("606", &Self::M606),
+        ("FM", &Self::FM),
         ("CR-78", &Self::CR78),
         ("Electronic", &Self::ELECTRO),
         ("Mutable", &Self::MUTABLE),
@@ -146,7 +165,7 @@ impl DrumVoice {
     ];
 
     pub fn family(self) -> Family {
-        if Self::M808.contains(&self) || Self::M909.contains(&self) || Self::CR78.contains(&self) || Self::ELECTRO.contains(&self) {
+        if Self::M808.contains(&self) || Self::M909.contains(&self) || Self::CR78.contains(&self) || Self::ELECTRO.contains(&self) || Self::M606.contains(&self) || Self::FM.contains(&self) {
             Family::Machine
         } else if Self::MUTABLE.contains(&self) {
             Family::Mutable
@@ -208,6 +227,21 @@ impl DrumVoice {
             DrumVoice::Cr78Tambourine => "CR-78 Tambourine",
             DrumVoice::Cr78Metal => "CR-78 Metal",
             DrumVoice::ElectroTom => "Electro Tom",
+            DrumVoice::M606Kick => "606 Kick",
+            DrumVoice::M606Snare => "606 Snare",
+            DrumVoice::M606LowTom => "606 Low Tom",
+            DrumVoice::M606HighTom => "606 High Tom",
+            DrumVoice::M606ClosedHat => "606 Closed Hat",
+            DrumVoice::M606OpenHat => "606 Open Hat",
+            DrumVoice::M606Cymbal => "606 Cymbal",
+            DrumVoice::FmKick => "FM Kick",
+            DrumVoice::FmSnare => "FM Snare",
+            DrumVoice::FmTom => "FM Tom",
+            DrumVoice::FmHat => "FM Hat",
+            DrumVoice::FmBell => "FM Bell",
+            DrumVoice::FmZap => "FM Zap",
+            DrumVoice::FmPerc => "FM Perc",
+            DrumVoice::FmNoise => "FM Noise",
             _ => "",
         }
     }
@@ -251,6 +285,21 @@ impl DrumVoice {
             DrumVoice::M808Maracas => 70,
             DrumVoice::Cr78Guiro => 73,
             DrumVoice::M808Claves => 75,
+            DrumVoice::M606Kick => 36,
+            DrumVoice::M606Snare => 38,
+            DrumVoice::M606LowTom => 45,
+            DrumVoice::M606HighTom => 50,
+            DrumVoice::M606ClosedHat => 42,
+            DrumVoice::M606OpenHat => 46,
+            DrumVoice::M606Cymbal => 49,
+            DrumVoice::FmKick => 36,
+            DrumVoice::FmSnare => 38,
+            DrumVoice::FmTom => 45,
+            DrumVoice::FmHat => 42,
+            DrumVoice::FmBell => 56,
+            DrumVoice::FmZap => 39,
+            DrumVoice::FmPerc => 37,
+            DrumVoice::FmNoise => 46,
         }
     }
 
@@ -262,6 +311,8 @@ impl DrumVoice {
                 DrumVoice::M808Snare | DrumVoice::M909Snare | DrumVoice::Cr78Snare => [Some("Snappy"), None],
                 DrumVoice::M909Kick => [Some("Attack"), None],
                 DrumVoice::ElectroTom => [Some("Bend"), None],
+                DrumVoice::M606Snare => [Some("Snappy"), None],
+                v if Self::FM.contains(&v) => [Some("FM"), None],
                 _ => [None, None],
             },
             Family::Shaker => [Some("Objects"), None],
@@ -317,8 +368,12 @@ pub enum DrumEngine {
     Cr78,
     Mutable,
     Shakers,
+    M606,
+    FmDrums,
 }
 
+static G606: [(&str, &[DrumVoice]); 1] = [("606", &DrumVoice::M606)];
+static GFM: [(&str, &[DrumVoice]); 1] = [("FM", &DrumVoice::FM)];
 static G808: [(&str, &[DrumVoice]); 1] = [("808", &DrumVoice::M808)];
 static G909: [(&str, &[DrumVoice]); 1] = [("909", &DrumVoice::M909)];
 static GCR78: [(&str, &[DrumVoice]); 1] = [("CR-78", &DrumVoice::CR78)];
@@ -328,7 +383,7 @@ static GSHAKERS: [(&str, &[DrumVoice]); 1] = [("Shakers", &DrumVoice::SHAKERS)];
 impl DrumEngine {
     /// The engines to choose from. `Shakers` is only kept for old projects:
     /// its kits are the Drum Rack's now, and Shakers is an instrument.
-    pub const ALL: [DrumEngine; 5] = [DrumEngine::M808, DrumEngine::M909, DrumEngine::Cr78, DrumEngine::Mutable, DrumEngine::Rack];
+    pub const ALL: [DrumEngine; 7] = [DrumEngine::M808, DrumEngine::M909, DrumEngine::M606, DrumEngine::Cr78, DrumEngine::Mutable, DrumEngine::FmDrums, DrumEngine::Rack];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -338,6 +393,8 @@ impl DrumEngine {
             DrumEngine::Cr78 => "CR-78",
             DrumEngine::Mutable => "Mutable Drums",
             DrumEngine::Shakers => "Shakers",
+            DrumEngine::M606 => "606",
+            DrumEngine::FmDrums => "FM Drums",
         }
     }
 
@@ -349,6 +406,8 @@ impl DrumEngine {
             DrumEngine::Cr78 => "The CR-78, rebuilt from its circuits: soft kick and snare, gated-noise hats and cymbal, bongo, guiro, tambourine and metal",
             DrumEngine::Mutable => "The drum models of Mutable Instruments Plaits: analog and synthetic kicks and snares, metallic and ring-modulated hats",
             DrumEngine::Shakers => "Perry Cook's PhISEM shakers: maraca, cabasa, tambourine, sleigh bells, bamboo, cans, rocks and more",
+            DrumEngine::M606 => "The 606, rebuilt from its circuits: tight kick, snare, two toms, six-square hats and cymbal; the acid house drummer",
+            DrumEngine::FmDrums => "Two-operator FM drums: kick, snare, tom, hat, bell, zap, perc and noise, with an FM knob on every pad",
         }
     }
 
@@ -361,6 +420,8 @@ impl DrumEngine {
             DrumEngine::Cr78 => &GCR78,
             DrumEngine::Mutable => &GMUTABLE,
             DrumEngine::Shakers => &GSHAKERS,
+            DrumEngine::M606 => &G606,
+            DrumEngine::FmDrums => &GFM,
         }
     }
 
@@ -371,7 +432,9 @@ impl DrumEngine {
             DrumEngine::Cr78 => &["CR-78 Classic", "CR-78 Disco", "CR-78 Bossa"],
             DrumEngine::Mutable => &["Mutable Analog", "Mutable Synthetic", "Mutable Industrial"],
             DrumEngine::Shakers => &[],
-            DrumEngine::Rack => &["Classic 808", "Classic 909", "Classic Lo-Fi", "Hybrid", "Electro", "Shaker Kit", "Hand Percussion", "Found Sounds"],
+            DrumEngine::M606 => &["606 Classic", "606 Acid House"],
+            DrumEngine::FmDrums => &["FM Kit", "FM Industrial", "FM Glitch"],
+            DrumEngine::Rack => &["Classic 808", "Classic 909", "Classic Lo-Fi", "Hybrid", "Electro", "606 Electro", "Shaker Kit", "Hand Percussion", "Found Sounds"],
         }
     }
 }
@@ -485,6 +548,131 @@ pub fn kit(name: &str) -> Vec<DrumPad> {
             pad("Claves", M808Claves, 75, |_| {}),
         ],
         // ---------------------------------------------------------- 909
+        // ---------------------------------------------------------- 606
+        "606 Classic" => vec![
+            pad("Kick", M606Kick, 36, |_| {}),
+            pad("Snare", M606Snare, 38, |_| {}),
+            pad("Closed Hat", M606ClosedHat, 42, hat),
+            pad("Low Tom", M606LowTom, 45, |_| {}),
+            pad("Open Hat", M606OpenHat, 46, hat),
+            pad("Cymbal", M606Cymbal, 49, |_| {}),
+            pad("High Tom", M606HighTom, 50, |_| {}),
+            pad("Accent Hat", M606ClosedHat, 44, |p| {
+                p.choke = 1;
+                p.tone = 0.8;
+                p.decay = 1.5;
+            }),
+        ],
+        "606 Acid House" => vec![
+            pad("Kick", M606Kick, 36, |p| {
+                p.decay = 1.8;
+                p.tune = -2.0;
+                p.tone = 0.7;
+            }),
+            pad("Snare", M606Snare, 38, |p| p.a = 0.8),
+            pad("Rim Snare", M606Snare, 39, |p| {
+                p.tune = 5.0;
+                p.a = 1.0;
+                p.decay = 0.5;
+            }),
+            pad("Closed Hat", M606ClosedHat, 42, closed),
+            pad("Low Tom", M606LowTom, 45, |p| p.tune = -3.0),
+            pad("Open Hat", M606OpenHat, 46, open),
+            pad("Cymbal", M606Cymbal, 49, |p| p.decay = 0.6),
+            pad("High Tom", M606HighTom, 50, |_| {}),
+        ],
+        "606 Electro" => vec![
+            pad("Kick", M606Kick, 36, |p| {
+                p.decay = 0.6;
+                p.tone = 0.9;
+            }),
+            pad("Snare", M606Snare, 38, |p| {
+                p.tune = 3.0;
+                p.decay = 0.6;
+            }),
+            pad("Zap", FmZap, 39, |_| {}),
+            pad("Closed Hat", M606ClosedHat, 42, |p| {
+                p.choke = 1;
+                p.decay = 0.5;
+            }),
+            pad("Low Tom", ElectroTom, 45, |p| p.a = 0.7),
+            pad("Open Hat", M606OpenHat, 46, hat),
+            pad("Cowbell", M808Cowbell, 56, |_| {}),
+            pad("High Tom", ElectroTom, 50, |p| {
+                p.a = 0.7;
+                p.tune = 7.0;
+            }),
+        ],
+        // ---------------------------------------------------------- FM
+        "FM Kit" => vec![
+            pad("Kick", FmKick, 36, |_| {}),
+            pad("Perc", FmPerc, 37, |_| {}),
+            pad("Snare", FmSnare, 38, |_| {}),
+            pad("Zap", FmZap, 39, |_| {}),
+            pad("Closed Hat", FmHat, 42, hat),
+            pad("Tom", FmTom, 45, |_| {}),
+            pad("Open Hat", FmHat, 46, |p| {
+                p.choke = 1;
+                p.decay = 4.0;
+            }),
+            pad("Bell", FmBell, 56, |_| {}),
+        ],
+        "FM Industrial" => vec![
+            pad("Kick", FmKick, 36, |p| {
+                p.a = 0.9;
+                p.decay = 1.4;
+            }),
+            pad("Metal", FmPerc, 37, |p| {
+                p.a = 0.9;
+                p.tune = -5.0;
+            }),
+            pad("Snare", FmSnare, 38, |p| {
+                p.a = 0.9;
+                p.tone = 0.8;
+            }),
+            pad("Noise", FmNoise, 39, |_| {}),
+            pad("Closed Hat", FmHat, 42, |p| {
+                p.choke = 1;
+                p.a = 0.9;
+            }),
+            pad("Tom", FmTom, 45, |p| p.a = 0.8),
+            pad("Open Noise", FmNoise, 46, |p| {
+                p.choke = 1;
+                p.decay = 3.0;
+            }),
+            pad("Anvil", FmBell, 56, |p| {
+                p.a = 0.9;
+                p.tune = -7.0;
+            }),
+        ],
+        "FM Glitch" => vec![
+            pad("Kick", FmKick, 36, |p| {
+                p.decay = 0.4;
+                p.a = 0.2;
+            }),
+            pad("Blip", FmPerc, 37, |p| {
+                p.tune = 12.0;
+                p.decay = 0.3;
+            }),
+            pad("Snare", FmSnare, 38, |p| p.decay = 0.4),
+            pad("Zap", FmZap, 39, |p| p.decay = 0.5),
+            pad("Tick", FmHat, 42, |p| {
+                p.choke = 1;
+                p.decay = 0.3;
+            }),
+            pad("Laser", FmZap, 45, |p| {
+                p.tune = -12.0;
+                p.decay = 1.5;
+            }),
+            pad("Crush", FmNoise, 46, |p| {
+                p.choke = 1;
+                p.decay = 0.6;
+            }),
+            pad("Ping", FmBell, 56, |p| {
+                p.tune = 12.0;
+                p.decay = 0.5;
+            }),
+        ],
         "909 Classic" => vec![
             pad("Kick", M909Kick, 36, |_| {}),
             pad("Rim", M909Rim, 37, |_| {}),

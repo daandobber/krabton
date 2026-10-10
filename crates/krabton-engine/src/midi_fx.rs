@@ -9,6 +9,8 @@ use crate::scale::{Scale, ScaleKind, NOTE_NAMES};
 use crate::sequencers::{self, SeqState};
 use serde::{Deserialize, Serialize};
 
+mod more;
+
 /// A note event inside one processing block.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MidiEvent {
@@ -40,6 +42,13 @@ pub struct MidiCtx {
     /// Session-clock beat at the block start (sequencers follow it).
     pub beat: f64,
     pub playing: bool,
+    pub sr: f32,
+}
+
+impl MidiCtx {
+    pub fn frames_per_second(&self) -> f32 {
+        self.sr
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,6 +71,12 @@ pub enum MidiFxKind {
     Acid,
     DrumGrid,
     Progression,
+    Strum,
+    NoteRepeat,
+    Humanize,
+    NoteFilter,
+    Mono,
+    Quantize,
 }
 
 const ARP_STYLES: &[&str] = &["Up", "Down", "Up Down", "Down Up", "Converge", "Diverge", "Random", "Played", "Chord"];
@@ -146,7 +161,7 @@ static NOTE_ECHO: &[ParamSpec] = &[
 ];
 
 impl MidiFxKind {
-    pub const ALL: [MidiFxKind; 8] = [
+    pub const ALL: [MidiFxKind; 14] = [
         MidiFxKind::Arpeggiator,
         MidiFxKind::Chord,
         MidiFxKind::NoteLength,
@@ -155,6 +170,12 @@ impl MidiFxKind {
         MidiFxKind::Random,
         MidiFxKind::Velocity,
         MidiFxKind::NoteEcho,
+        MidiFxKind::Strum,
+        MidiFxKind::NoteRepeat,
+        MidiFxKind::Humanize,
+        MidiFxKind::NoteFilter,
+        MidiFxKind::Mono,
+        MidiFxKind::Quantize,
     ];
 
     pub const SEQUENCERS: [MidiFxKind; 10] = [
@@ -207,6 +228,12 @@ impl MidiFxKind {
             MidiFxKind::Random => "Random",
             MidiFxKind::Velocity => "Velocity",
             MidiFxKind::NoteEcho => "Note Echo",
+            MidiFxKind::Strum => "Strum",
+            MidiFxKind::NoteRepeat => "Note Repeat",
+            MidiFxKind::Humanize => "Humanize",
+            MidiFxKind::NoteFilter => "Note Filter",
+            MidiFxKind::Mono => "Mono",
+            MidiFxKind::Quantize => "Quantize",
         }
     }
 
@@ -230,6 +257,12 @@ impl MidiFxKind {
             MidiFxKind::Random => "Randomly changes note pitches (optionally in key)",
             MidiFxKind::Velocity => "Reshapes, limits or randomizes velocities",
             MidiFxKind::NoteEcho => "Repeats notes like a delay, with feedback and pitch",
+            MidiFxKind::Strum => "Plays chords as strums: note by note, up, down or alternating",
+            MidiFxKind::NoteRepeat => "Held notes repeat in time: rolls, ratchets and drum fills",
+            MidiFxKind::Humanize => "Loosens timing and velocity, and swings the off-beats",
+            MidiFxKind::NoteFilter => "Lets notes through by chance, every Nth, or by key and velocity range",
+            MidiFxKind::Mono => "One note at a time: last, lowest or highest held, with legato",
+            MidiFxKind::Quantize => "Moves notes that come in late onto the beat grid",
         }
     }
 
@@ -253,6 +286,12 @@ impl MidiFxKind {
             MidiFxKind::Random => RANDOM,
             MidiFxKind::Velocity => VELOCITY,
             MidiFxKind::NoteEcho => NOTE_ECHO,
+            MidiFxKind::Strum => more::STRUM,
+            MidiFxKind::NoteRepeat => more::NOTE_REPEAT,
+            MidiFxKind::Humanize => more::HUMANIZE,
+            MidiFxKind::NoteFilter => more::NOTE_FILTER,
+            MidiFxKind::Mono => more::MONO,
+            MidiFxKind::Quantize => more::QUANTIZE,
         }
     }
 }
@@ -364,6 +403,7 @@ pub enum MidiFxState {
     Mapped(Box<NoteMap>, Rng),
     Scheduled(Box<Scheduler>),
     Velocity(Rng),
+    More(Box<more::MoreState>),
 }
 
 fn rand01(rng: &mut Rng) -> f32 {
@@ -395,6 +435,7 @@ impl MidiFxState {
             MidiFxKind::Arpeggiator => MidiFxState::Arp(Box::new(ArpState::new())),
             MidiFxKind::NoteLength | MidiFxKind::NoteEcho => MidiFxState::Scheduled(Box::new(Scheduler::new())),
             MidiFxKind::Velocity => MidiFxState::Velocity(Rng::new(0x0BAD_5EED)),
+            MidiFxKind::Strum | MidiFxKind::NoteRepeat | MidiFxKind::Humanize | MidiFxKind::NoteFilter | MidiFxKind::Mono | MidiFxKind::Quantize => MidiFxState::More(Box::new(more::MoreState::new())),
             _ => MidiFxState::Mapped(Box::new(NoteMap::new()), Rng::new(0xFEED_1234)),
         }
     }
@@ -408,6 +449,7 @@ impl MidiFxState {
             (MidiFxState::Arp(_), MidiFxKind::Arpeggiator)
                 | (MidiFxState::Scheduled(_), MidiFxKind::NoteLength | MidiFxKind::NoteEcho)
                 | (MidiFxState::Velocity(_), MidiFxKind::Velocity)
+                | (MidiFxState::More(_), MidiFxKind::Strum | MidiFxKind::NoteRepeat | MidiFxKind::Humanize | MidiFxKind::NoteFilter | MidiFxKind::Mono | MidiFxKind::Quantize)
                 | (MidiFxState::Mapped(..), MidiFxKind::Chord | MidiFxKind::Pitch | MidiFxKind::Scale | MidiFxKind::Random)
         )
     }
@@ -425,6 +467,7 @@ impl MidiFxState {
             MidiFxState::Mapped(m, _) => m.clear(),
             MidiFxState::Scheduled(s) => s.events.clear(),
             MidiFxState::Velocity(_) => {}
+            MidiFxState::More(m) => m.reset(),
         }
     }
 
@@ -518,6 +561,7 @@ impl MidiFxState {
                     out.push(e);
                 }
             }
+            (MidiFxState::More(m), kind) => m.process(kind, p, input, out, ctx),
             _ => out.extend_from_slice(input),
         }
     }
@@ -781,7 +825,7 @@ mod tests {
     use crate::params::defaults;
 
     fn ctx(now: u64, len: usize) -> MidiCtx {
-        MidiCtx { now, len, samples_per_beat: 24000.0, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: 0.0, playing: true }
+        MidiCtx { now, len, samples_per_beat: 24000.0, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: 0.0, playing: true, sr: 48000.0 }
     }
 
     /// Runs a device over `blocks` blocks of 256 frames; `input` holds (absolute frame, event).

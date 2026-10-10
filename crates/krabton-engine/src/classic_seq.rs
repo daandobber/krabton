@@ -596,7 +596,7 @@ mod tests {
         let blocks = (beats * spb / 256.0) as u64;
         for b in 0..blocks {
             let now = b * 256;
-            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(9, ScaleKind::Minor), scale_on: true, beat: now as f64 / spb, playing: true };
+            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(9, ScaleKind::Minor), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0 };
             let mut out = Vec::new();
             st.process(kind, p, data, &[], &mut out, &ctx);
             for e in &out {

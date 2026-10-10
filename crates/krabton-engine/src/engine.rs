@@ -10,6 +10,12 @@ use crate::dsp::effects::{EffectState, FxCtx};
 use crate::dsp::fm::FmState;
 use crate::dsp::analog::AnalogState;
 use crate::dsp::shaker_synth::ShakerSynthState;
+use crate::dsp::stk_voice::VoiceState;
+use crate::dsp::stk_mallets::MalletsState;
+use crate::dsp::stk_strings::StringsState;
+use crate::dsp::stk_winds::WindsState;
+use crate::dsp::organ::OrganState;
+use crate::dsp::rings_synth::RingsState;
 use crate::dsp::braids_synth::BraidsSynthState;
 use crate::dsp::elements_synth::ElementsSynthState;
 use crate::dsp::macro_osc::MacroState;
@@ -280,6 +286,12 @@ enum InstState {
     Elements(Box<ElementsSynthState>),
     Analog(Box<AnalogState>),
     Shakers(Box<ShakerSynthState>),
+    Voice(Box<VoiceState>),
+    Mallets(Box<MalletsState>),
+    Strings(Box<StringsState>),
+    Winds(Box<WindsState>),
+    Organ(Box<OrganState>),
+    Rings(Box<RingsState>),
     Plugin { instance: u64, proc: Option<Box<dyn AudioProcessor>>, pending: Vec<PluginEvent> },
 }
 
@@ -297,6 +309,12 @@ impl InstState {
             Some(Instrument::Elements { .. }) => InstState::Elements(Box::new(ElementsSynthState::new(sr))),
             Some(Instrument::Analog { .. }) => InstState::Analog(Box::new(AnalogState::new(sr))),
             Some(Instrument::Shakers { .. }) => InstState::Shakers(Box::new(ShakerSynthState::new(sr))),
+            Some(Instrument::Voice { .. }) => InstState::Voice(Box::new(VoiceState::new(sr))),
+            Some(Instrument::Mallets { .. }) => InstState::Mallets(Box::new(MalletsState::new(sr))),
+            Some(Instrument::Strings { .. }) => InstState::Strings(Box::new(StringsState::new(sr))),
+            Some(Instrument::Winds { .. }) => InstState::Winds(Box::new(WindsState::new(sr))),
+            Some(Instrument::Organ { .. }) => InstState::Organ(Box::new(OrganState::new(sr))),
+            Some(Instrument::Rings { .. }) => InstState::Rings(Box::new(RingsState::new(sr))),
         }
     }
 
@@ -328,6 +346,12 @@ impl InstState {
                 | (InstState::Elements(_), Some(Instrument::Elements { .. }))
                 | (InstState::Analog(_), Some(Instrument::Analog { .. }))
                 | (InstState::Shakers(_), Some(Instrument::Shakers { .. }))
+                | (InstState::Voice(_), Some(Instrument::Voice { .. }))
+                | (InstState::Mallets(_), Some(Instrument::Mallets { .. }))
+                | (InstState::Strings(_), Some(Instrument::Strings { .. }))
+                | (InstState::Winds(_), Some(Instrument::Winds { .. }))
+                | (InstState::Organ(_), Some(Instrument::Organ { .. }))
+                | (InstState::Rings(_), Some(Instrument::Rings { .. }))
         ) || matches!((self, i), (InstState::Plugin { instance, .. }, Some(Instrument::Plugin(p))) if *instance == p.instance)
     }
 
@@ -344,6 +368,12 @@ impl InstState {
             (InstState::Elements(s), Instrument::Elements { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Analog(s), Instrument::Analog { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Shakers(s), Instrument::Shakers { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Voice(s), Instrument::Voice { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Mallets(s), Instrument::Mallets { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Strings(s), Instrument::Strings { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Winds(s), Instrument::Winds { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Organ(s), Instrument::Organ { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Rings(s), Instrument::Rings { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             _ => {}
         }
     }
@@ -359,6 +389,12 @@ impl InstState {
             (InstState::Elements(s), Instrument::Elements { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Analog(s), Instrument::Analog { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Shakers(s), Instrument::Shakers { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Voice(s), Instrument::Voice { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Mallets(s), Instrument::Mallets { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Strings(s), Instrument::Strings { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Winds(s), Instrument::Winds { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Organ(s), Instrument::Organ { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Rings(s), Instrument::Rings { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             _ => {}
         }
     }
@@ -375,6 +411,12 @@ impl InstState {
             InstState::Elements(s) => s.all_off(),
             InstState::Analog(s) => s.all_off(),
             InstState::Shakers(s) => s.all_off(),
+            InstState::Voice(s) => s.all_off(),
+            InstState::Mallets(s) => s.all_off(),
+            InstState::Strings(s) => s.all_off(),
+            InstState::Winds(s) => s.all_off(),
+            InstState::Organ(s) => s.all_off(),
+            InstState::Rings(s) => s.all_off(),
             InstState::None => {}
         }
     }
@@ -390,6 +432,12 @@ impl InstState {
             (InstState::Elements(s), Instrument::Elements { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Analog(s), Instrument::Analog { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Shakers(s), Instrument::Shakers { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Voice(s), Instrument::Voice { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Mallets(s), Instrument::Mallets { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Strings(s), Instrument::Strings { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Winds(s), Instrument::Winds { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Organ(s), Instrument::Organ { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Rings(s), Instrument::Rings { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Plugin { proc, pending, .. }, Instrument::Plugin(_)) => {
                 if let Some(p) = proc {
                     p.process(pending, l, r);
@@ -1198,10 +1246,11 @@ impl Engine {
         let adv = if playing { seg as f64 / spb } else { 0.0 };
         let (s0, s1) = (self.session_pos, self.session_pos + adv);
         let (a0, a1) = (self.song_pos, self.song_pos + adv);
-        let ctx = FxCtx { sr, bpm: project.bpm as f32 };
         let any_solo = project.tracks.iter().any(|t| t.mixer.solo);
         let status = &self.status;
         let clock = self.clock;
+        // Effects that keep time follow the session clock (it starts from the song position).
+        let ctx = FxCtx { sr, bpm: project.bpm as f32, beat: s0, playing };
 
         // Modulators run once per block, from what the tracks did last block.
         self.signals.clear();
@@ -1303,7 +1352,7 @@ impl Engine {
             events.sort_unstable_by_key(|e| (e.offset, e.on));
             // MIDI effects transform the events before the instrument hears them.
             if track.midi_devices.iter().any(|d| d.enabled) {
-                let ctx = MidiCtx { now: clock, len: seg, samples_per_beat: spb, scale: project.scale, scale_on: project.scale_mode, beat: s0, playing };
+                let ctx = MidiCtx { now: clock, len: seg, samples_per_beat: spb, scale: project.scale, scale_on: project.scale_mode, beat: s0, playing, sr };
                 let mut shown = false;
                 for (dev, (_, st)) in track.midi_devices.iter().zip(midi_fx.iter_mut()) {
                     if !dev.enabled {

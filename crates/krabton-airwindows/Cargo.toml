@@ -1,0 +1,10 @@
+[package]
+name = "krabton-airwindows"
+description = "Rust ports of Airwindows effects by Chris Johnson, for Krabton"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license = "MIT"
+authors = ["Krabton contributors", "Chris Johnson (original Airwindows code)"]
+
+[dependencies]

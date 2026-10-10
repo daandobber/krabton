@@ -71,6 +71,7 @@
 - *Arpeggiator*: Up, Down, Up/Down, Down/Up, Converge, Diverge, Random, As Played and Chord styles; tempo-synced rate (1/32 to 1 bar, triplets), gate, octave range, swing and hold
 - *Chord*: one key plays a chord: diatonic triads or sevenths in the project key, major, minor, maj7, min7, dom7, sus2/4, power, octaves, add9 or custom intervals, with inversions
 - *Note Length*, *Pitch* (semitones or scale steps), *Scale* (snap or filter, project or custom scale), *Random* (optionally in key), *Velocity* (curve, range, randomize, fixed) and *Note Echo* (tempo-synced MIDI delay with feedback and pitch shift)
+- *Strum* (chords played note by note, up, down, alternating or random, with a velocity tilt), *Note Repeat* (held notes roll at 1/32 to 1/4, on the grid, with gate and decay), *Humanize* (loose timing, velocity and swing on the 8ths or 16ths), *Note Filter* (by chance, every Nth note, key range and velocity range), *Mono* (one note at a time: last, lowest or highest, with legato) and *Quantize* (late notes moved onto the grid)
 - Chain as many as you like; clips, the arrangement, the computer keyboard and MIDI input all go through them, sample-accurately. Recording keeps the notes you played
 
 **Sequencers** (drop them on any MIDI track, in front of any instrument)
@@ -103,10 +104,15 @@
 
 **Instruments**
 - **Analog**: a classic analog polysynth, see below
+- **Organ**: a tonewheel organ with nine drawbars (the top wheels fold back), single-triggered percussion on the second or third harmonic (fast or slow, soft or normal), key click, the scanner vibrato and chorus (V1-V3, C1-C3), a tube-style drive and a rotating speaker (slow, fast, with inertia). Registrations from Jazz Trio, Green Onions and Gospel to Whiter Shade, Reggae Bubble and Cathedral
+- **Winds**, **Strings**, **Mallets** and **Voice**: physical models from the Synthesis ToolKit, each with a model choice and that model's own controls (named after it), polyphonic. Winds: flute, clarinet, saxophone, brass, blown bottle, blow hole and whistle (breath pressure, reed, noise, vibrato). Strings: bowed (bow pressure, position and speed), plucked, mandolin (body, pluck position, detuning), sitar and stiff string. Mallets: marimba, vibraphone, agogo, two woods, reso, beats, two fixed, clump, and the banded waveguides: uniform and tuned bar, glass harmonica and Tibetan bowl. Voice: a formant singer with 32 vowels and consonants
+- **Rings**: the Mutable Instruments Rings resonator, played with notes: modal resonator, sympathetic strings, inharmonic string, FM voice, chord strings and a string with reverb, 1, 2 or 4 voices, Structure, Brightness, Damping and Position, and the hidden Disastrous Peace string synth with its formant, chorus, ensemble and reverb effects. Presets from Marimba, Kalimba and Glass Bowl to Sitar, FM Bells and Peace Pad
 - **Shakers**: Perry Cook's PhISEM shakers played with notes in the piano roll: maraca, cabasa, sekere, tambourine, sleigh bells, bamboo chimes, sandpaper, a can, crunch, rocks and gravel. The key tunes the resonances (Key Track, Transpose); a note shakes once, a number of times at a rate, or for as long as it is held (Hold), with Humanize, Swell (shakes that come in slowly) and Fade (each shake softer or louder). Objects, Length, Grain, Ring and Scatter shape the shaker itself; a second shaker can be layered on top; Brightness, Low Cut, Drive and a stereo Spread that throws each collision somewhere else; Damp stops a released note. Presets from Maraca Roll and Tambourine Roll to Rain Stick, Bell Tree, Popcorn, Footsteps, Gravel Walk and Shaker Pad
 - **Synth**: two PolyBLEP oscillators, sub, noise, unison detune, resonant multimode filter with envelope and key tracking, drive, two ADSRs, LFO, mono/legato with glide. Presets: Fat Bass, Acid, Sub Bass, Soft Pad, Pluck, Lead, Keys
 - **Drum instruments**: each is an 8-pad instrument on General MIDI notes with its own voices and kits (presets). Every pad has level, tune, decay, tone and pan plus the knobs of its voice, choke groups (a closed hat stops the open one), and can play a WAV or FLAC sample instead
   - **808**, **909** and **CR-78**: voices after the classic drum machines, built from how their circuits work (no samples). 808: kick, snare, tom, conga, rim, clap, claves, maracas, cowbell, cymbal, hats; kits 808 Classic, Boom, Electro, Latin. 909: swept kick with its attack, snare with snappy, tom, rim, clap, hats; kits 909 Classic, House, Techno, Toms. CR-78: kick, snare, hat, cymbal, bongo, guiro, tambourine, metal; kits CR-78 Classic, Disco, Bossa. Velocity works as accent
+  - **606**: the 606's tighter versions of the 808 circuits: kick, snare, low and high tom, six-square hats and cymbal; kits 606 Classic and 606 Acid House
+  - **FM Drums**: two-operator FM drums with an FM knob on every pad: kick, snare, tom, hat, bell, zap, perc and noise; kits FM Kit, FM Industrial and FM Glitch
   - **Mutable Drums**: the drum models of Mutable Instruments Plaits: an analog and a synthetic kick, an analog and a synthetic snare, a metallic and a ring-modulated hi-hat, with their knobs (Punch, Dirt, FM, Snappy, Noise); kits Mutable Analog, Synthetic, Industrial
   - **Drum Rack**: any of these voices side by side, Krabton's own Classic drums and a bending electronic tom, the shakers (one shake per hit, the number of objects as a knob; kits Shaker Kit, Hand Percussion, Found Sounds), and samples. *From folder...* turns a folder of drum samples into a kit: kick, snare, clap, rim, hats and toms go to their pads by name, the rest fill the free pads
 - **Sampler**: one sample across the keyboard, or a multi-sampled instrument
@@ -162,7 +168,17 @@
 - Krabton does not bundle these plugins: install them yourself (they keep their own licenses, mostly GPL-3)
 - Supported so far: CLAP instruments with note input and stereo (or mono) audio effects; editors are embedded on Windows, other platforms use the plugin's floating window when available. Sidechains, latency compensation and VST3 are on the roadmap
 
-**Audio effects**: EQ Three (with kills), Auto Filter (tempo-synced LFO), Compressor (parallel mix), Saturator (soft/hard/fold/tube), Delay (tempo-synced, ping-pong), Reverb, Chorus, Redux (bit crusher), Utility, Oscilloscope, Lens EQ, Lens Comp, Lens Limiter
+**Audio effects**, in folders by kind as in Live:
+- *Delay & Loop*: Delay (tempo-synced, ping-pong), Echo (tape echo with wow, flutter, saturation and runaway feedback), Beat Repeat (stutters and rolls in time with the song: interval, offset, gate, grid with variation, chance, decay, pitch decay; mix, insert or gate) and Clouds (the Mutable Instruments Clouds granular processor: granular, time stretch, looping delay and spectral modes, freeze, four buffer qualities, spread, feedback and reverb)
+- *Distortion*: Saturator (soft/hard/fold/tube), Redux (bit crusher), Vinyl (crackle, pops, hiss, rumble, wow and wear)
+- *Dynamics*: Compressor (parallel mix), Gate (threshold, return, attack, hold, release, floor), Transient (attack and sustain shaping), Multiband (three bands of upward and downward compression, over the top), Lens Comp, Lens Limiter
+- *EQ & Filters*: EQ Three (with kills), Auto Filter (tempo-synced LFO), Auto Wah (envelope filter), Lens EQ
+- *Modulation*: Chorus, Phaser (2 to 12 stages, feedback, stereo), Flanger, Auto Pan (tremolo to auto-pan, five LFO shapes, sync), Frequency Shifter (shift or ring, wide), Rotary (horn and drum, slow/fast with inertia)
+- *Pitch*: Shifter (pitch shifter, two octaves either way, feedback, stereo detune)
+- *Reverb & Resonance*: Reverb, Resonators (five tuned combs on a note and a chord), Rings (the Rings resonator excited by the track's audio, tuned to a note)
+- *Utilities*: Utility, Oscilloscope
+- *Airwindows*: fifteen effects by Chris Johnson: Galactic, Verbity2 and Chamber (reverbs), ToTape6 and IronOxide5 (tape), PurestDrive, Density2, Tube2 and Mackity (saturation), Pressure4 and ButterComp2 (compression), Air3 and Capacitor2 (tone), DeRez2 (lo-fi) and TapeDelay2
+- LFOs sync to the song, and Beat Repeat follows the transport
 
 **Lens EQ, Lens Comp, Lens Limiter** (in the style of the big visual mixing plug-ins)
 - *Lens EQ*: twelve bands on a big interactive curve over a real-time spectrum analyzer (before and/or after the EQ, with the usual 4.5 dB/oct tilt). Double-click to add a band (cuts near the edges), drag a dot for frequency and gain (Shift for fine), scroll for Q, Alt+click to bypass, double-click a dot to remove it, right-click for shape, slope, stereo and dynamics. Shapes: bell, low/high shelf, tilt, low/high cut from 6 to 96 dB/oct with resonance, notch and band pass. Every band can work on stereo, left, right, mid or side, and can be *dynamic*: its gain moves by up to its range as the level in its own frequency region crosses the threshold, and the display shows where it is right now. The filters are matched to their analog shapes, so a bell at 15 kHz keeps its shape up to Nyquist instead of being squeezed, and the drawn curve is computed from the same filters the audio runs through
@@ -249,6 +265,9 @@ The workspace has six crates:
 - [`crates/krabton-monome`](crates/krabton-monome): a small OSC codec and serialosc client for monome grids and arcs, plus monome's serial protocol for grids on a USB serial port (with [serialport](https://github.com/serialport/serialport-rs)).
 - [`crates/krabton-braids`](crates/krabton-braids): the Rust port of the Braids macro-oscillator (fixed-point DSP, no dependencies).
 - [`crates/krabton-elements`](crates/krabton-elements): the Rust port of the Elements modal voice (float DSP, no dependencies).
+- [`crates/krabton-rings`](crates/krabton-rings), [`crates/krabton-clouds`](crates/krabton-clouds): Rust ports of the Rings resonator and the Clouds granular processor (no dependencies; they resample to and from the host rate).
+- [`crates/krabton-airwindows`](crates/krabton-airwindows): Rust ports of fifteen Airwindows effects.
+- [`crates/krabton-stk`](crates/krabton-stk): Rust ports of physical models from the Synthesis ToolKit.
 - [`crates/krabton`](crates/krabton): the application, built with [egui](https://github.com/emilk/egui)/eframe, [cpal](https://github.com/RustAudio/cpal) for audio output and [midir](https://github.com/Boddlnagg/midir) for MIDI input.
 
 How the threads talk:
@@ -324,6 +343,10 @@ Ideas that would make Krabton even more Live-like (contributions welcome):
 - FLAC files are decoded with [claxon](https://github.com/ruuda/claxon) (Apache-2.0). SFZ is an open format for sampled instruments (<https://sfzformat.com>).
 - Shakers (and the shakers of the Drum Rack) are an implementation of Perry Cook's PhISEM (Physically Informed Stochastic Event Modeling, Computer Music Journal 21:3, 1997), with instrument settings after the Shakers of his Synthesis ToolKit (STK).
 - Analog, Synth and FM are original implementations; FM is DX7-style synthesis and reads standard DX7 sysex files.
+- Winds, Strings, Mallets and Voice are ports of instruments from the Synthesis ToolKit in C++ (STK) by Perry R. Cook and Gary P. Scavone (MIT-style license, <https://github.com/thestk/stk>; BandedWG by Georg Essl), including its rawwave samples for the mandolin body and the marimba strike; the notice is in [`crates/krabton-stk`](crates/krabton-stk/src/lib.rs).
+- Rings is a port of the Mutable Instruments Rings DSP code by Emilie Gillet (MIT, <https://github.com/pichenettes/eurorack>), with the original copyright and license kept in [`crates/krabton-rings/LICENSE`](crates/krabton-rings/LICENSE). Clouds is a port of the Mutable Instruments Clouds DSP code by the same author (MIT), see [`crates/krabton-clouds/LICENSE`](crates/krabton-clouds/LICENSE). Krabton is not affiliated with Mutable Instruments.
+- The Airwindows effects are ports of Chris Johnson's Airwindows plugins (MIT, <https://github.com/airwindows/airwindows>); the notice is in [`crates/krabton-airwindows`](crates/krabton-airwindows/src/lib.rs).
+- Organ, the 606 and FM drums, Phaser, Flanger, Auto Pan, Frequency Shifter (with Olli Niemitalo's Hilbert transform coefficients), Rotary, Gate, Transient, Multiband, Echo, Beat Repeat, Shifter, Auto Wah, Resonators, Vinyl and the MIDI effects are original implementations.
 
 ## License
 

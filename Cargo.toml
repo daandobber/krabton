@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/krabton-engine", "crates/krabton-clap", "crates/krabton-monome", "crates/krabton-braids", "crates/krabton-elements", "crates/krabton"]
+members = ["crates/krabton-engine", "crates/krabton-clap", "crates/krabton-monome", "crates/krabton-braids", "crates/krabton-elements", "crates/krabton-airwindows", "crates/krabton-clouds", "crates/krabton-stk", "crates/krabton-rings", "crates/krabton"]
 
 [workspace.package]
 version = "0.1.0"
@@ -30,6 +30,19 @@ overflow-checks = false
 
 # Elements runs dozens of filters per sample; keep it fast in dev builds.
 [profile.dev.package.krabton-elements]
+opt-level = 3
+
+# The ports run per-sample DSP; keep them fast in dev builds too.
+[profile.dev.package.krabton-airwindows]
+opt-level = 3
+
+[profile.dev.package.krabton-clouds]
+opt-level = 3
+
+[profile.dev.package.krabton-stk]
+opt-level = 3
+
+[profile.dev.package.krabton-rings]
 opt-level = 3
 
 [profile.release]

@@ -13,7 +13,7 @@ use crate::theme::*;
 use egui::{pos2, vec2, Align2, Color32, Key, Pos2, Rect, RichText, Sense, Shape, Stroke, StrokeKind, Ui};
 use krabton_engine::dsp::dx7::{self, Dx7Voice};
 use krabton_engine::dsp::effects::EffectKind;
-use krabton_engine::dsp::{analog, braids_synth, drums, elements_synth, macro_osc, shaker_synth, synth};
+use krabton_engine::dsp::{analog, braids_synth, drums, elements_synth, macro_osc, shaker_synth, synth, stk_voice, stk_mallets, stk_strings, stk_winds, organ, rings_synth};
 use krabton_engine::midi_fx::MidiFxKind;
 use krabton_engine::{Command, SampleRef};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -340,7 +340,7 @@ struct Dev {
     kind: Option<&'static str>,
 }
 
-fn devices() -> [Dev; 6] {
+fn devices() -> [Dev; 12] {
     [
         Dev {
             name: "Analog",
@@ -378,6 +378,12 @@ fn devices() -> [Dev; 6] {
             kind: Some("Drums"),
         },
         Dev { name: "Synth", hint: "Two-oscillator virtual analog synth", presets: synth::preset_names(), make: BrowserItem::Synth, kind: None },
+        Dev { name: "Voice", hint: "A singing voice from formant filters, 32 vowels and consonants, from the Synthesis ToolKit", presets: stk_voice::preset_names(), make: BrowserItem::Voice, kind: None },
+        Dev { name: "Mallets", hint: "Marimba, vibraphone, agogo, woods, glass harmonica and Tibetan bowl: struck physical models from the Synthesis ToolKit", presets: stk_mallets::preset_names(), make: BrowserItem::Mallets, kind: None },
+        Dev { name: "Strings", hint: "Bowed, plucked, mandolin, sitar and stiff strings: string physical models from the Synthesis ToolKit", presets: stk_strings::preset_names(), make: BrowserItem::Strings, kind: None },
+        Dev { name: "Winds", hint: "Flute, clarinet, saxophone, brass, blown bottle, blow hole and whistle: blown physical models from the Synthesis ToolKit", presets: stk_winds::preset_names(), make: BrowserItem::Winds, kind: None },
+        Dev { name: "Organ", hint: "Tonewheel organ: nine drawbars, percussion, key click, scanner vibrato and chorus, drive and a rotating speaker", presets: organ::preset_names(), make: BrowserItem::Organ, kind: None },
+        Dev { name: "Rings", hint: "Resonator after Mutable Instruments Rings: modal, sympathetic and inharmonic strings, FM voice, chords, and the Disastrous Peace string synth", presets: rings_synth::preset_names(), make: BrowserItem::Rings, kind: None },
     ]
 }
 
@@ -404,10 +410,17 @@ fn plugin_effect_node(info: &krabton_clap::PluginInfo) -> Node {
     Node::item(format!("plugin/{}", info.id), &info.name, Icon::Plugin, hint, BrowserItem::PluginEffect(info.clone()))
 }
 
+/// The built-in effects in folders by category, as in Live.
 fn effect_nodes() -> Vec<Node> {
-    let mut kinds = EffectKind::ALL.to_vec();
-    kinds.sort_by_key(|k| k.name());
-    kinds.into_iter().map(|k| Node::item(format!("fx/{}", k.name()), k.name(), Icon::Device, k.description(), BrowserItem::Effect(k))).collect()
+    EffectKind::CATEGORIES
+        .iter()
+        .map(|cat| {
+            let mut kinds: Vec<EffectKind> = EffectKind::ALL.into_iter().filter(|k| k.category() == *cat).collect();
+            kinds.sort_by_key(|k| k.name());
+            let kids = kinds.into_iter().map(|k| Node::item(format!("fx/{}", k.name()), k.name(), Icon::Device, k.description(), BrowserItem::Effect(k))).collect();
+            Node::folder(*cat, Icon::Folder, kids)
+        })
+        .collect()
 }
 
 fn midi_nodes() -> Vec<Node> {

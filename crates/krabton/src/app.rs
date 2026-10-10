@@ -89,6 +89,18 @@ pub enum BrowserItem {
     Analog(&'static str),
     /// A Shakers preset.
     Shakers(&'static str),
+    /// A Voice preset.
+    Voice(&'static str),
+    /// A Mallets preset.
+    Mallets(&'static str),
+    /// A Strings preset.
+    Strings(&'static str),
+    /// A Winds preset.
+    Winds(&'static str),
+    /// A Organ preset.
+    Organ(&'static str),
+    /// A Rings preset.
+    Rings(&'static str),
     /// A copy of a clip in this project.
     Clip { id: u64, name: String },
     /// An SFZ instrument, played by the Sampler.
@@ -112,6 +124,12 @@ impl BrowserItem {
             BrowserItem::Elements(p) => format!("Elements: {p}"),
             BrowserItem::Analog(p) => format!("Analog: {p}"),
             BrowserItem::Shakers(p) => format!("Shakers: {p}"),
+            BrowserItem::Voice(p) => format!("Voice: {p}"),
+            BrowserItem::Mallets(p) => format!("Mallets: {p}"),
+            BrowserItem::Strings(p) => format!("Strings: {p}"),
+            BrowserItem::Winds(p) => format!("Winds: {p}"),
+            BrowserItem::Organ(p) => format!("Organ: {p}"),
+            BrowserItem::Rings(p) => format!("Rings: {p}"),
             BrowserItem::Drums(k) => k.to_string(),
             BrowserItem::Sampler => "Sampler".into(),
             BrowserItem::Effect(k) => k.name().into(),
@@ -837,7 +855,7 @@ impl App {
                 }
                 self.toast(format!("Loading {} ...", info.name));
             }
-            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Shakers(_) => {
+            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) => {
                 let inst = match item {
                     BrowserItem::Synth(p) => Instrument::synth(p),
                     BrowserItem::Macro(p) => Instrument::macro_osc(p),
@@ -845,6 +863,12 @@ impl App {
                     BrowserItem::Elements(p) => Instrument::elements(p),
                     BrowserItem::Analog(p) => Instrument::analog(p),
                     BrowserItem::Shakers(p) => Instrument::shakers(p),
+                    BrowserItem::Voice(p) => Instrument::voice(p),
+                    BrowserItem::Mallets(p) => Instrument::mallets(p),
+                    BrowserItem::Strings(p) => Instrument::strings(p),
+                    BrowserItem::Winds(p) => Instrument::winds(p),
+                    BrowserItem::Organ(p) => Instrument::organ(p),
+                    BrowserItem::Rings(p) => Instrument::rings(p),
                     BrowserItem::Drums(k) => Instrument::drums(k),
                     _ => Instrument::sampler(None),
                 };
@@ -1701,6 +1725,42 @@ impl App {
                     let names = krabton_engine::dsp::analog::preset_names();
                     let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
                     self.apply_item(&BrowserItem::Analog(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "rings" => {
+                    let names = krabton_engine::dsp::rings_synth::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Rings(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "organ" => {
+                    let names = krabton_engine::dsp::organ::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Organ(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "winds" => {
+                    let names = krabton_engine::dsp::stk_winds::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Winds(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "strings" => {
+                    let names = krabton_engine::dsp::stk_strings::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Strings(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "mallets" => {
+                    let names = krabton_engine::dsp::stk_mallets::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Mallets(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "voice" => {
+                    let names = krabton_engine::dsp::stk_voice::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Voice(p), DropTarget::NewTrack);
                     self.detail = DetailTab::Devices;
                 }
                 "shakers" => {

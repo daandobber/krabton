@@ -4,7 +4,8 @@
 //! oscillators through band-passes for hats, cymbal and cowbell, and its
 //! clap of three noise bursts and a tail; the 909's swept triangle
 //! oscillators with a separate attack; the CR-78's gentler resonators and
-//! gated noise; and the bending toms of the first electronic kits.
+//! gated noise; the 606's tighter versions of the 808 circuits; the bending
+//! toms of the first electronic kits; and two-operator FM drums.
 //! Original code, not samples.
 
 use super::drums::DrumVoice;
@@ -36,6 +37,8 @@ pub struct MachineVoice {
     freq: [f32; 2],
     tone: f32,
     macro_a: f32,
+    /// FM drums: peak modulation index (radians).
+    fm_index: f32,
     active: bool,
 }
 
@@ -57,6 +60,7 @@ impl Default for MachineVoice {
             freq: [0.0; 2],
             tone: 0.5,
             macro_a: 0.5,
+            fm_index: 0.0,
             active: false,
         }
     }
@@ -248,6 +252,62 @@ impl MachineVoice {
                 self.coef = [dc(0.7 * d), 0.0, 0.0];
                 self.filt[0].set_q(3000.0, 0.7, sr);
             }
+            M606Kick => {
+                self.freq = [62.0 * tune, 0.0];
+                self.bend = 0.15;
+                self.bend_coef = dc(0.025);
+                self.coef = [dc(0.32 * d), 0.0, 0.0];
+                self.lp.set(500.0 + 4000.0 * self.tone * self.tone, sr);
+            }
+            M606Snare => {
+                self.freq = [235.0 * tune, 0.0];
+                self.coef = [dc(0.08 * d.sqrt()), 0.0, dc(0.17 * d)];
+                self.filt[0].set_q(2200.0, 0.7, sr);
+                self.filt[1].set(11000.0, 0.0, sr);
+            }
+            M606LowTom | M606HighTom => {
+                let base = if voice == M606LowTom { 142.0 } else { 212.0 };
+                self.freq = [base * tune, 0.0];
+                self.bend = 0.12;
+                self.bend_coef = dc(0.08);
+                self.coef = [dc(0.3 * d), 0.0, dc(0.05)];
+                self.filt[0].set(1200.0 * tune, 0.0, sr);
+            }
+            M606ClosedHat | M606OpenHat => {
+                let len = if voice == M606OpenHat { 0.45 } else { 0.05 };
+                self.filt[0].set_q(8200.0 * tune.sqrt(), 1.4, sr);
+                self.filt[1].set_q(7000.0, 0.7, sr);
+                self.coef = [dc(len * d), 0.0, 0.0];
+            }
+            M606Cymbal => {
+                self.filt[0].set_q(4200.0 * tune, 1.2, sr);
+                self.filt[1].set_q(8800.0 * tune, 0.9, sr);
+                self.filt[2].set_q(5500.0, 0.7, sr);
+                self.coef = [dc(0.6 * d), dc(1.6 * d), 0.0];
+            }
+            FmKick | FmSnare | FmTom | FmHat | FmBell | FmZap | FmPerc | FmNoise => {
+                // (carrier Hz, modulator ratio, index, body s, index s, pitch bend, bend s)
+                let (fc, ratio, index, body, idx_len, bend, bend_len) = match voice {
+                    FmKick => (48.0, 1.0, 3.0, 0.45, 0.03, 3.0, 0.03),
+                    FmSnare => (185.0, 1.47, 2.5, 0.12, 0.08, 0.4, 0.02),
+                    FmTom => (105.0, 1.0, 1.6, 0.4, 0.1, 1.0, 0.1),
+                    FmHat => (1700.0, 2.83, 7.0, 0.06, 0.2, 0.0, 0.01),
+                    FmBell => (560.0, 1.4, 3.0, 0.9, 0.35, 0.0, 0.01),
+                    FmZap => (90.0, 0.5, 1.2, 0.25, 0.2, 24.0, 0.025),
+                    FmPerc => (330.0, 3.5, 2.5, 0.16, 0.06, 0.05, 0.01),
+                    _ => (3100.0, 7.13, 12.0, 0.18, 0.3, 0.0, 0.01),
+                };
+                self.freq = [fc * tune, ratio];
+                // The pad's FM knob sets the index (0.5 = as designed).
+                self.fm_index = index * 4f32.powf(self.macro_a - 0.5);
+                self.bend = bend;
+                self.bend_coef = dc(bend_len);
+                self.coef = [dc(body * d), dc(idx_len * d.sqrt()), dc(0.15 * d)];
+                self.filt[0].set_q(match voice {
+                    FmHat | FmNoise => 6000.0,
+                    _ => 2500.0,
+                }, 0.7, sr);
+            }
             _ => {
                 self.active = false;
             }
@@ -412,6 +472,46 @@ impl MachineVoice {
                 let ring = square(self.advance(0, self.freq[0])) * square(self.advance(1, self.freq[1]));
                 self.filt[0].process(ring, FilterMode::Band) * self.env[0] * (1.4 + tone)
             }
+            M606Kick => {
+                let body = sine(self.advance(0, self.freq[0] * bendf)) * self.env[0];
+                let pulse = self.lp.lp(if ts < 0.0009 { 1.0 } else { 0.0 });
+                fast_tanh((body + pulse * (0.5 + 0.7 * tone) * (0.5 + 0.5 * self.vel)) * 1.4)
+            }
+            M606Snare => {
+                let body = sine(self.advance(0, self.freq[0])) * self.env[0];
+                let n = self.filt[0].process(rng.bipolar(), FilterMode::High);
+                let n = self.filt[1].process(n, FilterMode::Low);
+                body * (0.7 - 0.3 * tone) + n * self.env[2] * (0.3 + 1.1 * a)
+            }
+            M606LowTom | M606HighTom => {
+                let body = sine(self.advance(0, self.freq[0] * bendf)) * self.env[0];
+                body + self.filt[0].process(rng.bipolar(), FilterMode::Low) * self.env[2] * (0.1 + 0.3 * tone)
+            }
+            M606ClosedHat | M606OpenHat => {
+                let m = self.metal(&METAL_808, tune * 1.08);
+                let y = self.filt[0].process(m + rng.bipolar() * 0.15, FilterMode::Band);
+                let y = self.filt[1].process(y, FilterMode::High);
+                y * self.env[0] * (2.2 + 1.2 * tone)
+            }
+            M606Cymbal => {
+                let m = self.metal(&METAL_808, tune * 1.08);
+                let lo = self.filt[0].process(m, FilterMode::Band) * self.env[0];
+                let hi = self.filt[1].process(m, FilterMode::Band) * self.env[1];
+                self.filt[2].process(lo * (0.7 - 0.4 * tone) + hi * (0.5 + 0.5 * tone), FilterMode::High) * 2.2
+            }
+            FmKick | FmSnare | FmTom | FmHat | FmBell | FmZap | FmPerc | FmNoise => {
+                let fc = self.freq[0] * bendf;
+                let pm = self.advance(1, fc * self.freq[1]);
+                let pc = self.advance(0, fc);
+                let idx = self.fm_index * self.env[1];
+                let y = sine(wrap_phase(pc + idx * sine(pm) / std::f32::consts::TAU)) * self.env[0];
+                match voice {
+                    FmSnare => y * (0.8 - 0.3 * tone) + self.filt[0].process(rng.bipolar(), FilterMode::High) * self.env[2] * (0.3 + 0.8 * tone),
+                    FmHat | FmNoise => self.filt[0].process(y, FilterMode::High) * (1.5 + tone),
+                    FmKick => fast_tanh(y * (1.2 + tone)),
+                    _ => y,
+                }
+            }
             ElectroTom => {
                 let body = sine(self.advance(0, self.freq[0] * bendf)) * self.env[0];
                 let click = self.filt[0].process(rng.bipolar(), FilterMode::High) * self.click * (0.2 + 0.8 * tone);
@@ -447,6 +547,9 @@ fn machine_trim(voice: DrumVoice) -> f32 {
         M808OpenHat => 1.3,
         M909ClosedHat | M909OpenHat => 0.8,
         M808Maracas => 0.6,
+        M606Kick | FmKick => 1.4,
+        M606Snare => 1.4,
+        FmHat | FmNoise => 0.5,
         _ => 1.0,
     }
 }
