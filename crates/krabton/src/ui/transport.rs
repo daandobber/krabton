@@ -191,6 +191,10 @@ impl App {
                 self.redo();
                 ui.close();
             }
+            if ui.button("History...   Ctrl+H").on_hover_text("Every step you can undo, by name; click one to go there").clicked() {
+                self.show_history = true;
+                ui.close();
+            }
             ui.separator();
             if ui.button("Scenes to Arrangement").on_hover_text("Lay every scene out on the timeline, one after another").clicked() {
                 let n = self.project.scenes_to_arrangement();
@@ -241,6 +245,38 @@ impl App {
             }
             if ui.button("Rescan MIDI ports").clicked() {
                 self.midi.refresh();
+            }
+            ui.separator();
+            ui.label(RichText::new("Audio output").color(TEXT_DIM).small());
+            ui.label(RichText::new(&self.audio_desc).small());
+            if self.audio_devices.is_none() {
+                self.audio_devices = Some(crate::audio::output_device_names());
+            }
+            let chosen = self.prefs.audio_output.clone();
+            egui::ComboBox::from_id_salt("audio_output").width(260.0).selected_text(chosen.clone().unwrap_or_else(|| "System default".into())).show_ui(ui, |ui| {
+                let mut pick: Option<Option<String>> = None;
+                if ui.selectable_label(chosen.is_none(), "System default").clicked() {
+                    pick = Some(None);
+                }
+                for name in self.audio_devices.clone().unwrap_or_default() {
+                    if ui.selectable_label(chosen.as_deref() == Some(name.as_str()), &name).clicked() {
+                        pick = Some(Some(name));
+                    }
+                }
+                if let Some(p) = pick {
+                    self.prefs.audio_output = p;
+                    self.prefs.save();
+                    self.toast("Audio output saved: restart Krabton to switch to it");
+                }
+            });
+            if ui.small_button("Rescan devices").clicked() {
+                self.audio_devices = Some(crate::audio::output_device_names());
+            }
+            if self.audio_desc.starts_with("No audio") {
+                ui.scope(|ui| {
+                    ui.set_max_width(300.0);
+                    ui.add(egui::Label::new(RichText::new(crate::audio::no_audio_hint()).small().color(ACCENT)).wrap());
+                });
             }
             ui.separator();
             ui.label(RichText::new("Size of everything").color(TEXT_DIM).small());

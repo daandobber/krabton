@@ -1603,18 +1603,33 @@ fn collect_notes(
     let k1 = ((hi - origin) / len).floor() as i64;
     for k in k0..=k1 {
         let base = origin + k as f64 * len;
-        for n in notes {
+        for (idx, n) in notes.iter().enumerate() {
             if n.start >= len || n.start < 0.0 {
                 continue;
             }
-            let t = base + n.start;
-            if t < lo || t >= hi {
+            // Note operators: recurrence, chance, velocity spread, repeats.
+            if !n.plays_on_loop(k) || (n.chance < 1.0 && crate::project::note_random(k, idx, n, 1) >= n.chance) {
                 continue;
             }
-            let at = (((t - w0) * spb) as usize).min(seg.saturating_sub(1));
-            events.push(Ev { offset: at as u32, on: true, pitch: n.pitch, vel: n.velocity });
-            let end = (t + n.length.min(len - n.start).max(0.001)).min(region_end);
-            offs.push(PendingOff { at: end, pitch: n.pitch, clock });
+            let vel = if n.vel_spread > 0.0 {
+                (n.velocity + n.vel_spread * (crate::project::note_random(k, idx, n, 2) * 2.0 - 1.0)).clamp(0.02, 1.0)
+            } else {
+                n.velocity
+            };
+            let full = n.length.min(len - n.start).max(0.001);
+            let reps = n.repeats.max(1) as usize;
+            let step = full / reps as f64;
+            for r in 0..reps {
+                let t = base + n.start + r as f64 * step;
+                if t < lo || t >= hi {
+                    continue;
+                }
+                let at = (((t - w0) * spb) as usize).min(seg.saturating_sub(1));
+                events.push(Ev { offset: at as u32, on: true, pitch: n.pitch, vel });
+                let gate = if reps > 1 { step * 0.6 } else { full };
+                let end = (t + gate.max(0.001)).min(region_end);
+                offs.push(PendingOff { at: end, pitch: n.pitch, clock });
+            }
         }
     }
 }
@@ -1673,6 +1688,59 @@ mod tests {
 
     fn peak(buf: &[f32]) -> f32 {
         buf.iter().fold(0.0f32, |m, v| m.max(v.abs()))
+    }
+
+    /// Note-ons of a one-note clip over `loops` loops.
+    fn note_ons(n: Note, loops: i64) -> Vec<(f64, f32)> {
+        let len = 1.0;
+        let (mut events, mut offs) = (Vec::new(), Vec::new());
+        let mut out = Vec::new();
+        // One window per sixteenth, 1 beat = 4800 samples.
+        let w = 0.0625;
+        let mut t = 0.0;
+        while t < loops as f64 * len {
+            events.clear();
+            collect_notes(std::slice::from_ref(&n), len, 0.0, 0.0, 1e9, t, t + w, 4800.0, 300, Clock::Session, &mut events, &mut offs);
+            for e in &events {
+                out.push((t + e.offset as f64 / 4800.0, e.vel));
+            }
+            t += w;
+        }
+        out
+    }
+
+    #[test]
+    fn note_operators_shape_what_plays() {
+        let plain = Note::new(60, 0.0, 0.5, 0.8);
+        assert_eq!(note_ons(plain.clone(), 8).len(), 8);
+        // Ratchets: four quick hits per loop.
+        let rep = Note { repeats: 4, ..plain.clone() };
+        let ons = note_ons(rep, 2);
+        assert_eq!(ons.len(), 8);
+        assert!((ons[1].0 - 0.125).abs() < 1e-3, "{ons:?}");
+        // Recurrence: the first of every four loops.
+        let rec = Note { recur_len: 4, recur_mask: 0b0001, ..plain.clone() };
+        let ons = note_ons(rec, 8);
+        assert_eq!(ons.iter().map(|o| o.0.round() as i64).collect::<Vec<_>>(), vec![0, 4]);
+        // Chance: about half of many loops, and the same each time.
+        let half = Note { chance: 0.5, ..plain.clone() };
+        let a = note_ons(half.clone(), 400).len();
+        assert!((150..250).contains(&a), "{a}");
+        assert_eq!(note_ons(half, 400).len(), a, "repeatable");
+        // Velocity spread wanders around the velocity.
+        let spread = Note { vel_spread: 0.3, ..plain };
+        let vels: Vec<f32> = note_ons(spread, 50).iter().map(|o| o.1).collect();
+        assert!(vels.iter().any(|v| *v > 0.85) && vels.iter().any(|v| *v < 0.75), "{vels:?}");
+        assert!(vels.iter().all(|v| (0.5..=1.0).contains(v)));
+    }
+
+    #[test]
+    fn notes_without_operators_save_as_before() {
+        let n = Note::new(60, 0.0, 1.0, 0.8);
+        let json = serde_json::to_string(&n).unwrap();
+        assert!(!json.contains("chance") && !json.contains("repeats") && !json.contains("recur_len"), "{json}");
+        let back: Note = serde_json::from_str(r#"{"pitch":60,"start":0.0,"length":1.0,"velocity":0.8}"#).unwrap();
+        assert_eq!(back, n);
     }
 
     #[test]

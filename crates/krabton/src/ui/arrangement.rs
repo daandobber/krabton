@@ -11,6 +11,8 @@ use std::sync::atomic::Ordering;
 const HEAD_W: f32 = 168.0;
 const RULER_H: f32 = 26.0;
 const TOOLBAR_H: f32 = 28.0;
+/// The arranger track (song sections).
+const SECTION_H: f32 = 20.0;
 const LANE_H: f32 = 62.0;
 const EDGE: f32 = 6.0;
 
@@ -40,6 +42,15 @@ enum LoopDrag {
     Move { orig_start: f64, orig_end: f64, press_x: f32 },
 }
 
+/// A section being moved or copied on the arranger track.
+#[derive(Clone, Copy)]
+struct SectionDrag {
+    id: u64,
+    /// Beats from the section's start to where it was grabbed.
+    grab: f64,
+    copy: bool,
+}
+
 pub struct ArrState {
     pub px_per_beat: f32,
     pub scroll_x: f32,
@@ -50,11 +61,13 @@ pub struct ArrState {
     loop_drag: Option<LoopDrag>,
     /// Top of the first lane on screen (for dragging clips between tracks).
     lane_top: f32,
+    sec_drag: Option<SectionDrag>,
+    pub sel_section: Option<u64>,
 }
 
 impl Default for ArrState {
     fn default() -> Self {
-        Self { px_per_beat: 18.0, scroll_x: 0.0, scroll_y: 0.0, grid: 4.0, follow: true, drag: None, loop_drag: None, lane_top: 0.0 }
+        Self { px_per_beat: 18.0, scroll_x: 0.0, scroll_y: 0.0, grid: 4.0, follow: true, drag: None, loop_drag: None, lane_top: 0.0, sec_drag: None, sel_section: None }
     }
 }
 
@@ -91,7 +104,9 @@ impl App {
         let lane_h = self.lane_h();
 
         let toolbar = Rect::from_min_size(full.min, vec2(full.width(), TOOLBAR_H));
-        let ruler = Rect::from_min_max(pos2(full.left() + head_w, toolbar.bottom()), pos2(full.right(), toolbar.bottom() + RULER_H));
+        // The arranger track (song sections) sits between the toolbar and the ruler.
+        let arranger = Rect::from_min_max(pos2(full.left() + head_w, toolbar.bottom()), pos2(full.right(), toolbar.bottom() + SECTION_H));
+        let ruler = Rect::from_min_max(pos2(full.left() + head_w, arranger.bottom()), pos2(full.right(), arranger.bottom() + RULER_H));
         let lanes = Rect::from_min_max(pos2(full.left() + head_w, ruler.bottom()), full.max);
         let heads = Rect::from_min_max(pos2(full.left(), ruler.bottom()), pos2(full.left() + head_w, full.bottom()));
 
@@ -130,7 +145,7 @@ impl App {
         }
 
         // Zoom and scroll.
-        if ui.rect_contains_pointer(lanes.union(ruler)) {
+        if ui.rect_contains_pointer(lanes.union(ruler).union(arranger)) {
             let (d, shift, zoom, pointer) = ui.input(|i| (i.smooth_scroll_delta, i.modifiers.shift, i.zoom_delta(), i.pointer.hover_pos()));
             if zoom != 1.0 {
                 let px = pointer.map(|p| p.x).unwrap_or(lanes.left());
@@ -194,6 +209,8 @@ impl App {
 
         // Loop brace + ruler interaction.
         self.ruler(ui, ruler, &bx, &xb);
+        ui.painter().text(pos2(full.left() + 8.0, arranger.center().y), Align2::LEFT_CENTER, "Arranger", small(), TEXT_DIM);
+        self.arranger_track(ui, arranger, &bx, &xb);
 
         // Lanes.
         let mut lui = ui.new_child(UiBuilder::new().max_rect(lanes));
@@ -258,6 +275,132 @@ impl App {
             if resp.dragged() {
                 self.prefs.layout.lane_h = (lane_h + resp.drag_delta().y / (i + 1) as f32).clamp(28.0, 240.0);
                 self.layout_dirty = true;
+            }
+        }
+    }
+
+    /// The arranger track: song sections (Studio One style). Double-click
+    /// to add one; drag one to move it with everything in it, Ctrl+drag to
+    /// copy it; drag its right edge to resize it.
+    fn arranger_track(&mut self, ui: &mut Ui, r: Rect, bx: &dyn Fn(f64) -> f32, xb: &dyn Fn(f32) -> f64) {
+        let bpb = self.project.beats_per_bar_f();
+        let p = ui.painter_at(r);
+        rect_fill(&p, r, 0.0, PANEL);
+        p.line_segment([r.left_bottom(), r.right_bottom()], Stroke::new(1.0_f32, LINE));
+        let sections = self.project.sections.clone();
+        // Bars, pulled onto section edges when close.
+        let edges: Vec<f64> = sections.iter().flat_map(|s| [s.start, s.end()]).collect();
+        let snap = |b: f64| {
+            let bar = ((b / bpb).round() * bpb).max(0.0);
+            edges.iter().copied().filter(|e| (e - b).abs() < bpb * 0.5).min_by(|x, y| (x - b).abs().total_cmp(&(y - b).abs())).unwrap_or(bar)
+        };
+        let bg = ui.interact(r, Id::new("arranger_bg"), Sense::click());
+        if bg.double_clicked() {
+            if let Some(pos) = bg.interact_pointer_pos() {
+                let at = ((xb(pos.x) / bpb).floor() * bpb).max(0.0);
+                let next = sections.iter().map(|s| s.start).filter(|&s| s > at).fold(f64::MAX, f64::min);
+                let len = (4.0 * bpb).min(next - at);
+                if len >= bpb && !sections.iter().any(|s| at >= s.start && at < s.end()) {
+                    self.arr.sel_section = Some(self.project.add_section(at, len));
+                }
+            }
+        }
+        if sections.is_empty() {
+            p.text(pos2(r.left() + 8.0, r.center().y), Align2::LEFT_CENTER, "Double-click to add a section (Intro, Verse, Chorus...)", small(), TEXT_DIM);
+        }
+        let mut action: Option<(u64, &str)> = None;
+        for s in &sections {
+            let sr = Rect::from_min_max(pos2(bx(s.start), r.top() + 2.0), pos2(bx(s.end()), r.bottom() - 2.0));
+            if !sr.intersects(r) {
+                continue;
+            }
+            let body = ui.interact(sr, Id::new(("section", s.id)), Sense::click_and_drag());
+            let edge = ui.interact(Rect::from_min_max(pos2(sr.right() - 5.0, sr.top()), sr.max), Id::new(("section_edge", s.id)), Sense::drag());
+            let selected = self.arr.sel_section == Some(s.id);
+            let c = rgb(s.color);
+            p.rect_filled(sr, 3.0, if selected { c } else { shade(c, 0.7) });
+            if selected {
+                rect_line(&p, sr, 3.0, 1.5, egui::Color32::WHITE);
+            }
+            p.with_clip_rect(sr.shrink(2.0)).text(pos2(sr.left() + 5.0, sr.center().y), Align2::LEFT_CENTER, &s.name, small(), text_on(c));
+            if edge.hovered() || edge.dragged() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+            }
+            if edge.dragged() {
+                if let Some(pos) = edge.interact_pointer_pos() {
+                    let next = sections.iter().map(|x| x.start).filter(|&x| x > s.start).fold(f64::MAX, f64::min);
+                    let end = ((xb(pos.x) / bpb).round() * bpb).clamp(s.start + bpb, next);
+                    if let Some(x) = self.project.sections.iter_mut().find(|x| x.id == s.id) {
+                        x.length = end - x.start;
+                    }
+                }
+            } else if body.drag_started() {
+                let grab = ui.input(|i| i.pointer.press_origin()).map(|o| xb(o.x) - s.start).unwrap_or(0.0);
+                let copy = ui.input(|i| i.modifiers.ctrl || i.modifiers.command);
+                self.arr.sec_drag = Some(SectionDrag { id: s.id, grab, copy });
+                self.arr.sel_section = Some(s.id);
+            }
+            if body.clicked() {
+                self.arr.sel_section = Some(s.id);
+            }
+            if body.double_clicked() {
+                self.renaming = Some((RenameTarget::Section(s.id), s.name.clone()));
+            }
+            body.context_menu(|ui| {
+                for (label, what) in [("Rename", "rename"), ("Loop this section", "loop"), ("Duplicate", "dup"), ("Delete section (keep the music)", "del"), ("Delete with its music", "delall"), ("Next colour", "color")] {
+                    if ui.button(label).clicked() {
+                        action = Some((s.id, what));
+                        ui.close();
+                    }
+                }
+            });
+            body.on_hover_text(format!("{}: bars {} to {}. Drag to move it with its music, Ctrl+drag to copy, right-click for more.", s.name, (s.start / bpb) as i64 + 1, (s.end() / bpb) as i64));
+        }
+        if let Some((id, what)) = action {
+            let Some(s) = sections.iter().find(|s| s.id == id) else { return };
+            match what {
+                "rename" => self.renaming = Some((RenameTarget::Section(id), s.name.clone())),
+                "loop" => {
+                    self.project.loop_start = s.start;
+                    self.project.loop_end = s.end();
+                    self.project.loop_enabled = true;
+                }
+                "dup" => {
+                    self.arr.sel_section = self.project.copy_section(id, None);
+                }
+                "del" => self.project.delete_section(id, false),
+                "delall" => self.project.delete_section(id, true),
+                _ => {
+                    let palette = [[0x5b, 0x8d, 0xd9], [0x4c, 0xb8, 0x7a], [0xe0, 0x8a, 0x3c], [0xb0, 0x6c, 0xd8], [0xd8, 0x5a, 0x7a], [0x3c, 0xb4, 0xc0]];
+                    if let Some(x) = self.project.sections.iter_mut().find(|x| x.id == id) {
+                        let k = palette.iter().position(|c| *c == x.color).map(|k| k + 1).unwrap_or(0);
+                        x.color = palette[k % palette.len()];
+                    }
+                }
+            }
+        }
+        // Moving or copying: an outline where it would land, done on release.
+        if let Some(d) = self.arr.sec_drag {
+            let Some(s) = sections.iter().find(|s| s.id == d.id) else {
+                self.arr.sec_drag = None;
+                return;
+            };
+            if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
+                let to = snap(xb(pos.x) - d.grab);
+                let ghost = Rect::from_min_max(pos2(bx(to), r.top() + 1.0), pos2(bx(to + s.length), r.bottom() - 1.0));
+                let fg = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, Id::new("section_ghost")));
+                rect_line(&fg, ghost, 3.0, 2.0, if d.copy { PLAY } else { ACCENT });
+                fg.text(ghost.left_top() + vec2(4.0, -2.0), Align2::LEFT_BOTTOM, if d.copy { "copy here" } else { "move here" }, small(), TEXT);
+                if !ui.input(|i| i.pointer.any_down()) {
+                    if d.copy {
+                        self.arr.sel_section = self.project.copy_section(d.id, Some(to));
+                    } else {
+                        self.project.move_section(d.id, to);
+                    }
+                    self.arr.sec_drag = None;
+                }
+            } else {
+                self.arr.sec_drag = None;
             }
         }
     }

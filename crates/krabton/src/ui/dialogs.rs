@@ -46,6 +46,7 @@ impl App {
         self.ui_rename(ctx);
         self.ui_export(ctx);
         self.ui_scale_dialog(ctx);
+        self.ui_history(ctx);
         if self.show_about {
             let mut open = true;
             egui::Window::new("About Krabton").collapsible(false).resizable(false).open(&mut open).show(ctx, |ui| {
@@ -137,6 +138,47 @@ impl App {
                     c.name = name;
                 }
             }
+            RenameTarget::Section(id) => {
+                if let Some(s) = self.project.sections.iter_mut().find(|s| s.id == id) {
+                    s.name = name;
+                }
+            }
+        }
+    }
+
+    /// The undo history: every step by name, the current one lit; click one
+    /// to go back (or forward) to it.
+    fn ui_history(&mut self, ctx: &Context) {
+        if !self.show_history {
+            return;
+        }
+        let mut open = true;
+        let mut go: Option<usize> = None;
+        let n = self.undo_labels.len();
+        egui::Window::new("History").open(&mut open).default_width(280.0).default_height(360.0).resizable(true).show(ctx, |ui| {
+            egui::ScrollArea::vertical().auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
+                if ui.selectable_label(n == 0, "Start").clicked() {
+                    go = Some(0);
+                }
+                for (j, label) in self.undo_labels.iter().enumerate() {
+                    if ui.selectable_label(j + 1 == n, format!("{}  {label}", j + 1)).clicked() {
+                        go = Some(j + 1);
+                    }
+                }
+                // Undone steps, still there to redo.
+                for (k, label) in self.redo_labels.iter().rev().enumerate() {
+                    let text = egui::RichText::new(format!("{}  {label}", n + k + 1)).color(crate::theme::TEXT_DIM).italics();
+                    if ui.selectable_label(false, text).clicked() {
+                        go = Some(n + k + 1);
+                    }
+                }
+            });
+        });
+        if let Some(steps) = go {
+            self.history_go(steps);
+        }
+        if !open {
+            self.show_history = false;
         }
     }
 

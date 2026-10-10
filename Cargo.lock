@@ -1571,6 +1571,7 @@ dependencies = [
  "krabton-clap",
  "krabton-engine",
  "krabton-monome",
+ "libloading",
  "midir",
  "rfd",
  "serde",

@@ -37,6 +37,7 @@
 - Move clips and resize them from either edge (clips loop when stretched), with grid snapping (Alt = free)
 - Loop brace, click-to-locate ruler, follow playhead, Ctrl+wheel zoom
 - *Scenes to Arrangement* turns a session jam into a song
+- An **arranger track** (as in Studio One): song sections (Intro, Verse, Chorus...) above the ruler. Double-click to add one; drag a section to move it with all its music (the song closes up behind it and makes room where it lands), Ctrl+drag to copy it, drag its edge to resize; right-click to rename, loop it, duplicate it, recolour it or delete it with or without its music. Clips across a section's edge are cut in two
 - Session clips override the arrangement per track, with *Back to Arrangement* like Live
 
 **Editing and recording**
@@ -44,7 +45,9 @@
 - Drum mode: the piano roll folds to the pads of the drum rack
 - Computer MIDI keyboard (A W S E D F T G Y H U J K ..., Z/X octave, C/V velocity) and hardware MIDI input
 - Session record: arm a track, press record (F9), play; notes are overdubbed into the looping clip with optional 1/16 quantization
-- Undo/redo for every edit
+- Undo/redo for every edit, and a **history** window (Edit > History, Ctrl+H, as in Reaper and Bitwig) that names every step ("Edit notes in Pads", "Bass: Lens EQ", "Add section Chorus") and goes back or forward to any of them with a click
+- **Note operators** (as in Bitwig) for the selected notes: a *chance* to play each time, *velocity spread*, *repeats* (ratchets) over the note's length, and *recurrence* (play only on chosen loops of a cycle of 2 to 8). The randomness is repeatable, so an export sounds like playback; the piano roll dims notes with a chance, divides repeated ones and labels them
+- **Ghost notes**: the piano roll shows the notes of the other melodic tracks that play alongside (the same scene, or overlapping arrangement clips) faintly in their colours (toggle *Ghosts*)
 
 **Audio recording and routing** (Live's In/Out section)
 - Audio tracks record their input: arm the track and click a slot's record button (it starts and stops on the launch quantization grid, then the new clip plays on), or press Record (F9) to record every armed audio track into the session, or onto the arrangement from the play position in Arrangement view
@@ -187,8 +190,16 @@ cargo run --release
 Platform notes:
 - **Windows**: works out of the box (needs the MSVC build tools that rustup asks for).
 - **macOS**: works out of the box.
-- **Linux**: install the ALSA and X11/Wayland development packages first, for example on Debian/Ubuntu:
-  `sudo apt install libasound2-dev libudev-dev libxkbcommon-dev libgl1-mesa-dev`
+- **Linux**: Krabton plays straight to PulseAudio or PipeWire (through pipewire-pulse, which desktop installs have), loading the PulseAudio client library when it starts, so `cargo run` just plays. Without a sound server it uses ALSA. MIDI goes through ALSA. Build packages:
+  - Arch: `sudo pacman -S --needed base-devel rustup alsa-lib libpulse libxkbcommon mesa`, then `rustup default stable`
+  - Debian/Ubuntu: `sudo apt install build-essential libasound2-dev libpulse0 libxkbcommon-dev libgl1-mesa-dev`
+  - Fedora: `sudo dnf install alsa-lib-devel pulseaudio-libs libxkbcommon-devel mesa-libGL-devel`
+  - A monome grid on a serial port needs permission to open it: `sudo usermod -aG uucp $USER` on Arch (`dialout` on Debian/Ubuntu and Fedora), then log out and in
+
+**No sound on Linux?** The status bar (bottom right) shows where Krabton plays: `PulseAudio / PipeWire` when it reached the sound server, an ALSA device name otherwise, or that it found nothing (*Options > Audio output* then says why).
+- Krabton needs the PulseAudio client library (`libpulse`) and a running server: PulseAudio, or PipeWire with `pipewire-pulse` (check with `pactl info`)
+- Without them it opens ALSA's `default` device, which only reaches the sound server through its ALSA plugin (`pipewire-alsa` or `pulseaudio-alsa`); otherwise ALSA tries the sound card itself, which the server already holds
+- Pick a device in *Options > Audio output* (takes effect after a restart), or start with `KRABTON_AUDIO_DEVICE=pipewire cargo run --release`
 
 Run the engine tests (no audio device or GUI needed):
 
@@ -211,6 +222,7 @@ cargo test -p krabton-engine -p krabton-monome -p krabton-braids -p krabton-elem
 | Enter | Launch the selected scene (with the browser focused: load the selected item) |
 | Ctrl+F | Search in the browser (Down goes from the search field to the results) |
 | Ctrl+Alt+B | Show or hide the browser |
+| Ctrl+H | Undo history |
 | Ctrl +, Ctrl -, Ctrl 0 | Make everything bigger, smaller, or normal size |
 | Arrow keys, Enter, 1-7, 0 in the browser | Browse, open and close folders, load; put the selected item in a collection, take it out of all of them |
 | B | Draw mode in the piano roll |
@@ -274,6 +286,7 @@ The first plays a chord straight into the plugin and checks its state save/resto
 ## Debugging helpers
 
 - `KRABTON_NO_AUDIO=1` runs the engine on a silent real-time thread instead of the audio device.
+- `KRABTON_AUDIO_DEVICE=name` plays on that output device (as listed in *Options > Audio output*); if it does not open, Krabton falls back to the default and the others.
 - `KRABTON_SCRIPT="30:scene=1;60:arrangement;90:devices;120:convert=0,0"` runs UI actions at the given frame numbers (see `run_script` in `app.rs`). Handy for screenshots and manual testing.
 - `KRABTON_SERIALOSC_PORT=12102` talks to a serialosc on another port, for example a simulated one.
 - Test windows (`KRABTON_TEST_WINDOW`, or a custom serialosc port) never open grids on serial ports, so they cannot take over a real grid; `KRABTON_SERIAL_GRID=1` allows it. `cargo run -p krabton-monome --example serial_probe` lists the serial ports that look like grids and asks them for their id and size, without lighting anything.

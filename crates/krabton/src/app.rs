@@ -61,6 +61,8 @@ pub enum RenameTarget {
     Return(usize),
     Scene(usize),
     Clip(ClipSel),
+    /// A section of the arranger track, by id.
+    Section(u64),
 }
 
 /// Something dragged out of the browser.
@@ -260,10 +262,16 @@ pub struct App {
     committed: Project,
     undo: Vec<Project>,
     redo: Vec<Project>,
+    /// What each undo/redo step changed (see `history`).
+    pub(crate) undo_labels: Vec<String>,
+    pub(crate) redo_labels: Vec<String>,
+    pub show_history: bool,
     pub dirty: bool,
     pub engine: EngineHandle,
     _audio: AudioOutput,
     pub audio_desc: String,
+    /// Output devices for the Options menu (read when it first opens).
+    pub audio_devices: Option<Vec<String>>,
     pub midi: Midi,
     pending: Vec<Command>,
 
@@ -336,25 +344,24 @@ impl App {
         let project = krabton_engine::demo::demo_project();
         let snapshot = Arc::new(project.clone());
 
-        let probe = if std::env::var_os("KRABTON_NO_AUDIO").is_some() { Err("disabled by KRABTON_NO_AUDIO".to_string()) } else { audio::probe() };
-        let (audio_out, engine, audio_desc) = match probe {
-            Ok((device, config)) => {
-                let sr = config.sample_rate().0 as f32;
-                let (engine, handle) = Engine::new(sr, snapshot.clone());
-                match audio::start(device, config, engine) {
-                    Ok(out) => {
-                        let d = out.description();
-                        (out, handle, d)
-                    }
-                    Err(e) => {
-                        let (engine, handle) = Engine::new(48000.0, snapshot.clone());
-                        (audio::start_null(engine), handle, format!("Audio error: {e}"))
-                    }
-                }
+        let prefs = crate::prefs::Prefs::load();
+        // KRABTON_AUDIO_DEVICE (a device name) wins over the one picked in Options.
+        let preferred = std::env::var("KRABTON_AUDIO_DEVICE").ok().or_else(|| prefs.audio_output.clone());
+        let opened = if std::env::var_os("KRABTON_NO_AUDIO").is_some() {
+            Err("disabled by KRABTON_NO_AUDIO".to_string())
+        } else {
+            audio::open_output(preferred.as_deref(), |sr| Engine::new(sr, snapshot.clone()))
+        };
+        let (audio_out, engine, audio_desc) = match opened {
+            Ok((out, handle)) => {
+                let d = out.description();
+                (out, handle, d)
             }
             Err(e) => {
+                eprintln!("No audio output: {e}\n{}", audio::no_audio_hint());
                 let (engine, handle) = Engine::new(48000.0, snapshot.clone());
-                (audio::start_null(engine), handle, format!("No audio: {e}"))
+                let short = if std::env::var_os("KRABTON_NO_AUDIO").is_some() { format!("No audio: {e}") } else { "No audio output (see Options > Audio output)".to_string() };
+                (audio::start_null(engine), handle, short)
             }
         };
 
@@ -376,10 +383,14 @@ impl App {
             last_sent: snapshot,
             undo: Vec::new(),
             redo: Vec::new(),
+            undo_labels: Vec::new(),
+            redo_labels: Vec::new(),
+            show_history: false,
             dirty: false,
             engine,
             _audio: audio_out,
             audio_desc,
+            audio_devices: None,
             midi,
             pending: Vec::new(),
             view: View::Session,
@@ -412,7 +423,7 @@ impl App {
             arr: ArrState::default(),
             piano: PianoState::default(),
             browser: BrowserState::new(),
-            prefs: crate::prefs::Prefs::load(),
+            prefs,
             sel_pad: 0,
             sel_zone: 0,
             pending_pad_hit: None,
@@ -473,33 +484,58 @@ impl App {
         let pointer_down = ctx.input(|i| i.pointer.any_down());
         if !pointer_down && self.project != self.committed {
             let prev = std::mem::replace(&mut self.committed, self.project.clone());
+            self.undo_labels.push(crate::history::describe(&prev, &self.project));
             self.undo.push(prev);
             if self.undo.len() > 200 {
                 self.undo.remove(0);
+                self.undo_labels.remove(0);
             }
             self.redo.clear();
+            self.redo_labels.clear();
             self.dirty = true;
         }
     }
 
     pub fn undo(&mut self) {
-        if let Some(prev) = self.undo.pop() {
-            let cur = std::mem::replace(&mut self.project, prev);
-            self.redo.push(cur);
-            self.committed = self.project.clone();
-            self.dirty = true;
-            self.toast("Undo");
+        if let Some(label) = self.undo_step() {
+            self.toast(format!("Undo: {label}"));
         }
     }
 
     pub fn redo(&mut self) {
-        if let Some(next) = self.redo.pop() {
-            let cur = std::mem::replace(&mut self.project, next);
-            self.undo.push(cur);
-            self.committed = self.project.clone();
-            self.dirty = true;
-            self.toast("Redo");
+        if let Some(label) = self.redo_step() {
+            self.toast(format!("Redo: {label}"));
         }
+    }
+
+    /// One step back; returns what it undid.
+    fn undo_step(&mut self) -> Option<String> {
+        let prev = self.undo.pop()?;
+        let label = self.undo_labels.pop().unwrap_or_default();
+        let cur = std::mem::replace(&mut self.project, prev);
+        self.redo.push(cur);
+        self.redo_labels.push(label.clone());
+        self.committed = self.project.clone();
+        self.dirty = true;
+        Some(label)
+    }
+
+    /// One step forward; returns what it redid.
+    fn redo_step(&mut self) -> Option<String> {
+        let next = self.redo.pop()?;
+        let label = self.redo_labels.pop().unwrap_or_default();
+        let cur = std::mem::replace(&mut self.project, next);
+        self.undo.push(cur);
+        self.undo_labels.push(label.clone());
+        self.committed = self.project.clone();
+        self.dirty = true;
+        Some(label)
+    }
+
+    /// Goes to the state after `steps` steps of the history (0: the start).
+    pub(crate) fn history_go(&mut self, steps: usize) {
+        while self.undo.len() > steps && self.undo_step().is_some() {}
+        while self.undo.len() < steps && self.redo_step().is_some() {}
     }
 
     fn validate_selection(&mut self) {
@@ -1339,6 +1375,7 @@ impl App {
         if m.command || m.ctrl {
             match key {
                 Key::B if m.alt => self.browser.visible = !self.browser.visible,
+                Key::H => self.show_history = !self.show_history,
                 Key::F => {
                     self.browser.visible = true;
                     self.browser.focus_search = true;

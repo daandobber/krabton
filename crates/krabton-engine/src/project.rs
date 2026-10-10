@@ -112,16 +112,79 @@ pub struct Note {
     pub start: f64,
     pub length: f64,
     pub velocity: f32,
+    /// Note operators (as in Bitwig): the chance it plays each time (0..1).
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub chance: f32,
+    /// How far the velocity may wander each time it plays (0..1).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub vel_spread: f32,
+    /// Plays as this many quick repeats over its length (ratchets).
+    #[serde(default = "one_u8", skip_serializing_if = "is_one_u8")]
+    pub repeats: u8,
+    /// Recurrence: over a cycle of this many loops (2..8; 0 or 1: off) the
+    /// note plays on the loops whose bit is set in `recur_mask`.
+    #[serde(default, skip_serializing_if = "is_zero_u8")]
+    pub recur_len: u8,
+    #[serde(default = "all_bits")]
+    pub recur_mask: u8,
+}
+
+fn one() -> f32 {
+    1.0
+}
+fn is_one(v: &f32) -> bool {
+    *v == 1.0
+}
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
+}
+fn one_u8() -> u8 {
+    1
+}
+fn is_one_u8(v: &u8) -> bool {
+    *v <= 1
+}
+fn is_zero_u8(v: &u8) -> bool {
+    *v == 0
+}
+fn all_bits() -> u8 {
+    0xFF
 }
 
 impl Note {
     pub fn new(pitch: u8, start: f64, length: f64, velocity: f32) -> Self {
-        Self { pitch, start, length, velocity }
+        Self { pitch, start, length, velocity, chance: 1.0, vel_spread: 0.0, repeats: 1, recur_len: 0, recur_mask: 0xFF }
     }
 
     pub fn end(&self) -> f64 {
         self.start + self.length
     }
+
+    /// Whether the note plays on loop `k` of its clip (recurrence).
+    pub fn plays_on_loop(&self, k: i64) -> bool {
+        let n = self.recur_len as i64;
+        n < 2 || (self.recur_mask >> k.rem_euclid(n)) & 1 == 1
+    }
+
+    /// Whether any operator is set.
+    pub fn has_operators(&self) -> bool {
+        self.chance < 1.0 || self.vel_spread > 0.0 || self.repeats > 1 || self.recur_len >= 2
+    }
+}
+
+/// A repeatable random number in 0..1 for note `idx` on loop `k` (so a
+/// render sounds like playback); `salt` picks an independent stream.
+pub fn note_random(k: i64, idx: usize, n: &Note, salt: u64) -> f32 {
+    let mut x = (k as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        ^ (idx as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F)
+        ^ ((n.pitch as u64) << 32 | (n.start * 960.0) as u64).wrapping_mul(0x1656_67B1_9E37_79F9)
+        ^ salt.wrapping_mul(0x27D4_EB2F_1656_67C5);
+    x ^= x >> 33;
+    x = x.wrapping_mul(0xFF51_AFD7_ED55_8CCD);
+    x ^= x >> 33;
+    x = x.wrapping_mul(0xC4CE_B9FE_1A85_EC53);
+    x ^= x >> 33;
+    (x >> 40) as f32 / (1u64 << 24) as f32
 }
 
 /// An audio clip is always "warped" in Re-Pitch mode: it is locked to the
@@ -573,8 +636,32 @@ pub struct Project {
     pub modulators: Vec<crate::modulation::Modulator>,
     #[serde(default)]
     pub mod_routes: Vec<crate::modulation::ModRoute>,
+    /// The arranger track: song sections over the arrangement.
+    #[serde(default)]
+    pub sections: Vec<SongSection>,
     pub next_id: u64,
 }
+
+/// A part of the song on the arranger track (Intro, Verse, Chorus...), as in
+/// Studio One: moving or copying it takes everything in it along.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SongSection {
+    pub id: u64,
+    pub name: String,
+    pub start: f64,
+    pub length: f64,
+    pub color: Rgb,
+}
+
+impl SongSection {
+    pub fn end(&self) -> f64 {
+        self.start + self.length
+    }
+}
+
+/// Names new sections get, in turn.
+const SECTION_NAMES: [&str; 8] = ["Intro", "Verse", "Chorus", "Verse", "Chorus", "Bridge", "Chorus", "Outro"];
+const SECTION_COLORS: [Rgb; 6] = [[0x5b, 0x8d, 0xd9], [0x4c, 0xb8, 0x7a], [0xe0, 0x8a, 0x3c], [0xb0, 0x6c, 0xd8], [0xd8, 0x5a, 0x7a], [0x3c, 0xb4, 0xc0]];
 
 pub const FILE_EXTENSION: &str = "krab";
 
@@ -598,6 +685,7 @@ impl Project {
             scale_mode: true,
             modulators: Vec::new(),
             mod_routes: Vec::new(),
+            sections: Vec::new(),
             next_id: 1,
         };
         let mut reverb = p.make_device(EffectKind::Reverb);
@@ -616,6 +704,137 @@ impl Project {
         p.add_midi_track(Some(Instrument::synth("Fat Bass")));
         p.add_audio_track();
         p
+    }
+
+    /// Adds a section from `start` for `length` beats, named in turn.
+    pub fn add_section(&mut self, start: f64, length: f64) -> u64 {
+        let id = self.alloc_id();
+        let k = self.sections.len();
+        self.sections.push(SongSection { id, name: SECTION_NAMES[k % SECTION_NAMES.len()].into(), start, length: length.max(1.0), color: SECTION_COLORS[k % SECTION_COLORS.len()] });
+        self.sections.sort_by(|a, b| a.start.total_cmp(&b.start));
+        id
+    }
+
+    /// Cuts every arrangement clip that crosses `t` in two.
+    pub fn split_arrangement_at(&mut self, t: f64) {
+        for ti in 0..self.tracks.len() {
+            let mut right_parts = Vec::new();
+            for ac in self.tracks[ti].arrangement.iter_mut() {
+                if ac.start < t - 1e-9 && ac.end() > t + 1e-9 {
+                    let mut right = ac.clone();
+                    right.start = t;
+                    right.length = ac.end() - t;
+                    right.offset = ac.offset + (t - ac.start);
+                    ac.length = t - ac.start;
+                    right_parts.push(right);
+                }
+            }
+            for mut r in right_parts {
+                r.id = self.alloc_id();
+                r.clip.id = self.alloc_id();
+                self.tracks[ti].arrangement.push(r);
+            }
+        }
+    }
+
+    /// Moves everything at or after `at` by `by` beats: arrangement clips,
+    /// sections (but `keep`) and a loop that lies after it.
+    fn shift_from(&mut self, at: f64, by: f64, keep: Option<u64>) {
+        for t in &mut self.tracks {
+            for ac in &mut t.arrangement {
+                if ac.start >= at - 1e-9 {
+                    ac.start += by;
+                }
+            }
+        }
+        for s in &mut self.sections {
+            if Some(s.id) != keep && s.start >= at - 1e-9 {
+                s.start += by;
+            }
+        }
+        if self.loop_start >= at - 1e-9 {
+            self.loop_start += by;
+            self.loop_end += by;
+        }
+    }
+
+    /// Takes the clips starting in `[a, b)` out of the arrangement.
+    fn lift(&mut self, a: f64, b: f64) -> Vec<(usize, ArrangementClip)> {
+        let mut out = Vec::new();
+        for (ti, t) in self.tracks.iter_mut().enumerate() {
+            let (inside, rest): (Vec<_>, Vec<_>) = t.arrangement.drain(..).partition(|ac| ac.start >= a - 1e-9 && ac.start < b - 1e-9);
+            t.arrangement = rest;
+            out.extend(inside.into_iter().map(|ac| (ti, ac)));
+        }
+        out
+    }
+
+    /// Moves section `id`, and everything in it, to start at `to`: the gap
+    /// it leaves closes and room opens where it lands.
+    pub fn move_section(&mut self, id: u64, to: f64) {
+        let Some(s) = self.sections.iter().find(|s| s.id == id).cloned() else { return };
+        let (a, b, len) = (s.start, s.end(), s.length);
+        if to > a - 1e-9 && to < b + 1e-9 {
+            return;
+        }
+        for t in [a, b, to] {
+            self.split_arrangement_at(t);
+        }
+        let lifted = self.lift(a, b);
+        self.shift_from(b, -len, Some(id));
+        let to = if to > b { to - len } else { to };
+        self.shift_from(to, len, Some(id));
+        for (ti, mut ac) in lifted {
+            ac.start = ac.start - a + to;
+            self.tracks[ti].arrangement.push(ac);
+        }
+        if let Some(s) = self.sections.iter_mut().find(|s| s.id == id) {
+            s.start = to;
+        }
+        self.sections.sort_by(|a, b| a.start.total_cmp(&b.start));
+    }
+
+    /// Copies section `id` and everything in it to start at `to` (right
+    /// after it when `None`), making room there. Returns the new section.
+    pub fn copy_section(&mut self, id: u64, to: Option<f64>) -> Option<u64> {
+        let s = self.sections.iter().find(|s| s.id == id).cloned()?;
+        let (a, b, len) = (s.start, s.end(), s.length);
+        let to = to.unwrap_or(b);
+        if to > a + 1e-9 && to < b - 1e-9 {
+            return None;
+        }
+        for t in [a, b, to] {
+            self.split_arrangement_at(t);
+        }
+        let copies: Vec<(usize, ArrangementClip)> = self
+            .tracks
+            .iter()
+            .enumerate()
+            .flat_map(|(ti, t)| t.arrangement.iter().filter(|ac| ac.start >= a - 1e-9 && ac.start < b - 1e-9).map(move |ac| (ti, ac.clone())))
+            .collect();
+        self.shift_from(to, len, None);
+        for (ti, mut ac) in copies {
+            ac.start = ac.start - a + to;
+            ac.id = self.alloc_id();
+            ac.clip.id = self.alloc_id();
+            self.tracks[ti].arrangement.push(ac);
+        }
+        let new = self.alloc_id();
+        self.sections.push(SongSection { id: new, name: s.name.clone(), start: to, length: len, color: s.color });
+        self.sections.sort_by(|a, b| a.start.total_cmp(&b.start));
+        Some(new)
+    }
+
+    /// Removes section `id`; with its content, the time it took closes too.
+    pub fn delete_section(&mut self, id: u64, with_content: bool) {
+        let Some(s) = self.sections.iter().find(|s| s.id == id).cloned() else { return };
+        if with_content {
+            self.split_arrangement_at(s.start);
+            self.split_arrangement_at(s.end());
+            self.lift(s.start, s.end());
+            self.shift_from(s.end(), -s.length, Some(id));
+        }
+        self.sections.retain(|x| x.id != id);
     }
 
     pub fn alloc_id(&mut self) -> u64 {
@@ -973,4 +1192,62 @@ mod tests {
         assert!(placed > 0);
         assert!(p.arrangement_end() > 0.0);
     }
+
+    /// A project with one MIDI track and arrangement clips at the given
+    /// (start, length) in beats, each holding one note at its start.
+    fn arranged(clips: &[(f64, f64)]) -> Project {
+        let mut p = Project::blank();
+        let t = p.add_midi_track(None);
+        for (k, &(start, length)) in clips.iter().enumerate() {
+            let id = p.alloc_id();
+            let cid = p.alloc_id();
+            let mut clip = Clip::new_midi(cid, format!("c{k}"), [1, 2, 3], length);
+            if let Some(v) = clip.notes_mut() {
+                v.push(Note::new(60 + k as u8, 0.0, 1.0, 0.8));
+            }
+            p.tracks[t].arrangement.push(ArrangementClip { id, start, length, offset: 0.0, clip });
+        }
+        p
+    }
+
+    fn starts(p: &Project) -> Vec<(String, f64)> {
+        let mut v: Vec<(String, f64)> = p.tracks[0].arrangement.iter().map(|a| (a.clip.name.clone(), a.start)).collect();
+        v.sort_by(|a, b| a.1.total_cmp(&b.1));
+        v
+    }
+
+    #[test]
+    fn sections_move_copy_and_delete_with_their_music() {
+        // Intro 0..16 (clip c0), Verse 16..32 (c1), Chorus 32..48 (c2).
+        let mut p = arranged(&[(0.0, 16.0), (16.0, 16.0), (32.0, 16.0)]);
+        let intro = p.add_section(0.0, 16.0);
+        let verse = p.add_section(16.0, 16.0);
+        let chorus = p.add_section(32.0, 16.0);
+        assert_eq!(p.sections.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), vec!["Intro", "Verse", "Chorus"]);
+        // The chorus to the front.
+        p.move_section(chorus, 0.0);
+        assert_eq!(starts(&p), vec![("c2".into(), 0.0), ("c0".into(), 16.0), ("c1".into(), 32.0)]);
+        assert_eq!(p.sections.iter().map(|s| (s.id, s.start)).collect::<Vec<_>>(), vec![(chorus, 0.0), (intro, 16.0), (verse, 32.0)]);
+        // A copy of the verse right after it.
+        let copy = p.copy_section(verse, None).unwrap();
+        assert_eq!(starts(&p).last().unwrap(), &("c1".to_string(), 48.0));
+        assert_eq!(p.sections.iter().find(|s| s.id == copy).unwrap().start, 48.0);
+        // Deleting the intro with its music closes the gap.
+        p.delete_section(intro, true);
+        assert_eq!(starts(&p), vec![("c2".into(), 0.0), ("c1".into(), 16.0), ("c1".into(), 32.0)]);
+    }
+
+    #[test]
+    fn a_clip_across_a_section_edge_is_cut_in_two() {
+        let mut p = arranged(&[(8.0, 16.0)]);
+        let s = p.add_section(16.0, 8.0);
+        p.add_section(0.0, 16.0);
+        p.move_section(s, 0.0);
+        let mut v = p.tracks[0].arrangement.clone();
+        v.sort_by(|a, b| a.start.total_cmp(&b.start));
+        // The second half (from beat 16, 8 beats into the clip) moved to the front.
+        assert_eq!((v[0].start, v[0].length, v[0].offset), (0.0, 8.0, 8.0));
+        assert_eq!((v[1].start, v[1].length, v[1].offset), (16.0, 8.0, 0.0));
+    }
+
 }

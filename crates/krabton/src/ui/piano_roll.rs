@@ -46,6 +46,8 @@ pub struct PianoState {
     pub selected: HashSet<usize>,
     drag: Option<NoteDrag>,
     pub draw_mode: bool,
+    /// Show the notes of other clips playing alongside, faintly.
+    pub ghosts: bool,
     pub grid: f64,
     scroll_y: f32,
     pub zoom: f32,
@@ -70,6 +72,7 @@ impl Default for PianoState {
             selected: HashSet::new(),
             drag: None,
             draw_mode: false,
+            ghosts: true,
             grid: 0.25,
             scroll_y: 0.0,
             zoom: 1.0,
@@ -219,6 +222,60 @@ impl App {
         (notes, names, false)
     }
 
+    /// Notes of other melodic tracks that sound with clip `sel`, in its own
+    /// time (0..`len`): the same scene in the session, overlapping clips in
+    /// the arrangement. As (pitch, start, length, colour).
+    fn ghost_notes(&self, sel: ClipSel, len: f64) -> Vec<(u8, f64, f64, Color32)> {
+        let mut out = Vec::new();
+        let melodic = |t: &krabton_engine::Track| t.kind == krabton_engine::TrackKind::Midi && !matches!(t.instrument, Some(krabton_engine::Instrument::Drums { .. }));
+        match sel {
+            ClipSel::Slot { track, scene } => {
+                for (i, t) in self.project.tracks.iter().enumerate() {
+                    if i == track || !melodic(t) {
+                        continue;
+                    }
+                    let Some(Some(c)) = t.slots.get(scene) else { continue };
+                    let glen = c.length.max(0.0625);
+                    for k in 0..((len / glen).ceil() as usize).min(64) {
+                        for n in c.notes() {
+                            let s = n.start + k as f64 * glen;
+                            if n.start < glen && s < len {
+                                out.push((n.pitch, s, n.length.min(len - s), rgb(t.color)));
+                            }
+                        }
+                    }
+                }
+            }
+            ClipSel::Arr { track, id } => {
+                let Some(me) = self.project.tracks.get(track).and_then(|t| t.arrangement.iter().find(|a| a.id == id)) else { return out };
+                for (i, t) in self.project.tracks.iter().enumerate() {
+                    if i == track || !melodic(t) {
+                        continue;
+                    }
+                    for o in t.arrangement.iter().filter(|o| o.start < me.end() && o.end() > me.start) {
+                        let glen = o.clip.length.max(0.0625);
+                        let k0 = (o.offset / glen).floor() as i64;
+                        let k1 = ((o.offset + o.length) / glen).ceil() as i64;
+                        for k in k0..k1.min(k0 + 256) {
+                            for n in o.clip.notes() {
+                                // Song time of this note, then this clip's own time.
+                                let song = o.start - o.offset + k as f64 * glen + n.start;
+                                if song < o.start || song >= o.end() || song < me.start || song >= me.end() {
+                                    continue;
+                                }
+                                let local = song - me.start + me.offset;
+                                if (0.0..len.max(me.length)).contains(&local) {
+                                    out.push((n.pitch, local, n.length, rgb(t.color)));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
     pub(crate) fn ui_piano_roll(&mut self, ui: &mut Ui, area: Rect, sel: ClipSel) {
         let Some(clip) = self.clip_ref(sel) else { return };
         let len = clip.length.max(0.0625);
@@ -366,6 +423,18 @@ impl App {
             b += grid.max(1.0 / 64.0);
         }
 
+        // Ghost notes: other tracks' clips that play alongside this one.
+        if self.piano.ghosts && !drums {
+            for (pitch, start, length, color) in self.ghost_notes(sel, len) {
+                let Some(row) = row_of(pitch) else { continue };
+                let y = ry(row);
+                let r = Rect::from_min_max(pos2(bx(start) + 0.5, y + 2.0), pos2(bx(start + length).max(bx(start) + 3.0) - 0.5, y + row_h - 2.0));
+                if r.intersects(grid_rect) {
+                    gp.rect_filled(r, 2.0, color.gamma_multiply(0.22));
+                }
+            }
+        }
+
         // Notes.
         let note_rect = |n: &Note| -> Option<Rect> {
             let row = row_of(n.pitch)?;
@@ -380,7 +449,26 @@ impl App {
             let selected = self.piano.selected.contains(&idx);
             let fill = if selected { mix(base, Color32::WHITE, 0.55) } else { shade(base, 0.45 + 0.55 * n.velocity) };
             gp.rect_filled(r, 2.0, fill);
+            // Operators: chance dims the note, repeats divide it.
+            if n.chance < 1.0 {
+                gp.rect_filled(r, 2.0, Color32::from_black_alpha(((1.0 - n.chance) * 150.0) as u8));
+            }
+            let reps = n.repeats.max(1);
+            for i in 1..reps {
+                let x = r.left() + r.width() * i as f32 / reps as f32;
+                gp.line_segment([pos2(x, r.top() + 2.0), pos2(x, r.bottom() - 2.0)], Stroke::new(1.0_f32, Color32::from_black_alpha(140)));
+            }
             gp.rect_stroke(r, 2.0, Stroke::new(1.0_f32, if selected { Color32::WHITE } else { shade(base, 0.35) }), egui::StrokeKind::Inside);
+            if n.has_operators() && r.width() > 30.0 && row_h >= 11.0 {
+                let mut tag = Vec::new();
+                if n.chance < 1.0 {
+                    tag.push(format!("{:.0}%", n.chance * 100.0));
+                }
+                if n.recur_len >= 2 {
+                    tag.push(format!("{}/{}", n.recur_mask.count_ones().min(n.recur_len as u32), n.recur_len));
+                }
+                gp.with_clip_rect(r).text(pos2(r.left() + 3.0, r.center().y), Align2::LEFT_CENTER, tag.join(" "), egui::FontId::proportional((row_h - 3.0).clamp(7.0, 10.0)), TEXT_DARK);
+            }
             if n.start >= len {
                 gp.rect_filled(r, 2.0, Color32::from_black_alpha(120));
             }

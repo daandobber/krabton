@@ -112,6 +112,10 @@ impl App {
         if ui.add_enabled(on, egui::Button::new(RichText::new("Fold").color(if fold && on { TEXT_DARK } else { TEXT })).fill(if fold && on { ACCENT } else { PANEL3 })).on_hover_text("Only show the notes of the scale").clicked() {
             self.piano.fold = !fold;
         }
+        let gh = self.piano.ghosts;
+        if ui.add(egui::Button::new(RichText::new("Ghosts").color(if gh { TEXT_DARK } else { TEXT })).fill(if gh { ACCENT } else { PANEL3 })).on_hover_text("Show the notes of the other tracks that play alongside, faintly").clicked() {
+            self.piano.ghosts = !gh;
+        }
         ui.separator();
         let sel_txt = if self.piano.selected.is_empty() { "all notes" } else { "selected notes" };
         let tip = |what: &str| format!("{what} ({sel_txt})");
@@ -160,6 +164,87 @@ impl App {
         ui.separator();
         if ui.add(egui::Button::new(RichText::new("Seed").color(TEXT_DARK)).fill(shade(ACCENT, 0.85))).on_hover_text("Generate a random melody in the scale (click again for another one)").clicked() {
             self.piano_tool(NoteTool::Seed);
+        }
+    }
+
+    /// Bitwig-style note operators of the selected notes: what changes only
+    /// touches that setting of every selected note.
+    fn note_operators(&mut self, ui: &mut Ui, sel: ClipSel, picked: &[usize], first: &krabton_engine::Note) {
+        ui.separator();
+        ui.label(RichText::new("Note operators").strong()).on_hover_text("How the selected notes play each time round: a chance, velocity that wanders, quick repeats, and on which loops");
+        let (mut chance, mut spread, mut reps, mut rlen, mut mask) = (first.chance, first.vel_spread, first.repeats.max(1), first.recur_len, first.recur_mask);
+        #[derive(PartialEq)]
+        enum Set {
+            None,
+            Chance,
+            Spread,
+            Repeats,
+            Recur,
+        }
+        let mut set = Set::None;
+        let pct = |v: f64, _: std::ops::RangeInclusive<usize>| format!("{:.0}%", v * 100.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Chance").small().color(TEXT_DIM));
+            if ui.add(egui::Slider::new(&mut chance, 0.0..=1.0).custom_formatter(pct)).on_hover_text("How often the note plays").changed() {
+                set = Set::Chance;
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Vel spread").small().color(TEXT_DIM));
+            if ui.add(egui::Slider::new(&mut spread, 0.0..=1.0).custom_formatter(pct)).on_hover_text("How far the velocity wanders each time").changed() {
+                set = Set::Spread;
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Repeats").small().color(TEXT_DIM));
+            if ui.add(egui::DragValue::new(&mut reps).range(1..=16)).on_hover_text("Play the note as this many quick hits (ratchets)").changed() {
+                set = Set::Repeats;
+            }
+            ui.label(RichText::new("Recur").small().color(TEXT_DIM));
+            let label = |n: u8| if n < 2 { "Off".to_string() } else { format!("{n} loops") };
+            egui::ComboBox::from_id_salt("note_recur").width(64.0).selected_text(label(rlen)).show_ui(ui, |ui| {
+                for n in [0u8, 2, 3, 4, 5, 6, 7, 8] {
+                    if ui.selectable_label(rlen == n, label(n)).clicked() {
+                        rlen = n;
+                        if n >= 2 && mask.count_ones() >= 8 {
+                            mask = 1;
+                        }
+                        set = Set::Recur;
+                    }
+                }
+            })
+            .response
+            .on_hover_text("Recurrence: over a cycle of loops, play only on the chosen ones");
+        });
+        if rlen >= 2 {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("on loop").small().color(TEXT_DIM));
+                for i in 0..rlen {
+                    let on = (mask >> i) & 1 == 1;
+                    if ui.selectable_label(on, format!("{}", i + 1)).clicked() {
+                        mask ^= 1 << i;
+                        set = Set::Recur;
+                    }
+                }
+            });
+        }
+        if set == Set::None {
+            return;
+        }
+        if let Some(v) = self.clip_mut(sel).and_then(|c| c.notes_mut()) {
+            for &i in picked {
+                let Some(n) = v.get_mut(i) else { continue };
+                match set {
+                    Set::Chance => n.chance = chance,
+                    Set::Spread => n.vel_spread = spread,
+                    Set::Repeats => n.repeats = reps,
+                    Set::Recur => {
+                        n.recur_len = rlen;
+                        n.recur_mask = mask;
+                    }
+                    Set::None => {}
+                }
+            }
         }
     }
 
@@ -244,6 +329,7 @@ impl App {
                         self.prefs.note_preview = !pv;
                         self.prefs.save();
                     }
+
                 });
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Transpose").small().color(TEXT_DIM));
@@ -265,7 +351,13 @@ impl App {
                     }
                 });
                 ui.label(RichText::new(format!("{} notes, {} selected", notes.len(), self.piano.selected.len())).small().color(TEXT_DIM));
-                ui.label(RichText::new("Double-click: add/remove note\nDrag: move, edge: resize\nCtrl+drag: copy, Alt: no snap\nCtrl+C/X/V/D: copy, cut, paste, duplicate\nArrows: move, Shift: octave / length").small().color(TEXT_DIM));
+                let picked: Vec<usize> = self.piano.selected.iter().copied().filter(|&i| i < notes.len()).collect();
+                match picked.first().map(|&i| notes[i].clone()) {
+                    Some(first) => self.note_operators(ui, sel, &picked, &first),
+                    None => {
+                        ui.label(RichText::new("Double-click: add/remove note\nDrag: move, edge: resize\nCtrl+drag: copy, Alt: no snap\nCtrl+C/X/V/D: copy, cut, paste, duplicate\nArrows: move, Shift: octave / length\nSelect notes for their operators").small().color(TEXT_DIM));
+                    }
+                }
             }
             ClipContent::Audio(a) => {
                 let mut bpm = a.bpm;

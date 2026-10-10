@@ -66,6 +66,8 @@ pub struct Prefs {
     /// Size of everything (1 = normal; 0 = never set).
     pub ui_zoom: f32,
     pub layout: Layout,
+    /// The audio output device by name (None: the system default).
+    pub audio_output: Option<String>,
 }
 
 impl Prefs {
