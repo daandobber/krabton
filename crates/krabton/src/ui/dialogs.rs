@@ -47,6 +47,7 @@ impl App {
         self.ui_export(ctx);
         self.ui_scale_dialog(ctx);
         self.ui_history(ctx);
+        self.ui_rack(ctx);
         if self.show_about {
             let mut open = true;
             egui::Window::new("About Krabton").collapsible(false).resizable(false).open(&mut open).show(ctx, |ui| {

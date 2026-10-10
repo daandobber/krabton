@@ -13,7 +13,7 @@ use krabton_braids::{MacroOscillator, BLOCK_SIZE, SHAPES};
 pub const MAX_VOICES: usize = 8;
 /// Output samples per Braids block (24 at the doubled rate).
 const OUT_BLOCK: usize = BLOCK_SIZE / 2;
-const FIR_TAPS: usize = 31;
+pub(crate) const FIR_TAPS: usize = 31;
 
 /// The shapes offered in the instrument (the "?" easter egg is left out).
 pub const SHAPE_COUNT: usize = 47;
@@ -103,7 +103,7 @@ const BIT_MASKS: [u16; 7] = [0xffff, 0xfff0, 0xff00, 0xf800, 0xf000, 0xe000, 0xc
 pub const RATE_NAMES: &[&str] = &["96 kHz", "48 kHz", "32 kHz", "24 kHz", "16 kHz", "8 kHz", "4 kHz"];
 const DECIMATION: [usize; 7] = [1, 2, 3, 4, 6, 12, 24];
 
-static SHAPE_LIST: [&str; SHAPE_COUNT] = {
+pub static SHAPE_LIST: [&str; SHAPE_COUNT] = {
     let mut a = [""; SHAPE_COUNT];
     let mut i = 0;
     while i < SHAPE_COUNT {
@@ -242,7 +242,7 @@ pub fn preset(name: &str) -> Vec<f32> {
 }
 
 /// A windowed-sinc half-band low-pass for 2:1 decimation.
-fn halfband() -> [f32; FIR_TAPS] {
+pub(crate) fn halfband() -> [f32; FIR_TAPS] {
     let mut h = [0.0f32; FIR_TAPS];
     let m = (FIR_TAPS - 1) as f32 / 2.0;
     let mut sum = 0.0;

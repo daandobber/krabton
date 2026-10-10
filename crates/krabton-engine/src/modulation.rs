@@ -202,6 +202,7 @@ pub fn instrument_specs(i: &Instrument) -> Option<&'static [ParamSpec]> {
         Instrument::Elements { .. } => Some(elements_synth::SPECS),
         Instrument::Analog { .. } => Some(analog::SPECS),
         Instrument::Shakers { .. } => Some(shaker_synth::SPECS),
+        Instrument::Modular { .. } => Some(crate::modular::SPECS),
         Instrument::Voice { .. } => Some(stk_voice::SPECS),
         Instrument::Mallets { .. } => Some(stk_mallets::SPECS),
         Instrument::Strings { .. } => Some(stk_strings::SPECS),
@@ -214,7 +215,7 @@ pub fn instrument_specs(i: &Instrument) -> Option<&'static [ParamSpec]> {
 
 fn instrument_params(i: &Instrument) -> Option<&[f32]> {
     match i {
-        Instrument::Synth { params, .. } | Instrument::Sampler { params, .. } | Instrument::Fm { params, .. } | Instrument::Macro { params, .. } | Instrument::Braids { params, .. } | Instrument::Elements { params, .. } | Instrument::Analog { params, .. } | Instrument::Shakers { params, .. } | Instrument::Voice { params, .. } | Instrument::Mallets { params, .. } | Instrument::Strings { params, .. } | Instrument::Winds { params, .. } | Instrument::Organ { params, .. } | Instrument::Rings { params, .. } => Some(params),
+        Instrument::Synth { params, .. } | Instrument::Sampler { params, .. } | Instrument::Fm { params, .. } | Instrument::Macro { params, .. } | Instrument::Braids { params, .. } | Instrument::Elements { params, .. } | Instrument::Analog { params, .. } | Instrument::Shakers { params, .. } | Instrument::Modular { params, .. } | Instrument::Voice { params, .. } | Instrument::Mallets { params, .. } | Instrument::Strings { params, .. } | Instrument::Winds { params, .. } | Instrument::Organ { params, .. } | Instrument::Rings { params, .. } => Some(params),
         _ => None,
     }
 }

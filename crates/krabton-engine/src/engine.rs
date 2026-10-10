@@ -10,6 +10,7 @@ use crate::dsp::effects::{EffectState, FxCtx};
 use crate::dsp::fm::FmState;
 use crate::dsp::analog::AnalogState;
 use crate::dsp::shaker_synth::ShakerSynthState;
+use crate::modular::runtime::ModularState;
 use crate::dsp::stk_voice::VoiceState;
 use crate::dsp::stk_mallets::MalletsState;
 use crate::dsp::stk_strings::StringsState;
@@ -286,6 +287,7 @@ enum InstState {
     Elements(Box<ElementsSynthState>),
     Analog(Box<AnalogState>),
     Shakers(Box<ShakerSynthState>),
+    Modular(Box<ModularState>),
     Voice(Box<VoiceState>),
     Mallets(Box<MalletsState>),
     Strings(Box<StringsState>),
@@ -309,6 +311,7 @@ impl InstState {
             Some(Instrument::Elements { .. }) => InstState::Elements(Box::new(ElementsSynthState::new(sr))),
             Some(Instrument::Analog { .. }) => InstState::Analog(Box::new(AnalogState::new(sr))),
             Some(Instrument::Shakers { .. }) => InstState::Shakers(Box::new(ShakerSynthState::new(sr))),
+            Some(Instrument::Modular { .. }) => InstState::Modular(Box::new(ModularState::new(sr))),
             Some(Instrument::Voice { .. }) => InstState::Voice(Box::new(VoiceState::new(sr))),
             Some(Instrument::Mallets { .. }) => InstState::Mallets(Box::new(MalletsState::new(sr))),
             Some(Instrument::Strings { .. }) => InstState::Strings(Box::new(StringsState::new(sr))),
@@ -346,6 +349,7 @@ impl InstState {
                 | (InstState::Elements(_), Some(Instrument::Elements { .. }))
                 | (InstState::Analog(_), Some(Instrument::Analog { .. }))
                 | (InstState::Shakers(_), Some(Instrument::Shakers { .. }))
+                | (InstState::Modular(_), Some(Instrument::Modular { .. }))
                 | (InstState::Voice(_), Some(Instrument::Voice { .. }))
                 | (InstState::Mallets(_), Some(Instrument::Mallets { .. }))
                 | (InstState::Strings(_), Some(Instrument::Strings { .. }))
@@ -368,6 +372,7 @@ impl InstState {
             (InstState::Elements(s), Instrument::Elements { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Analog(s), Instrument::Analog { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Shakers(s), Instrument::Shakers { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Modular(s), Instrument::Modular { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Voice(s), Instrument::Voice { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Mallets(s), Instrument::Mallets { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Strings(s), Instrument::Strings { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
@@ -389,6 +394,7 @@ impl InstState {
             (InstState::Elements(s), Instrument::Elements { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Analog(s), Instrument::Analog { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Shakers(s), Instrument::Shakers { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Modular(s), Instrument::Modular { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Voice(s), Instrument::Voice { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Mallets(s), Instrument::Mallets { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Strings(s), Instrument::Strings { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
@@ -411,6 +417,7 @@ impl InstState {
             InstState::Elements(s) => s.all_off(),
             InstState::Analog(s) => s.all_off(),
             InstState::Shakers(s) => s.all_off(),
+            InstState::Modular(s) => s.all_off(),
             InstState::Voice(s) => s.all_off(),
             InstState::Mallets(s) => s.all_off(),
             InstState::Strings(s) => s.all_off(),
@@ -432,6 +439,7 @@ impl InstState {
             (InstState::Elements(s), Instrument::Elements { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Analog(s), Instrument::Analog { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Shakers(s), Instrument::Shakers { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Modular(s), Instrument::Modular { params, patch, .. }) => s.render(ov.unwrap_or(params), patch, l, r),
             (InstState::Voice(s), Instrument::Voice { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Mallets(s), Instrument::Mallets { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Strings(s), Instrument::Strings { params, .. }) => s.render(ov.unwrap_or(params), l, r),
@@ -1404,6 +1412,10 @@ impl Engine {
 
             if let Some(inst) = &track.instrument {
                 let ov = mods.params(ModOwner::Instrument(track.id));
+                // Clocks in a modular patch keep time with the song.
+                if let InstState::Modular(m) = instrument {
+                    m.set_transport(ctx.bpm, ctx.beat, ctx.playing);
+                }
                 let mut pos = 0;
                 for ev in events.iter() {
                     let o = (ev.offset as usize).min(seg);

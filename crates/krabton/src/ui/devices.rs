@@ -498,6 +498,7 @@ impl App {
         let mut remove = false;
         let title = inst.kind_name();
         let mut toggle_editor = false;
+        let mut open_rack = false;
         let mut mv = self.mod_view(ModOwner::Instrument(track_id));
         let (_, action) = device_frame(ui, title, None, h, |ui| {
             ui.horizontal_top(|ui| {
@@ -650,6 +651,24 @@ impl App {
                             ui.label(RichText::new("formant voice (STK)").small().color(TEXT_DIM));
                         });
                         stk_controls(ui, track_id, krabton_engine::dsp::stk_synth::Family::Voice, params, h, mv.as_mut());
+                    }
+                    Instrument::Modular { preset, params, patch } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Patch").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("modular_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in krabton_engine::modular::presets::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        (*params, *patch) = krabton_engine::modular::presets::preset(name);
+                                    }
+                                }
+                            });
+                            if ui.add(egui::Button::new(RichText::new("Open Rack").color(TEXT_DARK)).fill(ACCENT)).on_hover_text("Patch the modules: add, move, turn knobs and draw cables").clicked() {
+                                open_rack = true;
+                            }
+                            ui.label(RichText::new(format!("{} modules, {} cables", patch.modules.len(), patch.cables.len())).small().color(TEXT_DIM));
+                        });
+                        param_grid_mod(ui, Id::new(("modular", track_id)), krabton_engine::modular::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
                     }
                     Instrument::Shakers { preset, params } => {
                         ui.horizontal(|ui| {
@@ -1051,6 +1070,9 @@ impl App {
         }
         if toggle_editor {
             self.toggle_plugin_editor(i);
+        }
+        if open_rack {
+            self.rack.open = Some(track_id);
         }
         let _ = Command::AllNotesOff;
     }

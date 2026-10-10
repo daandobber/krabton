@@ -425,6 +425,9 @@ pub enum Instrument {
     Analog { preset: String, params: Vec<f32> },
     /// Shakers: PhISEM shakers played with notes.
     Shakers { preset: String, params: Vec<f32> },
+    /// Modular: a eurorack-style patch of modules and cables; `params` are
+    /// the macros, voices and volume.
+    Modular { preset: String, params: Vec<f32>, patch: crate::modular::Patch },
     /// Voice: A singing voice from formant filters, 32 vowels and consonants, from the Synthesis ToolKit.
     Voice { preset: String, params: Vec<f32> },
     /// Mallets: Marimba, vibraphone, agogo, woods, glass harmonica and Tibetan bowl: struck physical models from the Synthesis ToolKit.
@@ -472,6 +475,11 @@ impl Instrument {
         Instrument::Analog { preset: preset.to_string(), params: analog::preset(preset) }
     }
 
+    pub fn modular(preset: &str) -> Self {
+        let (params, patch) = crate::modular::presets::preset(preset);
+        Instrument::Modular { preset: preset.to_string(), params, patch }
+    }
+
     pub fn shakers(preset: &str) -> Self {
         Instrument::Shakers { preset: preset.to_string(), params: shaker_synth::preset(preset) }
     }
@@ -512,6 +520,7 @@ impl Instrument {
             Instrument::Elements { .. } => "Elements",
             Instrument::Analog { .. } => "Analog",
             Instrument::Shakers { .. } => "Shakers",
+            Instrument::Modular { .. } => "Modular",
             Instrument::Voice { .. } => "Voice",
             Instrument::Mallets { .. } => "Mallets",
             Instrument::Strings { .. } => "Strings",
@@ -530,7 +539,7 @@ impl Instrument {
             Instrument::Sampler { sample, .. } => sample.as_ref().map(|s| s.name.clone()).unwrap_or_else(|| "Empty".into()),
             Instrument::Plugin(p) => p.name.clone(),
             Instrument::Fm { voice, .. } => Dx7Voice::from_slice(voice).map(|v| v.name()).unwrap_or_else(|| "FM".into()),
-            Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } => preset.clone(),
+            Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Modular { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } => preset.clone(),
         }
     }
 
@@ -1178,6 +1187,10 @@ impl Project {
                 Some(Instrument::Elements { params, .. }) => params::fix_len(params, elements_synth::SPECS),
                 Some(Instrument::Analog { params, .. }) => params::fix_len(params, analog::SPECS),
                 Some(Instrument::Shakers { params, .. }) => params::fix_len(params, shaker_synth::SPECS),
+                Some(Instrument::Modular { params, patch, .. }) => {
+                    params::fix_len(params, crate::modular::SPECS);
+                    patch.sanitize();
+                }
                 Some(Instrument::Voice { params, .. }) => params::fix_len(params, stk_voice::SPECS),
                 Some(Instrument::Mallets { params, .. }) => params::fix_len(params, stk_mallets::SPECS),
                 Some(Instrument::Strings { params, .. }) => params::fix_len(params, stk_strings::SPECS),

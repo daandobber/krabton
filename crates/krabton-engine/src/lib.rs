@@ -10,6 +10,7 @@ pub mod dsp;
 pub mod engine;
 pub mod midi_fx;
 pub mod midi_tools;
+pub mod modular;
 pub mod modulation;
 pub mod params;
 pub mod plugin;

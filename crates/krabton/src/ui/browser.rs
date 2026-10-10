@@ -340,7 +340,7 @@ struct Dev {
     kind: Option<&'static str>,
 }
 
-fn devices() -> [Dev; 12] {
+fn devices() -> [Dev; 13] {
     [
         Dev {
             name: "Analog",
@@ -378,6 +378,13 @@ fn devices() -> [Dev; 12] {
             kind: Some("Drums"),
         },
         Dev { name: "Synth", hint: "Two-oscillator virtual analog synth", presets: synth::preset_names(), make: BrowserItem::Synth, kind: None },
+        Dev {
+            name: "Modular",
+            hint: "A eurorack-style modular synth: VCOs, filters, envelopes, LFOs, sequencers and more, patched with cables in a rack",
+            presets: krabton_engine::modular::presets::preset_names(),
+            make: BrowserItem::Modular,
+            kind: None,
+        },
         Dev { name: "Voice", hint: "A singing voice from formant filters, 32 vowels and consonants, from the Synthesis ToolKit", presets: stk_voice::preset_names(), make: BrowserItem::Voice, kind: None },
         Dev { name: "Mallets", hint: "Marimba, vibraphone, agogo, woods, glass harmonica and Tibetan bowl: struck physical models from the Synthesis ToolKit", presets: stk_mallets::preset_names(), make: BrowserItem::Mallets, kind: None },
         Dev { name: "Strings", hint: "Bowed, plucked, mandolin, sitar and stiff strings: string physical models from the Synthesis ToolKit", presets: stk_strings::preset_names(), make: BrowserItem::Strings, kind: None },
