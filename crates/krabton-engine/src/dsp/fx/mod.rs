@@ -6,6 +6,7 @@
 pub mod airwindows;
 pub mod auto_pan;
 pub mod auto_wah;
+pub mod hall;
 pub mod beat_repeat;
 pub mod clouds;
 pub mod echo;
@@ -13,10 +14,13 @@ pub mod flanger;
 pub mod freq_shifter;
 pub mod gate;
 pub mod multiband;
+pub mod pitch_delay;
+pub mod plate;
 pub mod phaser;
 pub mod resonators;
 pub mod rotary;
 pub mod shifter;
+pub mod spring;
 pub mod transient;
 pub mod vinyl;
 
@@ -107,6 +111,58 @@ impl DelayLine {
 
     pub fn clear(&mut self) {
         self.buf.fill(0.0);
+    }
+}
+
+/// A pitch shifter on one channel: two read heads sweep a short delay,
+/// crossfaded so one is always away from its jump.
+pub struct PitchShifter {
+    line: DelayLine,
+    phase: f32,
+}
+
+impl PitchShifter {
+    /// Room for windows up to `max_window_s` seconds.
+    pub fn new(sr: f32, max_window_s: f32) -> Self {
+        Self { line: DelayLine::new((sr * max_window_s) as usize + 8), phase: 0.0 }
+    }
+
+    /// Shifts by `ratio` (2 = an octave up) with a window of `window` samples.
+    #[inline]
+    pub fn tick(&mut self, x: f32, ratio: f32, window: f32) -> f32 {
+        let window = window.clamp(16.0, (self.line.len() - 8) as f32);
+        self.line.write(x);
+        self.phase = wrap(self.phase + (1.0 - ratio) / window);
+        let a = self.phase;
+        let b = wrap(a + 0.5);
+        let ya = self.line.read(1.0 + a * window);
+        let yb = self.line.read(1.0 + b * window);
+        ya * (std::f32::consts::PI * a).sin() + yb * (std::f32::consts::PI * b).sin()
+    }
+
+    pub fn clear(&mut self) {
+        self.line.clear();
+    }
+}
+
+/// A Schroeder all-pass on a delay line (its taps can be read, as in plate
+/// reverbs).
+pub struct Allpass {
+    pub line: DelayLine,
+}
+
+impl Allpass {
+    pub fn new(len: usize) -> Self {
+        Self { line: DelayLine::new(len + 4) }
+    }
+
+    /// One sample through an all-pass of `delay` samples and coefficient `g`.
+    #[inline]
+    pub fn tick(&mut self, x: f32, delay: f32, g: f32) -> f32 {
+        let d = self.line.read(delay);
+        let v = x + g * d;
+        self.line.write(v);
+        d - g * v
     }
 }
 

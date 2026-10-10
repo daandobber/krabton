@@ -51,6 +51,11 @@ pub enum EffectKind {
     AwTapeDelay2,
     Rings,
     Clouds,
+    Plate,
+    Hall,
+    Shimmer,
+    Spring,
+    PitchDelay,
     /// A hosted effect plug-in (`Device::plugin`), not in `ALL`.
     Plugin,
 }
@@ -164,7 +169,7 @@ static UTILITY: &[ParamSpec] = &[
 ];
 
 impl EffectKind {
-    pub const ALL: [EffectKind; 44] = [
+    pub const ALL: [EffectKind; 49] = [
         EffectKind::Eq3,
         EffectKind::AutoFilter,
         EffectKind::Compressor,
@@ -194,6 +199,11 @@ impl EffectKind {
         EffectKind::Vinyl,
         EffectKind::Rings,
         EffectKind::Clouds,
+        EffectKind::Plate,
+        EffectKind::Hall,
+        EffectKind::Shimmer,
+        EffectKind::Spring,
+        EffectKind::PitchDelay,
         EffectKind::AwGalactic,
         EffectKind::AwVerbity2,
         EffectKind::AwChamber,
@@ -230,6 +240,12 @@ impl EffectKind {
             EffectKind::Plugin => "Plug-ins",
             EffectKind::Rings => "Reverb & Resonance",
             EffectKind::Clouds => "Delay & Loop",
+            EffectKind::Plate => "Reverb & Resonance",
+            EffectKind::Hall => "Reverb & Resonance",
+            EffectKind::Shimmer => "Reverb & Resonance",
+            EffectKind::Spring => "Reverb & Resonance",
+            EffectKind::PitchDelay => "Delay & Loop",
+
             EffectKind::AwGalactic => "Airwindows",
             EffectKind::AwVerbity2 => "Airwindows",
             EffectKind::AwChamber => "Airwindows",
@@ -317,6 +333,12 @@ impl EffectKind {
             EffectKind::AwTapeDelay2 => "TapeDelay2",
             EffectKind::Rings => "Rings",
             EffectKind::Clouds => "Clouds",
+            EffectKind::Plate => "Plate",
+            EffectKind::Hall => "Hall",
+            EffectKind::Shimmer => "Shimmer",
+            EffectKind::Spring => "Spring",
+            EffectKind::PitchDelay => "Pitch Delay",
+
             EffectKind::Plugin => "Plug-in",
         }
     }
@@ -366,6 +388,11 @@ impl EffectKind {
             EffectKind::AwDeRez2 => "Lower sample rate and bit depth: crunchy retro digital lo-fi (Airwindows)",
             EffectKind::AwTapeDelay2 => "Warm tape echo with a resonant filter on the repeats and flutter (Airwindows)",
             EffectKind::Clouds => "Granular texture machine after Mutable Instruments Clouds: grains, time stretch, looping delay and spectral freezes",
+            EffectKind::Plate => "Dattorro's plate reverb: dense and smooth, long tails, modulation, freeze",
+            EffectKind::Hall => "A big hall: decays up to a minute, separate low decay, modulation, freeze",
+            EffectKind::Shimmer => "A hall with a pitch shifter in its loop: every pass an octave (or any interval) higher or lower",
+            EffectKind::Spring => "A spring reverb tank: the chirp and boing of amps and dub mixers, with drips",
+            EffectKind::PitchDelay => "A delay whose echoes are pitched in semitone steps: each repeat one more step up or down, or all by one interval",
             EffectKind::Rings => "The Rings resonator rung by the track's audio: drums and noise become tuned strings, bells and chords",
             EffectKind::Plugin => "A CLAP effect plug-in",
         }
@@ -417,6 +444,12 @@ impl EffectKind {
             EffectKind::AwTapeDelay2 => super::fx::airwindows::TAPEDELAY2,
             EffectKind::Rings => super::rings_synth::FX_SPECS,
             EffectKind::Clouds => super::fx::clouds::SPECS,
+            EffectKind::Plate => super::fx::plate::SPECS,
+            EffectKind::Hall => super::fx::hall::SPECS,
+            EffectKind::Shimmer => super::fx::hall::SHIMMER_SPECS,
+            EffectKind::Spring => super::fx::spring::SPECS,
+            EffectKind::PitchDelay => super::fx::pitch_delay::SPECS,
+
             EffectKind::Plugin => &[],
         }
     }
@@ -462,6 +495,12 @@ pub enum EffectState {
     Vinyl(Box<super::fx::vinyl::Vinyl>),
     Rings(Box<super::rings_synth::RingsFx>),
     Clouds(Box<super::fx::clouds::CloudsFx>),
+    Plate(Box<super::fx::plate::Plate>),
+    Hall(Box<super::fx::hall::Hall>),
+    Shimmer(Box<super::fx::hall::Hall>),
+    Spring(Box<super::fx::spring::SpringReverb>),
+    PitchDelay(Box<super::fx::pitch_delay::PitchDelay>),
+
     /// An Airwindows effect.
     Airwindows(EffectKind, Box<dyn krabton_airwindows::Effect>),
     /// A hosted plug-in; passes audio through until its processor arrives.
@@ -541,6 +580,12 @@ impl EffectState {
             EffectKind::AwTapeDelay2 => Self::airwindows(kind, "TapeDelay2", sr),
             EffectKind::Rings => EffectState::Rings(Box::new(super::rings_synth::RingsFx::new(sr))),
             EffectKind::Clouds => EffectState::Clouds(Box::new(super::fx::clouds::CloudsFx::new(sr))),
+            EffectKind::Plate => EffectState::Plate(Box::new(super::fx::plate::Plate::new(sr))),
+            EffectKind::Hall => EffectState::Hall(Box::new(super::fx::hall::Hall::new(sr))),
+            EffectKind::Shimmer => EffectState::Shimmer(Box::new(super::fx::hall::Hall::new(sr))),
+            EffectKind::Spring => EffectState::Spring(Box::new(super::fx::spring::SpringReverb::new(sr))),
+            EffectKind::PitchDelay => EffectState::PitchDelay(Box::new(super::fx::pitch_delay::PitchDelay::new(sr))),
+
             EffectKind::Plugin => EffectState::Plugin { instance: 0, proc: None },
         }
     }
@@ -603,6 +648,12 @@ impl EffectState {
             EffectState::Airwindows(kind, _) => *kind,
             EffectState::Rings(_) => EffectKind::Rings,
             EffectState::Clouds(_) => EffectKind::Clouds,
+            EffectState::Plate(_) => EffectKind::Plate,
+            EffectState::Hall(_) => EffectKind::Hall,
+            EffectState::Shimmer(_) => EffectKind::Shimmer,
+            EffectState::Spring(_) => EffectKind::Spring,
+            EffectState::PitchDelay(_) => EffectKind::PitchDelay,
+
             EffectState::Plugin { .. } => EffectKind::Plugin,
         }
     }
@@ -826,6 +877,14 @@ impl EffectState {
             EffectState::Airwindows(_, e) => e.process(p, &mut l[..n], &mut r[..n]),
             EffectState::Rings(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Clouds(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
+            EffectState::Plate(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
+            EffectState::Hall(s) => s.process(p, &mut l[..n], &mut r[..n], ctx, None),
+            EffectState::Shimmer(s) => {
+                let ratio = 2f32.powf(p[super::fx::hall::PITCH].round() / 12.0);
+                s.process(p, &mut l[..n], &mut r[..n], ctx, Some((ratio, p[super::fx::hall::SHIMMER].clamp(0.0, 1.0))))
+            }
+            EffectState::Spring(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
+            EffectState::PitchDelay(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Plugin { proc, .. } => {
                 if let Some(pr) = proc {
                     pr.process_effect(&mut l[..n], &mut r[..n]);
