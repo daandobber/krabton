@@ -14,4 +14,5 @@
 # Scripts and packaging files stay LF everywhere.
 *.sh text eol=lf
 PKGBUILD text eol=lf
+AppRun text eol=lf
 *.desktop text eol=lf

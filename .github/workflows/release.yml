@@ -63,7 +63,11 @@ jobs:
           cp packaging/linux/krabton.desktop AppDir/
           cp crates/krabton/assets/icon-256.png AppDir/usr/share/icons/hicolor/256x256/apps/krabton.png
           cp crates/krabton/assets/icon-256.png AppDir/krabton.png
-          ln -s usr/bin/krabton AppDir/AppRun
+          # Our own AppRun: the system's ALSA library, or a bundled copy when there is none.
+          cp packaging/linux/AppRun AppDir/AppRun
+          chmod +x AppDir/AppRun
+          mkdir -p AppDir/usr/lib/fallback
+          cp -L /usr/lib/x86_64-linux-gnu/libasound.so.2 AppDir/usr/lib/fallback/
           curl -fsSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
           chmod +x appimagetool
           ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool AppDir "dist/Krabton-$VERSION-x86_64.AppImage"
