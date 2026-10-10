@@ -64,7 +64,7 @@ jobs:
           cp crates/krabton/assets/icon-256.png AppDir/usr/share/icons/hicolor/256x256/apps/krabton.png
           cp crates/krabton/assets/icon-256.png AppDir/krabton.png
           ln -s usr/bin/krabton AppDir/AppRun
-          curl -fsSL -o appimagetool https://github.com/AppImage/AppImageKit/releases/download/13/appimagetool-x86_64.AppImage
+          curl -fsSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
           chmod +x appimagetool
           ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool AppDir "dist/Krabton-$VERSION-x86_64.AppImage"
       - name: Tarball
