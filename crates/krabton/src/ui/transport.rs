@@ -243,6 +243,21 @@ impl App {
                 self.midi.refresh();
             }
             ui.separator();
+            ui.label(RichText::new("Size of everything").color(TEXT_DIM).small());
+            ui.horizontal(|ui| {
+                let ctx = ui.ctx().clone();
+                if ui.button(" - ").on_hover_text("Smaller (Ctrl -)").clicked() {
+                    egui::gui_zoom::zoom_out(&ctx);
+                }
+                ui.label(format!("{:.0}%", ctx.zoom_factor() * 100.0));
+                if ui.button(" + ").on_hover_text("Bigger (Ctrl +)").clicked() {
+                    egui::gui_zoom::zoom_in(&ctx);
+                }
+                if ui.button("Reset").on_hover_text("Normal size (Ctrl 0)").clicked() {
+                    ctx.set_zoom_factor(1.0);
+                }
+            });
+            ui.separator();
             ui.checkbox(&mut self.kb_enabled, "Computer MIDI keyboard (M)");
             ui.checkbox(&mut self.rec_quantize, "Record quantization 1/16");
             ui.separator();

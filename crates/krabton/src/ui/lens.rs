@@ -486,7 +486,7 @@ fn eq_display(ui: &mut Ui, rect: Rect, id: Id, dev_id: u64, p: &mut [f32], statu
 /// Lens EQ: the display and a strip with the selected band and the global
 /// settings.
 #[allow(clippy::too_many_arguments)]
-pub fn eq_panel(ui: &mut Ui, id: Id, dev_id: u64, p: &mut Vec<f32>, accent: Color32, h: f32, mut mv: Option<&mut ModView>, status: &EngineStatus) -> bool {
+pub fn eq_panel(ui: &mut Ui, id: Id, dev_id: u64, p: &mut Vec<f32>, accent: Color32, h: f32, mut mv: Option<&mut ModView>, status: &EngineStatus, width: &mut f32) -> bool {
     if p.len() < eq::SPECS.len() {
         return false;
     }
@@ -494,8 +494,9 @@ pub fn eq_panel(ui: &mut Ui, id: Id, dev_id: u64, p: &mut Vec<f32>, accent: Colo
     let mut view: EqView = ui.ctx().memory_mut(|m| m.data.get_temp::<EqView>(view_id)).unwrap_or_default();
     let mut changed = false;
     ui.horizontal_top(|ui| {
-        let (rect, _) = ui.allocate_exact_size(vec2(620.0, (h - 30.0).max(120.0)), Sense::hover());
+        let (rect, _) = ui.allocate_exact_size(vec2(*width, (h - 30.0).max(120.0)), Sense::hover());
         changed |= eq_display(ui, rect, id, dev_id, p, status, &mut view);
+        width_grip(ui, id.with("display_width"), rect, width, 320.0, 1800.0);
         ui.add_space(6.0);
         // Band strip: the selected band on top, the global settings below.
         let (strip, _) = ui.allocate_exact_size(vec2(4.0 * CELL_W, rect.height()), Sense::hover());
@@ -624,7 +625,7 @@ fn gr_meter(painter: &egui::Painter, rect: Rect, gr: f32, floor: f32) {
 /// Lens Comp: level display with gain reduction, the transfer curve, and
 /// the knobs.
 #[allow(clippy::too_many_arguments)]
-pub fn comp_panel(ui: &mut Ui, id: Id, dev_id: u64, p: &mut Vec<f32>, accent: Color32, h: f32, mv: Option<&mut ModView>, status: &EngineStatus) -> bool {
+pub fn comp_panel(ui: &mut Ui, id: Id, dev_id: u64, p: &mut Vec<f32>, accent: Color32, h: f32, mv: Option<&mut ModView>, status: &EngineStatus, width: &mut f32) -> bool {
     if p.len() < comp::SPECS.len() {
         return false;
     }
@@ -632,7 +633,8 @@ pub fn comp_panel(ui: &mut Ui, id: Id, dev_id: u64, p: &mut Vec<f32>, accent: Co
     let gr = meters[comp::M_GR];
     let mut changed = false;
     ui.horizontal_top(|ui| {
-        let (rect, _) = ui.allocate_exact_size(vec2(420.0, (h - 30.0).max(120.0)), Sense::hover());
+        let (rect, _) = ui.allocate_exact_size(vec2(*width, (h - 30.0).max(120.0)), Sense::hover());
+        width_grip(ui, id.with("display_width"), rect, width, 260.0, 1600.0);
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 4.0, SCREEN);
         let floor = -60.0;
@@ -678,7 +680,7 @@ pub fn comp_panel(ui: &mut Ui, id: Id, dev_id: u64, p: &mut Vec<f32>, accent: Co
 /// Lens Limiter: level display with gain reduction, loudness readouts and
 /// the knobs.
 #[allow(clippy::too_many_arguments)]
-pub fn limiter_panel(ui: &mut Ui, id: Id, dev_id: u64, p: &mut Vec<f32>, accent: Color32, h: f32, mv: Option<&mut ModView>, status: &EngineStatus) -> bool {
+pub fn limiter_panel(ui: &mut Ui, id: Id, dev_id: u64, p: &mut Vec<f32>, accent: Color32, h: f32, mv: Option<&mut ModView>, status: &EngineStatus, width: &mut f32) -> bool {
     if p.len() < lim::SPECS.len() {
         return false;
     }
@@ -686,7 +688,8 @@ pub fn limiter_panel(ui: &mut Ui, id: Id, dev_id: u64, p: &mut Vec<f32>, accent:
     let gr = meters[lim::M_GR];
     let mut changed = false;
     ui.horizontal_top(|ui| {
-        let (rect, _) = ui.allocate_exact_size(vec2(400.0, (h - 30.0).max(120.0)), Sense::hover());
+        let (rect, _) = ui.allocate_exact_size(vec2(*width, (h - 30.0).max(120.0)), Sense::hover());
+        width_grip(ui, id.with("display_width"), rect, width, 260.0, 1600.0);
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 4.0, SCREEN);
         let floor = -36.0;
@@ -759,7 +762,7 @@ mod tests {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     origin = ui.cursor().min;
                     let mut v = p.clone();
-                    if eq_panel(ui, Id::new(("device", 7u64)), 7, &mut v, ACCENT, 290.0, None, status) {
+                    if eq_panel(ui, Id::new(("device", 7u64)), 7, &mut v, ACCENT, 290.0, None, status, &mut 620.0) {
                         *p = v;
                     }
                 });

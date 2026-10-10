@@ -7,8 +7,6 @@
 
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-/// Samples kept per track for the live wave of its instrument (mono).
-pub const WAVE_LEN: usize = 8192;
 /// Samples kept per device tap (stereo): about 0.7 s at 48 kHz.
 pub const SCOPE_LEN: usize = 32768;
 /// Device taps that can show audio at the same time (an analyzer device

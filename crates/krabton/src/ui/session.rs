@@ -9,7 +9,8 @@ use krabton_engine::{fader_gain, Command, TrackKind, PALETTE};
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
-pub const COL_W: f32 = 112.0;
+/// Track columns, until the user drags them wider or narrower.
+const COL_W: f32 = 112.0;
 const HEADER_H: f32 = 24.0;
 const SLOT_H: f32 = 24.0;
 const STOP_H: f32 = 24.0;
@@ -83,11 +84,12 @@ impl App {
 
         // The In/Out section sits between the clip slots and the mixer; when
         // space is short the mixer gives way (it turns compact).
-        let mut mixer_h = MIXER_H.min(full.height() * 0.62);
+        // Its height is the user's (drag the line above it) or a share of the view.
+        let col_w = crate::prefs::Layout::or(self.prefs.layout.track_w, COL_W).clamp(60.0, 320.0);
         let grid_min = HEADER_H + SLOT_H;
-        if !self.session.hide_io {
-            mixer_h = mixer_h.min(full.height() - IO_H - grid_min).max(MIXER_MIN);
-        }
+        let room = (full.height() - grid_min - if self.session.hide_io { 0.0 } else { IO_H }).max(MIXER_MIN);
+        let wanted = if self.prefs.layout.mixer_h > 0.0 { self.prefs.layout.mixer_h } else { MIXER_H.min(full.height() * 0.62) };
+        let mixer_h = wanted.clamp(MIXER_MIN, room);
         let io_h = if self.session.hide_io { 0.0 } else { IO_H.min((full.height() - mixer_h - grid_min).max(0.0)) };
         let grid = Rect::from_min_max(full.min, pos2(full.right(), full.bottom() - mixer_h - io_h));
         let io = Rect::from_min_max(pos2(full.left(), grid.bottom()), pos2(full.right(), grid.bottom() + io_h));
@@ -101,7 +103,7 @@ impl App {
         let mixer_master = Rect::from_min_max(pos2(cols_right, mixer.top()), mixer.max);
 
         // Scrolling.
-        let content_w = (nt + nr) as f32 * COL_W + DROP_W;
+        let content_w = (nt + nr) as f32 * col_w + DROP_W;
         let content_h = ns as f32 * SLOT_H + STOP_H + 40.0;
         if ui.rect_contains_pointer(full) {
             let (d, shift) = ui.input(|i| (i.smooth_scroll_delta, i.modifiers.shift));
@@ -117,7 +119,7 @@ impl App {
         self.session.scroll_y = self.session.scroll_y.clamp(0.0, (content_h - slots.height()).max(0.0));
         let sx = self.session.scroll_x;
         let sy = self.session.scroll_y;
-        let col_x = |i: usize| slots.left() + i as f32 * COL_W - sx;
+        let col_x = |i: usize| slots.left() + i as f32 * col_w - sx;
         let row_y = |s: usize| slots.top() + s as f32 * SLOT_H - sy;
 
         let p = ui.painter();
@@ -130,13 +132,13 @@ impl App {
         {
             let mut hui = child(ui, header);
             for i in 0..nt {
-                let r = Rect::from_min_size(pos2(col_x(i), header.top()), vec2(COL_W - 1.0, HEADER_H - 1.0));
+                let r = Rect::from_min_size(pos2(col_x(i), header.top()), vec2(col_w - 1.0, HEADER_H - 1.0));
                 if r.intersects(header) {
                     self.track_header(&mut hui, i, r);
                 }
             }
             for j in 0..nr {
-                let r = Rect::from_min_size(pos2(col_x(nt + j), header.top()), vec2(COL_W - 1.0, HEADER_H - 1.0));
+                let r = Rect::from_min_size(pos2(col_x(nt + j), header.top()), vec2(col_w - 1.0, HEADER_H - 1.0));
                 if r.intersects(header) {
                     self.return_header(&mut hui, j, r);
                 }
@@ -148,21 +150,21 @@ impl App {
             let mut sui = child(ui, slots);
             for i in 0..nt {
                 let x = col_x(i);
-                if x + COL_W < slots.left() || x > slots.right() {
+                if x + col_w < slots.left() || x > slots.right() {
                     continue;
                 }
                 for s in 0..ns {
-                    let r = Rect::from_min_size(pos2(x + 1.0, row_y(s) + 1.0), vec2(COL_W - 3.0, SLOT_H - 2.0));
+                    let r = Rect::from_min_size(pos2(x + 1.0, row_y(s) + 1.0), vec2(col_w - 3.0, SLOT_H - 2.0));
                     if r.intersects(slots) {
                         self.slot(&mut sui, i, s, r, &status);
                     }
                 }
-                let r = Rect::from_min_size(pos2(x + 1.0, row_y(ns) + 3.0), vec2(COL_W - 3.0, STOP_H - 4.0));
+                let r = Rect::from_min_size(pos2(x + 1.0, row_y(ns) + 3.0), vec2(col_w - 3.0, STOP_H - 4.0));
                 self.track_stop_button(&mut sui, i, r, &status);
             }
             for j in 0..nr {
                 let x = col_x(nt + j);
-                let r = Rect::from_min_max(pos2(x, slots.top()), pos2(x + COL_W - 1.0, slots.bottom()));
+                let r = Rect::from_min_max(pos2(x, slots.top()), pos2(x + col_w - 1.0, slots.bottom()));
                 rect_fill(sui.painter(), r, 0.0, shade(PANEL, 0.85));
             }
             let drop = Rect::from_min_max(pos2(col_x(nt + nr) + 4.0, slots.top() + 4.0), pos2(col_x(nt + nr) + DROP_W - 8.0, slots.bottom() - 8.0));
@@ -211,13 +213,13 @@ impl App {
             let io_cols = Rect::from_min_max(io.min, pos2(cols_right, io.bottom()));
             let mut iui = child(ui, io_cols);
             for i in 0..nt {
-                let r = Rect::from_min_size(pos2(col_x(i), io.top()), vec2(COL_W - 1.0, io_h));
+                let r = Rect::from_min_size(pos2(col_x(i), io.top()), vec2(col_w - 1.0, io_h));
                 if r.intersects(io_cols) {
                     self.track_io(&mut iui, i, r, &status);
                 }
             }
             for j in 0..nr {
-                let r = Rect::from_min_size(pos2(col_x(nt + j), io.top()), vec2(COL_W - 1.0, io_h));
+                let r = Rect::from_min_size(pos2(col_x(nt + j), io.top()), vec2(col_w - 1.0, io_h));
                 if r.intersects(io_cols) {
                     self.return_io(&mut iui, r);
                 }
@@ -231,13 +233,13 @@ impl App {
         {
             let mut xui = child(ui, mixer_cols);
             for i in 0..nt {
-                let r = Rect::from_min_size(pos2(col_x(i), mixer.top() + 1.0), vec2(COL_W - 1.0, mixer.height() - 1.0));
+                let r = Rect::from_min_size(pos2(col_x(i), mixer.top() + 1.0), vec2(col_w - 1.0, mixer.height() - 1.0));
                 if r.intersects(mixer_cols) {
                     self.track_strip(&mut xui, i, r);
                 }
             }
             for j in 0..nr {
-                let r = Rect::from_min_size(pos2(col_x(nt + j), mixer.top() + 1.0), vec2(COL_W - 1.0, mixer.height() - 1.0));
+                let r = Rect::from_min_size(pos2(col_x(nt + j), mixer.top() + 1.0), vec2(col_w - 1.0, mixer.height() - 1.0));
                 if r.intersects(mixer_cols) {
                     self.return_strip(&mut xui, j, r);
                 }
@@ -258,6 +260,29 @@ impl App {
                 self.session.scroll_x += resp.drag_delta().x / frac;
             }
             rect_fill(ui.painter(), thumb, 2.0, if resp.hovered() || resp.dragged() { TEXT_DIM } else { PANEL3 });
+        }
+
+        // Dividers: the line above the In/Out section and mixer, and the
+        // right edge of every track header.
+        let split = Rect::from_min_max(pos2(full.left(), grid.bottom() - 1.0), pos2(full.right(), grid.bottom() + 5.0));
+        let resp = splitter(ui, Id::new("session_mixer_split"), split, false);
+        if resp.dragged() {
+            self.prefs.layout.mixer_h = (mixer_h - resp.drag_delta().y).clamp(MIXER_MIN, room);
+            self.layout_dirty = true;
+        }
+        grip_dots(ui.painter(), pos2(cols_right - 20.0, grid.bottom() + 2.0), false, TEXT_DIM);
+        for i in 0..nt + nr {
+            let x = col_x(i) + col_w - 1.0;
+            if x < slots.left() || x > cols_right {
+                continue;
+            }
+            let r = Rect::from_center_size(pos2(x, header.center().y), vec2(7.0, HEADER_H));
+            let resp = splitter(ui, Id::new(("session_col_split", i)), r, true);
+            if resp.dragged() {
+                // Every column changes, so this edge moves (i + 1) times as far.
+                self.prefs.layout.track_w = (col_w + resp.drag_delta().x / (i + 1) as f32).clamp(60.0, 320.0);
+                self.layout_dirty = true;
+            }
         }
     }
 

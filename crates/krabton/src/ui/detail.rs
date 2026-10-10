@@ -66,7 +66,8 @@ impl App {
             return;
         };
         let Some(clip) = self.clip_ref(sel).cloned() else { return };
-        let sidebar = Rect::from_min_size(body.min, vec2(SIDEBAR_W, body.height()));
+        let side_w = crate::prefs::Layout::or(self.prefs.layout.clip_side_w, SIDEBAR_W).clamp(150.0, 480.0);
+        let sidebar = Rect::from_min_size(body.min, vec2(side_w, body.height()));
         let main = Rect::from_min_max(pos2(sidebar.right() + 1.0, body.top()), body.max);
         rect_fill(ui.painter(), sidebar, 0.0, PANEL);
         ui.painter().line_segment([pos2(sidebar.right(), body.top()), pos2(sidebar.right(), body.bottom())], Stroke::new(1.0_f32, LINE));
@@ -74,6 +75,12 @@ impl App {
         let mut sui = ui.new_child(UiBuilder::new().max_rect(sidebar.shrink(6.0)).layout(egui::Layout::top_down(egui::Align::Min)));
         sui.set_clip_rect(sidebar);
         self.clip_sidebar(&mut sui, sel, &clip);
+        let split = Rect::from_min_max(pos2(sidebar.right() - 4.0, sidebar.top()), pos2(sidebar.right() + 2.0, sidebar.bottom()));
+        let resp = crate::widgets::splitter(ui, Id::new("clip_side_split"), split, true);
+        if resp.dragged() {
+            self.prefs.layout.clip_side_w = (side_w + resp.drag_delta().x).clamp(150.0, 480.0);
+            self.layout_dirty = true;
+        }
 
         match &clip.content {
             ClipContent::Midi { .. } => {

@@ -88,7 +88,8 @@ static REDUX: &[ParamSpec] = &[
     ParamSpec::int("Downsample", "Crush", 1.0, 50.0, 4.0, Unit::None),
     ParamSpec::lin("Mix", "Output", 0.0, 1.0, 1.0, Unit::Percent),
 ];
-pub const SCOPE_MODES: &[&str] = &["Wave", "Time", "XY", "Vector"];
+pub const SCOPE_MODES: &[&str] = &["Wave", "Time", "XY", "Vector", "Spectrum"];
+pub const SCOPE_COLORS: &[&str] = &["Green", "Amber", "Ice", "Pink", "White"];
 pub const SCOPE_TRIGGERS: &[&str] = &["Rising", "Falling", "Free"];
 pub const SCOPE_CHANNELS: &[&str] = &["Mid", "Stereo", "Left", "Right"];
 pub const SCOPE_MODE: usize = 0;
@@ -100,6 +101,11 @@ pub const SCOPE_AUTO: usize = 5;
 pub const SCOPE_GAIN: usize = 6;
 pub const SCOPE_GLOW: usize = 7;
 pub const SCOPE_FREEZE: usize = 8;
+pub const SCOPE_COLOR: usize = 9;
+pub const SCOPE_LINE: usize = 10;
+pub const SCOPE_FILL: usize = 11;
+pub const SCOPE_GRID: usize = 12;
+pub const SCOPE_PHASE: usize = 13;
 static SCOPE: &[ParamSpec] = &[
     ParamSpec::choice("Mode", "Scope", SCOPE_MODES, 0),
     ParamSpec::int("Cycles", "Scope", 1.0, 8.0, 2.0, Unit::None),
@@ -110,6 +116,11 @@ static SCOPE: &[ParamSpec] = &[
     ParamSpec::lin("Gain", "Display", -24.0, 36.0, 0.0, Unit::Db),
     ParamSpec::lin("Glow", "Display", 0.0, 1.0, 0.5, Unit::Percent),
     ParamSpec::toggle("Freeze", "Display", false),
+    ParamSpec::choice("Color", "Look", SCOPE_COLORS, 0),
+    ParamSpec::lin("Line", "Look", 0.5, 4.0, 1.4, Unit::None),
+    ParamSpec::toggle("Fill", "Look", false),
+    ParamSpec::toggle("Grid", "Look", true),
+    ParamSpec::lin("Phase", "Scope", 0.0, 1.0, 0.0, Unit::Percent),
 ];
 static UTILITY: &[ParamSpec] = &[
     ParamSpec::lin("Gain", "Utility", -60.0, 24.0, 0.0, Unit::Db),
@@ -170,7 +181,7 @@ impl EffectKind {
             EffectKind::Chorus => "Stereo chorus / flanger",
             EffectKind::Redux => "Bit and sample rate reduction",
             EffectKind::Utility => "Gain, width, pan and phase",
-            EffectKind::Scope => "See the waveform: locked to the pitch, triggered, or XY",
+            EffectKind::Scope => "See the sound: the wave locked to its pitch, a triggered time base, XY, vector or a spectrum",
             EffectKind::LensEq => "Twelve-band EQ with a big curve, spectrum analyzer, mid/side and dynamic bands",
             EffectKind::LensComp => "Compressor with styles, lookahead and a scrolling level display",
             EffectKind::LensLimiter => "True-peak limiter with styles and a loudness meter (LUFS)",

@@ -88,11 +88,6 @@ pub struct TrackStatus {
     pub peak_r: AtomicF32,
     /// Visual state of the track's first sequencer (see `sequencers`).
     pub seq: [AtomicU64; 4],
-    /// The track's source signal (instrument or clips, before effects),
-    /// written while `wave_watch` is above zero.
-    pub wave: crate::scope::ScopeBuffer,
-    /// Set by the UI while it shows the wave; counts down per block.
-    pub wave_watch: AtomicU32,
     /// Peak of the track's audio input since the UI last took it.
     pub in_peak: AtomicF32,
 }
@@ -108,22 +103,7 @@ impl TrackStatus {
             peak_l: AtomicF32::new(0.0),
             peak_r: AtomicF32::new(0.0),
             seq: [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)],
-            wave: crate::scope::ScopeBuffer::new(crate::scope::WAVE_LEN, false),
-            wave_watch: AtomicU32::new(0),
             in_peak: AtomicF32::new(0.0),
-        }
-    }
-
-    /// UI: keep writing the wave for a while.
-    pub fn watch_wave(&self) {
-        self.wave_watch.store(200, Ordering::Relaxed);
-    }
-
-    fn tap_wave(&self, l: &[f32], r: &[f32]) {
-        let w = self.wave_watch.load(Ordering::Relaxed);
-        if w > 0 {
-            self.wave_watch.store(w - 1, Ordering::Relaxed);
-            self.wave.write(l, r);
         }
     }
 
@@ -1383,9 +1363,6 @@ impl Engine {
             }
             pre_l[..seg].copy_from_slice(&l[..seg]);
             pre_r[..seg].copy_from_slice(&r[..seg]);
-            if let Some(ts) = status.tracks.get(ti) {
-                ts.tap_wave(&l[..seg], &r[..seg]);
-            }
             for (dev, (_, st)) in track.devices.iter().zip(devices.iter_mut()) {
                 if dev.enabled {
                     let params = mods.params(ModOwner::Device(dev.id)).unwrap_or(&dev.params);
@@ -2127,7 +2104,7 @@ mod tests {
     }
 
     #[test]
-    fn scopes_and_waves_receive_audio() {
+    fn scopes_receive_audio() {
         let mut p = crate::demo::demo_project();
         let scope = p.make_device(crate::dsp::effects::EffectKind::Scope);
         let scope_id = scope.id;
@@ -2142,19 +2119,6 @@ mod tests {
         assert_eq!(l.len(), 4800);
         assert!(l.iter().chain(&r).any(|x| x.abs() > 0.01), "the scope sees the bass");
         assert!(track_level(&mut e, &h, 1, 1.0) > 0.02, "and the bass still plays");
-        // The track wave is only written while the UI watches it.
-        let ts = &h.status.tracks[1];
-        assert_eq!(ts.wave.written(), 0);
-        ts.watch_wave();
-        run(&mut e, 0.2);
-        let n = ts.wave.written();
-        assert!(n >= 4800, "wave written while watched: {n}");
-        ts.wave.read(4800, &mut l, &mut r);
-        assert!(l.iter().any(|x| x.abs() > 0.01));
-        run(&mut e, 3.0);
-        let m = ts.wave.written();
-        run(&mut e, 0.5);
-        assert_eq!(ts.wave.written(), m, "stops when nobody watches");
     }
 
     #[test]

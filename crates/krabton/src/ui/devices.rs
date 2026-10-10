@@ -209,28 +209,42 @@ impl App {
         let accent = if enabled { ACCENT } else { TEXT_DIM };
         let mut mv = self.mod_view(ModOwner::Device(dev_id));
         let status = self.status();
+        // Displays are as wide as the user dragged them (per kind of device).
+        let default_w = match kind {
+            EffectKind::Scope => 360.0,
+            EffectKind::LensEq => 620.0,
+            EffectKind::LensComp => 420.0,
+            _ => 400.0,
+        };
+        let mut width = self.prefs.layout.display(kind.name(), default_w);
+        let width_before = width;
         let (changed, action) = device_frame(ui, kind.name(), Some(&mut enabled), h, |ui| {
             if kind == EffectKind::Scope {
                 ui.horizontal_top(|ui| {
-                    let (rect, _) = ui.allocate_exact_size(vec2(360.0, (h - 30.0).max(80.0)), Sense::hover());
                     let opts = crate::ui::scope::ScopeOpts::from_params(&params);
+                    let (rect, _) = ui.allocate_exact_size(vec2(width, (h - 30.0).max(80.0)), Sense::hover());
                     let resp = crate::ui::scope::scope_view(ui, rect, id.with("screen"), status.scopes.find(dev_id), status.sample_rate.load(), &opts);
-                    resp.on_hover_text("Wave: locked to the pitch. Time: triggered window. XY: left against right. Vector: mid up, side across.");
+                    resp.on_hover_text("Wave: locked to the pitch. Time: triggered window. XY: left against right. Vector: mid up, side across. Spectrum: level per frequency. Drag the right edge to make it wider.");
+                    width_grip(ui, id.with("display_width"), rect, &mut width, 160.0, 1800.0);
                     ui.add_space(6.0);
                     param_grid_mod(ui, id, kind.specs(), &mut params, accent, h - 24.0, mv.as_mut())
                 })
                 .inner
             } else if kind == EffectKind::LensEq {
-                crate::ui::lens::eq_panel(ui, id, dev_id, &mut params, accent, h, mv.as_mut(), &status)
+                crate::ui::lens::eq_panel(ui, id, dev_id, &mut params, accent, h, mv.as_mut(), &status, &mut width)
             } else if kind == EffectKind::LensComp {
-                crate::ui::lens::comp_panel(ui, id, dev_id, &mut params, accent, h, mv.as_mut(), &status)
+                crate::ui::lens::comp_panel(ui, id, dev_id, &mut params, accent, h, mv.as_mut(), &status, &mut width)
             } else if kind == EffectKind::LensLimiter {
-                crate::ui::lens::limiter_panel(ui, id, dev_id, &mut params, accent, h, mv.as_mut(), &status)
+                crate::ui::lens::limiter_panel(ui, id, dev_id, &mut params, accent, h, mv.as_mut(), &status, &mut width)
             } else {
                 param_grid_mod(ui, id, kind.specs(), &mut params, accent, h - 24.0, mv.as_mut())
             }
         });
         self.apply_mod_view(mv);
+        if width != width_before {
+            self.prefs.layout.displays.insert(kind.name().to_string(), width);
+            self.layout_dirty = true;
+        }
         let dev = self.chain_mut(sel)?.get_mut(d)?;
         dev.enabled = enabled;
         if changed {
@@ -410,11 +424,8 @@ impl App {
         let title = inst.kind_name();
         let mut toggle_editor = false;
         let mut mv = self.mod_view(ModOwner::Instrument(track_id));
-        let status = self.status();
         let (_, action) = device_frame(ui, title, None, h, |ui| {
             ui.horizontal_top(|ui| {
-                crate::ui::scope::instrument_wave(ui, &status, i, track_id, h - 30.0);
-                ui.add_space(6.0);
                 ui.vertical(|ui| match &mut new_inst {
                     Instrument::Fm { voice, op_mask, bank, params } => {
                         self.fm_panel(ui, track_id, voice, op_mask, bank, params, h, mv.as_mut());
@@ -596,7 +607,8 @@ impl App {
                                     ui.label(RichText::new("drag S/E and the loop; Ctrl+wheel zooms").small().color(TEXT_DIM));
                                 });
                                 let map_h = if zones.is_empty() { 0.0 } else { 84.0 };
-                                let size = vec2(380.0, (h - 80.0 - map_h).max(40.0));
+                                let mut ed_w = self.prefs.layout.display("Sampler", 380.0);
+                                let size = vec2(ed_w, (h - 80.0 - map_h).max(40.0));
                                 let wid = Id::new(("sampler_wave", track_id, sel, zones.len()));
                                 let resp = match zones.get_mut(sel) {
                                     Some(z) => {
@@ -616,6 +628,12 @@ impl App {
                                     },
                                 };
                                 let r = resp.rect;
+                                let before = ed_w;
+                                width_grip(ui, Id::new(("sampler_width", track_id)), r, &mut ed_w, 240.0, 1800.0);
+                                if ed_w != before {
+                                    self.prefs.layout.displays.insert("Sampler".into(), ed_w);
+                                    self.layout_dirty = true;
+                                }
                                 if let Some(item) = drop_payload::<BrowserItem>(&resp) {
                                     match &*item {
                                         BrowserItem::Sample(path) => match SampleRef::load(path) {
@@ -633,7 +651,7 @@ impl App {
                                     rect_line(ui.painter(), r, 2.0, 2.0, ACCENT);
                                 }
                                 if !zones.is_empty() {
-                                    let (zr, zresp) = ui.allocate_exact_size(vec2(380.0, 34.0), Sense::click());
+                                    let (zr, zresp) = ui.allocate_exact_size(vec2(ed_w, 34.0), Sense::click());
                                     let hit = draw_zone_map(ui, zr, zones, sel, zresp.hover_pos());
                                     if let (true, Some(k)) = (zresp.clicked(), hit) {
                                         self.sel_zone = k;

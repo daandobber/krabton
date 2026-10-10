@@ -87,11 +87,13 @@ impl App {
         let status = self.status();
         let bpb = self.project.beats_per_bar_f();
         let nt = self.project.tracks.len();
+        let head_w = crate::prefs::Layout::or(self.prefs.layout.arr_head_w, HEAD_W).clamp(100.0, 420.0);
+        let lane_h = self.lane_h();
 
         let toolbar = Rect::from_min_size(full.min, vec2(full.width(), TOOLBAR_H));
-        let ruler = Rect::from_min_max(pos2(full.left() + HEAD_W, toolbar.bottom()), pos2(full.right(), toolbar.bottom() + RULER_H));
-        let lanes = Rect::from_min_max(pos2(full.left() + HEAD_W, ruler.bottom()), full.max);
-        let heads = Rect::from_min_max(pos2(full.left(), ruler.bottom()), pos2(full.left() + HEAD_W, full.bottom()));
+        let ruler = Rect::from_min_max(pos2(full.left() + head_w, toolbar.bottom()), pos2(full.right(), toolbar.bottom() + RULER_H));
+        let lanes = Rect::from_min_max(pos2(full.left() + head_w, ruler.bottom()), full.max);
+        let heads = Rect::from_min_max(pos2(full.left(), ruler.bottom()), pos2(full.left() + head_w, full.bottom()));
 
         {
             let p = ui.painter();
@@ -99,7 +101,7 @@ impl App {
             rect_fill(p, toolbar, 0.0, PANEL);
             rect_fill(p, heads, 0.0, PANEL);
             rect_fill(p, ruler, 0.0, PANEL2);
-            rect_fill(p, Rect::from_min_max(pos2(full.left(), toolbar.bottom()), pos2(full.left() + HEAD_W, ruler.bottom())), 0.0, PANEL2);
+            rect_fill(p, Rect::from_min_max(pos2(full.left(), toolbar.bottom()), pos2(full.left() + head_w, ruler.bottom())), 0.0, PANEL2);
         }
 
         // Toolbar (regular egui layout).
@@ -154,13 +156,13 @@ impl App {
             }
         }
         self.arr.scroll_x = self.arr.scroll_x.max(0.0);
-        let content_h = nt as f32 * LANE_H + 60.0;
+        let content_h = nt as f32 * lane_h + 60.0;
         self.arr.scroll_y = self.arr.scroll_y.clamp(0.0, (content_h - lanes.height()).max(0.0));
         let sx = self.arr.scroll_x;
         let sy = self.arr.scroll_y;
         let bx = |beat: f64| lanes.left() + beat as f32 * ppb - sx;
         let xb = |x: f32| ((x - lanes.left() + sx) / ppb) as f64;
-        let lane_y = |i: usize| lanes.top() + i as f32 * LANE_H - sy;
+        let lane_y = |i: usize| lanes.top() + i as f32 * lane_h - sy;
         self.arr.lane_top = lane_y(0);
         // A drag that ended elsewhere (e.g. dropped in the session view).
         if !ui.input(|i| i.pointer.any_down()) {
@@ -201,11 +203,11 @@ impl App {
         let free = ui.input(|i| i.modifiers.alt);
         for i in 0..nt {
             let y = lane_y(i);
-            let lane = Rect::from_min_size(pos2(lanes.left(), y), vec2(lanes.width(), LANE_H - 1.0));
+            let lane = Rect::from_min_size(pos2(lanes.left(), y), vec2(lanes.width(), lane_h - 1.0));
             if !lane.intersects(lanes) {
                 continue;
             }
-            let head = Rect::from_min_size(pos2(heads.left(), y), vec2(HEAD_W - 1.0, LANE_H - 1.0));
+            let head = Rect::from_min_size(pos2(heads.left(), y), vec2(head_w - 1.0, lane_h - 1.0));
             self.arr_head(&mut hui, i, head);
             self.arr_lane(&mut lui, i, lane, &bx, &xb, free);
         }
@@ -237,6 +239,32 @@ impl App {
         if self.arr.drag.is_some() && !ui.input(|i| i.pointer.any_down()) {
             self.arr.drag = None;
         }
+
+        // Dividers: the right edge of the track headers, and the bottom of
+        // every lane (all lanes share one height).
+        let split = Rect::from_min_max(pos2(heads.right() - 3.0, heads.top()), pos2(heads.right() + 3.0, heads.bottom()));
+        let resp = splitter(ui, Id::new("arr_head_split"), split, true);
+        if resp.dragged() {
+            self.prefs.layout.arr_head_w = (head_w + resp.drag_delta().x).clamp(100.0, 420.0);
+            self.layout_dirty = true;
+        }
+        for i in 0..nt {
+            let y = lane_y(i) + lane_h - 1.0;
+            if y < heads.top() || y > heads.bottom() {
+                continue;
+            }
+            let r = Rect::from_min_max(pos2(heads.left(), y - 3.0), pos2(heads.right() - 4.0, y + 3.0));
+            let resp = splitter(ui, Id::new(("arr_lane_split", i)), r, false);
+            if resp.dragged() {
+                self.prefs.layout.lane_h = (lane_h + resp.drag_delta().y / (i + 1) as f32).clamp(28.0, 240.0);
+                self.layout_dirty = true;
+            }
+        }
+    }
+
+    /// Height of the arrangement's lanes.
+    pub(crate) fn lane_h(&self) -> f32 {
+        crate::prefs::Layout::or(self.prefs.layout.lane_h, LANE_H).clamp(28.0, 240.0)
     }
 
     fn ruler(&mut self, ui: &mut Ui, ruler: Rect, bx: &dyn Fn(f64) -> f32, xb: &dyn Fn(f32) -> f64) {
@@ -485,7 +513,7 @@ impl App {
                     // Moving up or down takes the clip to another track of the same kind.
                     let mut i = i;
                     if matches!(d.kind, DragKind::Move) {
-                        let row = ((pos.y - self.arr.lane_top) / LANE_H).floor();
+                        let row = ((pos.y - self.arr.lane_top) / self.lane_h()).floor();
                         if row >= 0.0 && (row as usize) < self.project.tracks.len() {
                             let to = row as usize;
                             if to != i && self.project.tracks[to].kind == self.project.tracks[i].kind {

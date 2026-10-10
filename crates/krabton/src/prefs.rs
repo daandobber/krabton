@@ -4,7 +4,40 @@
 //! theirs in memory, so they never touch the real ones.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
+
+/// Sizes the user dragged. 0 means "never set": the built-in size.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct Layout {
+    pub browser_w: f32,
+    pub detail_h: f32,
+    /// Width of the session's track columns.
+    pub track_w: f32,
+    pub mixer_h: f32,
+    pub arr_head_w: f32,
+    pub lane_h: f32,
+    /// Width of the clip view's left column.
+    pub clip_side_w: f32,
+    /// Display widths of devices, by device name.
+    pub displays: BTreeMap<String, f32>,
+}
+
+impl Layout {
+    /// `v`, or `default` while it was never set.
+    pub fn or(v: f32, default: f32) -> f32 {
+        if v > 0.0 {
+            v
+        } else {
+            default
+        }
+    }
+
+    pub fn display(&self, name: &str, default: f32) -> f32 {
+        self.displays.get(name).copied().unwrap_or(default)
+    }
+}
 
 /// A browser item in one or more collections (Favorites and the colors).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -30,6 +63,9 @@ pub struct Prefs {
     pub fm_banks: Vec<PathBuf>,
     /// Hear notes while placing and moving them in the clip editor.
     pub note_preview: bool,
+    /// Size of everything (1 = normal; 0 = never set).
+    pub ui_zoom: f32,
+    pub layout: Layout,
 }
 
 impl Prefs {

@@ -1,5 +1,4 @@
-//! Waveform views: the live wave in every instrument panel and the
-//! Oscilloscope device.
+//! The Oscilloscope device: waves, XY and vector views, and a spectrum.
 //!
 //! Periodic signals are drawn locked to their pitch: the period is found
 //! with a normalized square difference function, and the window starts
@@ -7,17 +6,34 @@
 //! however complex it is. Other signals get a classic triggered time base.
 
 use crate::theme::*;
-use egui::{pos2, vec2, Align2, Color32, Id, Pos2, Rect, Response, Sense, Shape, Stroke, Ui};
-use krabton_engine::dsp::effects::{SCOPE_AUTO, SCOPE_CHANNEL, SCOPE_CYCLES, SCOPE_FREEZE, SCOPE_GAIN, SCOPE_GLOW, SCOPE_MODE, SCOPE_TIME, SCOPE_TRIGGER};
-use krabton_engine::engine::EngineStatus;
+use egui::{pos2, vec2, Align2, Color32, Id, Mesh, Pos2, Rect, Response, Sense, Shape, Stroke, Ui};
+use krabton_engine::dsp::effects::*;
+use krabton_engine::dsp::fft::Fft;
 use krabton_engine::scope::ScopeBuffer;
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::f32::consts::PI;
+
+/// Points of the spectrum's FFT.
+const FFT_N: usize = 8192;
+
+thread_local! {
+    static FFT: RefCell<Fft> = RefCell::new(Fft::new(FFT_N));
+}
 
 const SCREEN: Color32 = Color32::from_rgb(0x0b, 0x11, 0x0e);
 const GRID: Color32 = Color32::from_rgb(0x1c, 0x2a, 0x22);
 const GRID_MID: Color32 = Color32::from_rgb(0x2a, 0x3d, 0x31);
-const TRACES: [Color32; 2] = [PLAY, SELECT];
+/// Trace colours per Color setting: the first (or left) and the second
+/// (right) trace.
+const PALETTES: [[Color32; 2]; 5] = [
+    [PLAY, SELECT],
+    [ACCENT, Color32::from_rgb(0xff, 0xdc, 0xa8)],
+    [SELECT, Color32::from_rgb(0xe8, 0xf4, 0xff)],
+    [Color32::from_rgb(0xff, 0x6e, 0xc7), Color32::from_rgb(0x96, 0xbe, 0xff)],
+    [Color32::from_rgb(0xee, 0xee, 0xee), Color32::from_rgb(0x9a, 0x9a, 0xa2)],
+];
+
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Mode {
@@ -29,6 +45,8 @@ pub enum Mode {
     Xy,
     /// Mid up, side across: mono is a vertical line.
     Vector,
+    /// Level per frequency (log scale, 20 Hz to 20 kHz).
+    Spectrum,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -60,8 +78,15 @@ pub struct ScopeOpts {
     /// Afterglow, 0..1.
     pub glow: f32,
     pub freeze: bool,
-    /// Small view: no labels, and the last wave stays visible in silence.
-    pub compact: bool,
+    /// Index into `PALETTES`.
+    pub color: usize,
+    /// Line width in points.
+    pub line: f32,
+    /// Fill under the traces.
+    pub fill: bool,
+    pub grid: bool,
+    /// Where in the cycle the Wave view starts (0..1).
+    pub phase: f32,
 }
 
 impl ScopeOpts {
@@ -73,6 +98,7 @@ impl ScopeOpts {
                 1 => Mode::Time,
                 2 => Mode::Xy,
                 3 => Mode::Vector,
+                4 => Mode::Spectrum,
                 _ => Mode::Wave,
             },
             cycles: (get(SCOPE_CYCLES).round() as usize).clamp(1, 8),
@@ -92,7 +118,11 @@ impl ScopeOpts {
             gain: krabton_engine::dsp::db_to_gain(get(SCOPE_GAIN)),
             glow: get(SCOPE_GLOW).clamp(0.0, 1.0),
             freeze: get(SCOPE_FREEZE) >= 0.5,
-            compact: false,
+            color: (get(SCOPE_COLOR).round().max(0.0) as usize).min(PALETTES.len() - 1),
+            line: p.get(SCOPE_LINE).copied().unwrap_or(1.4).clamp(0.5, 4.0),
+            fill: get(SCOPE_FILL) >= 0.5,
+            grid: p.get(SCOPE_GRID).copied().unwrap_or(1.0) >= 0.5,
+            phase: get(SCOPE_PHASE).clamp(0.0, 1.0),
         }
     }
 }
@@ -285,12 +315,13 @@ struct Frame {
     /// (points, colour index); time traces as (u, value), XY as (x, y).
     traces: Vec<(Vec<[f32; 2]>, usize)>,
     xy: bool,
+    /// Values are levels (-1 = -90 dB .. 1 = 0 dB), drawn without gain.
+    spectrum: bool,
 }
 
 #[derive(Clone, Default)]
 struct Mem {
     history: VecDeque<Frame>,
-    last_good: Option<Frame>,
     gain: f32,
     readout: String,
     level: String,
@@ -302,6 +333,7 @@ fn capture(buf: &ScopeBuffer, sr: f32, o: &ScopeOpts, cols: usize) -> (Frame, f3
     let span_t = (o.time * sr).max(16.0);
     let want = match o.mode {
         Mode::Wave => 16384,
+        Mode::Spectrum => FFT_N,
         Mode::Time => (2.0 * span_t) as usize + 64,
         Mode::Xy | Mode::Vector => span_t as usize,
     };
@@ -322,7 +354,59 @@ fn capture(buf: &ScopeBuffer, sr: f32, o: &ScopeOpts, cols: usize) -> (Frame, f3
             peak = peak.max(p[0].abs()).max(p[1].abs());
             pts.push(p);
         }
-        return (Frame { traces: vec![(pts, 0)], xy: true }, peak, String::new());
+        return (Frame { traces: vec![(pts, 0)], xy: true, spectrum: false }, peak, String::new());
+    }
+    let pick = |o: &ScopeOpts| -> Vec<(Vec<f32>, usize)> {
+        if !stereo {
+            return vec![(l.clone(), 0)];
+        }
+        match o.channel {
+            Channel::Stereo => vec![(l.clone(), 0), (r.clone(), 1)],
+            Channel::Left => vec![(l.clone(), 0)],
+            Channel::Right => vec![(r.clone(), 1)],
+            Channel::Mid => vec![(mid.clone(), 0)],
+        }
+    };
+    if o.mode == Mode::Spectrum {
+        let peak = mid.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        let per_bin = sr / FFT_N as f32;
+        let (mut top_db, mut top_f) = (-200.0f32, 0.0f32);
+        let mut traces = Vec::new();
+        for (x, c) in pick(o) {
+            let mut bins = Vec::new();
+            FFT.with(|f| f.borrow_mut().spectrum_db(&x, &mut bins));
+            if bins.len() < 4 {
+                continue;
+            }
+            let pts: Vec<[f32; 2]> = (0..=cols)
+                .map(|col| {
+                    let u = col as f32 / cols as f32;
+                    let f0 = 20.0 * 1000f32.powf(u);
+                    let f1 = 20.0 * 1000f32.powf((col + 1) as f32 / cols as f32);
+                    let (k0, k1) = (f0 / per_bin, f1 / per_bin);
+                    let db = if k1 - k0 < 1.0 {
+                        let k = k0.max(0.0);
+                        let i = (k as usize).min(bins.len() - 2);
+                        bins[i] + (bins[i + 1] - bins[i]) * (k - i as f32)
+                    } else {
+                        let (a, b) = ((k0 as usize).min(bins.len() - 1), (k1.ceil() as usize).min(bins.len()));
+                        bins[a..b.max(a + 1)].iter().fold(f32::MIN, |m, v| m.max(*v))
+                    };
+                    if db > top_db {
+                        (top_db, top_f) = (db, f0);
+                    }
+                    [u, ((db + 90.0) / 45.0 - 1.0).clamp(-1.0, 1.0)]
+                })
+                .collect();
+            traces.push((pts, c));
+        }
+        let readout = if top_db > -80.0 {
+            let midi = 69.0 + 12.0 * (top_f / 440.0).log2();
+            format!("peak {:.0} Hz  {}", top_f, krabton_engine::note_name(midi.round().clamp(0.0, 127.0) as u8))
+        } else {
+            String::new()
+        };
+        return (Frame { traces, xy: false, spectrum: true }, peak, readout);
     }
     let len = mid.len() as f32;
     let mut readout = String::new();
@@ -338,7 +422,12 @@ fn capture(buf: &ScopeBuffer, sr: f32, o: &ScopeOpts, cols: usize) -> (Frame, f3
                 let midi = 69.0 + 12.0 * (f / 440.0).log2();
                 let note = midi.round().clamp(0.0, 127.0);
                 readout = format!("{f:.1} Hz  {} {:+.0}c", krabton_engine::note_name(note as u8), (midi - note) * 100.0);
-                (locked_start(&mid, per, span), span)
+                // Phase moves the start along the cycle (staying inside the buffer).
+                let mut t0 = locked_start(&mid, per, span) + o.phase * per;
+                if t0 + span > len - 1.0 {
+                    t0 -= per;
+                }
+                (t0.max(0.0), span)
             }
             None => {
                 let span = (0.03 * sr).min(len / 2.0);
@@ -350,27 +439,21 @@ fn capture(buf: &ScopeBuffer, sr: f32, o: &ScopeOpts, cols: usize) -> (Frame, f3
             (trigger_start(&mid, span, o.trigger), span)
         }
     };
-    let chans: Vec<(&[f32], usize)> = if !stereo {
-        vec![(l.as_slice(), 0)]
-    } else {
-        match o.channel {
-            Channel::Stereo => vec![(l.as_slice(), 0), (r.as_slice(), 1)],
-            Channel::Left => vec![(l.as_slice(), 0)],
-            Channel::Right => vec![(r.as_slice(), 1)],
-            Channel::Mid => vec![(mid.as_slice(), 0)],
-        }
-    };
+    let chans = pick(o);
     let i0 = (t0.max(0.0) as usize).min(mid.len() - 1);
     let i1 = ((t0 + span) as usize + 1).min(mid.len());
     let peak = chans.iter().map(|(x, _)| x[i0..i1].iter().fold(0.0f32, |m, v| m.max(v.abs()))).fold(0.0, f32::max);
-    let traces = chans.into_iter().map(|(x, c)| (columns(x, t0, span, cols), c)).collect();
-    (Frame { traces, xy: false }, peak, readout)
+    let traces = chans.into_iter().map(|(x, c)| (columns(&x, t0, span, cols), c)).collect();
+    (Frame { traces, xy: false, spectrum: false }, peak, readout)
 }
 
-fn draw_frame(p: &egui::Painter, rect: Rect, f: &Frame, gain: f32, alpha: f32, glow: bool) {
+fn draw_frame(p: &egui::Painter, rect: Rect, f: &Frame, gain: f32, alpha: f32, glow: bool, o: &ScopeOpts) {
     let c = rect.center();
     let half_h = rect.height() * 0.5 * 0.92;
     let half_xy = rect.width().min(rect.height()) * 0.5 * 0.92;
+    let gain = if f.spectrum { 1.0 } else { gain };
+    // Waves fill to the centre line, a spectrum to the bottom.
+    let base = if f.spectrum { rect.bottom() } else { c.y };
     for (pts, ci) in &f.traces {
         if pts.len() < 2 {
             continue;
@@ -380,11 +463,25 @@ fn draw_frame(p: &egui::Painter, rect: Rect, f: &Frame, gain: f32, alpha: f32, g
         } else {
             pts.iter().map(|q| pos2(rect.left() + q[0] * rect.width(), c.y - (q[1] * gain).clamp(-1.1, 1.1) * half_h)).collect()
         };
-        let color = TRACES[*ci % TRACES.len()];
-        if glow {
-            p.add(Shape::line(pos.clone(), Stroke::new(4.0_f32, color.gamma_multiply(0.18 * alpha))));
+        let color = PALETTES[o.color][*ci % 2];
+        if o.fill && !f.xy && alpha > 0.5 {
+            let mut m = Mesh::default();
+            let fill = color.gamma_multiply(0.16);
+            for (k, q) in pos.iter().enumerate() {
+                m.colored_vertex(*q, fill);
+                m.colored_vertex(pos2(q.x, base), fill);
+                if k > 0 {
+                    let i = (2 * k) as u32;
+                    m.add_triangle(i - 2, i - 1, i);
+                    m.add_triangle(i - 1, i + 1, i);
+                }
+            }
+            p.add(Shape::mesh(m));
         }
-        p.add(Shape::line(pos, Stroke::new(1.4_f32, color.gamma_multiply(alpha))));
+        if glow {
+            p.add(Shape::line(pos.clone(), Stroke::new(o.line + 2.6, color.gamma_multiply(0.18 * alpha))));
+        }
+        p.add(Shape::line(pos, Stroke::new(o.line, color.gamma_multiply(alpha))));
     }
 }
 
@@ -397,13 +494,39 @@ pub fn scope_view(ui: &mut Ui, rect: Rect, id: Id, buf: Option<&ScopeBuffer>, sr
     let xy = matches!(o.mode, Mode::Xy | Mode::Vector);
     // Graticule.
     let (cx, cy) = (rect.center().x, rect.center().y);
-    if xy {
+    if !o.grid {
+    } else if xy {
         let rad = rect.width().min(rect.height()) * 0.46;
         p.circle_stroke(rect.center(), rad, Stroke::new(1.0_f32, GRID));
         p.line_segment([pos2(cx - rad, cy), pos2(cx + rad, cy)], Stroke::new(1.0_f32, GRID_MID));
         p.line_segment([pos2(cx, cy - rad), pos2(cx, cy + rad)], Stroke::new(1.0_f32, GRID_MID));
+    } else if o.mode == Mode::Spectrum {
+        // Decades of frequency, and 18 dB steps.
+        let mut f = 100.0f32;
+        while f < 20000.0 {
+            for k in 1..10 {
+                let ff = f * k as f32 / 10.0 * 10.0;
+                if !(20.0..20000.0).contains(&ff) {
+                    continue;
+                }
+                let x = rect.left() + (ff / 20.0).log10() / 3.0 * rect.width();
+                let strong = k == 1;
+                p.line_segment([pos2(x, rect.top()), pos2(x, rect.bottom())], Stroke::new(1.0_f32, if strong { GRID_MID } else { GRID }));
+                if strong {
+                    let label = if ff >= 1000.0 { format!("{}k", ff / 1000.0) } else { format!("{ff}") };
+                    p.text(pos2(x + 2.0, rect.bottom() - 2.0), Align2::LEFT_BOTTOM, label, small(), GRID_MID);
+                }
+            }
+            f *= 10.0;
+        }
+        let half_h = rect.height() * 0.5 * 0.92;
+        for db in [-18.0f32, -36.0, -54.0, -72.0] {
+            let y = cy - ((db + 90.0) / 45.0 - 1.0) * half_h;
+            p.line_segment([pos2(rect.left(), y), pos2(rect.right(), y)], Stroke::new(1.0_f32, GRID));
+            p.text(pos2(rect.right() - 3.0, y - 1.0), Align2::RIGHT_BOTTOM, format!("{db:.0}"), small(), GRID_MID);
+        }
     } else {
-        let (nx, ny) = if o.compact { (4, 4) } else { (8, 6) };
+        let (nx, ny) = (8, 6);
         for i in 1..nx {
             let x = rect.left() + rect.width() * i as f32 / nx as f32;
             p.line_segment([pos2(x, rect.top()), pos2(x, rect.bottom())], Stroke::new(1.0_f32, GRID));
@@ -419,20 +542,18 @@ pub fn scope_view(ui: &mut Ui, rect: Rect, id: Id, buf: Option<&ScopeBuffer>, sr
         mem.gain = 1.0;
     }
     let keep = (o.glow * 6.0).round() as usize;
-    let mut silent = false;
     if !o.freeze {
         if let Some(buf) = buf {
             let cols = (rect.width() as usize).clamp(32, 1024);
             let (frame, peak, readout) = capture(buf, sr, o, cols);
-            silent = peak < 1e-4;
-            if o.auto_gain && !silent {
+            let silent = peak < 1e-4;
+            if o.auto_gain && !silent && o.mode != Mode::Spectrum {
                 let target = (0.9 / peak).clamp(0.5, 2000.0);
                 mem.gain = if target < mem.gain { target } else { mem.gain + (target - mem.gain) * 0.06 };
             }
             if !silent {
                 mem.readout = readout;
                 mem.level = format!("{:.1} dB", 20.0 * peak.log10());
-                mem.last_good = Some(frame.clone());
             } else {
                 mem.readout.clear();
                 mem.level = "silent".into();
@@ -444,36 +565,31 @@ pub fn scope_view(ui: &mut Ui, rect: Rect, id: Id, buf: Option<&ScopeBuffer>, sr
         }
     }
     let gain = if o.auto_gain { mem.gain } else { o.gain };
-    if silent && o.compact {
-        // Keep the last wave on screen, dimmed, until the next note.
-        if let Some(f) = &mem.last_good {
-            draw_frame(&p, rect, f, gain, 0.3, false);
-        }
-    } else {
-        let n = mem.history.len();
-        for (k, f) in mem.history.iter().enumerate() {
-            let age = n - 1 - k;
-            let alpha = if age == 0 { 1.0 } else { 0.4 * (1.0 - age as f32 / (keep + 1) as f32).powi(2) };
-            draw_frame(&p, rect, f, gain, alpha, age == 0);
-        }
+    let n = mem.history.len();
+    for (k, f) in mem.history.iter().enumerate() {
+        let age = n - 1 - k;
+        let alpha = if age == 0 { 1.0 } else { 0.4 * (1.0 - age as f32 / (keep + 1) as f32).powi(2) };
+        draw_frame(&p, rect, f, gain, alpha, age == 0, o);
     }
     // Labels.
     let font = small();
-    if o.compact {
-        if !mem.readout.is_empty() {
-            let note = mem.readout.split("  ").nth(1).unwrap_or("").to_string();
-            p.text(rect.left_bottom() + vec2(4.0, -3.0), Align2::LEFT_BOTTOM, note, font, TEXT_DIM);
-        }
-    } else {
+    {
         let what = match o.mode {
             Mode::Wave => format!("WAVE  {} cycle{}", o.cycles, if o.cycles == 1 { "" } else { "s" }),
             Mode::Time => format!("TIME  {:.0} ms  {}", o.time * 1000.0, ["rising", "falling", "free"][o.trigger as usize]),
             Mode::Xy => "XY  left / right".into(),
             Mode::Vector => "VECTOR  mid / side".into(),
+            Mode::Spectrum => "SPECTRUM".into(),
         };
         p.text(rect.left_top() + vec2(5.0, 4.0), Align2::LEFT_TOP, what, font.clone(), TEXT_DIM);
         p.text(rect.right_top() + vec2(-5.0, 4.0), Align2::RIGHT_TOP, &mem.readout, font.clone(), TEXT);
-        let gain_label = if o.auto_gain { format!("{}   auto x{:.1}", mem.level, gain) } else { format!("{}   x{:.1}", mem.level, gain) };
+        let gain_label = if o.mode == Mode::Spectrum {
+            mem.level.clone()
+        } else if o.auto_gain {
+            format!("{}   auto x{:.1}", mem.level, gain)
+        } else {
+            format!("{}   x{:.1}", mem.level, gain)
+        };
         p.text(rect.right_bottom() + vec2(-5.0, -3.0), Align2::RIGHT_BOTTOM, gain_label, font.clone(), TEXT_DIM);
         if o.freeze {
             p.text(rect.left_bottom() + vec2(5.0, -3.0), Align2::LEFT_BOTTOM, "FROZEN", font, ACCENT);
@@ -487,39 +603,6 @@ pub fn scope_view(ui: &mut Ui, rect: Rect, id: Id, buf: Option<&ScopeBuffer>, sr
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(16));
     }
     resp
-}
-
-/// The live wave of a track's instrument, for its device panel. Click to
-/// show 1, 2 or 4 cycles.
-pub fn instrument_wave(ui: &mut Ui, status: &EngineStatus, ti: usize, track_id: u64, height: f32) {
-    let Some(ts) = status.tracks.get(ti) else { return };
-    ts.watch_wave();
-    let id = Id::new(("inst_wave", track_id));
-    let cycles_id = id.with("cycles");
-    let cycles = ui.ctx().memory(|m| m.data.get_temp::<usize>(cycles_id)).unwrap_or(2);
-    let (rect, _) = ui.allocate_exact_size(vec2(150.0, height.max(60.0)), Sense::hover());
-    let opts = ScopeOpts {
-        mode: Mode::Wave,
-        cycles,
-        time: 0.03,
-        trigger: Trigger::Rising,
-        channel: Channel::Mid,
-        auto_gain: true,
-        gain: 1.0,
-        glow: 0.35,
-        freeze: false,
-        compact: true,
-    };
-    let resp = scope_view(ui, rect, id, Some(&ts.wave), status.sample_rate.load(), &opts);
-    if resp.clicked() {
-        let next = match cycles {
-            1 => 2,
-            2 => 4,
-            _ => 1,
-        };
-        ui.ctx().memory_mut(|m| m.data.insert_temp(cycles_id, next));
-    }
-    resp.on_hover_text(format!("Live wave of this instrument, locked to its pitch ({cycles} cycle{}). Click for 1, 2 or 4 cycles.", if cycles == 1 { "" } else { "s" }));
 }
 
 #[cfg(test)]
@@ -594,4 +677,28 @@ mod tests {
         let pts = columns(&x, 0.0, 1000.0, 50);
         assert!(pts.iter().any(|p| p[1] == 1.0), "a one-sample spike survives");
     }
+
+    #[test]
+    fn the_spectrum_shows_a_sine_at_its_frequency() {
+        let sr = 48000.0;
+        let buf = ScopeBuffer::new(32768, true);
+        let x: Vec<f32> = (0..16384).map(|i| 0.5 * (2.0 * PI * 1000.0 * i as f32 / sr).sin()).collect();
+        buf.write(&x, &x);
+        let mut o = ScopeOpts::from_params(&krabton_engine::params::defaults(krabton_engine::dsp::effects::EffectKind::Scope.specs()));
+        o.mode = Mode::Spectrum;
+        let (frame, peak, readout) = capture(&buf, sr, &o, 300);
+        assert!(frame.spectrum && frame.traces.len() == 1);
+        assert!(peak > 0.4);
+        assert!(readout.starts_with("peak 9") || readout.starts_with("peak 10"), "{readout}");
+        // The highest point of the trace sits at 1 kHz on the log scale (20 Hz .. 20 kHz).
+        let pts = &frame.traces[0].0;
+        let top = pts.iter().max_by(|a, b| a[1].total_cmp(&b[1])).unwrap();
+        let f = 20.0 * 1000f32.powf(top[0]);
+        assert!((900.0..1100.0).contains(&f), "top at {f} Hz");
+        // Stereo shows two traces; the default look has a grid and medium size.
+        o.channel = Channel::Stereo;
+        assert_eq!(capture(&buf, sr, &o, 300).0.traces.len(), 2);
+        assert!(o.grid && !o.fill);
+    }
+
 }

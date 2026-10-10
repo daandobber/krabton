@@ -326,6 +326,8 @@ pub struct App {
     pub(crate) frame: u64,
     /// Close the window at the end of this frame (script action `quit`).
     quit_requested: bool,
+    /// A size changed: save the layout once the mouse is up.
+    pub layout_dirty: bool,
 }
 
 impl App {
@@ -425,8 +427,12 @@ impl App {
             script_input: std::collections::VecDeque::new(),
             frame: 0,
             quit_requested: false,
+            layout_dirty: false,
         };
         app.apply_prefs();
+        if app.prefs.ui_zoom > 0.0 {
+            cc.egui_ctx.set_zoom_factor(app.prefs.ui_zoom.clamp(0.5, 3.0));
+        }
         let hint = if app.midi.connected.is_some() { "" } else { " Play notes with A-W-S-E-D... (Z/X = octave)." };
         app.toast(format!("Welcome to Krabton! Press Space or launch a scene.{hint}"));
         app
@@ -1065,6 +1071,15 @@ impl App {
         let title = format!("{} - {} - Krabton", t.name, p.name);
         if let Err(e) = self.plugins.toggle_editor(p.instance, &title) {
             self.toast(e);
+        }
+    }
+
+    /// Keeps a panel size the user dragged (saved once the mouse is up).
+    fn remember_size(&mut self, field: impl Fn(&mut crate::prefs::Layout) -> &mut f32, v: f32) {
+        let slot = field(&mut self.prefs.layout);
+        if (*slot - v).abs() > 0.5 {
+            *slot = v;
+            self.layout_dirty = true;
         }
     }
 
@@ -1918,13 +1933,18 @@ impl eframe::App for App {
             .frame(egui::Frame::new().fill(theme::BG).inner_margin(egui::Margin::symmetric(8, 2)))
             .show(ctx, |ui| self.ui_statusbar(ui));
         // The browser runs from top to bottom, next to the detail view, as in Live.
+        let fg = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("panel_grips")));
         if self.browser.visible {
-            egui::SidePanel::left("browser")
+            let r = egui::SidePanel::left("browser")
                 .resizable(true)
-                .default_width(330.0)
-                .width_range(240.0..=640.0)
+                .default_width(crate::prefs::Layout::or(self.prefs.layout.browser_w, 330.0))
+                .width_range(240.0..=900.0)
                 .frame(egui::Frame::new().fill(theme::PANEL))
-                .show(ctx, |ui| self.ui_browser(ui));
+                .show(ctx, |ui| self.ui_browser(ui))
+                .response
+                .rect;
+            crate::widgets::grip_dots(&fg, egui::pos2(r.right(), r.center().y), true, theme::TEXT_DIM);
+            self.remember_size(|l| &mut l.browser_w, r.width());
         } else {
             egui::SidePanel::left("browser_hidden")
                 .resizable(false)
@@ -1941,12 +1961,16 @@ impl eframe::App for App {
                     }
                 });
         }
-        egui::TopBottomPanel::bottom("detail")
+        let r = egui::TopBottomPanel::bottom("detail")
             .resizable(true)
-            .default_height(290.0)
-            .min_height(160.0)
+            .default_height(crate::prefs::Layout::or(self.prefs.layout.detail_h, 290.0))
+            .height_range(120.0..=2000.0)
             .frame(egui::Frame::new().fill(theme::PANEL).inner_margin(egui::Margin::same(0)))
-            .show(ctx, |ui| self.ui_detail(ui));
+            .show(ctx, |ui| self.ui_detail(ui))
+            .response
+            .rect;
+        crate::widgets::grip_dots(&fg, egui::pos2(r.center().x, r.top()), false, theme::TEXT_DIM);
+        self.remember_size(|l| &mut l.detail_h, r.height());
         egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::BG)).show(ctx, |ui| match self.view {
             View::Session => self.ui_session(ui),
             View::Arrangement => self.ui_arrangement(ui),
@@ -1957,6 +1981,17 @@ impl eframe::App for App {
 
         self.sync(ctx);
         self.update_title(ctx);
+        if self.layout_dirty && !ctx.input(|i| i.pointer.any_down()) {
+            self.layout_dirty = false;
+            self.prefs.save();
+        }
+        // Remember the size of everything (Ctrl + / - / 0, or the Options menu).
+        let zoom = ctx.zoom_factor();
+        let stored = if self.prefs.ui_zoom > 0.0 { self.prefs.ui_zoom } else { 1.0 };
+        if (zoom - stored).abs() > 1e-3 {
+            self.prefs.ui_zoom = zoom;
+            self.prefs.save();
+        }
         if self.quit_requested {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }

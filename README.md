@@ -17,6 +17,11 @@
 - Stop keeps the launched clips, so Play starts them again, as in Live; *Stop All Clips* or a track's stop button clears them
 - New tracks are named after their instrument (Analog, Elements, FM, ...), not after the preset; a name you type stays
 
+**Your layout**
+- Drag any divider to make things bigger or smaller: the browser's edge, the top of the detail view (devices and clips), the right edge of a track header (track width), the line above the mixer (mixer height), the arrangement's header edge and the bottom of a lane (lane height), the clip view's left column, and the right edge of the big device displays (Lens EQ, Lens Comp, Lens Limiter, Oscilloscope, the sample editor). Dividers light up under the pointer; small dots show where they are
+- *Options > Size of everything* (or Ctrl +, Ctrl -, Ctrl 0) makes the whole interface bigger or smaller
+- Sizes and zoom are remembered between sessions
+
 **Browser** (laid out like Live's)
 - A sidebar with *Collections* (Favorites and six colors), *Categories* (All, Sounds, Drums, Instruments, Audio Effects, MIDI Effects, Plug-ins, Clips, Samples) and *Places* (Music, the current project's folder and folders you add)
 - A *Name* list where devices open up into their presets (Analog, Braids, Drums, Elements, FM with its banks, Plaits, Sampler, Synth) and folders on disk into their samples and DX7 banks
@@ -161,10 +166,9 @@
 - *Lens Limiter*: lookahead brickwall limiting whose gain ramps down before each peak, true-peak detection (4x), eight release styles (Transparent, Punchy, Dynamic, Aggressive, Allround, Bus, Safe, Modern), channel link and unity-gain monitoring; an EBU R128 loudness meter (momentary, short-term and gated integrated LUFS, true peak) next to a scrolling level and gain reduction display
 - Krabton is not affiliated with FabFilter; these are its own implementations
 
-**See the wave**
-- Every instrument panel shows the live wave of that instrument, locked to its pitch so it stands still while you turn knobs: a saw opening up through the filter, sync sweeps, the bow on an Elements string. Click it for 1, 2 or 4 cycles; the note it hears is shown below the wave, and the last wave stays on screen after the note ends
-- The **Oscilloscope** device goes anywhere in a chain (tracks, returns, master) and passes audio through. *Wave* locks to the pitch (period by a normalized square difference function, window started where the fundamental rises through zero, so even complex waves stand still), *Time* is a classic triggered time base (rising, falling or free, 1 ms to 1 s), *XY* draws left against right (Lissajous figures) and *Vector* draws mid up and side across. Mid, stereo, left or right; auto gain or a fixed gain; phosphor-style afterglow; freeze; a readout of frequency, note, cents and level
-- The audio thread writes into lock-free buffers that the UI reads; a track's wave is only captured while its panel is on screen
+**See the sound**
+- The **Oscilloscope** device goes anywhere in a chain (tracks, returns, master) and passes audio through. *Wave* locks to the pitch (period by a normalized square difference function, window started where the fundamental rises through zero, so even complex waves stand still), *Time* is a classic triggered time base (rising, falling or free, 1 ms to 1 s), *XY* draws left against right (Lissajous figures), *Vector* draws mid up and side across, and *Spectrum* shows the level per frequency (20 Hz to 20 kHz, with the loudest peak and its note). Mid, stereo, left or right; auto gain or a fixed gain; phosphor-style afterglow; freeze; a readout of frequency, note, cents and level. Its look is yours: colour (green, amber, ice, pink, white), line width, fill, grid, the phase where the locked wave starts, and its width (drag the right edge of the screen)
+- The audio thread writes into lock-free buffers that the UI reads, so watching costs the audio nothing
 
 **Audio clips**: drop WAV files on audio tracks. They are beat-locked in Re-Pitch mode, so they follow the project tempo. The original tempo is guessed automatically.
 
@@ -207,6 +211,7 @@ cargo test -p krabton-engine -p krabton-monome -p krabton-braids -p krabton-elem
 | Enter | Launch the selected scene (with the browser focused: load the selected item) |
 | Ctrl+F | Search in the browser (Down goes from the search field to the results) |
 | Ctrl+Alt+B | Show or hide the browser |
+| Ctrl +, Ctrl -, Ctrl 0 | Make everything bigger, smaller, or normal size |
 | Arrow keys, Enter, 1-7, 0 in the browser | Browse, open and close folders, load; put the selected item in a collection, take it out of all of them |
 | B | Draw mode in the piano roll |
 | Click / right-click the key in the transport | Key & Scale dialog / scale mode on-off |

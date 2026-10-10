@@ -6,6 +6,44 @@ use egui::{pos2, vec2, Align2, Color32, CornerRadius, Id, Painter, Pos2, Rect, R
 use krabton_engine::params::{ParamKind, ParamSpec};
 use std::f32::consts::PI;
 
+/// A divider to drag, grabbed anywhere in `rect`. A `vertical` divider
+/// moves left and right. It lights up under the pointer.
+pub fn splitter(ui: &mut Ui, id: Id, rect: Rect, vertical: bool) -> Response {
+    let resp = ui.interact(rect, id, Sense::drag());
+    if resp.hovered() || resp.dragged() {
+        ui.ctx().set_cursor_icon(if vertical { egui::CursorIcon::ResizeHorizontal } else { egui::CursorIcon::ResizeVertical });
+        let p = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, id));
+        let c = rect.center();
+        let s = Stroke::new(2.0_f32, ACCENT);
+        if vertical {
+            p.line_segment([pos2(c.x, rect.top()), pos2(c.x, rect.bottom())], s);
+        } else {
+            p.line_segment([pos2(rect.left(), c.y), pos2(rect.right(), c.y)], s);
+        }
+    }
+    resp
+}
+
+/// Three dots that show where something can be dragged to resize it.
+pub fn grip_dots(p: &Painter, c: Pos2, vertical: bool, color: Color32) {
+    for k in [-1.0f32, 0.0, 1.0] {
+        let at = if vertical { c + vec2(0.0, 4.0 * k) } else { c + vec2(4.0 * k, 0.0) };
+        p.circle_filled(at, 1.2, color);
+    }
+}
+
+/// Drag the right edge of a display (`rect`) to change its `width`.
+pub fn width_grip(ui: &mut Ui, id: Id, rect: Rect, width: &mut f32, min: f32, max: f32) {
+    let strip = Rect::from_min_max(pos2(rect.right() - 4.0, rect.top()), pos2(rect.right() + 4.0, rect.bottom()));
+    let resp = splitter(ui, id, strip, true);
+    if !(resp.hovered() || resp.dragged()) {
+        grip_dots(ui.painter(), pos2(rect.right() - 3.0, rect.center().y), true, TEXT_DIM.gamma_multiply(0.7));
+    }
+    if resp.dragged() {
+        *width = (*width + resp.drag_delta().x).clamp(min, max);
+    }
+}
+
 pub fn rect_fill(p: &Painter, r: Rect, radius: f32, c: Color32) {
     p.rect_filled(r, CornerRadius::same(radius as u8), c);
 }
