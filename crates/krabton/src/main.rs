@@ -17,8 +17,11 @@ mod ui;
 mod widgets;
 
 fn main() -> eframe::Result<()> {
+    // The crab, for the title bar and the task bar.
+    let icon = egui::IconData { rgba: include_bytes!("../assets/icon-64.rgba").to_vec(), width: 64, height: 64 };
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Krabton")
+        .with_icon(std::sync::Arc::new(icon))
         .with_inner_size([1440.0, 900.0])
         .with_min_inner_size([960.0, 620.0])
         .with_maximized(true);

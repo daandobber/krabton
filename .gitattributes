@@ -6,3 +6,12 @@
 *.png binary
 *.wav binary
 *.syx binary
+*.ico binary
+*.icns binary
+*.rgba binary
+*.raw binary
+
+# Scripts and packaging files stay LF everywhere.
+*.sh text eol=lf
+PKGBUILD text eol=lf
+*.desktop text eol=lf

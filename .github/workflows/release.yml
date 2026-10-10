@@ -1,0 +1,133 @@
+name: Release
+
+# Builds the installers. Push a version tag (git tag v0.2.0 && git push origin v0.2.0)
+# to publish them as a GitHub release; run it by hand to just get the files
+# (Actions > Release > Run workflow; they appear under the run's artifacts).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Windows installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Version
+        shell: bash
+        run: echo "VERSION=$(if [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "${GITHUB_REF_NAME#v}"; else grep -m1 '^version' Cargo.toml | cut -d'"' -f2; fi)" >> "$GITHUB_ENV"
+      - run: cargo build --release --locked -p krabton
+      - name: Installer
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$env:VERSION" packaging\windows\krabton.iss
+      - name: Portable zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist\Krabton | Out-Null
+          Copy-Item target\release\krabton.exe dist\Krabton\
+          Copy-Item LICENSE dist\Krabton\LICENSE.txt
+          Compress-Archive -Path dist\Krabton -DestinationPath "dist\Krabton-$env:VERSION-windows-portable.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            dist/Krabton-Setup-*.exe
+            dist/*.zip
+
+  linux:
+    name: Linux AppImage
+    # The oldest supported Ubuntu, so the program runs on as many distributions as possible.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Dependencies
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxkbcommon-dev libgl1-mesa-dev file
+      - name: Version
+        run: echo "VERSION=$(if [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "${GITHUB_REF_NAME#v}"; else grep -m1 '^version' Cargo.toml | cut -d'"' -f2; fi)" >> "$GITHUB_ENV"
+      - run: cargo build --release --locked -p krabton
+      - name: AppImage
+        run: |
+          mkdir -p dist AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps
+          cp target/release/krabton AppDir/usr/bin/
+          cp packaging/linux/krabton.desktop AppDir/usr/share/applications/
+          cp packaging/linux/krabton.desktop AppDir/
+          cp crates/krabton/assets/icon-256.png AppDir/usr/share/icons/hicolor/256x256/apps/krabton.png
+          cp crates/krabton/assets/icon-256.png AppDir/krabton.png
+          ln -s usr/bin/krabton AppDir/AppRun
+          curl -fsSL -o appimagetool https://github.com/AppImage/AppImageKit/releases/download/13/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool AppDir "dist/Krabton-$VERSION-x86_64.AppImage"
+      - name: Tarball
+        run: |
+          mkdir -p "krabton-$VERSION"
+          cp target/release/krabton packaging/linux/krabton.desktop packaging/linux/install.sh LICENSE "krabton-$VERSION/"
+          cp crates/krabton/assets/icon-256.png "krabton-$VERSION/krabton.png"
+          chmod +x "krabton-$VERSION/install.sh"
+          tar czf "dist/krabton-$VERSION-linux-x86_64.tar.gz" "krabton-$VERSION"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/*
+
+  macos:
+    name: macOS app
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - name: Version
+        run: echo "VERSION=$(if [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "${GITHUB_REF_NAME#v}"; else grep -m1 '^version' Cargo.toml | cut -d'"' -f2; fi)" >> "$GITHUB_ENV"
+      - name: Build (Apple silicon and Intel)
+        run: |
+          cargo build --release --locked -p krabton --target aarch64-apple-darwin
+          cargo build --release --locked -p krabton --target x86_64-apple-darwin
+      - name: App and disk image
+        run: |
+          app=dmg/Krabton.app
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" dist
+          lipo -create -output "$app/Contents/MacOS/krabton" target/aarch64-apple-darwin/release/krabton target/x86_64-apple-darwin/release/krabton
+          sed "s/VERSION/$VERSION/g" packaging/macos/Info.plist > "$app/Contents/Info.plist"
+          cp crates/krabton/assets/icon.icns "$app/Contents/Resources/krabton.icns"
+          # Not signed by Apple: an ad-hoc signature, so it runs after "Open" in the Finder.
+          codesign --force --deep -s - "$app"
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname Krabton -srcfolder dmg -ov -format UDZO "dist/Krabton-$VERSION-macOS.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/*
+
+  release:
+    name: Publish
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, linux, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "Krabton ${GITHUB_REF_NAME#v}" --notes "Download the file for your system:
+
+          - **Windows**: Krabton-Setup-….exe (installer), or the portable zip
+          - **Linux**: Krabton-….AppImage (make it executable and double-click it), or the tar.gz with install.sh
+          - **macOS**: Krabton-….dmg (drag Krabton to Applications; the first time, right-click it and choose Open)
+
+          On Arch Linux you can also build it with packaging/arch/PKGBUILD (makepkg -si)."

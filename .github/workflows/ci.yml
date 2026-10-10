@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p krabton-engine -p krabton-monome -p krabton-braids -p krabton-elements
+      - run: cargo test -p krabton-engine -p krabton-monome -p krabton-braids -p krabton-elements -p krabton-rings -p krabton-clouds -p krabton-stk -p krabton-airwindows
 
   build-app:
     name: Build app (${{ matrix.os }})

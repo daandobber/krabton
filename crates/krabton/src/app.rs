@@ -89,6 +89,8 @@ pub enum BrowserItem {
     Analog(&'static str),
     /// A Shakers preset.
     Shakers(&'static str),
+    /// A Modular patch.
+    Modular(&'static str),
     /// A Voice preset.
     Voice(&'static str),
     /// A Mallets preset.
@@ -124,6 +126,7 @@ impl BrowserItem {
             BrowserItem::Elements(p) => format!("Elements: {p}"),
             BrowserItem::Analog(p) => format!("Analog: {p}"),
             BrowserItem::Shakers(p) => format!("Shakers: {p}"),
+            BrowserItem::Modular(p) => format!("Modular: {p}"),
             BrowserItem::Voice(p) => format!("Voice: {p}"),
             BrowserItem::Mallets(p) => format!("Mallets: {p}"),
             BrowserItem::Strings(p) => format!("Strings: {p}"),
@@ -289,6 +292,8 @@ pub struct App {
     pub(crate) undo_labels: Vec<String>,
     pub(crate) redo_labels: Vec<String>,
     pub show_history: bool,
+    /// The Modular rack window.
+    pub rack: crate::ui::rack::RackUi,
     pub dirty: bool,
     pub engine: EngineHandle,
     _audio: AudioOutput,
@@ -409,6 +414,7 @@ impl App {
             undo_labels: Vec::new(),
             redo_labels: Vec::new(),
             show_history: false,
+            rack: Default::default(),
             dirty: false,
             engine,
             _audio: audio_out,
@@ -464,6 +470,10 @@ impl App {
             layout_dirty: false,
         };
         app.apply_prefs();
+        // A set to open, from the file manager ("Open with Krabton").
+        if let Some(path) = std::env::args_os().skip(1).map(std::path::PathBuf::from).find(|p| p.is_file()) {
+            app.open_path(path);
+        }
         if app.prefs.ui_zoom > 0.0 {
             cc.egui_ctx.set_zoom_factor(app.prefs.ui_zoom.clamp(0.5, 3.0));
         }
@@ -855,7 +865,7 @@ impl App {
                 }
                 self.toast(format!("Loading {} ...", info.name));
             }
-            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) => {
+            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) => {
                 let inst = match item {
                     BrowserItem::Synth(p) => Instrument::synth(p),
                     BrowserItem::Macro(p) => Instrument::macro_osc(p),
@@ -863,6 +873,7 @@ impl App {
                     BrowserItem::Elements(p) => Instrument::elements(p),
                     BrowserItem::Analog(p) => Instrument::analog(p),
                     BrowserItem::Shakers(p) => Instrument::shakers(p),
+                    BrowserItem::Modular(p) => Instrument::modular(p),
                     BrowserItem::Voice(p) => Instrument::voice(p),
                     BrowserItem::Mallets(p) => Instrument::mallets(p),
                     BrowserItem::Strings(p) => Instrument::strings(p),
@@ -1546,6 +1557,12 @@ impl App {
 
     pub fn open(&mut self) {
         let Some(path) = rfd::FileDialog::new().add_filter("Krabton set", &[FILE_EXTENSION]).pick_file() else { return };
+        self.open_path(path);
+    }
+
+    /// Opens a set from disk (the Open dialog, or a file double-clicked in
+    /// the file manager).
+    pub fn open_path(&mut self, path: std::path::PathBuf) {
         match Project::load(&path) {
             Ok((p, missing)) => {
                 self.replace_project(p);
@@ -1762,6 +1779,18 @@ impl App {
                     let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
                     self.apply_item(&BrowserItem::Voice(p), DropTarget::NewTrack);
                     self.detail = DetailTab::Devices;
+                }
+                "modular" => {
+                    let names = krabton_engine::modular::presets::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Modular(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "rack" => {
+                    // Opens the rack of the selected track.
+                    if let TrackSel::Track(i) = self.sel_track {
+                        self.rack.open = self.project.tracks.get(i).map(|t| t.id);
+                    }
                 }
                 "shakers" => {
                     let names = krabton_engine::dsp::shaker_synth::preset_names();

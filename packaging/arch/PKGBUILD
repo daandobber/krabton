@@ -1,0 +1,44 @@
+# Krabton for Arch Linux, built from the latest source.
+#   git clone https://github.com/daandobber/krabton.git
+#   cd krabton/packaging/arch && makepkg -si
+pkgname=krabton-git
+pkgver=r1
+pkgrel=1
+pkgdesc="An open-source, Live-inspired DAW written in Rust"
+arch=('x86_64' 'aarch64')
+url="https://github.com/daandobber/krabton"
+license=('MIT')
+depends=('alsa-lib' 'libxkbcommon' 'libglvnd' 'hicolor-icon-theme')
+optdepends=('libpulse: sound through PulseAudio or PipeWire (pipewire-pulse)')
+makedepends=('cargo' 'git')
+provides=('krabton')
+conflicts=('krabton')
+source=("krabton::git+https://github.com/daandobber/krabton.git")
+sha256sums=('SKIP')
+options=('!lto')
+
+pkgver() {
+    cd krabton
+    printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+prepare() {
+    cd krabton
+    export RUSTUP_TOOLCHAIN=stable
+    cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+    cd krabton
+    export RUSTUP_TOOLCHAIN=stable
+    export CARGO_TARGET_DIR=target
+    cargo build --frozen --release -p krabton
+}
+
+package() {
+    cd krabton
+    install -Dm755 target/release/krabton "$pkgdir/usr/bin/krabton"
+    install -Dm644 packaging/linux/krabton.desktop "$pkgdir/usr/share/applications/krabton.desktop"
+    install -Dm644 crates/krabton/assets/icon-256.png "$pkgdir/usr/share/icons/hicolor/256x256/apps/krabton.png"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

@@ -6,6 +6,21 @@
 
 > Krabton is a hobby project inspired by the workflow of Ableton Live. It is not affiliated with or endorsed by Ableton.
 
+## Install
+
+No programming needed: download the file for your system from the [Releases page](https://github.com/daandobber/krabton/releases).
+
+- **Windows**: `Krabton-Setup-....exe`. Run it and click through (it does not need administrator rights). Krabton appears in the Start menu, and double-clicking a `.krab` set opens it. Windows may warn about an unknown publisher the first time: click *More info*, then *Run anyway*. Prefer no installer? Unzip the portable zip and start `krabton.exe`.
+- **Linux**: `Krabton-....AppImage`. Make it executable (right-click > Properties > Allow executing, or `chmod +x Krabton-*.AppImage`) and double-click it. Or unpack the `tar.gz` and run `./install.sh`, which puts Krabton in your applications menu (`./install.sh --uninstall` removes it).
+- **Arch Linux**: build the package from source with makepkg:
+  ```sh
+  git clone https://github.com/daandobber/krabton.git
+  cd krabton/packaging/arch && makepkg -si
+  ```
+- **macOS**: `Krabton-....dmg`. Open it and drag Krabton to Applications. It is not signed by Apple, so the first time right-click Krabton and choose *Open*.
+
+For sound on Linux see [Building](#building) below: Krabton talks to PulseAudio/PipeWire directly, or to ALSA.
+
 ## Features
 
 **Session view**
@@ -104,6 +119,15 @@
 
 **Instruments**
 - **Analog**: a classic analog polysynth, see below
+- **Modular**: a eurorack-style modular synth in its own rack window (*Open Rack*). Modules sit in 104 HP rows and are patched by dragging cables from jack to jack (drag an input's cable to move it, right-click a jack to unplug it, drag a module by its name to move it). Real eurorack voltages: 1 V/oct (0 V is C4), 10 V gates, ±5 V audio and LFOs, 0-10 V envelopes. 48 modules:
+  - *Sources*: VCO (sine, triangle, saw, square, PWM, linear FM, hard sync), Macro VCO (24 synthesis models: virtual analog, FM, formants, chords, speech, strings, modal, drums; with its low-pass gate), Shape VCO (47 digital shapes), Resonator (modal, sympathetic and inharmonic strings, FM voice, chords; struck or fed audio), Pluck (Karplus-Strong string), Noise (white, pink, drift)
+  - *Drums*: Bass Drum, Snare Drum, Hi-Hat
+  - *Filters & Amps*: VCF (multimode state-variable), Ladder, Formant (vowel filter), VCA, Quad VCA, Folder (wavefolder), Ring Mod, Meta Mod (crossfade, fold, analog and digital ring, XOR, compare, morphing)
+  - *Envelopes & LFOs*: ADSR, AD, Function (rise and fall with a curve, triggered or cycling), LFO
+  - *Sequencing*: Clock (in time with the song, swing, divisions, bar reset), Sequencer (8 steps), Trigger Seq (16 steps), Euclid, Random (random gates and voltages with bias, spread, steps and deja vu), Shift Register (a looping, slowly changing random sequence), Burst (ratchets), Switch (sequential), Quantizer, Divider, Chance (Bernoulli gate)
+  - *Utilities*: S&H, Mixer, Stereo Mixer (level and pan), Atten (attenuverter and offset), Slew, Transpose, Logic (min, max, rectify, compare), Follower (envelope follower), Pulse (trigger to gate, with delay)
+  - *Effects & I/O*: Delay, Reverb, Texture (granular: grains, time stretch, looping delay, spectral), Crusher, MIDI-CV (your notes as pitch, gate, velocity and trigger), Macros (eight knobs you can modulate and automate from Krabton) and Audio Out
+  - Mono (legato, with clocks and drones running free) or up to 8 voices, each running its own copy of the patch. Patches: Init, Acid Bass, Fat Lead, West Coast, FM Bell, Drone, Generative, Kick, Poly Pluck, Drum Machine (plays by itself), Macro Voice, Texture Pad, Pluck Melody, Struck Resonator
 - **Organ**: a tonewheel organ with nine drawbars (the top wheels fold back), single-triggered percussion on the second or third harmonic (fast or slow, soft or normal), key click, the scanner vibrato and chorus (V1-V3, C1-C3), a tube-style drive and a rotating speaker (slow, fast, with inertia). Registrations from Jazz Trio, Green Onions and Gospel to Whiter Shade, Reggae Bubble and Cathedral
 - **Winds**, **Strings**, **Mallets** and **Voice**: physical models from the Synthesis ToolKit, each with a model choice and that model's own controls (named after it), polyphonic. Winds: flute, clarinet, saxophone, brass, blown bottle, blow hole and whistle (breath pressure, reed, noise, vibrato). Strings: bowed (bow pressure, position and speed), plucked, mandolin (body, pluck position, detuning), sitar and stiff string. Mallets: marimba, vibraphone, agogo, two woods, reso, beats, two fixed, clump, and the banded waveguides: uniform and tuned bar, glass harmonica and Tibetan bowl. Voice: a formant singer with 32 vowels and consonants
 - **Rings**: the Mutable Instruments Rings resonator, played with notes: modal resonator, sympathetic strings, inharmonic string, FM voice, chord strings and a string with reverb, 1, 2 or 4 voices, Structure, Brightness, Damping and Position, and the hidden Disastrous Peace string synth with its formant, chorus, ensemble and reverb effects. Presets from Marimba, Kalimba and Glass Bowl to Sitar, FM Bells and Peace Pad
@@ -196,7 +220,7 @@
 
 ## Building
 
-You need a recent stable Rust toolchain ([rustup.rs](https://rustup.rs)).
+To run it from source you need a recent stable Rust toolchain ([rustup.rs](https://rustup.rs)).
 
 ```sh
 git clone https://github.com/daandobber/krabton
@@ -223,6 +247,14 @@ Run the engine tests (no audio device or GUI needed):
 ```sh
 cargo test -p krabton-engine -p krabton-monome -p krabton-braids -p krabton-elements
 ```
+
+### Making the installers
+
+The [Release workflow](.github/workflows/release.yml) builds them on GitHub for every version tag (`git tag v0.2.0 && git push origin v0.2.0`) and publishes them as a release; run it by hand under *Actions* to just get the files. To make them yourself:
+
+- **Windows**: `cargo build --release -p krabton`, then compile [`packaging/windows/krabton.iss`](packaging/windows/krabton.iss) with [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`iscc /DMyAppVersion=0.2.0 packaging\windows\krabton.iss`); the installer lands in `dist\`.
+- **Linux**: see the AppImage and tarball steps in the workflow; [`packaging/linux`](packaging/linux) has the desktop entry and `install.sh`.
+- **macOS**: see the workflow: a universal binary in `Krabton.app` with [`packaging/macos/Info.plist`](packaging/macos/Info.plist), in a disk image.
 
 ## Keyboard shortcuts
 
@@ -346,6 +378,7 @@ Ideas that would make Krabton even more Live-like (contributions welcome):
 - Winds, Strings, Mallets and Voice are ports of instruments from the Synthesis ToolKit in C++ (STK) by Perry R. Cook and Gary P. Scavone (MIT-style license, <https://github.com/thestk/stk>; BandedWG by Georg Essl), including its rawwave samples for the mandolin body and the marimba strike; the notice is in [`crates/krabton-stk`](crates/krabton-stk/src/lib.rs).
 - Rings is a port of the Mutable Instruments Rings DSP code by Emilie Gillet (MIT, <https://github.com/pichenettes/eurorack>), with the original copyright and license kept in [`crates/krabton-rings/LICENSE`](crates/krabton-rings/LICENSE). Clouds is a port of the Mutable Instruments Clouds DSP code by the same author (MIT), see [`crates/krabton-clouds/LICENSE`](crates/krabton-clouds/LICENSE). Krabton is not affiliated with Mutable Instruments.
 - The Airwindows effects are ports of Chris Johnson's Airwindows plugins (MIT, <https://github.com/airwindows/airwindows>); the notice is in [`crates/krabton-airwindows`](crates/krabton-airwindows/src/lib.rs).
+- Modular and its modules are original implementations, after the way eurorack modules work, except Macro VCO, Shape VCO, Resonator, Texture and the three drums, which run the Plaits, Braids, Rings, Clouds and Plaits drum code of Mutable Instruments (MIT, see above).
 - Plate follows Jon Dattorro's "Effect Design, Part 1" (J. Audio Eng. Soc., 1997). Organ, the 606 and FM drums, Hall, Shimmer, Spring, Pitch Delay, Phaser, Flanger, Auto Pan, Frequency Shifter (with Olli Niemitalo's Hilbert transform coefficients), Rotary, Gate, Transient, Multiband, Echo, Beat Repeat, Shifter, Auto Wah, Resonators, Vinyl and the MIDI effects are original implementations.
 
 ## License

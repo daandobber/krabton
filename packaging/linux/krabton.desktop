@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Krabton
+GenericName=Digital Audio Workstation
+Comment=Make music: an open-source, Live-inspired DAW
+Exec=krabton %f
+Icon=krabton
+Terminal=false
+Categories=AudioVideo;Audio;Midi;Sequencer;
+Keywords=DAW;music;synth;sequencer;modular;
+StartupWMClass=krabton
