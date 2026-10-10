@@ -6,8 +6,15 @@
 //! - Euclid: four euclidean rings (steps, pulses, rotation, note).
 //! - Turing: a looping shift register that slowly mutates.
 //! - Life: Conway's Game of Life on a 16x8 board, scanned column by column.
-//! - Bounce: bouncing balls; every floor hit is a note.
+//! - Bounce: bouncing balls; every floor hit is a note. Each ball has its
+//!   own note and drop height (in note values), hits can snap to a grid and
+//!   balls that come to rest are dropped again on the beat or the bar.
 //! - Drunk: a random walk through the scale.
+//!
+//! More in `more`: Orbits, Chaos, Automaton, Ant, Pong, Markov, Rain, Words
+//! and Lorenz.
+
+pub mod more;
 
 use crate::dsp::Rng;
 use crate::midi_fx::{MidiCtx, MidiEvent};
@@ -65,12 +72,37 @@ pub static LIFE: &[ParamSpec] = &[
     ParamSpec::lin("Gate", "Notes", 0.1, 1.0, 0.6, Unit::Percent),
     ParamSpec::lin("Velocity", "Notes", 0.05, 1.0, 0.7, Unit::Percent),
 ];
+pub const DROPS: &[&str] = &["1/16", "1/8", "1/4", "1/2", "1 Bar", "2 Bars"];
+pub const DROP_BEATS: [f64; 6] = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0];
+pub const REDROPS: &[&str] = &["At Once", "Next Beat", "Next Bar", "2 Bars"];
+const REDROP_BEATS: [f64; 4] = [0.0, 1.0, 4.0, 8.0];
+
+/// Bounce. The first five keep their meaning from earlier versions.
 pub static BOUNCE: &[ParamSpec] = &[
     ParamSpec::int("Balls", "Physics", 1.0, 8.0, 4.0, Unit::None),
     ParamSpec::lin("Fall Time", "Physics", 0.25, 4.0, 1.0, Unit::None),
     ParamSpec::lin("Energy", "Physics", 0.5, 0.97, 0.82, Unit::Percent),
-    ParamSpec::int("Base Note", "Notes", 24.0, 96.0, 60.0, Unit::None),
-    ParamSpec::lin("Velocity", "Notes", 0.05, 1.0, 0.9, Unit::Percent),
+    ParamSpec::int("Base Note", "Physics", 24.0, 96.0, 60.0, Unit::None),
+    ParamSpec::lin("Velocity", "Physics", 0.05, 1.0, 0.9, Unit::Percent),
+    ParamSpec::choice("Sync", "Physics", more::SYNCS, 2),
+    ParamSpec::choice("Re-drop", "Physics", REDROPS, 2),
+    ParamSpec::lin("Gate", "Physics", 0.05, 2.0, 0.25, Unit::None),
+    ParamSpec::int("Note 1", "Notes", -14.0, 14.0, 0.0, Unit::None),
+    ParamSpec::int("Note 2", "Notes", -14.0, 14.0, 2.0, Unit::None),
+    ParamSpec::int("Note 3", "Notes", -14.0, 14.0, 4.0, Unit::None),
+    ParamSpec::int("Note 4", "Notes", -14.0, 14.0, 7.0, Unit::None),
+    ParamSpec::int("Note 5", "Notes", -14.0, 14.0, 9.0, Unit::None),
+    ParamSpec::int("Note 6", "Notes", -14.0, 14.0, 11.0, Unit::None),
+    ParamSpec::int("Note 7", "Notes", -14.0, 14.0, 14.0, Unit::None),
+    ParamSpec::int("Note 8", "Notes", -14.0, 14.0, -3.0, Unit::None),
+    ParamSpec::choice("Drop 1", "Drops", DROPS, 4),
+    ParamSpec::choice("Drop 2", "Drops", DROPS, 3),
+    ParamSpec::choice("Drop 3", "Drops", DROPS, 2),
+    ParamSpec::choice("Drop 4", "Drops", DROPS, 5),
+    ParamSpec::choice("Drop 5", "Drops", DROPS, 3),
+    ParamSpec::choice("Drop 6", "Drops", DROPS, 4),
+    ParamSpec::choice("Drop 7", "Drops", DROPS, 1),
+    ParamSpec::choice("Drop 8", "Drops", DROPS, 5),
 ];
 pub static DRUNK: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
@@ -205,8 +237,14 @@ pub struct SeqState {
     seed: [u16; 8],
     seeded: bool,
     generation: u32,
-    balls: [(f32, f32); MAX_BALLS],
+    /// Height, speed (in heights per beat) and when a resting ball drops again (song beat).
+    balls: [(f64, f64, f64); MAX_BALLS],
     balls_ready: bool,
+    /// The last (snapped) beat each ball played, so a grid never doubles a note.
+    ball_last: [f64; MAX_BALLS],
+    /// Where the next block should start; anything else is a jump (loop, locate).
+    next_beat: f64,
+    pub(crate) extra: Box<more::Extra>,
     pos: i32,
     /// Packed state for the UI / grid (layout depends on the sequencer).
     pub visual: [u64; 4],
@@ -231,8 +269,11 @@ impl SeqState {
             seed: [0; 8],
             seeded: false,
             generation: 0,
-            balls: [(1.0, 0.0); MAX_BALLS],
+            balls: [(1.0, 0.0, 0.0); MAX_BALLS],
             balls_ready: false,
+            ball_last: [f64::NEG_INFINITY; MAX_BALLS],
+            next_beat: f64::NEG_INFINITY,
+            extra: Box::default(),
             pos: 0,
             visual: [0; 4],
         }
@@ -244,6 +285,8 @@ impl SeqState {
         self.acid_open = None;
         self.seeded = false;
         self.balls_ready = false;
+        self.ball_last = [f64::NEG_INFINITY; MAX_BALLS];
+        self.extra.reset();
     }
 
     fn unit(&mut self) -> f32 {
@@ -295,11 +338,25 @@ impl SeqState {
             self.flush_pending(ctx, out);
         }
         if ctx.playing {
-            if kind == K::Bounce {
-                self.bounce(p, out, ctx);
+            if matches!(kind, K::Bounce | K::Orbits | K::Pong | K::Rain) {
+                // Time-based: they keep their own time against the song's beat.
+                if (ctx.beat - self.next_beat).abs() > 1e-3 {
+                    // The song jumped (a loop, a locate, a start): start over from here.
+                    self.ball_last = [f64::NEG_INFINITY; MAX_BALLS];
+                    self.balls_ready = false;
+                    self.extra.rain_next = ctx.beat;
+                }
+                self.next_beat = ctx.beat + ctx.len as f64 / ctx.samples_per_beat;
+                match kind {
+                    K::Bounce => self.bounce(p, out, ctx),
+                    K::Orbits => self.orbits(p, out, ctx),
+                    K::Pong => self.pong(p, out, ctx),
+                    _ => self.rain(p, out, ctx),
+                }
             } else {
                 let rate = match kind {
                     K::Polymeter | K::Euclid | K::Turing | K::Life | K::Drunk | K::Step | K::Acid | K::DrumGrid => rate_beats(p[0]),
+                    K::Chaos | K::Automaton | K::Ant | K::Markov | K::Words | K::Lorenz => rate_beats(p[0]),
                     _ => 0.25,
                 };
                 let beat0 = ctx.beat;
@@ -319,6 +376,12 @@ impl SeqState {
                             K::Acid => self.acid(k, p, data, at, step_frames, out, ctx),
                             K::DrumGrid => self.drum_grid(k, p, data, at, step_frames, out, ctx),
                             K::Progression => self.progression(k, p, data, at, step_frames, out, ctx),
+                            K::Chaos => self.chaos(p, at, step_frames, out, ctx),
+                            K::Automaton => self.automaton(p, at, step_frames, out, ctx),
+                            K::Ant => self.ant(p, at, step_frames, out, ctx),
+                            K::Markov => self.markov(p, at, step_frames, out, ctx),
+                            K::Words => self.words(p, data, at, step_frames, out, ctx),
+                            K::Lorenz => self.lorenz(p, at, step_frames, out, ctx),
                             _ => {}
                         }
                     }
@@ -455,47 +518,72 @@ impl SeqState {
 
     fn bounce(&mut self, p: &[f32], out: &mut Vec<MidiEvent>, ctx: &MidiCtx) {
         let n = p[0].round().clamp(1.0, MAX_BALLS as f32) as usize;
-        let fall = p[1].max(0.05);
-        let g = 2.0 / (fall * fall);
-        let energy = p[2];
-        let height = |i: usize| 1.0 - i as f32 * 0.09;
+        let energy = p[2].clamp(0.3, 0.99) as f64;
+        let grid = more::sync_beats(p[5]);
+        let redrop = REDROP_BEATS[(p[6].round().max(0.0) as usize).min(REDROP_BEATS.len() - 1)];
+        let gate = p[7].max(0.01) as f64 * ctx.samples_per_beat;
+        let (b0, b1) = (ctx.beat, ctx.beat + ctx.len as f64 / ctx.samples_per_beat);
+        // When a ball that has come to rest goes up again.
+        let next_drop = |t: f64| if redrop > 0.0 { (t / redrop - 1e-9).ceil() * redrop } else { t };
         if !self.balls_ready {
-            for i in 0..MAX_BALLS {
-                self.balls[i] = (height(i), 0.0);
+            let first = next_drop(b0);
+            for b in self.balls.iter_mut() {
+                *b = (1.0, 0.0, first);
             }
             self.balls_ready = true;
         }
-        let dt = (ctx.len as f64 / ctx.samples_per_beat) as f32;
         let (base, _) = ctx.scale.locate(p[3].round() as i32);
         let mut vis = 0u64;
         for i in 0..n {
-            let (mut y, mut v) = self.balls[i];
-            // Time until the floor within this block (solve y + v t - g t^2 / 2 = 0).
-            let t_hit = (v + (v * v + 2.0 * g * y).sqrt()) / g;
-            if t_hit <= dt {
-                let impact = (v - g * t_hit).abs();
-                let full = (2.0 * g * height(i)).sqrt();
-                let vel = (impact / full).clamp(0.05, 1.0) * p[4];
-                let at = ctx.now + (t_hit as f64 * ctx.samples_per_beat) as u64;
-                let pitch = ctx.scale.pitch_at(base + i as i32 * 2);
-                self.note(ctx, at, pitch, vel, ctx.samples_per_beat * 0.25, out);
-                v = impact * energy;
-                y = 0.0;
-                let rest = dt - t_hit;
-                if v < full * 0.12 {
-                    // Out of energy: drop it again from the top.
-                    y = height(i);
+            // A fall from the top takes the ball's drop length (in beats).
+            let fall = DROP_BEATS[(p[16 + i].round().max(0.0) as usize).min(DROP_BEATS.len() - 1)] * p[1].clamp(0.1, 8.0) as f64;
+            let g = 2.0 / (fall * fall);
+            let full = (2.0 * g).sqrt();
+            let (mut y, mut v, mut wait) = self.balls[i];
+            let mut t = b0;
+            for _ in 0..64 {
+                if wait > t {
+                    if wait >= b1 {
+                        y = 1.0;
+                        v = 0.0;
+                        break;
+                    }
+                    t = wait;
+                    y = 1.0;
                     v = 0.0;
-                } else {
-                    y += v * rest - 0.5 * g * rest * rest;
-                    v -= g * rest;
-                    y = y.max(0.0);
                 }
-            } else {
-                y += v * dt - 0.5 * g * dt * dt;
-                v -= g * dt;
+                // Time to the floor: y + v s - g s^2 / 2 = 0.
+                let s = (v + (v * v + 2.0 * g * y.max(0.0)).sqrt()) / g;
+                if t + s >= b1 {
+                    let d = b1 - t;
+                    y = (y + v * d - 0.5 * g * d * d).max(0.0);
+                    v -= g * d;
+                    break;
+                }
+                let hit = t + s;
+                let impact = (v - g * s).abs();
+                let vel = (impact / full).clamp(0.05, 1.0) as f32 * p[4];
+                let pitch = ctx.scale.pitch_at(base + p[8 + i].round() as i32);
+                let on = more::snap(hit, grid);
+                if on > self.ball_last[i] + 1e-6 {
+                    self.ball_last[i] = on;
+                    let at = ctx.now + ((on - b0) * ctx.samples_per_beat).max(0.0) as u64;
+                    self.play(ctx, at, pitch, vel, gate, out);
+                }
+                t = hit;
+                y = 0.0;
+                v = impact * energy;
+                if v < full * 0.12 {
+                    // Out of bounce: up again, on the beat or bar if asked.
+                    wait = next_drop(hit).max(hit + 1e-6);
+                    if redrop == 0.0 {
+                        wait = hit;
+                    }
+                    y = 1.0;
+                    v = 0.0;
+                }
             }
-            self.balls[i] = (y, v);
+            self.balls[i] = (y, v, wait);
             vis |= ((y.clamp(0.0, 1.0) * 255.0) as u64) << (i * 8);
         }
         self.visual[0] = vis;
@@ -524,7 +612,7 @@ mod tests {
     use crate::scale::{Scale, ScaleKind};
 
     /// Runs `beats` beats at 120 BPM / 48 kHz and returns note-ons as (beat, pitch).
-    fn run(kind: MidiFxKind, p: &[f32], data: &[u8], beats: f64) -> Vec<(f64, u8)> {
+    pub(crate) fn run(kind: MidiFxKind, p: &[f32], data: &[u8], beats: f64) -> Vec<(f64, u8)> {
         let spb = 24000.0;
         let mut st = MidiFxState::new(kind);
         let mut ons = Vec::new();
@@ -601,12 +689,32 @@ mod tests {
     #[test]
     fn bounce_and_drunk_make_notes() {
         let p = defaults(BOUNCE);
-        let ons = run(MidiFxKind::Bounce, &p, &[], 8.0);
+        let ons = run(MidiFxKind::Bounce, &p, &[], 16.0);
         assert!(ons.len() >= 8, "bounces: {}", ons.len());
-        // Bounces speed up: gaps between hits of ball 0 shrink.
+        // Two balls dropped from a quarter note, free running: ball 0 plays the
+        // base note, ball 1 its own note (two scale steps up), and the gaps
+        // between hits shrink.
+        let mut p = defaults(BOUNCE);
+        p[0] = 2.0;
+        p[5] = 0.0;
+        p[16] = 2.0;
+        p[17] = 2.0;
+        let ons = run(MidiFxKind::Bounce, &p, &[], 8.0);
         let b0: Vec<f64> = ons.iter().filter(|o| o.1 == 60).map(|o| o.0).collect();
-        assert!(b0.len() >= 3);
-        assert!(b0[2] - b0[1] < b0[1] - b0[0] + 1e-6);
+        assert!(b0.len() >= 4, "{b0:?}");
+        assert!((b0[0] - 1.0).abs() < 0.01, "first hit after one beat: {b0:?}");
+        assert!(b0[2] - b0[1] < b0[1] - b0[0]);
+        assert!(ons.iter().any(|o| o.1 == 64));
+        assert!(ons.iter().all(|o| o.1 == 60 || o.1 == 64));
+        // Synced to quarter notes: every hit lands on a beat, never twice.
+        p[5] = 4.0;
+        let ons = run(MidiFxKind::Bounce, &p, &[], 16.0);
+        assert!(ons.len() >= 6);
+        assert!(ons.iter().all(|o| (o.0 - o.0.round()).abs() < 0.01), "{ons:?}");
+        for pitch in [60, 64] {
+            let b: Vec<f64> = ons.iter().filter(|o| o.1 == pitch).map(|o| o.0).collect();
+            assert!(b.windows(2).all(|w| w[1] > w[0] + 0.5), "{b:?}");
+        }
         let p = defaults(DRUNK);
         let ons = run(MidiFxKind::Drunk, &p, &[], 8.0);
         assert!(ons.len() > 10);

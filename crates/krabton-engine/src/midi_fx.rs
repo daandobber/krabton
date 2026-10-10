@@ -77,6 +77,15 @@ pub enum MidiFxKind {
     NoteFilter,
     Mono,
     Quantize,
+    Orbits,
+    Chaos,
+    Automaton,
+    Ant,
+    Pong,
+    Markov,
+    Rain,
+    Words,
+    Lorenz,
 }
 
 const ARP_STYLES: &[&str] = &["Up", "Down", "Up Down", "Down Up", "Converge", "Diverge", "Random", "Played", "Chord"];
@@ -178,7 +187,7 @@ impl MidiFxKind {
         MidiFxKind::Quantize,
     ];
 
-    pub const SEQUENCERS: [MidiFxKind; 10] = [
+    pub const SEQUENCERS: [MidiFxKind; 19] = [
         MidiFxKind::Step,
         MidiFxKind::Acid,
         MidiFxKind::DrumGrid,
@@ -189,6 +198,15 @@ impl MidiFxKind {
         MidiFxKind::Life,
         MidiFxKind::Bounce,
         MidiFxKind::Drunk,
+        MidiFxKind::Orbits,
+        MidiFxKind::Chaos,
+        MidiFxKind::Automaton,
+        MidiFxKind::Ant,
+        MidiFxKind::Pong,
+        MidiFxKind::Markov,
+        MidiFxKind::Rain,
+        MidiFxKind::Words,
+        MidiFxKind::Lorenz,
     ];
 
     pub fn is_sequencer(self) -> bool {
@@ -204,6 +222,7 @@ impl MidiFxKind {
             MidiFxKind::DrumGrid => crate::classic_seq::drum_default(),
             MidiFxKind::Progression => crate::classic_seq::progression_default(),
             MidiFxKind::Life => sequencers::life_default(),
+            MidiFxKind::Words => sequencers::more::words_default(),
             _ => Vec::new(),
         }
     }
@@ -220,6 +239,16 @@ impl MidiFxKind {
             MidiFxKind::Life => "Life",
             MidiFxKind::Bounce => "Bounce",
             MidiFxKind::Drunk => "Drunk",
+            MidiFxKind::Orbits => "Orbits",
+            MidiFxKind::Chaos => "Chaos",
+            MidiFxKind::Automaton => "Automaton",
+            MidiFxKind::Ant => "Ant",
+            MidiFxKind::Pong => "Pong",
+            MidiFxKind::Markov => "Markov",
+            MidiFxKind::Rain => "Rain",
+            MidiFxKind::Words => "Words",
+            MidiFxKind::Lorenz => "Lorenz",
+
             MidiFxKind::Arpeggiator => "Arpeggiator",
             MidiFxKind::Chord => "Chord",
             MidiFxKind::NoteLength => "Note Length",
@@ -249,6 +278,16 @@ impl MidiFxKind {
             MidiFxKind::Life => "Conway's Game of Life plays the board column by column",
             MidiFxKind::Bounce => "Bouncing balls: every floor hit plays a note",
             MidiFxKind::Drunk => "A random walk through the scale",
+            MidiFxKind::Orbits => "Planets circling at their own speeds; each pass plays its note: polyrhythms that always meet again",
+            MidiFxKind::Chaos => "The logistic map: one knob from steady cycles to chaos, as a melody",
+            MidiFxKind::Automaton => "A one-dimensional cellular automaton (rules 30, 90, 110...): patterns that grow and break",
+            MidiFxKind::Ant => "Langton's ant walks an 8x8 board, flipping cells: order out of chaos",
+            MidiFxKind::Pong => "Balls bouncing in a box: every wall plays its note",
+            MidiFxKind::Markov => "A melody from chances: repeat, step, leap or rest, with accents",
+            MidiFxKind::Rain => "Raindrops at random times and pitches, in drizzles and storms",
+            MidiFxKind::Words => "Type text and it plays as a melody, or as Morse code",
+            MidiFxKind::Lorenz => "The Lorenz attractor's butterfly as a melody",
+
             MidiFxKind::Arpeggiator => "Plays held notes one after another, tempo-synced",
             MidiFxKind::Chord => "Turns single notes into chords, also in the project key",
             MidiFxKind::NoteLength => "Gives every note a fixed, tempo-synced length",
@@ -278,6 +317,16 @@ impl MidiFxKind {
             MidiFxKind::Life => sequencers::LIFE,
             MidiFxKind::Bounce => sequencers::BOUNCE,
             MidiFxKind::Drunk => sequencers::DRUNK,
+            MidiFxKind::Orbits => sequencers::more::ORBITS,
+            MidiFxKind::Chaos => sequencers::more::CHAOS,
+            MidiFxKind::Automaton => sequencers::more::AUTOMATON,
+            MidiFxKind::Ant => sequencers::more::ANT,
+            MidiFxKind::Pong => sequencers::more::PONG,
+            MidiFxKind::Markov => sequencers::more::MARKOV,
+            MidiFxKind::Rain => sequencers::more::RAIN,
+            MidiFxKind::Words => sequencers::more::WORDS,
+            MidiFxKind::Lorenz => sequencers::more::LORENZ,
+
             MidiFxKind::Arpeggiator => ARP,
             MidiFxKind::Chord => CHORD,
             MidiFxKind::NoteLength => NOTE_LENGTH,

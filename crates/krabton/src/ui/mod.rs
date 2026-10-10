@@ -14,6 +14,7 @@ pub mod modulation;
 pub mod piano_roll;
 pub mod rack;
 pub mod scope;
+pub mod seq_more_view;
 pub mod seq_view;
 pub mod session;
 pub mod transport;

@@ -266,8 +266,38 @@ impl App {
                 }
             }
             MidiFxKind::Bounce => {
+                let i = (x / 2) as usize;
                 if y == h - 1 {
                     dev.params[0] = (x as f32 + 1.0).clamp(1.0, 8.0);
+                } else if i < sequencers::MAX_BALLS {
+                    // Even columns: how high the ball drops from; odd: its note.
+                    let up = (h - 2 - y) as f32;
+                    if x % 2 == 0 {
+                        dev.params[16 + i] = (up * 5.0 / (h - 2) as f32).round().clamp(0.0, 5.0);
+                    } else {
+                        dev.params[8 + i] = up;
+                    }
+                    dev.params[0] = dev.params[0].max(i as f32 + 1.0);
+                }
+            }
+            MidiFxKind::Orbits => {
+                if (y as usize) < 8 {
+                    dev.params[5 + y as usize] = (x as f32 + 1.0).clamp(1.0, 16.0);
+                    dev.params[0] = dev.params[0].max(y as f32 + 1.0);
+                }
+            }
+            MidiFxKind::Chaos => {
+                dev.params[1] = 2.8 + x as f32 / (self.grid.width - 1) as f32 * 1.2;
+            }
+            MidiFxKind::Automaton => {
+                if y == h - 1 && x < 8 {
+                    let rule = dev.params[1].round().clamp(0.0, 255.0) as u32 ^ (1 << (7 - x));
+                    dev.params[1] = rule as f32;
+                }
+            }
+            MidiFxKind::Markov => {
+                if y == h - 1 && x < 16 {
+                    dev.params[1 + (x / 4) as usize] = ((x % 4) + 1) as f32 / 4.0;
                 }
             }
             MidiFxKind::Drunk => {
@@ -509,16 +539,143 @@ impl App {
                         }
                     }
                     MidiFxKind::Bounce => {
-                        let n = (vis[1] as u32).clamp(1, 8);
+                        let n = (dev.params[0].round() as u32).clamp(1, 8);
+                        let rows = (h - 2) as f32;
                         for i in 0..n {
-                            let y = ((vis[0] >> (i * 8)) & 0xff) as f32 / 255.0;
                             let x = i * 2;
-                            let gy = (h - 2) - (y * (h - 2) as f32).round() as u32;
-                            self.grid.set(x, gy, 15);
-                            self.grid.set(x, h - 2, 2);
+                            let drop = dev.params[16 + i as usize].round().clamp(0.0, 5.0);
+                            let top = (rows * drop / 5.0).round().max(1.0);
+                            let y = if playing && first_seq { ((vis[0] >> (i * 8)) & 0xff) as f32 / 255.0 } else { 1.0 };
+                            self.grid.set(x, h - 2 - top as u32, 3);
+                            self.grid.set(x, (h - 2) - (y * top).round() as u32, 15);
+                            let note = dev.params[8 + i as usize].round();
+                            if (0.0..=rows).contains(&note) {
+                                self.grid.set(x + 1, h - 2 - note as u32, 5);
+                            }
                         }
-                        for x in 0..(dev.params[0].round() as u32).min(w) {
+                        for x in 0..n.min(w) {
                             self.grid.set(x, h - 1, 3);
+                        }
+                    }
+                    MidiFxKind::Orbits => {
+                        let n = (dev.params[0].round() as u32).clamp(1, 8);
+                        for i in 0..n.min(h) {
+                            let speed = dev.params[5 + i as usize].round() as u32;
+                            self.grid.set(speed.saturating_sub(1).min(w - 1), i, 4);
+                            if playing && first_seq {
+                                let phase = ((vis[0] >> (i * 8)) & 0xff) as u32;
+                                self.grid.set(phase * w / 256, i, if phase < 20 { 15 } else { 10 });
+                            }
+                        }
+                    }
+                    MidiFxKind::Chaos => {
+                        // The bifurcation diagram, with the setting as a column.
+                        let r_now = dev.params[1];
+                        let col = (((r_now - 2.8) / 1.2) * (w - 1) as f32).round() as u32;
+                        for x in 0..w {
+                            let r = 2.8 + x as f32 / (w - 1) as f32 * 1.2;
+                            let mut v = 0.5_f32;
+                            for _ in 0..100 {
+                                v = r * v * (1.0 - v);
+                            }
+                            for _ in 0..24 {
+                                v = r * v * (1.0 - v);
+                                let gy = ((1.0 - v) * (h - 1) as f32).round() as u32;
+                                self.grid.set(x, gy, if x == col { 7 } else { 2 });
+                            }
+                        }
+                        if playing && first_seq {
+                            let v = (vis[0] & 0xffff) as f32 / 65535.0;
+                            self.grid.set(col, ((1.0 - v) * (h - 1) as f32).round() as u32, 15);
+                        }
+                    }
+                    MidiFxKind::Automaton => {
+                        let rows = (h - 1) as usize;
+                        if playing && first_seq {
+                            for k in 0..rows.min(16) {
+                                let r = 16 - rows.min(16) + k;
+                                let row = (vis[r / 4] >> ((r % 4) * 16)) & 0xffff;
+                                for i in 0..16u32 {
+                                    if (row >> i) & 1 == 1 {
+                                        self.grid.set(15 - i, k as u32, if k + 1 == rows { 15 } else { 4 + (k * 6 / rows) as u8 });
+                                    }
+                                }
+                            }
+                        }
+                        let rule = dev.params[1].round().clamp(0.0, 255.0) as u32;
+                        for x in 0..8 {
+                            self.grid.set(x, h - 1, if (rule >> (7 - x)) & 1 == 1 { 12 } else { 2 });
+                        }
+                    }
+                    MidiFxKind::Ant => {
+                        if playing && first_seq {
+                            for y in 0..8.min(h) {
+                                for x in 0..8 {
+                                    if (vis[0] >> (y * 8 + x)) & 1 == 1 {
+                                        self.grid.set(x, y, 5);
+                                    }
+                                }
+                            }
+                            let n = ((vis[1] >> 32) & 0xff).clamp(1, 3);
+                            for i in 0..n {
+                                let b = (vis[1] >> (i * 8)) as u32;
+                                self.grid.set(b & 7, (b >> 3) & 7, 15);
+                            }
+                        }
+                    }
+                    MidiFxKind::Pong => {
+                        if playing && first_seq {
+                            let n = (vis[1] as u32).clamp(1, 2);
+                            for i in 0..n {
+                                let x = ((vis[0] >> (i * 16)) & 0xff) as u32;
+                                let y = ((vis[0] >> (i * 16 + 8)) & 0xff) as u32;
+                                self.grid.set(x * (w - 1) / 255, (255 - y) * (h - 1) / 255, 15);
+                            }
+                        }
+                    }
+                    MidiFxKind::Markov | MidiFxKind::Lorenz => {
+                        if playing && first_seq {
+                            let (x, y) = if kind == MidiFxKind::Markov {
+                                let pos = (vis[0] & 0xff) as u32;
+                                let range = ((vis[0] >> 8) & 0xff).max(1) as u32;
+                                (pos * (w - 1) / range, (h - 1) / 2)
+                            } else {
+                                let xi = (vis[0] & 0xffff) as u32;
+                                let zi = ((vis[0] >> 16) & 0xffff) as u32;
+                                (xi * (w - 1) / 65535, (65535 - zi) * (h - 2) / 65535)
+                            };
+                            for gy in 0..h - 1 {
+                                self.grid.set(x, gy, if gy == y { 15 } else if kind == MidiFxKind::Markov { 3 } else { 0 });
+                            }
+                        }
+                        if kind == MidiFxKind::Markov {
+                            for g in 0..4u32 {
+                                let v = (dev.params[1 + g as usize] * 4.0).round().clamp(0.0, 4.0) as u32;
+                                for k in 0..v {
+                                    self.grid.set(g * 4 + k, h - 1, 3 + g as u8 * 2);
+                                }
+                            }
+                        }
+                    }
+                    MidiFxKind::Rain => {
+                        if playing && first_seq {
+                            let range = vis[1].max(2) as u32;
+                            for k in 0..8u32.min(h) {
+                                let d = ((vis[0] >> (k * 8)) & 0xff) as u32;
+                                self.grid.set(d.min(range) * (w - 1) / range, k, 15u8.saturating_sub(k as u8 * 2));
+                            }
+                        }
+                    }
+                    MidiFxKind::Words => {
+                        if playing && first_seq && !dev.data.is_empty() {
+                            let i = vis[0] as usize;
+                            if let Some((d, _)) = dev.data.get(i).and_then(|&b| sequencers::more::letter_degree(b)) {
+                                self.grid.set((i as u32) % w, (h - 2) - (d as u32 % (h - 1)), 15);
+                            }
+                            let done = (i as u32 + 1) * w / dev.data.len() as u32;
+                            for x in 0..done.min(w) {
+                                self.grid.set(x, h - 1, 3);
+                            }
                         }
                     }
                     MidiFxKind::Drunk => {

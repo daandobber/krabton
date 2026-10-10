@@ -99,8 +99,17 @@ For sound on Linux see [Building](#building) below: Krabton talks to PulseAudio/
   - *Euclid*: four euclidean rhythm rings (steps, pulses, rotation, note), drawn as circles. Made for drums
   - *Turing Machine*: a looping shift register that slowly mutates into new melodies; lock it when you like what you hear
   - *Life*: Conway's Game of Life on a 16x8 board, played column by column. Draw the seed, watch it evolve
-  - *Bounce*: bouncing balls that play a note on every floor hit, speeding up as they lose energy
+  - *Bounce*: up to 8 bouncing balls that play a note on every floor hit, speeding up as they lose energy. Each ball has its own note and drop height (from a 16th to two bars: drag them in the editor), hits can snap to a grid, and balls that come to rest drop again on the next beat or bar
   - *Drunk*: a random walk through the scale
+  - *Orbits*: up to 8 planets circling at their own speeds; each pass plays its note. Polyrhythms (4 against 3 against 5...) that always meet again on the downbeat
+  - *Chaos*: the logistic map as a melody. One knob takes it from a steady note through cycles of 2, 4 and 8 into chaos, drawn as the bifurcation diagram you drag along
+  - *Automaton*: a one-dimensional cellular automaton (rules 30, 90, 110 and all 256 others); click the rule's pictures to change it, watch the generations scroll
+  - *Ant*: Langton's ant on an 8x8 board (up to three ants), playing the cells it walks over
+  - *Pong*: balls bouncing in a box; every wall has its note
+  - *Markov*: a melody from chances: repeat, step, leap or rest, leaning up or down, with accents
+  - *Rain*: drops at random times and pitches, in drizzles and swelling storms
+  - *Words*: type text and it plays: each letter a note (vowels accented), or the whole text as Morse code
+  - *Lorenz*: the Lorenz attractor's butterfly, its wings as the melody and rests below a line you drag
 - They follow the transport, play in the project key and feed the rest of the chain: put an Arpeggiator or Chord after a Turing Machine. Stopping or bypassing one never leaves notes hanging
 
 **Modulation matrix** (something Live doesn't have)

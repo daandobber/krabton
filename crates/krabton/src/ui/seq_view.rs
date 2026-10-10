@@ -7,7 +7,7 @@ use crate::theme::*;
 use crate::widgets::*;
 use egui::{pos2, vec2, Align2, Color32, Id, Rect, Sense, Shape, Stroke, Ui, UiBuilder};
 use krabton_engine::midi_fx::MidiFxKind;
-use krabton_engine::sequencers::{self, LANES, LANE_BYTES, LANE_MAX, LANE_MIN, LANE_NAMES, MAX_BALLS};
+use krabton_engine::sequencers::{self, LANES, LANE_BYTES, LANE_MAX, LANE_MIN, LANE_NAMES};
 use std::f32::consts::TAU;
 
 const LANE_SHORT: [&str; LANES] = ["Trig", "Note", "Oct", "Len", "Prob"];
@@ -39,7 +39,16 @@ pub(crate) fn editor(ui: &mut Ui, id: Id, kind: MidiFxKind, params: &mut [f32], 
         MidiFxKind::Euclid => euclid(ui, id, params, live, height),
         MidiFxKind::Turing => turing(ui, id, params, live, accent, height),
         MidiFxKind::Life => life(ui, id, data, live, accent, height),
-        MidiFxKind::Bounce => bounce(ui, params, live, height),
+        MidiFxKind::Bounce => super::seq_more_view::bounce(ui, id, params, live, height),
+        MidiFxKind::Orbits => super::seq_more_view::orbits(ui, id, params, live, height),
+        MidiFxKind::Chaos => super::seq_more_view::chaos(ui, id, params, live, height),
+        MidiFxKind::Automaton => super::seq_more_view::automaton(ui, id, params, live, accent, height),
+        MidiFxKind::Ant => super::seq_more_view::ant(ui, params, live, accent, height),
+        MidiFxKind::Pong => super::seq_more_view::pong(ui, id, params, live, height),
+        MidiFxKind::Markov => super::seq_more_view::markov(ui, id, params, live, accent, height),
+        MidiFxKind::Rain => super::seq_more_view::rain(ui, id, params, live, accent, height),
+        MidiFxKind::Words => super::seq_more_view::words(ui, id, params, data, live, accent, height),
+        MidiFxKind::Lorenz => super::seq_more_view::lorenz(ui, id, params, live, accent, height),
         MidiFxKind::Drunk => drunk(ui, id, params, live, accent, height),
         MidiFxKind::Step => super::classic_view::step(ui, id, params, data, live, lane, accent, height),
         MidiFxKind::Acid => super::classic_view::acid(ui, id, params, data, live, accent, height),
@@ -471,34 +480,6 @@ fn life(ui: &mut Ui, id: Id, data: &mut Vec<u8>, live: Live, accent: Color32, he
     changed
 }
 
-// ---------------------------------------------------------------- bounce
-
-fn bounce(ui: &mut Ui, params: &mut [f32], live: Live, height: f32) -> bool {
-    let w = 200.0;
-    let (rect, _) = ui.allocate_exact_size(vec2(w, height), Sense::hover());
-    let p = ui.painter().clone();
-    rect_fill(&p, rect, 3.0, KNOB);
-    let n = params[0].round().clamp(1.0, MAX_BALLS as f32) as usize;
-    let floor = rect.bottom() - 10.0;
-    let top = rect.top() + 10.0;
-    p.line_segment([pos2(rect.left() + 6.0, floor + 6.0), pos2(rect.right() - 6.0, floor + 6.0)], Stroke::new(2.0_f32, LINE));
-    let lw = (w - 12.0) / n as f32;
-    for i in 0..n {
-        let y = match live.on() {
-            Some(v) => ((v[0] >> (i * 8)) & 0xff) as f32 / 255.0,
-            None => 1.0 - i as f32 * 0.09,
-        };
-        let x = rect.left() + 6.0 + (i as f32 + 0.5) * lw;
-        let cy = floor - y * (floor - top);
-        let col = RING_COLORS[i % 4];
-        let col = if i >= 4 { mix(col, Color32::WHITE, 0.35) } else { col };
-        // Shadow grows as the ball comes down.
-        p.circle_filled(pos2(x, floor + 6.0), 2.0 + (1.0 - y) * 4.0, shade(col, 0.4));
-        p.circle_filled(pos2(x, cy), (lw * 0.28).clamp(3.0, 9.0), col);
-    }
-    false
-}
-
 // ---------------------------------------------------------------- drunk
 
 fn drunk(ui: &mut Ui, id: Id, params: &mut [f32], live: Live, accent: Color32, height: f32) -> bool {
@@ -599,6 +580,48 @@ mod tests {
         let frames = vec![vec![(step(0.0, 23.0), Some(true))], vec![(step(0.0, 23.0), Some(false))]];
         drive(MidiFxKind::Polymeter, &mut p, &mut data, &mut lane, &frames);
         assert_eq!(data[LANE_BYTES], LANE_MAX[1]);
+    }
+
+    #[test]
+    fn bounce_columns_set_drop_and_note() {
+        let mut p = defaults(sequencers::BOUNCE);
+        let mut data = Vec::new();
+        // Column 2 (ball 2): click low in the column for a short drop.
+        let frames = vec![vec![(pos2(52.5, 115.0), Some(true))], vec![(pos2(52.5, 115.0), Some(false))]];
+        drive(MidiFxKind::Bounce, &mut p, &mut data, &mut 0, &frames);
+        assert_eq!(p[17], 1.0);
+        // A dimmed column adds balls up to it.
+        let frames = vec![vec![(pos2(6.0 + 6.0 * 31.0 + 15.0, 60.0), Some(true))], vec![(pos2(6.0 + 6.0 * 31.0 + 15.0, 60.0), Some(false))]];
+        drive(MidiFxKind::Bounce, &mut p, &mut data, &mut 0, &frames);
+        assert_eq!(p[0], 7.0);
+        // Ball 1's note: drag up.
+        let frames = vec![
+            vec![(pos2(21.5, 177.0), Some(true))],
+            vec![(pos2(21.5, 160.0), None)],
+            vec![(pos2(21.5, 147.0), None)],
+            vec![(pos2(21.5, 147.0), Some(false))],
+        ];
+        drive(MidiFxKind::Bounce, &mut p, &mut data, &mut 0, &frames);
+        assert!(p[8] >= 3.0, "note {}", p[8]);
+    }
+
+    #[test]
+    fn automaton_rule_pictures_flip_bits() {
+        let mut p = defaults(sequencers::more::AUTOMATON);
+        let mut data = Vec::new();
+        assert_eq!(p[1], 90.0);
+        let frames = vec![vec![(pos2(14.0, 11.0), Some(true))], vec![(pos2(14.0, 11.0), Some(false))]];
+        drive(MidiFxKind::Automaton, &mut p, &mut data, &mut 0, &frames);
+        assert_eq!(p[1], 218.0);
+    }
+
+    #[test]
+    fn every_sequencer_editor_draws() {
+        for kind in MidiFxKind::SEQUENCERS {
+            let mut p = defaults(kind.specs());
+            let mut data = kind.default_data();
+            drive(kind, &mut p, &mut data, &mut 0, &[vec![(pos2(40.0, 40.0), None)]]);
+        }
     }
 
     #[test]
