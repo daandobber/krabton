@@ -36,6 +36,7 @@ enum ChainAction {
     Remove(usize),
     MoveLeft(usize),
     MoveRight(usize),
+    Duplicate(usize),
 }
 
 /// Lays out parameters in labelled groups of up to three rows.
@@ -117,14 +118,41 @@ fn device_frame<R>(ui: &mut Ui, title: &str, enabled: Option<&mut bool>, height:
             ui.set_min_height(height);
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
-                    if let Some(en) = enabled {
+                    let mut enabled = enabled;
+                    if let Some(en) = enabled.as_mut() {
                         let (rr, resp) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::click());
-                        ui.painter().circle_filled(rr.center(), 5.5, if *en { ACCENT } else { PANEL3 });
+                        ui.painter().circle_filled(rr.center(), 5.5, if **en { ACCENT } else { PANEL3 });
                         if resp.on_hover_text("Device on/off").clicked() {
-                            *en = !*en;
+                            **en = !**en;
                         }
                     }
-                    ui.label(RichText::new(title).strong().color(TEXT));
+                    // Right-click the name for everything you can do with it.
+                    let name = ui.add(egui::Label::new(RichText::new(title).strong().color(TEXT)).sense(Sense::click())).on_hover_text("Right-click: on/off, duplicate, move, remove");
+                    name.context_menu(|ui| {
+                        if let Some(en) = enabled.as_mut() {
+                            if ui.button(if **en { "Turn off" } else { "Turn on" }).clicked() {
+                                **en = !**en;
+                                ui.close();
+                            }
+                            if ui.button("Duplicate").clicked() {
+                                action = Some(ChainActionKind::Duplicate);
+                                ui.close();
+                            }
+                        }
+                        if ui.button("Move left").clicked() {
+                            action = Some(ChainActionKind::Left);
+                            ui.close();
+                        }
+                        if ui.button("Move right").clicked() {
+                            action = Some(ChainActionKind::Right);
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.button("Remove").clicked() {
+                            action = Some(ChainActionKind::Remove);
+                            ui.close();
+                        }
+                    });
                     ui.add_space(10.0);
                     // Buttons sit next to the title so the panel keeps its natural width.
                     if ui.small_button("<").on_hover_text("Move left").clicked() {
@@ -144,11 +172,18 @@ fn device_frame<R>(ui: &mut Ui, title: &str, enabled: Option<&mut bool>, height:
     (r.inner, action)
 }
 
+/// Escape, or a press on the interface outside any popup (submenus are
+/// popups too, so picking from one still works).
+pub(crate) fn popup_dismissed(ui: &Ui) -> bool {
+    ui.input(|i| i.key_pressed(egui::Key::Escape)) || (ui.input(|i| i.pointer.any_pressed()) && !ui.ctx().is_pointer_over_area())
+}
+
 #[derive(Clone, Copy)]
 enum ChainActionKind {
     Remove,
     Left,
     Right,
+    Duplicate,
 }
 
 impl App {
@@ -253,6 +288,14 @@ impl App {
             }
         }
         if let (TrackSel::Track(i), false) = (sel, midi_actions.is_empty()) {
+            for a in &midi_actions {
+                if let ChainAction::Duplicate(d) = *a {
+                    if let Some(mut dev) = self.project.tracks.get(i).and_then(|t| t.midi_devices.get(d)).cloned() {
+                        dev.id = self.project.alloc_id();
+                        self.project.tracks[i].midi_devices.insert(d + 1, dev);
+                    }
+                }
+            }
             if let Some(chain) = self.project.tracks.get_mut(i).map(|t| &mut t.midi_devices) {
                 for a in midi_actions {
                     match a {
@@ -263,6 +306,20 @@ impl App {
                         ChainAction::MoveRight(d) if d + 1 < chain.len() => chain.swap(d, d + 1),
                         _ => {}
                     }
+                }
+            }
+        }
+        for a in &actions {
+            if let ChainAction::Duplicate(d) = *a {
+                let copy = self.chain_mut(sel).and_then(|c| c.get(d)).filter(|dev| dev.plugin.is_none()).cloned();
+                match copy {
+                    Some(mut dev) => {
+                        dev.id = self.project.alloc_id();
+                        if let Some(c) = self.chain_mut(sel) {
+                            c.insert(d + 1, dev);
+                        }
+                    }
+                    None => self.toast("Plug-ins can't be duplicated yet: add it again from the browser"),
                 }
             }
         }
@@ -387,6 +444,7 @@ impl App {
             ChainActionKind::Remove => ChainAction::Remove(d),
             ChainActionKind::Left => ChainAction::MoveLeft(d),
             ChainActionKind::Right => ChainAction::MoveRight(d),
+            ChainActionKind::Duplicate => ChainAction::Duplicate(d),
         })
     }
 
@@ -434,6 +492,7 @@ impl App {
             ChainActionKind::Remove => ChainAction::Remove(d),
             ChainActionKind::Left => ChainAction::MoveLeft(d),
             ChainActionKind::Right => ChainAction::MoveRight(d),
+            ChainActionKind::Duplicate => ChainAction::Duplicate(d),
         })
     }
 
@@ -458,9 +517,15 @@ impl App {
             ui.ctx().memory_mut(|m| m.data.insert_temp(menu_id, true));
         }
         resp.on_hover_text("Add a sequencer or MIDI effect (arpeggiator, chord, ...)");
+        self.midi_fx_popup(ui, track, menu_id, r.left_top() + vec2(4.0, 4.0));
+    }
+
+    /// The menu of sequencers and MIDI effects for `track`, at `at`, while
+    /// `menu_id` is open in memory.
+    pub(crate) fn midi_fx_popup(&mut self, ui: &Ui, track: usize, menu_id: Id, at: egui::Pos2) {
         if ui.ctx().memory(|m| m.data.get_temp::<bool>(menu_id).unwrap_or(false)) {
             let mut close = false;
-            egui::Area::new(menu_id.with("area")).fixed_pos(r.left_top() + vec2(4.0, 4.0)).order(egui::Order::Foreground).constrain(true).show(ui.ctx(), |ui| {
+            egui::Area::new(menu_id.with("area")).fixed_pos(at).order(egui::Order::Foreground).constrain(true).show(ui.ctx(), |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
                     // A column per group of sequencers, then the MIDI effects,
                     // side by side like the audio effects' menu.
@@ -499,7 +564,7 @@ impl App {
                     }
                 });
             });
-            if close || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            if close || popup_dismissed(ui) {
                 ui.ctx().memory_mut(|m| m.data.insert_temp(menu_id, false));
             }
         }
@@ -540,9 +605,16 @@ impl App {
             // Left-click opens the same menu via a popup.
             ui.ctx().memory_mut(|m| m.data.insert_temp(open_id, true));
         }
+        self.effect_popup(ui, sel, open_id, r.left_top() + vec2(4.0, 4.0));
+    }
+
+    /// The menu of audio effects for the chain `sel`, at `at`, while
+    /// `open_id` is open in memory.
+    pub(crate) fn effect_popup(&mut self, ui: &Ui, sel: TrackSel, open_id: Id, at: egui::Pos2) {
+        let key = (open_id, 0u8);
         let open = ui.ctx().memory(|m| m.data.get_temp::<bool>(open_id).unwrap_or(false));
         if open {
-            let area = egui::Area::new(Id::new(("fx_menu", key))).fixed_pos(r.left_top() + vec2(4.0, 4.0)).order(egui::Order::Foreground).constrain(true);
+            let area = egui::Area::new(Id::new(("fx_menu", key))).fixed_pos(at).order(egui::Order::Foreground).constrain(true);
             let mut close = false;
             area.show(ui.ctx(), |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
@@ -606,7 +678,7 @@ impl App {
                     }
                 });
             });
-            if close || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            if close || popup_dismissed(ui) {
                 ui.ctx().memory_mut(|m| m.data.insert_temp(open_id, false));
             }
         }
@@ -616,7 +688,13 @@ impl App {
         let (r, resp) = ui.allocate_exact_size(vec2(160.0, h), Sense::click());
         let p = ui.painter();
         rect_line(p, r.shrink(2.0), 4.0, 1.0, if resp.dnd_hover_payload::<BrowserItem>().is_some() { ACCENT } else { LINE_SOFT });
-        p.text(r.center(), Align2::CENTER_CENTER, "Drop an instrument", small(), TEXT_DIM);
+        p.text(r.center() - vec2(0.0, 8.0), Align2::CENTER_CENTER, "Drop an instrument", small(), TEXT_DIM);
+        p.text(r.center() + vec2(0.0, 8.0), Align2::CENTER_CENTER, "or click to pick one", small(), TEXT_DIM);
+        let menu = Id::new(("inst_menu", i));
+        if resp.clicked() {
+            ui.ctx().memory_mut(|m| m.data.insert_temp(menu, true));
+        }
+        self.instrument_popup(ui, i, menu, r.left_top() + vec2(4.0, 4.0));
         if let Some(item) = drop_payload::<BrowserItem>(&resp) {
             self.apply_item(&item, crate::app::DropTarget::Track(i));
         }

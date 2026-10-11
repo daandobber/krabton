@@ -664,6 +664,65 @@ impl App {
         out
     }
 
+    /// A popup with every instrument and its presets (as in the browser),
+    /// for `track`, at `at`, while `menu_id` is open in memory.
+    pub(crate) fn instrument_popup(&mut self, ui: &Ui, track: usize, menu_id: egui::Id, at: egui::Pos2) {
+        if !ui.ctx().memory(|m| m.data.get_temp::<bool>(menu_id).unwrap_or(false)) {
+            return;
+        }
+        let mut picked: Option<BrowserItem> = None;
+        let mut close = false;
+        egui::Area::new(menu_id.with("area")).fixed_pos(at).order(egui::Order::Foreground).constrain(true).show(ui.ctx(), |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                ui.label(RichText::new("Instruments: pick one, or a preset from its list").small().color(TEXT_DIM));
+                let mut all: Vec<(&'static str, &'static str, Vec<(String, BrowserItem)>)> = devices().into_iter().map(|d| (d.name, d.hint, d.presets.iter().map(|p| (p.to_string(), (d.make)(p))).collect())).collect();
+                for e in drums::DrumEngine::ALL {
+                    all.push((e.name(), e.description(), e.kits().iter().map(|k| (k.to_string(), BrowserItem::Drums(k))).collect()));
+                }
+                all.push(("Sampler", "Plays samples: drop a sample on it afterwards", vec![("Sampler".to_string(), BrowserItem::Sampler)]));
+                all.sort_by_key(|a| a.0);
+                // Columns of names; each opens its presets.
+                let per = all.len().div_ceil(3);
+                ui.horizontal_top(|ui| {
+                    for col in all.chunks(per.max(1)) {
+                        ui.vertical(|ui| {
+                            ui.set_min_width(130.0);
+                            for (name, hint, presets) in col {
+                                if presets.len() == 1 {
+                                    if ui.button(*name).on_hover_text(*hint).clicked() {
+                                        picked = Some(presets[0].1.clone());
+                                    }
+                                } else {
+                                    ui.menu_button(*name, |ui| {
+                                        for (label, item) in presets {
+                                            if ui.button(label).clicked() {
+                                                picked = Some(item.clone());
+                                            }
+                                        }
+                                    })
+                                    .response
+                                    .on_hover_text(*hint);
+                                }
+                            }
+                        });
+                    }
+                });
+                ui.add_space(4.0);
+                if ui.button("Cancel").clicked() {
+                    close = true;
+                }
+            });
+        });
+        if let Some(item) = picked {
+            self.apply_item(&item, crate::app::DropTarget::Track(track));
+            close = true;
+        }
+        if close || super::devices::popup_dismissed(ui) {
+            ui.ctx().memory_mut(|m| m.data.insert_temp(menu_id, false));
+        }
+    }
+
     fn instrument_nodes(&self) -> Vec<Node> {
         let mut out: Vec<Node> = devices()
             .into_iter()
