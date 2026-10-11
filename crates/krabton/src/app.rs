@@ -115,6 +115,8 @@ pub enum BrowserItem {
     Waves(&'static str),
     /// A Guitar preset.
     Guitar(&'static str),
+    /// A Wind Chimes preset.
+    WindChimes(&'static str),
     /// A Grand Piano preset.
     Piano(&'static str),
     /// A copy of a clip in this project.
@@ -152,6 +154,7 @@ impl BrowserItem {
             BrowserItem::Drone(p) => format!("Drone: {p}"),
             BrowserItem::Waves(p) => format!("Waves: {p}"),
             BrowserItem::Guitar(p) => format!("Guitar: {p}"),
+            BrowserItem::WindChimes(p) => format!("Wind Chimes: {p}"),
             BrowserItem::Piano(p) => format!("Grand Piano: {p}"),
             BrowserItem::Drums(k) => k.to_string(),
             BrowserItem::Sampler => "Sampler".into(),
@@ -898,7 +901,7 @@ impl App {
                 }
                 self.toast(format!("Loading {} ...", info.name));
             }
-            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) => {
+            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) => {
                 let inst = match item {
                     BrowserItem::Synth(p) => Instrument::synth(p),
                     BrowserItem::Macro(p) => Instrument::macro_osc(p),
@@ -919,6 +922,7 @@ impl App {
                     BrowserItem::Drone(p) => Instrument::drone(p),
                     BrowserItem::Waves(p) => Instrument::waves(p),
                     BrowserItem::Guitar(p) => Instrument::guitar(p),
+                    BrowserItem::WindChimes(p) => Instrument::wind_chimes(p),
                     BrowserItem::Drums(k) => Instrument::drums(k),
                     _ => Instrument::sampler(None),
                 };
@@ -1949,6 +1953,12 @@ impl App {
                     self.apply_item(&BrowserItem::Waves(p), DropTarget::NewTrack);
                     self.detail = DetailTab::Devices;
                 }
+                "windchimes" => {
+                    let names = krabton_engine::dsp::wind_chimes::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::WindChimes(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
                 "guitar" => {
                     let names = krabton_engine::dsp::guitar::preset_names();
                     let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
@@ -2358,14 +2368,23 @@ impl eframe::App for App {
             // Folded away: a thin strip to bring it back.
             egui::TopBottomPanel::bottom("detail_hidden")
                 .resizable(false)
-                .exact_height(14.0)
-                .frame(egui::Frame::new().fill(theme::PANEL))
+                .exact_height(20.0)
+                .frame(egui::Frame::new().fill(theme::PANEL2))
                 .show(ctx, |ui| {
                     let r = ui.max_rect();
                     let resp = ui.interact(r, ui.id().with("show_detail"), egui::Sense::click()).on_hover_text("Show the clip and device view (Ctrl+Alt+L)");
-                    let c = egui::pos2(r.left() + 14.0, r.center().y);
-                    let col = if resp.hovered() { theme::TEXT } else { theme::TEXT_DIM };
-                    ui.painter().add(egui::Shape::convex_polygon(vec![c + egui::vec2(-4.0, 2.0), c + egui::vec2(0.0, -3.0), c + egui::vec2(4.0, 2.0)], col, egui::Stroke::NONE));
+                    let hot = resp.hovered();
+                    let p = ui.painter();
+                    if hot {
+                        p.rect_filled(r, 0.0, theme::PANEL3);
+                    }
+                    p.line_segment([r.left_top(), r.right_top()], egui::Stroke::new(1.0_f32, theme::LINE));
+                    let col = if hot { theme::ACCENT } else { theme::TEXT_DIM };
+                    // An arrow and the tabs' names in the middle, at the left too.
+                    for c in [egui::pos2(r.left() + 14.0, r.center().y), egui::pos2(r.center().x - 92.0, r.center().y)] {
+                        p.add(egui::Shape::convex_polygon(vec![c + egui::vec2(-6.0, 3.0), c + egui::vec2(0.0, -4.0), c + egui::vec2(6.0, 3.0)], col, egui::Stroke::NONE));
+                    }
+                    p.text(egui::pos2(r.center().x - 80.0, r.center().y), egui::Align2::LEFT_CENTER, "Clip · Devices · Mod · Grid", theme::small(), col);
                     if resp.clicked() {
                         self.toggle_detail();
                     }

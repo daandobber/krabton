@@ -796,6 +796,25 @@ impl App {
                             param_grid_mod(ui, Id::new(("waves", track_id)), krabton_engine::dsp::waves::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
                         });
                     }
+                    Instrument::WindChimes { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("wind_chimes_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in krabton_engine::dsp::wind_chimes::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = krabton_engine::dsp::wind_chimes::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("plays by itself while the song plays (Blows): drag in the screen for the wind, play a key to touch a tube").small().color(TEXT_DIM));
+                        });
+                        ui.horizontal_top(|ui| {
+                            super::engine_screens::wind_chimes_screen(ui, Id::new(("wind_chimes_screen", track_id)), params, &live, h - 48.0);
+                            ui.add_space(6.0);
+                            param_grid_mod(ui, Id::new(("wind_chimes", track_id)), krabton_engine::dsp::wind_chimes::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
+                        });
+                    }
                     Instrument::Guitar { preset, params } => {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Preset").small().color(TEXT_DIM));

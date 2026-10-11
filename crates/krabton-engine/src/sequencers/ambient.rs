@@ -7,7 +7,8 @@
 //! - Bloom: after Brian Eno and Peter Chilvers' Bloom: notes you drop on a
 //!   pond echo in time, looping or fading away, sometimes wandering a step;
 //!   left alone it plays by itself around your notes.
-//! - Chimes: wind chimes: a wind that rises and falls strikes tuned tubes.
+//! - Chimes: wind chimes, simulated: the wind pushes a sail, the clapper
+//!   swings and a note sounds whenever it meets a tube (see `chime_sim`).
 //! - Drift Chords: chords that change slowly, one voice moving a step at a
 //!   time, the others held.
 //! - Tintinnabuli: a melody moving by steps and a second voice on the
@@ -16,6 +17,7 @@
 //!   fourth or the octave, struck again for instruments that fade.
 
 use super::{SeqState, RATES};
+use crate::dsp::chime_sim::{lengths_for, ChimeSim, Shape, MAX_TUBES};
 use crate::midi_fx::{MidiCtx, MidiEvent};
 use crate::params::{ParamSpec, Unit};
 
@@ -117,14 +119,39 @@ pub static BLOOM: &[ParamSpec] = &[
 pub static CHIMES: &[ParamSpec] = &[
     ParamSpec::lin("Wind", "Wind", 0.0, 1.0, 0.45, Unit::Percent),
     ParamSpec::lin("Gusts", "Wind", 0.0, 1.0, 0.6, Unit::Percent),
-    ParamSpec::int("Chimes", "Chimes", 3.0, 9.0, 6.0, Unit::None),
+    ParamSpec::int("Chimes", "Chimes", 3.0, 8.0, 6.0, Unit::None),
     ParamSpec::int("Octaves", "Chimes", 1.0, 3.0, 2.0, Unit::None),
     ParamSpec::int("Base Note", "Chimes", 24.0, 96.0, 72.0, Unit::None),
     ParamSpec::lin("Length", "Chimes", 0.5, 8.0, 3.0, Unit::None),
     ParamSpec::lin("Velocity", "Chimes", 0.05, 1.0, 0.6, Unit::Percent),
+    ParamSpec::lin("Spacing", "Build", 0.0, 1.0, 0.45, Unit::Percent),
+    ParamSpec::lin("Clapper", "Build", 0.0, 1.0, 0.5, Unit::Percent),
+    ParamSpec::lin("Sail", "Build", 0.0, 1.0, 0.5, Unit::Percent),
     KEYS[0],
     KEYS[1],
 ];
+
+/// The Chimes sequencer's tubes: how many, and the note of each, from a
+/// pentatonic set of the scale's steps (1, 2, 3, 5, 6) over the octaves.
+pub fn chime_notes(scale: &crate::scale::Scale, p: &[f32]) -> (usize, [i32; MAX_TUBES]) {
+    let count = (p[2].round() as usize).clamp(3, MAX_TUBES);
+    let octaves = p[3].round().clamp(1.0, 3.0) as i32;
+    let set: Vec<i32> = (0..octaves).flat_map(|o| [0, 1, 2, 4, 5].map(|d| o * 7 + d)).collect();
+    let (b, _) = scale.locate(p[4].round() as i32);
+    let notes = std::array::from_fn(|j| {
+        let j = j.min(count - 1);
+        scale.pitch_at(b + set[(j * (set.len() - 1)) / (count - 1).max(1)])
+    });
+    (count, notes)
+}
+
+/// The build the simulation runs for these params.
+pub fn chime_shape(scale: &crate::scale::Scale, p: &[f32]) -> Shape {
+    let (count, notes) = chime_notes(scale, p);
+    let f: Vec<f32> = notes[..count].iter().map(|&n| crate::dsp::midi_to_freq(n as f32)).collect();
+    let g = |i: usize, d: f32| p.get(i).copied().unwrap_or(d);
+    Shape { tubes: count, spacing: g(7, 0.45), clapper: g(8, 0.5), sail: g(9, 0.5), wind: p[0].clamp(0.0, 1.5), gusts: p[1].clamp(0.0, 1.0), lengths: lengths_for(&f) }
+}
 
 pub const CHANGES: &[&str] = &["1 Bar", "2 Bars", "4 Bars", "8 Bars"];
 const CHANGE_BARS: [i64; 4] = [1, 2, 4, 8];
@@ -195,9 +222,9 @@ pub struct Ambient {
     seed_next: f64,
     pub(crate) recent: u64,
     recent_across: u64,
-    chime_tick: i64,
-    pub(crate) chime_hits: [u8; 9],
-    pub(crate) wind: f32,
+    chime_sim: Box<ChimeSim>,
+    /// How strongly each tube rings now, for the screen.
+    chime_ring: [f32; MAX_TUBES],
     pub(crate) chord: [i32; 6],
     chord_n: usize,
     chord_bar: i64,
@@ -229,9 +256,8 @@ impl Default for Ambient {
             seed_next: -1.0,
             recent: 0,
             recent_across: 0,
-            chime_tick: i64::MIN,
-            chime_hits: [0; 9],
-            wind: 0.0,
+            chime_sim: Box::default(),
+            chime_ring: [0.0; MAX_TUBES],
             chord: [0; 6],
             chord_n: 0,
             chord_bar: i64::MIN,
@@ -260,7 +286,6 @@ impl Ambient {
             s.active = false;
         }
         self.seed_next = -1.0;
-        self.chime_tick = i64::MIN;
         self.chord_bar = i64::MIN;
         self.chord_n = 0;
         self.tin_drone = i64::MIN;
@@ -495,43 +520,34 @@ impl SeqState {
         self.visual[3] = ((b1 / echo).rem_euclid(1.0) * 65536.0) as u64 & 0xffff;
     }
 
-    /// The wind: a slow mix of three waves around Wind, Gusts deep.
-    fn wind_at(p: &[f32], t: f64) -> f32 {
-        let n = 0.5 * (std::f64::consts::TAU * 0.031 * t).sin() + 0.3 * (std::f64::consts::TAU * 0.083 * t + 1.0).sin() + 0.2 * (std::f64::consts::TAU * 0.21 * t + 2.0).sin();
-        (p[0] * (1.0 + p[1] * n as f32 * 1.2)).clamp(0.0, 1.5)
-    }
-
     pub(crate) fn chimes(&mut self, p: &[f32], out: &mut Vec<MidiEvent>, ctx: &MidiCtx) {
-        let b1 = ctx.beat + ctx.len as f64 / ctx.samples_per_beat;
-        let count = (p[2].round() as usize).clamp(3, 9);
-        let octaves = p[3].round().clamp(1.0, 3.0) as i32;
-        // The tubes: a pentatonic set of the scale's steps (1, 2, 3, 5, 6) over the octaves.
-        let set: Vec<i32> = (0..octaves).flat_map(|o| [0, 1, 2, 4, 5].map(|d| o * 7 + d)).collect();
-        let tube = |j: usize| set[(j * (set.len() - 1)) / (count - 1).max(1)];
+        let shape = chime_shape(&ctx.scale, p);
+        let (_, notes) = chime_notes(&ctx.scale, p);
         let len = p[5].max(0.1) as f64 * ctx.samples_per_beat;
-        let first = (ctx.beat * 16.0).ceil() as i64;
-        if self.ambient.chime_tick == i64::MIN || self.ambient.chime_tick < first - 1 {
-            self.ambient.chime_tick = first - 1;
+        // The wind blows for this block's time; every meeting of clapper and
+        // tube is a note, as loud as they met.
+        let secs = ctx.len as f32 / ctx.sr.max(1.0);
+        let mut hits: Vec<(usize, f32, f32)> = Vec::new();
+        self.ambient.chime_sim.run(&shape, secs, true, &mut |i, speed, at| hits.push((i, speed, at)));
+        for (i, speed, at) in hits {
+            let vel = (speed / 2.0).sqrt().min(1.0);
+            let when = ctx.now + (at * ctx.sr) as u64;
+            self.play(ctx, when, notes[i], (p[6] * (0.25 + 0.75 * vel)).clamp(0.02, 1.0), len, out);
+            self.ambient.chime_ring[i] = self.ambient.chime_ring[i].max(vel);
         }
-        // A sixteenth at a time: each tube swings on its own and strikes when the wind pushes it.
-        while ((self.ambient.chime_tick + 1) as f64) / 16.0 < b1 {
-            self.ambient.chime_tick += 1;
-            let t = self.ambient.chime_tick as f64 / 16.0;
-            let wind = Self::wind_at(p, t);
-            self.ambient.wind = wind;
-            for j in 0..count {
-                let swing = 0.5 + 0.5 * (std::f64::consts::TAU * t * (0.23 + 0.071 * j as f64) + j as f64 * 1.7).sin() as f32;
-                let chance = wind * wind * 0.05 * swing;
-                if self.ambient.unit() < chance {
-                    let vel = p[6] * (0.35 + 0.65 * wind.min(1.0) * (0.5 + 0.5 * self.ambient.unit()));
-                    let pitch = Self::degree(ctx, p[4], tube(j));
-                    self.play(ctx, frame(ctx, t), pitch, vel, len, out);
-                    self.ambient.chime_hits[j] = self.ambient.chime_hits[j].wrapping_add(1);
-                }
-            }
+        // The rings fade over the notes' length.
+        let fade = (-(ctx.len as f64) / (len / 3.0).max(1.0)).exp() as f32;
+        for r in self.ambient.chime_ring.iter_mut() {
+            *r *= fade;
         }
-        self.visual[0] = (0..9).fold(0u64, |acc, j| acc | ((self.ambient.chime_hits[j] as u64 & 0xf) << (j * 4)));
-        self.visual[1] = (self.ambient.wind * 1000.0) as u64 | (count as u64) << 16;
+        let sim = &self.ambient.chime_sim;
+        let i16b = |v: f32| ((v * 10000.0).clamp(-32767.0, 32767.0) as i16) as u16 as u64;
+        let i8b = |v: f32| ((v * 200.0).clamp(-127.0, 127.0) as i8) as u8 as u64;
+        let dir = (sim.dir.rem_euclid(std::f32::consts::TAU) / std::f32::consts::TAU * 255.0) as u64;
+        self.visual[0] = i16b(sim.clapper[0]) | i16b(sim.clapper[1]) << 16 | ((sim.wind / 1.5 * 255.0).clamp(0.0, 255.0) as u64) << 32 | dir << 40 | (shape.tubes as u64) << 48;
+        self.visual[1] = (0..MAX_TUBES).fold(0, |acc, i| acc | i8b(sim.tube[i][0]) << (8 * i));
+        self.visual[2] = (0..MAX_TUBES).fold(0, |acc, i| acc | i8b(sim.tube[i][1]) << (8 * i));
+        self.visual[3] = (0..MAX_TUBES).fold(0, |acc, i| acc | ((self.ambient.chime_ring[i] * 255.0).clamp(0.0, 255.0) as u64) << (8 * i));
     }
 
     pub(crate) fn drift_chords(&mut self, p: &[f32], out: &mut Vec<MidiEvent>, ctx: &MidiCtx) {

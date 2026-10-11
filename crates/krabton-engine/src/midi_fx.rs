@@ -326,7 +326,7 @@ impl MidiFxKind {
             MidiFxKind::Lorenz => "The Lorenz attractor's butterfly as a melody",
             MidiFxKind::Loops => "Notes on their own long loops that drift in and out of phase, like tape loops: ambient chords that never repeat",
             MidiFxKind::Bloom => "Click the pond to drop notes (higher is higher) that echo away, softer each time; left alone it blooms by itself",
-            MidiFxKind::Chimes => "Wind chimes: a wind that rises and falls strikes tuned tubes",
+            MidiFxKind::Chimes => "Wind chimes, simulated: the wind pushes the sail, the clapper swings, and a note sounds whenever it meets a tube",
             MidiFxKind::DriftChords => "Slowly changing chords: one voice moves a step, the others are held",
             MidiFxKind::Tintinnabuli => "A stepwise melody with a voice on the nearest note of the tonic triad, over a held tonic",
             MidiFxKind::Pedal => "A held drone note that now and then moves to the fifth, fourth or octave",

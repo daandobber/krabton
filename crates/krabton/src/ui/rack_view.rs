@@ -24,6 +24,12 @@ impl App {
                 self.layout_dirty = true;
             }
             ui.add_space(8.0);
+            let shown = self.prefs.layout.rack_detail;
+            let label = if shown { "Hide clip view" } else { "Show clip view" };
+            if ui.add(egui::Button::new(RichText::new(label).color(TEXT)).fill(PANEL3)).on_hover_text("The clip editor, devices, modulation and grid at the bottom (Ctrl+Alt+L)").clicked() {
+                self.toggle_detail();
+            }
+            ui.add_space(8.0);
             ui.label(RichText::new("Device height").small().color(TEXT_DIM)).on_hover_text("For devices you did not resize: drag the grip at the bottom of a device for its own height");
             let mut hh = h;
             if ui.add(egui::DragValue::new(&mut hh).range(140.0..=600.0).speed(1.0).suffix(" px")).changed() {

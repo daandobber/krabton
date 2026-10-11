@@ -3,6 +3,7 @@
 pub mod analog;
 pub mod bassline;
 pub mod biquad;
+pub mod chime_sim;
 pub mod lens_comp;
 pub mod lens_eq;
 pub mod lens_limiter;
@@ -32,6 +33,7 @@ pub mod stk_voice;
 pub mod stk_winds;
 pub mod synth;
 pub mod waves;
+pub mod wind_chimes;
 
 use std::f32::consts::PI;
 

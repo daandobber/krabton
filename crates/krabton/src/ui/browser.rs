@@ -340,7 +340,7 @@ struct Dev {
     kind: Option<&'static str>,
 }
 
-fn devices() -> [Dev; 19] {
+fn devices() -> [Dev; 20] {
     [
         Dev {
             name: "Analog",
@@ -397,6 +397,7 @@ fn devices() -> [Dev; 19] {
         Dev { name: "Drone", hint: "A drone that keeps moving: tanpura strings with a buzzing bridge, a PADsynth pad, swelling FM pairs and wind, all drifting slowly. Hold a key for minutes", presets: krabton_engine::dsp::drone::preset_names(), make: BrowserItem::Drone, kind: None },
         Dev { name: "Waves", hint: "Wavetable synth: two oscillators morphing through 16 banks of single-cycle waves (Adventure Kid Waveforms), unison, warps, sub, filter, envelopes and an LFO. Drag a stack to move through it", presets: krabton_engine::dsp::waves::preset_names(), make: BrowserItem::Waves, kind: None },
         Dev { name: "Guitar", hint: "A six-string guitar, steel or nylon acoustic or electric with pickups: notes go on the strings and frets a guitarist would use, chords are strummed. Put pedals after it", presets: krabton_engine::dsp::guitar::preset_names(), make: BrowserItem::Guitar, kind: None },
+        Dev { name: "Wind Chimes", hint: "A wind chime that plays by itself: the wind pushes the sail, the clapper strikes the tubes (aluminium, brass, steel, bamboo, glass or wood) and you see every strike you hear. Change the tubes, the tuning, the spacing, the clapper and the sail", presets: krabton_engine::dsp::wind_chimes::preset_names(), make: BrowserItem::WindChimes, kind: None },
     ]
 }
 

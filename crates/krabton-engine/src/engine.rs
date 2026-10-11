@@ -21,6 +21,7 @@ use crate::dsp::bassline::BasslineState;
 use crate::dsp::drone::DroneState;
 use crate::dsp::waves::WavesState;
 use crate::dsp::guitar::GuitarState;
+use crate::dsp::wind_chimes::WindChimesState;
 use crate::piano::{library::PianoLibrary, PianoState};
 use crate::dsp::rings_synth::RingsState;
 use crate::dsp::braids_synth::BraidsSynthState;
@@ -47,6 +48,10 @@ pub const MAX_TRACKS: usize = 128;
 pub const MAX_RETURNS: usize = 8;
 /// Values an instrument reports for its display (see `InstState::visual`).
 pub const INST_VALS: usize = 32;
+
+/// Whether the transport plays, for instruments that follow it (Wind
+/// Chimes' wind). Set by the audio thread every block.
+pub static TRANSPORT_PLAYING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Samples of the shown instrument's sound kept for its display.
 pub const INST_SCOPE_LEN: usize = 8192;
 
@@ -351,6 +356,7 @@ enum InstState {
     Drone(Box<DroneState>),
     Waves(Box<WavesState>),
     Guitar(Box<GuitarState>),
+    WindChimes(Box<WindChimesState>),
     Plugin { instance: u64, proc: Option<Box<dyn AudioProcessor>>, pending: Vec<PluginEvent> },
 }
 
@@ -381,6 +387,7 @@ impl InstState {
             Some(Instrument::Drone { .. }) => InstState::Drone(Box::new(DroneState::new(sr))),
             Some(Instrument::Waves { .. }) => InstState::Waves(Box::new(WavesState::new(sr))),
             Some(Instrument::Guitar { .. }) => InstState::Guitar(Box::new(GuitarState::new(sr))),
+            Some(Instrument::WindChimes { .. }) => InstState::WindChimes(Box::new(WindChimesState::new(sr))),
         }
     }
 
@@ -425,6 +432,7 @@ impl InstState {
                 | (InstState::Drone(_), Some(Instrument::Drone { .. }))
                 | (InstState::Waves(_), Some(Instrument::Waves { .. }))
                 | (InstState::Guitar(_), Some(Instrument::Guitar { .. }))
+                | (InstState::WindChimes(_), Some(Instrument::WindChimes { .. }))
         ) || matches!((self, i), (InstState::Plugin { instance, .. }, Some(Instrument::Plugin(p))) if *instance == p.instance)
     }
 
@@ -454,6 +462,7 @@ impl InstState {
             (InstState::Drone(s), Instrument::Drone { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Waves(s), Instrument::Waves { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Guitar(s), Instrument::Guitar { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::WindChimes(s), Instrument::WindChimes { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             _ => {}
         }
     }
@@ -482,6 +491,7 @@ impl InstState {
             (InstState::Drone(s), Instrument::Drone { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Waves(s), Instrument::Waves { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Guitar(s), Instrument::Guitar { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::WindChimes(s), Instrument::WindChimes { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             _ => {}
         }
     }
@@ -511,6 +521,7 @@ impl InstState {
             InstState::Drone(s) => s.all_off(),
             InstState::Waves(s) => s.all_off(),
             InstState::Guitar(s) => s.all_off(),
+            InstState::WindChimes(s) => s.all_off(),
             InstState::None => {}
         }
     }
@@ -530,6 +541,7 @@ impl InstState {
             InstState::Drone(s) => s.visual(out),
             InstState::Waves(s) => s.visual(out),
             InstState::Guitar(s) => s.visual(out),
+            InstState::WindChimes(s) => s.visual(out),
             _ => return false,
         }
         true
@@ -559,6 +571,7 @@ impl InstState {
             (InstState::Drone(s), Instrument::Drone { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Waves(s), Instrument::Waves { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Guitar(s), Instrument::Guitar { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::WindChimes(s), Instrument::WindChimes { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Plugin { proc, pending, .. }, Instrument::Plugin(_)) => {
                 if let Some(p) = proc {
                     p.process(pending, l, r);
@@ -1400,6 +1413,7 @@ impl Engine {
         let sr = self.sr;
         let spb = sr as f64 * 60.0 / project.bpm.max(1.0);
         let playing = self.playing;
+        TRANSPORT_PLAYING.store(playing, std::sync::atomic::Ordering::Relaxed);
         let adv = if playing { seg as f64 / spb } else { 0.0 };
         let (s0, s1) = (self.session_pos, self.session_pos + adv);
         let (a0, a1) = (self.song_pos, self.song_pos + adv);

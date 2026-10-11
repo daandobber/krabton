@@ -422,6 +422,46 @@ pub(crate) fn guitar_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive,
     changed
 }
 
+// ---------------------------------------------------------------- wind chimes
+
+/// The wind chime as the engine simulates it, in its material's colour:
+/// every strike you hear is the clapper meeting a tube you see. Drag left
+/// or right for the wind.
+pub(crate) fn wind_chimes_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, height: f32) -> bool {
+    use krabton_engine::dsp::chime_sim::MAX_TUBES;
+    use krabton_engine::dsp::wind_chimes::*;
+    let w = 300.0;
+    let (rect, _) = ui.allocate_exact_size(vec2(w, height), Sense::hover());
+    let resp = ui.interact(rect, id, Sense::click_and_drag());
+    let mut changed = false;
+    if let Some(pos) = resp.interact_pointer_pos().filter(|_| resp.dragged() || resp.clicked()) {
+        let v = (((pos.x - rect.left() - 10.0) / (w - 20.0)).clamp(0.0, 1.0) * 1.5 * 100.0).round() / 100.0;
+        changed |= set(p, WIND, v);
+    }
+    let painter = frame(ui, rect);
+    let s = shape(p);
+    let f = tube_freqs(p);
+    let names = (0..s.tubes).map(|i| krabton_engine::note_name((p[BASE_NOTE] + 12.0 * (f[i] / f[0]).log2()).round().clamp(0.0, 127.0) as u8)).collect();
+    let mat = (p[MATERIAL].round().max(0.0) as usize).min(MATERIALS.len() - 1);
+    let v = &live.vals;
+    let on = v[4] > 0.5;
+    let mut st = super::chime_view::ChimeState { clapper: [v[0], v[1]], wind: if on { v[2] } else { 0.0 }, dir: if on { v[3] } else { 0.4 }, ..Default::default() };
+    if on {
+        for i in 0..MAX_TUBES {
+            st.tube[i] = [v[5 + i], v[13 + i]];
+            st.ring[i] = (v[21 + i] * 3.0).min(1.0);
+        }
+        ui.ctx().request_repaint();
+    }
+    let look = super::chime_view::ChimeLook { shape: s, color: super::chime_view::material_color(mat), thickness: p[THICKNESS], names };
+    let t = ui.input(|i| i.time) as f32;
+    super::chime_view::draw(&painter, rect, &look, &st, t);
+    caption(&painter, rect.left_top() + vec2(10.0, 6.0), Align2::LEFT_TOP, &format!("{} · {} tubes", MATERIALS[mat], s.tubes), ORANGE);
+    caption(&painter, pos2(rect.right() - 10.0, rect.top() + 6.0), Align2::RIGHT_TOP, &format!("wind {:.0}%", if on { v[2] } else { p[WIND] } * 100.0), DIM);
+    resp.on_hover_text("Drag left or right: the wind. Every strike is the clapper meeting a tube; play a key to touch one");
+    changed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -454,6 +494,10 @@ mod tests {
         show(|ui, live| {
             let mut p = waves::preset(waves::preset_names()[0]);
             waves_screen(ui, Id::new("w"), &mut p, live, 160.0);
+        });
+        show(|ui, live| {
+            let mut p = wind_chimes::preset("Temple Brass");
+            wind_chimes_screen(ui, Id::new("c"), &mut p, live, 200.0);
         });
         show(|ui, live| {
             let mut p = guitar::preset("Steel Acoustic");

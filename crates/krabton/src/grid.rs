@@ -768,17 +768,19 @@ impl App {
                         }
                     }
                     MidiFxKind::Chimes => {
-                        // The tubes hanging from the top, longest on the left; the wind on the bottom row.
-                        let n = (dev.params[2].round() as u32).clamp(3, 9);
+                        // The tubes hanging from the top as long as they are, lit
+                        // while they ring; the wind on the bottom row.
+                        let shape = krabton_engine::sequencers::ambient::chime_shape(&self.project.scale, &dev.params);
+                        let n = shape.tubes as u32;
                         for j in 0..n {
-                            let x = j * (w - 1) / (n - 1);
-                            let len = (h - 2) - j * (h - 4) / (n - 1);
-                            let hits = ((vis[0] >> (j * 4)) & 0xf) as u8;
+                            let x = j * (w - 1) / (n - 1).max(1);
+                            let len = ((shape.lengths[j as usize] * (h - 2) as f32).round() as u32).clamp(1, h - 1);
+                            let ring = if playing && first_seq { ((vis[3] >> (8 * j)) & 0xff) as f32 / 255.0 } else { 0.0 };
                             for y in 0..len {
-                                self.grid.set(x, y, if playing && first_seq && hits & 1 == 1 && y + 1 == len { 12 } else { 3 });
+                                self.grid.set(x, y, (3.0 + 12.0 * ring).round() as u8);
                             }
                         }
-                        let wind = if playing && first_seq { (vis[1] & 0xffff) as f32 / 1000.0 } else { dev.params[0] };
+                        let wind = if playing && first_seq { ((vis[0] >> 32) & 0xff) as f32 / 255.0 * 1.5 } else { dev.params[0] };
                         for x in 0..((wind * w as f32).round() as u32).min(w) {
                             self.grid.set(x, h - 1, 4);
                         }

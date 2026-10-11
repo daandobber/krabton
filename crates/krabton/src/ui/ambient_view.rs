@@ -24,12 +24,6 @@ fn voice_color(i: usize) -> Color32 {
     ][i % 7]
 }
 
-/// A number in 0..1 that looks random but is the same for the same `k`.
-fn hash01(k: i32) -> f32 {
-    let s = (k as f32 * 12.9898 + 4.1).sin() * 43_758.547;
-    s - s.floor()
-}
-
 fn dice_seed() -> u32 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(1) | 1
 }
@@ -278,88 +272,47 @@ pub(crate) fn bloom(ui: &mut Ui, id: Id, params: &[f32], data: &mut Vec<u8>, liv
 
 // ---------------------------------------------------------------- chimes
 
-/// Tubes swinging in the wind, longest (lowest) on the left; one lights up
-/// when it strikes. Drag left or right to set the wind.
-pub(crate) fn chimes(ui: &mut Ui, id: Id, params: &mut [f32], live: Live, accent: Color32, height: f32) -> bool {
-    let w = 230.0;
+/// The wind chime itself, as the engine simulates it: the clapper swings,
+/// and a tube lights up exactly when it is struck. Drag left or right to
+/// set the wind.
+pub(crate) fn chimes(ui: &mut Ui, id: Id, params: &mut [f32], live: Live, height: f32) -> bool {
+    let w = 260.0;
     let (rect, resp) = ui.allocate_exact_size(vec2(w, height), Sense::click_and_drag());
-    let p = ui.painter().clone();
+    let p = ui.painter_at(rect);
     rect_fill(&p, rect, 3.0, KNOB);
     let mut changed = false;
     if let Some(pos) = resp.interact_pointer_pos().filter(|_| resp.dragged() || resp.clicked()) {
-        let v = ((pos.x - rect.left() - 10.0) / (w - 20.0)).clamp(0.0, 1.0);
-        let v = (v * 100.0).round() / 100.0;
+        let v = (((pos.x - rect.left() - 10.0) / (w - 20.0)).clamp(0.0, 1.0) * 100.0).round() / 100.0;
         if params[0] != v {
             params[0] = v;
             changed = true;
         }
     }
-    let now = ui.input(|i| i.time);
-    let vis = live.on();
-    let count = vis.map(|v| ((v[1] >> 16) & 0xff) as usize).filter(|&c| c > 0).unwrap_or(params[2].round() as usize).clamp(3, 9);
-    let wind = vis.map(|v| (v[1] & 0xffff) as f32 / 1000.0).unwrap_or(params[0]);
-    // Strikes: the engine counts each tube's hits.
-    let hits_id = id.with("hits");
-    let (mut last, mut flash): (Vec<u8>, Vec<f64>) = ui.ctx().memory(|m| m.data.get_temp(hits_id).unwrap_or((vec![0; 9], vec![-10.0; 9])));
-    if let Some(v) = vis {
-        for j in 0..9 {
-            let h = ((v[0] >> (j * 4)) & 0xf) as u8;
-            if h != last[j] {
-                last[j] = h;
-                flash[j] = now;
-            }
+    let shape = ambient::chime_shape(&live.scale, params);
+    let (count, notes) = ambient::chime_notes(&live.scale, params);
+    let names = notes[..count].iter().map(|n| krabton_engine::note_name((*n).clamp(0, 127) as u8)).collect();
+    let mut st = super::chime_view::ChimeState::default();
+    if let Some(v) = live.on() {
+        let i16v = |b: u64| (b as u16 as i16) as f32 / 10000.0;
+        let i8v = |b: u64| (b as u8 as i8) as f32 / 200.0;
+        st.clapper = [i16v(v[0]), i16v(v[0] >> 16)];
+        st.wind = ((v[0] >> 32) & 0xff) as f32 / 255.0 * 1.5;
+        st.dir = ((v[0] >> 40) & 0xff) as f32 / 255.0 * std::f32::consts::TAU;
+        for i in 0..count {
+            st.tube[i] = [i8v(v[1] >> (8 * i)), i8v(v[2] >> (8 * i))];
+            st.ring[i] = ((v[3] >> (8 * i)) & 0xff) as f32 / 255.0;
         }
-    }
-    // Wind streaks, as many and as fast as the wind.
-    let streaks = (wind * 14.0) as usize;
-    for k in 0..streaks {
-        let fy = hash01(k as i32 * 7 + 3);
-        let speed = 0.4 + wind * 1.2 + hash01(k as i32) * 0.3;
-        let fx = ((now as f32 * speed * 0.35 + hash01(k as i32 * 5)) % 1.0).abs();
-        let x = rect.left() + fx * (w + 30.0) - 30.0;
-        let y = rect.top() + 20.0 + fy * (height - 46.0);
-        let x0 = x.max(rect.left() + 2.0);
-        let x1 = (x + 12.0 + wind * 14.0).min(rect.right() - 2.0);
-        if x1 > x0 {
-            p.line_segment([pos2(x0, y), pos2(x1, y)], Stroke::new(1.0_f32, Color32::from_white_alpha(if vis.is_some() { 30 } else { 14 })));
-        }
-    }
-    let beam_y = rect.top() + 10.0;
-    p.line_segment([pos2(rect.left() + 16.0, beam_y), pos2(rect.right() - 16.0, beam_y)], Stroke::new(3.0_f32, LINE));
-    let octaves = params[3].round().clamp(1.0, 3.0) as i32;
-    let set: Vec<i32> = (0..octaves).flat_map(|o| [0, 1, 2, 4, 5].map(|d| o * 7 + d)).collect();
-    let tube = |j: usize| set[(j * (set.len() - 1)) / (count - 1).max(1)];
-    let span = w - 44.0;
-    let longest = height - 50.0;
-    for j in 0..count {
-        let x = rect.left() + 22.0 + span * j as f32 / (count - 1) as f32;
-        let len = longest * (1.0 - 0.5 * j as f32 / (count - 1) as f32);
-        let sway = if vis.is_some() { wind * 0.18 * (now as f32 * (1.3 + 0.17 * j as f32) + j as f32 * 1.7).sin() } else { 0.0 };
-        let dir = vec2(sway.sin(), sway.cos());
-        let top = pos2(x, beam_y + 7.0);
-        let a = top + dir * 2.0;
-        let b = top + dir * len;
-        p.line_segment([pos2(x, beam_y), a], Stroke::new(1.0_f32, TEXT_DIM));
-        let f = (1.0 - (now - flash[j]) as f32 / 0.9).max(0.0);
-        p.line_segment([a, b], Stroke::new(5.0_f32, mix(PANEL3, accent, f)));
-        p.line_segment([a + vec2(-1.5, 0.0), b + vec2(-1.5, 0.0)], Stroke::new(1.0_f32, Color32::from_white_alpha(30 + (f * 120.0) as u8)));
-        if f > 0.0 {
-            p.circle_stroke(b, 4.0 + (1.0 - f) * 14.0, Stroke::new(1.0_f32, accent.gamma_multiply(f)));
-        }
-        text(&p, pos2(x, rect.bottom() - 3.0), Align2::CENTER_BOTTOM, degree_name(&live, params[4], tube(j)), small(), if f > 0.0 { TEXT } else { TEXT_DIM });
-    }
-    // The sail in the middle that the wind pushes.
-    let sway = if vis.is_some() { wind * 0.35 * (now as f32 * 0.9).sin() } else { 0.0 };
-    let mid = pos2(rect.center().x, beam_y);
-    let sail = mid + vec2(sway.sin(), sway.cos()) * (longest * 0.75);
-    p.line_segment([mid, sail], Stroke::new(1.0_f32, TEXT_DIM));
-    p.circle_filled(sail, 4.0, TEXT_DIM);
-    text(&p, pos2(rect.left() + 6.0, rect.top() + 14.0), Align2::LEFT_TOP, format!("wind {:.0}%", wind * 100.0), small(), TEXT_DIM);
-    if vis.is_some() || flash.iter().any(|&t| now - t < 1.0) {
         ui.ctx().request_repaint();
+    } else {
+        st.wind = params[0];
+        st.dir = 0.4;
     }
-    ui.ctx().memory_mut(|m| m.data.insert_temp(hits_id, (last, flash)));
-    resp.on_hover_text("Drag left or right: the wind");
+    let look = super::chime_view::ChimeLook { shape, color: super::chime_view::material_color(0), thickness: 0.5, names };
+    let t = ui.input(|i| i.time) as f32;
+    super::chime_view::draw(&p, rect, &look, &st, t);
+    text(&p, pos2(rect.left() + 6.0, rect.top() + 4.0), Align2::LEFT_TOP, format!("wind {:.0}%", st.wind * 100.0), small(), TEXT_DIM);
+    resp.on_hover_text("Drag left or right: the wind. A note sounds whenever the clapper meets a tube");
+    let _ = id;
     changed
 }
 
