@@ -16,6 +16,12 @@ use crate::dsp::stk_mallets::MalletsState;
 use crate::dsp::stk_strings::StringsState;
 use crate::dsp::stk_winds::WindsState;
 use crate::dsp::organ::OrganState;
+use crate::dsp::monk::MonkState;
+use crate::dsp::bassline::BasslineState;
+use crate::dsp::drone::DroneState;
+use crate::dsp::waves::WavesState;
+use crate::dsp::guitar::GuitarState;
+use crate::piano::{library::PianoLibrary, PianoState};
 use crate::dsp::rings_synth::RingsState;
 use crate::dsp::braids_synth::BraidsSynthState;
 use crate::dsp::elements_synth::ElementsSynthState;
@@ -24,7 +30,7 @@ use crate::dsp::sampler::SamplerState;
 use crate::dsp::synth::SynthState;
 use crate::audio_in::{InputRing, MAX_INPUTS};
 use crate::dsp::pan_gains;
-use crate::routing::{AudioInput, AudioOutput, Monitor, Tap};
+use crate::routing::{AudioInput, AudioOutput, MidiInput, Monitor, Tap};
 use crate::midi_fx::{MidiCtx, MidiEvent, MidiFxState};
 use crate::modulation::{ModClock, ModOwner, ModRuntime, TrackSignal, MAX_MODS, MOD_BLOCK};
 use crate::plugin::{AudioProcessor, PluginEvent, PluginEventKind};
@@ -39,6 +45,10 @@ use std::time::Instant;
 pub const MAX_BLOCK: usize = 256;
 pub const MAX_TRACKS: usize = 128;
 pub const MAX_RETURNS: usize = 8;
+/// Values an instrument reports for its display (see `InstState::visual`).
+pub const INST_VALS: usize = 32;
+/// Samples of the shown instrument's sound kept for its display.
+pub const INST_SCOPE_LEN: usize = 8192;
 
 const RELAXED: Ordering = Ordering::Relaxed;
 
@@ -145,6 +155,13 @@ pub struct EngineStatus {
     pub capturing: AtomicBool,
     /// Recorded blocks that did not fit in the channel to the UI.
     pub rec_dropped: AtomicU64,
+    /// The track whose instrument the UI shows (its id, 0: none). That
+    /// instrument reports its sound, the notes it holds and the values of
+    /// `InstState::visual` below.
+    pub inst_watch: AtomicU64,
+    pub inst_scope: crate::scope::ScopeBuffer,
+    pub inst_held: [AtomicU64; 2],
+    pub inst_vals: Vec<AtomicF32>,
 }
 
 impl EngineStatus {
@@ -166,7 +183,21 @@ impl EngineStatus {
             input_channels: AtomicU32::new(0),
             capturing: AtomicBool::new(false),
             rec_dropped: AtomicU64::new(0),
+            inst_watch: AtomicU64::new(0),
+            inst_scope: crate::scope::ScopeBuffer::new(INST_SCOPE_LEN, false),
+            inst_held: [AtomicU64::new(0), AtomicU64::new(0)],
+            inst_vals: (0..INST_VALS).map(|_| AtomicF32::new(0.0)).collect(),
         }
+    }
+
+    /// UI: the notes the shown instrument holds, as a 128-bit mask.
+    pub fn inst_notes(&self) -> u128 {
+        self.inst_held[0].load(RELAXED) as u128 | (self.inst_held[1].load(RELAXED) as u128) << 64
+    }
+
+    /// UI: the shown instrument's display values.
+    pub fn inst_values(&self) -> [f32; INST_VALS] {
+        std::array::from_fn(|i| self.inst_vals[i].load())
     }
 }
 
@@ -197,6 +228,10 @@ pub enum Command {
     SetInput(Option<Arc<InputRing>>),
     /// Start or stop sending the input of armed audio tracks to the UI.
     SetCapture(bool),
+    /// The sustain pedal (MIDI CC 64) for a track's instrument.
+    Sustain { track: u64, down: bool },
+    /// The grand piano's samples (installed, or none).
+    SetPianoLibrary(Option<Arc<PianoLibrary>>),
 }
 
 /// Frames per recorded block.
@@ -215,6 +250,19 @@ pub struct RecChunk {
     pub r: [f32; REC_FRAMES],
 }
 
+/// A note an armed MIDI track got from another track ("MIDI From"), for the
+/// UI to record: where it falls in the track's playing session clip.
+#[derive(Clone, Copy, Debug)]
+pub struct MidiRec {
+    pub track: u64,
+    pub pitch: u8,
+    pub vel: f32,
+    pub on: bool,
+    /// The playing slot (-1: none) and the position in its clip (beats).
+    pub slot: i32,
+    pub pos: f64,
+}
+
 /// Something the audio thread no longer needs. Drop it on another thread.
 pub struct Garbage(#[allow(dead_code)] GarbageInner);
 
@@ -227,6 +275,7 @@ enum GarbageInner {
     Sample(SampleRef),
     Processor(Box<dyn AudioProcessor>),
     Input(Arc<InputRing>),
+    PianoLibrary(Arc<PianoLibrary>),
 }
 
 /// The UI side of the engine.
@@ -236,6 +285,8 @@ pub struct EngineHandle {
     pub status: Arc<EngineStatus>,
     /// Recorded audio of armed tracks (see `Command::SetCapture`).
     pub recorded: Receiver<RecChunk>,
+    /// Notes armed tracks got from other tracks.
+    pub midi_recorded: Receiver<MidiRec>,
 }
 
 impl EngineHandle {
@@ -294,6 +345,12 @@ enum InstState {
     Winds(Box<WindsState>),
     Organ(Box<OrganState>),
     Rings(Box<RingsState>),
+    Monk(Box<MonkState>),
+    Piano(Box<PianoState>),
+    Bassline(Box<BasslineState>),
+    Drone(Box<DroneState>),
+    Waves(Box<WavesState>),
+    Guitar(Box<GuitarState>),
     Plugin { instance: u64, proc: Option<Box<dyn AudioProcessor>>, pending: Vec<PluginEvent> },
 }
 
@@ -318,6 +375,12 @@ impl InstState {
             Some(Instrument::Winds { .. }) => InstState::Winds(Box::new(WindsState::new(sr))),
             Some(Instrument::Organ { .. }) => InstState::Organ(Box::new(OrganState::new(sr))),
             Some(Instrument::Rings { .. }) => InstState::Rings(Box::new(RingsState::new(sr))),
+            Some(Instrument::Monk { .. }) => InstState::Monk(Box::new(MonkState::new(sr))),
+            Some(Instrument::Piano { .. }) => InstState::Piano(Box::new(PianoState::new(sr))),
+            Some(Instrument::Bassline { .. }) => InstState::Bassline(Box::new(BasslineState::new(sr))),
+            Some(Instrument::Drone { .. }) => InstState::Drone(Box::new(DroneState::new(sr))),
+            Some(Instrument::Waves { .. }) => InstState::Waves(Box::new(WavesState::new(sr))),
+            Some(Instrument::Guitar { .. }) => InstState::Guitar(Box::new(GuitarState::new(sr))),
         }
     }
 
@@ -356,6 +419,12 @@ impl InstState {
                 | (InstState::Winds(_), Some(Instrument::Winds { .. }))
                 | (InstState::Organ(_), Some(Instrument::Organ { .. }))
                 | (InstState::Rings(_), Some(Instrument::Rings { .. }))
+                | (InstState::Monk(_), Some(Instrument::Monk { .. }))
+                | (InstState::Piano(_), Some(Instrument::Piano { .. }))
+                | (InstState::Bassline(_), Some(Instrument::Bassline { .. }))
+                | (InstState::Drone(_), Some(Instrument::Drone { .. }))
+                | (InstState::Waves(_), Some(Instrument::Waves { .. }))
+                | (InstState::Guitar(_), Some(Instrument::Guitar { .. }))
         ) || matches!((self, i), (InstState::Plugin { instance, .. }, Some(Instrument::Plugin(p))) if *instance == p.instance)
     }
 
@@ -379,6 +448,12 @@ impl InstState {
             (InstState::Winds(s), Instrument::Winds { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Organ(s), Instrument::Organ { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Rings(s), Instrument::Rings { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Monk(s), Instrument::Monk { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Piano(s), Instrument::Piano { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Bassline(s), Instrument::Bassline { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Drone(s), Instrument::Drone { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Waves(s), Instrument::Waves { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Guitar(s), Instrument::Guitar { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             _ => {}
         }
     }
@@ -401,6 +476,12 @@ impl InstState {
             (InstState::Winds(s), Instrument::Winds { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Organ(s), Instrument::Organ { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Rings(s), Instrument::Rings { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Monk(s), Instrument::Monk { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Piano(s), Instrument::Piano { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Bassline(s), Instrument::Bassline { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Drone(s), Instrument::Drone { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Waves(s), Instrument::Waves { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Guitar(s), Instrument::Guitar { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             _ => {}
         }
     }
@@ -424,8 +505,34 @@ impl InstState {
             InstState::Winds(s) => s.all_off(),
             InstState::Organ(s) => s.all_off(),
             InstState::Rings(s) => s.all_off(),
+            InstState::Monk(s) => s.all_off(),
+            InstState::Piano(s) => s.all_off(),
+            InstState::Bassline(s) => s.all_off(),
+            InstState::Drone(s) => s.all_off(),
+            InstState::Waves(s) => s.all_off(),
+            InstState::Guitar(s) => s.all_off(),
             InstState::None => {}
         }
+    }
+
+    /// Fills in what this instrument shows on its display (zeros where it has
+    /// nothing to say). Returns false for instruments without such values.
+    fn visual(&self, out: &mut [f32; INST_VALS]) -> bool {
+        match self {
+            InstState::Shakers(s) => s.visual(out),
+            InstState::Organ(s) => s.visual(out),
+            InstState::Analog(s) => s.visual(out),
+            InstState::Synth(s) => s.visual(out),
+            InstState::Voice(s) => s.visual(out),
+            InstState::Monk(s) => s.visual(out),
+            InstState::Piano(s) => s.visual(out),
+            InstState::Bassline(s) => s.visual(out),
+            InstState::Drone(s) => s.visual(out),
+            InstState::Waves(s) => s.visual(out),
+            InstState::Guitar(s) => s.visual(out),
+            _ => return false,
+        }
+        true
     }
 
     fn render(&mut self, inst: &Instrument, ov: Option<&[f32]>, l: &mut [f32], r: &mut [f32], sr: f32) {
@@ -446,6 +553,12 @@ impl InstState {
             (InstState::Winds(s), Instrument::Winds { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Organ(s), Instrument::Organ { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Rings(s), Instrument::Rings { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Monk(s), Instrument::Monk { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Piano(s), Instrument::Piano { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Bassline(s), Instrument::Bassline { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Drone(s), Instrument::Drone { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Waves(s), Instrument::Waves { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Guitar(s), Instrument::Guitar { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Plugin { proc, pending, .. }, Instrument::Plugin(_)) => {
                 if let Some(p) = proc {
                     p.process(pending, l, r);
@@ -493,6 +606,10 @@ struct TrackRt {
     out_r: Vec<f32>,
     /// What this (audio) track hears: its input and tracks sent to it.
     sources: Vec<Source>,
+    /// The notes this track played in the current segment (for tracks that
+    /// take them) and the track it takes notes from.
+    midi_out: Vec<Ev>,
+    midi_src: Option<usize>,
     /// False when the track's output goes into another track.
     to_master: bool,
 }
@@ -534,6 +651,8 @@ impl TrackRt {
             out_l: vec![0.0; MAX_BLOCK],
             out_r: vec![0.0; MAX_BLOCK],
             sources: Vec::with_capacity(8),
+            midi_out: Vec::with_capacity(512),
+            midi_src: None,
             to_master: true,
         }
     }
@@ -746,6 +865,11 @@ pub struct Engine {
     resample: ResampleRing,
     capture: bool,
     rec_tx: Sender<RecChunk>,
+    midi_rec_tx: Sender<MidiRec>,
+    /// The grand piano's samples, for every Grand Piano.
+    piano_lib: Option<Arc<PianoLibrary>>,
+    /// The notes the current track takes from another track.
+    midi_scratch: Vec<Ev>,
 }
 
 impl Engine {
@@ -754,6 +878,7 @@ impl Engine {
         let (garbage_tx, garbage_rx) = bounded(8192);
         // About 20 seconds of one recording track; the UI drains it every frame.
         let (rec_tx, rec_rx) = bounded(4096);
+        let (midi_rec_tx, midi_rec_rx) = bounded(4096);
         let status = Arc::new(EngineStatus::new());
         status.sample_rate.store(sample_rate);
         let mut e = Engine {
@@ -785,9 +910,12 @@ impl Engine {
             resample: ResampleRing::new(),
             capture: false,
             rec_tx,
+            midi_rec_tx,
+            midi_scratch: Vec::with_capacity(512),
+            piano_lib: crate::piano::library::shared(),
         };
         e.reconcile();
-        (e, EngineHandle { commands: cmd_tx, garbage: garbage_rx, status, recorded: rec_rx })
+        (e, EngineHandle { commands: cmd_tx, garbage: garbage_rx, status, recorded: rec_rx, midi_recorded: midi_rec_rx })
     }
 
     pub fn sample_rate(&self) -> f32 {
@@ -1026,6 +1154,23 @@ impl Engine {
                 self.capture = on;
                 self.status.capturing.store(on, RELAXED);
             }
+            Command::Sustain { track, down } => {
+                if let Some(InstState::Piano(s)) = self.project.track_index(track).and_then(|ti| self.tracks.get_mut(ti)).map(|rt| &mut rt.instrument) {
+                    s.sustain(down);
+                }
+            }
+            Command::SetPianoLibrary(lib) => {
+                let mut old = Vec::new();
+                for rt in self.tracks.iter_mut() {
+                    if let InstState::Piano(s) = &mut rt.instrument {
+                        old.extend(s.set_library(lib.clone()));
+                    }
+                }
+                old.extend(std::mem::replace(&mut self.piano_lib, lib));
+                for o in old {
+                    self.trash(GarbageInner::PianoLibrary(o));
+                }
+            }
         }
     }
 
@@ -1127,6 +1272,9 @@ impl Engine {
         for (t, rt) in project.tracks.iter().zip(self.tracks.iter_mut()) {
             if !rt.instrument.matches(t.instrument.as_ref()) {
                 let mut old = std::mem::replace(&mut rt.instrument, InstState::for_instrument(t.instrument.as_ref(), sr));
+                if let InstState::Piano(s) = &mut rt.instrument {
+                    s.set_library(self.piano_lib.clone());
+                }
                 old.suspend();
                 trash.push(GarbageInner::Instrument(old));
                 if let InstState::Plugin { instance, proc, .. } = &mut rt.instrument {
@@ -1186,6 +1334,7 @@ impl Engine {
         self.order.clear();
         self.order.extend(project.routing_order());
         for (ti, (t, rt)) in project.tracks.iter().zip(self.tracks.iter_mut()).enumerate() {
+            rt.midi_src = project.midi_source(ti);
             rt.sources.clear();
             if t.kind == TrackKind::Audio {
                 match t.input {
@@ -1297,8 +1446,13 @@ impl Engine {
             if listens {
                 gather_input(&self.tracks, ti, &self.in_buf, &self.resample, seg, &mut self.in_l, &mut self.in_r);
             }
+            // The notes it takes from another track (processed before it).
+            self.midi_scratch.clear();
+            if let Some(src) = self.tracks.get(ti).and_then(|rt| rt.midi_src).and_then(|si| self.tracks.get(si)) {
+                self.midi_scratch.extend_from_slice(&src.midi_out);
+            }
             let Some(rt) = self.tracks.get_mut(ti) else { continue };
-            let TrackRt { instrument, devices, playing: pc, overridden, offs, events, fx_buf, live, midi_fx, fx_sig, sounding, signal, l, r, gain_l, gain_r, sends, pre_l, pre_r, post_l, post_r, out_l, out_r, to_master, .. } = &mut **rt;
+            let TrackRt { instrument, devices, playing: pc, overridden, offs, events, fx_buf, live, midi_fx, fx_sig, sounding, signal, l, r, gain_l, gain_r, sends, pre_l, pre_r, post_l, post_r, out_l, out_r, to_master, midi_out, .. } = &mut **rt;
             l[..seg].fill(0.0);
             r[..seg].fill(0.0);
             events.clear();
@@ -1357,6 +1511,28 @@ impl Engine {
             }
 
             events.append(live);
+            if !self.midi_scratch.is_empty() {
+                // Like live notes: heard with Monitor In, or Auto when armed.
+                let hears = match track.monitor {
+                    Monitor::In => true,
+                    Monitor::Auto => track.arm,
+                    Monitor::Off => false,
+                };
+                if hears {
+                    events.extend_from_slice(&self.midi_scratch);
+                }
+                // An armed track records them (the UI writes them into its clip).
+                if track.arm && playing {
+                    let clip = pc.and_then(|pc| track.slots.get(pc.slot).and_then(|s| s.as_ref()).map(|c| (pc.slot, pc.start, c.length.max(1.0 / 64.0))));
+                    for e in &self.midi_scratch {
+                        let (slot, pos) = match clip {
+                            Some((slot, start, len)) => (slot as i32, (s0 + e.offset as f64 / spb - start).rem_euclid(len)),
+                            None => (-1, 0.0),
+                        };
+                        let _ = self.midi_rec_tx.try_send(MidiRec { track: track.id, pitch: e.pitch, vel: e.vel, on: e.on, slot, pos });
+                    }
+                }
+            }
             events.sort_unstable_by_key(|e| (e.offset, e.on));
             // MIDI effects transform the events before the instrument hears them.
             if track.midi_devices.iter().any(|d| d.enabled) {
@@ -1383,7 +1559,12 @@ impl Engine {
             }
             // The chain changed or the transport stopped: notes started by
             // effects that are gone or bypassed would never get their note-off.
-            let sig = fx_signature(&track.midi_devices);
+            // Changing where the notes come from also lets go of what is held.
+            let route = match track.midi_in {
+                MidiInput::Track(id) => id.wrapping_mul(0x9E37_79B9_7F4A_7C15),
+                _ => 0,
+            };
+            let sig = fx_signature(&track.midi_devices) ^ route;
             if sig != *fx_sig {
                 *fx_sig = sig;
                 fx_buf.clear();
@@ -1410,6 +1591,9 @@ impl Engine {
                 }
             }
 
+            midi_out.clear();
+            midi_out.extend_from_slice(events);
+
             if let Some(inst) = &track.instrument {
                 let ov = mods.params(ModOwner::Instrument(track.id));
                 // Clocks in a modular patch keep time with the song.
@@ -1434,6 +1618,24 @@ impl Engine {
                 }
                 if pos < seg {
                     instrument.render(inst, ov, &mut l[pos..seg], &mut r[pos..seg], sr);
+                }
+                if track.id == status.inst_watch.load(RELAXED) {
+                    status.inst_scope.write(&l[..seg], &r[..seg]);
+                    let mut held = [0u64; 2];
+                    for (p, &n) in sounding.iter().enumerate() {
+                        if n > 0 {
+                            held[p / 64] |= 1 << (p % 64);
+                        }
+                    }
+                    for (a, h) in status.inst_held.iter().zip(held) {
+                        a.store(h, RELAXED);
+                    }
+                    let mut vals = [0.0; INST_VALS];
+                    if instrument.visual(&mut vals) {
+                        for (a, v) in status.inst_vals.iter().zip(vals) {
+                            a.store(v);
+                        }
+                    }
                 }
             }
 
@@ -2066,6 +2268,53 @@ mod tests {
         h.send(Command::Stop);
         run(&mut e, 0.05);
         assert_eq!(sounding(&e), 0, "stop left notes on");
+    }
+
+    #[test]
+    fn a_track_takes_the_notes_another_track_plays() {
+        use crate::midi_fx::MidiFxKind;
+        let mut p = crate::demo::demo_project();
+        let (src, dst) = (2, 3);
+        for ti in [src, dst] {
+            p.tracks[ti].arrangement.clear();
+        }
+        let mut seq = p.make_midi_device(MidiFxKind::Drunk);
+        seq.params[3] = 0.0; // never rest
+        seq.params[5] = 1.0; // full gate
+        p.tracks[src].midi_devices.push(seq);
+        p.tracks[dst].midi_in = MidiInput::Track(p.tracks[src].id);
+        p.tracks[dst].monitor = Monitor::In;
+        assert_eq!(p.midi_source(dst), Some(src));
+        assert!(!p.can_route_midi(dst, src), "no loops");
+        assert!(p.routing_order().iter().position(|&t| t == src) < p.routing_order().iter().position(|&t| t == dst));
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p.clone()));
+        let sounding = |e: &Engine, ti: usize| e.tracks[ti].sounding.iter().map(|&n| n as u32).sum::<u32>();
+        h.send(Command::Play);
+        let mut both = 0;
+        for _ in 0..50 {
+            run(&mut e, 0.01);
+            both += (sounding(&e, src) > 0 && sounding(&e, dst) > 0) as u32;
+        }
+        assert!(both > 40, "the second track plays along in {both} of 50 checks");
+        assert!(h.midi_recorded.try_recv().is_err(), "not armed: nothing to record");
+        // Armed with a clip playing: the notes go to the UI to record, at their place in the clip.
+        let clip_id = p.alloc_id();
+        p.tracks[dst].slots[0] = Some(Clip::new_midi(clip_id, "Rec", p.tracks[dst].color, 4.0));
+        p.tracks[dst].arm = true;
+        h.send(Command::SetProject(Arc::new(p.clone())));
+        h.send(Command::LaunchClip { track: p.tracks[dst].id, slot: 0 });
+        // The launch waits for the next bar.
+        run(&mut e, 4.0);
+        let got: Vec<MidiRec> = std::iter::from_fn(|| h.midi_recorded.try_recv().ok()).collect();
+        assert!(got.iter().filter(|m| m.on).count() > 3, "{}", got.len());
+        assert!(got.iter().filter(|m| m.slot == 0).all(|m| (0.0..4.0).contains(&m.pos)));
+        assert!(got.iter().any(|m| m.slot == 0));
+        // Another source: what was held is let go.
+        p.tracks[dst].midi_in = MidiInput::None;
+        h.send(Command::SetProject(Arc::new(p.clone())));
+        run(&mut e, 0.05);
+        assert_eq!(sounding(&e, dst), 0, "rerouting left notes on");
+        assert!(sounding(&e, src) > 0);
     }
 
     /// Average post-fader peak of a track over `seconds`, sampled every 10 ms.

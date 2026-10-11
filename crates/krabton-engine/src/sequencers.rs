@@ -14,6 +14,8 @@
 //! More in `more`: Orbits, Chaos, Automaton, Ant, Pong, Markov, Rain, Words
 //! and Lorenz.
 
+pub mod ambient;
+pub mod strum;
 pub mod more;
 
 use crate::dsp::Rng;
@@ -34,7 +36,8 @@ pub static POLYMETER: &[ParamSpec] = &[
     ParamSpec::int("Base Note", "Notes", 24.0, 96.0, 60.0, Unit::None),
     ParamSpec::lin("Gate", "Notes", 0.1, 1.0, 0.8, Unit::Percent),
     ParamSpec::lin("Velocity", "Notes", 0.05, 1.0, 0.8, Unit::Percent),
-];
+    ParamSpec::toggle("Transpose", "Keys", false),
+    ParamSpec::toggle("Hold", "Keys", false),];
 pub static EUCLID: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
     ParamSpec::lin("Velocity", "Clock", 0.05, 1.0, 0.85, Unit::Percent),
@@ -54,7 +57,8 @@ pub static EUCLID: &[ParamSpec] = &[
     ParamSpec::int("Pulses 4", "Ring 4", 0.0, 16.0, 5.0, Unit::None),
     ParamSpec::int("Rotate 4", "Ring 4", 0.0, 15.0, 2.0, Unit::None),
     ParamSpec::int("Note 4", "Ring 4", 0.0, 127.0, 37.0, Unit::None),
-];
+    ParamSpec::toggle("Transpose", "Keys", false),
+    ParamSpec::toggle("Hold", "Keys", false),];
 pub static TURING: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
     ParamSpec::int("Length", "Register", 2.0, 16.0, 8.0, Unit::None),
@@ -64,14 +68,16 @@ pub static TURING: &[ParamSpec] = &[
     ParamSpec::int("Base Note", "Notes", 24.0, 96.0, 60.0, Unit::None),
     ParamSpec::lin("Gate", "Notes", 0.1, 1.0, 0.5, Unit::Percent),
     ParamSpec::lin("Velocity", "Notes", 0.05, 1.0, 0.8, Unit::Percent),
-];
+    ParamSpec::toggle("Transpose", "Keys", false),
+    ParamSpec::toggle("Hold", "Keys", false),];
 pub static LIFE: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
     ParamSpec::int("Evolve", "Clock", 1.0, 32.0, 16.0, Unit::None),
     ParamSpec::int("Base Note", "Notes", 24.0, 96.0, 48.0, Unit::None),
     ParamSpec::lin("Gate", "Notes", 0.1, 1.0, 0.6, Unit::Percent),
     ParamSpec::lin("Velocity", "Notes", 0.05, 1.0, 0.7, Unit::Percent),
-];
+    ParamSpec::toggle("Transpose", "Keys", false),
+    ParamSpec::toggle("Hold", "Keys", false),];
 pub const DROPS: &[&str] = &["1/16", "1/8", "1/4", "1/2", "1 Bar", "2 Bars"];
 pub const DROP_BEATS: [f64; 6] = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0];
 pub const REDROPS: &[&str] = &["At Once", "Next Beat", "Next Bar", "2 Bars"];
@@ -103,7 +109,8 @@ pub static BOUNCE: &[ParamSpec] = &[
     ParamSpec::choice("Drop 6", "Drops", DROPS, 4),
     ParamSpec::choice("Drop 7", "Drops", DROPS, 1),
     ParamSpec::choice("Drop 8", "Drops", DROPS, 5),
-];
+    ParamSpec::toggle("Transpose", "Keys", false),
+    ParamSpec::toggle("Hold", "Keys", false),];
 pub static DRUNK: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
     ParamSpec::int("Step", "Walk", 1.0, 4.0, 1.0, Unit::None),
@@ -112,7 +119,8 @@ pub static DRUNK: &[ParamSpec] = &[
     ParamSpec::int("Base Note", "Notes", 24.0, 96.0, 60.0, Unit::None),
     ParamSpec::lin("Gate", "Notes", 0.1, 1.0, 0.6, Unit::Percent),
     ParamSpec::lin("Velocity", "Notes", 0.05, 1.0, 0.75, Unit::Percent),
-];
+    ParamSpec::toggle("Transpose", "Keys", false),
+    ParamSpec::toggle("Hold", "Keys", false),];
 
 // ---------------------------------------------------------------- pattern data
 
@@ -223,14 +231,29 @@ pub fn euclid_hit(i: usize, steps: usize, pulses: usize, rotate: usize) -> bool 
 
 pub const MAX_BALLS: usize = 8;
 
+/// Where a sequencer keeps its Transpose and Hold switches: the last two
+/// parameters (Acid had Transpose before the others and keeps it at 7).
+pub fn keys_params(kind: crate::midi_fx::MidiFxKind) -> (usize, usize) {
+    if kind == crate::midi_fx::MidiFxKind::Acid {
+        return (7, 8);
+    }
+    let n = kind.specs().len();
+    (n.saturating_sub(2), n.saturating_sub(1))
+}
+
 pub struct SeqState {
     pub(crate) offs: Vec<(u64, u8)>,
     /// Notes that start in a later block: (frame, pitch, velocity, length).
     pub(crate) pending: Vec<(u64, u8, f32, u64)>,
     /// Acid: a note whose end waits for the next step (slide).
     pub(crate) acid_open: Option<u8>,
-    /// Acid: the key held on the track, for pattern transposition.
-    pub(crate) held_key: Option<u8>,
+    /// Transpose: keys held on the track (newest last), the last one
+    /// pressed, and the shift that applies now: (key, reference note).
+    keys: Vec<u8>,
+    latched: Option<u8>,
+    pub(crate) shift: Option<(i32, i32)>,
+    /// False when the sequencer applies the shift itself (Acid).
+    shift_in_note: bool,
     pub(crate) rng: Rng,
     reg: u16,
     cells: [u16; 8],
@@ -245,6 +268,7 @@ pub struct SeqState {
     /// Where the next block should start; anything else is a jump (loop, locate).
     next_beat: f64,
     pub(crate) extra: Box<more::Extra>,
+    pub(crate) ambient: Box<ambient::Ambient>,
     pos: i32,
     /// Packed state for the UI / grid (layout depends on the sequencer).
     pub visual: [u64; 4],
@@ -262,7 +286,10 @@ impl SeqState {
             offs: Vec::with_capacity(256),
             pending: Vec::with_capacity(256),
             acid_open: None,
-            held_key: None,
+            keys: Vec::with_capacity(16),
+            latched: None,
+            shift: None,
+            shift_in_note: true,
             rng: Rng::new(0x7EA5_1234),
             reg: 0b1011_0010_0110_1001,
             cells: [0; 8],
@@ -274,6 +301,7 @@ impl SeqState {
             ball_last: [f64::NEG_INFINITY; MAX_BALLS],
             next_beat: f64::NEG_INFINITY,
             extra: Box::default(),
+            ambient: Box::default(),
             pos: 0,
             visual: [0; 4],
         }
@@ -287,13 +315,30 @@ impl SeqState {
         self.balls_ready = false;
         self.ball_last = [f64::NEG_INFINITY; MAX_BALLS];
         self.extra.reset();
+        self.ambient.restart();
     }
 
     fn unit(&mut self) -> f32 {
         (self.rng.bipolar() + 1.0) * 0.5
     }
 
+    /// `pitch` moved by the held (or latched) key: in scale steps when the
+    /// project's scale is on, so the pattern stays in key, else in semitones.
+    pub(crate) fn shifted(&self, ctx: &MidiCtx, pitch: i32) -> i32 {
+        match self.shift {
+            None => pitch,
+            Some((key, reference)) if ctx.scale_on => {
+                let (d, rest) = ctx.scale.locate(pitch);
+                let (dk, _) = ctx.scale.locate(key);
+                let (dr, _) = ctx.scale.locate(reference);
+                ctx.scale.pitch_at(d + dk - dr) + rest
+            }
+            Some((key, reference)) => pitch + key - reference,
+        }
+    }
+
     pub(crate) fn note(&mut self, ctx: &MidiCtx, at: u64, pitch: i32, vel: f32, len_frames: f64, out: &mut Vec<MidiEvent>) {
+        let pitch = if self.shift_in_note { self.shifted(ctx, pitch) } else { pitch };
         let pitch = pitch.clamp(0, 127) as u8;
         let offset = at.saturating_sub(ctx.now).min(ctx.len.saturating_sub(1) as u64) as u32;
         // Retrigger: end a still-sounding copy first.
@@ -323,40 +368,68 @@ impl SeqState {
     /// Generates this block's notes. `kind` selects the sequencer.
     pub fn process(&mut self, kind: crate::midi_fx::MidiFxKind, p: &[f32], data: &[u8], out: &mut Vec<MidiEvent>, ctx: &MidiCtx) {
         use crate::midi_fx::MidiFxKind as K;
-        if kind == K::Acid && p.len() > 7 && p[7] >= 0.5 {
-            // Key Transpose: held keys move the pattern instead of sounding.
+        // Transpose: notes coming in move the pattern instead of sounding;
+        // with Hold the last one stays, otherwise only while it is held.
+        let (ti, hi) = keys_params(kind);
+        if p.get(ti).is_some_and(|v| *v >= 0.5) {
             for e in out.iter() {
+                self.keys.retain(|k| *k != e.pitch);
                 if e.on {
-                    self.held_key = Some(e.pitch);
-                } else if self.held_key == Some(e.pitch) {
-                    self.held_key = None;
+                    if self.keys.len() == self.keys.capacity() {
+                        self.keys.remove(0);
+                    }
+                    self.keys.push(e.pitch);
+                    self.latched = Some(e.pitch);
                 }
             }
             out.clear();
+            let hold = p.get(hi).is_some_and(|v| *v >= 0.5);
+            let key = if hold { self.latched } else { self.keys.last().copied() };
+            // The pattern is where it was written with its base note held (C3 without one).
+            let reference = kind.specs().iter().position(|s| s.name == "Base Note").and_then(|i| p.get(i)).map(|v| v.round() as i32).unwrap_or(60);
+            self.shift = key.map(|k| (k as i32, reference));
+        } else {
+            self.keys.clear();
+            self.latched = None;
+            self.shift = None;
         }
+        // Acid and Guitar Chords move their own notes (a semitone line, chord shapes).
+        self.shift_in_note = !matches!(kind, K::Acid | K::GuitarChords);
         if ctx.playing {
             self.flush_pending(ctx, out);
         }
+        if !ctx.playing && kind == K::Bloom {
+            // Your taps sound with the transport stopped too.
+            let fresh = std::mem::replace(&mut self.next_beat, f64::NEG_INFINITY).is_finite();
+            self.bloom_stopped(p, data, out, ctx, fresh);
+            self.flush_pending(ctx, out);
+        }
         if ctx.playing {
-            if matches!(kind, K::Bounce | K::Orbits | K::Pong | K::Rain) {
+            if matches!(kind, K::Bounce | K::Orbits | K::Pong | K::Rain | K::Loops | K::Bloom | K::Chimes | K::DriftChords | K::Pedal) {
                 // Time-based: they keep their own time against the song's beat.
                 if (ctx.beat - self.next_beat).abs() > 1e-3 {
                     // The song jumped (a loop, a locate, a start): start over from here.
                     self.ball_last = [f64::NEG_INFINITY; MAX_BALLS];
                     self.balls_ready = false;
                     self.extra.rain_next = ctx.beat;
+                    self.ambient.restart();
                 }
                 self.next_beat = ctx.beat + ctx.len as f64 / ctx.samples_per_beat;
                 match kind {
                     K::Bounce => self.bounce(p, out, ctx),
                     K::Orbits => self.orbits(p, out, ctx),
                     K::Pong => self.pong(p, out, ctx),
+                    K::Loops => self.loops(p, out, ctx),
+                    K::Bloom => self.bloom(p, data, out, ctx, true),
+                    K::Chimes => self.chimes(p, out, ctx),
+                    K::DriftChords => self.drift_chords(p, out, ctx),
+                    K::Pedal => self.pedal(p, out, ctx),
                     _ => self.rain(p, out, ctx),
                 }
             } else {
                 let rate = match kind {
                     K::Polymeter | K::Euclid | K::Turing | K::Life | K::Drunk | K::Step | K::Acid | K::DrumGrid => rate_beats(p[0]),
-                    K::Chaos | K::Automaton | K::Ant | K::Markov | K::Words | K::Lorenz => rate_beats(p[0]),
+                    K::Chaos | K::Automaton | K::Ant | K::Markov | K::Words | K::Lorenz | K::Tintinnabuli => rate_beats(p[0]),
                     _ => 0.25,
                 };
                 let beat0 = ctx.beat;
@@ -376,12 +449,14 @@ impl SeqState {
                             K::Acid => self.acid(k, p, data, at, step_frames, out, ctx),
                             K::DrumGrid => self.drum_grid(k, p, data, at, step_frames, out, ctx),
                             K::Progression => self.progression(k, p, data, at, step_frames, out, ctx),
+                            K::GuitarChords => self.strum(k, p, data, at, step_frames, out, ctx),
                             K::Chaos => self.chaos(p, at, step_frames, out, ctx),
                             K::Automaton => self.automaton(p, at, step_frames, out, ctx),
                             K::Ant => self.ant(p, at, step_frames, out, ctx),
                             K::Markov => self.markov(p, at, step_frames, out, ctx),
                             K::Words => self.words(p, data, at, step_frames, out, ctx),
                             K::Lorenz => self.lorenz(p, at, step_frames, out, ctx),
+                            K::Tintinnabuli => self.tintinnabuli(k, p, at, step_frames, out, ctx),
                             _ => {}
                         }
                     }
@@ -719,6 +794,53 @@ mod tests {
         let ons = run(MidiFxKind::Drunk, &p, &[], 8.0);
         assert!(ons.len() > 10);
         assert!(ons.windows(2).all(|w| (w[0].1 as i32 - w[1].1 as i32).abs() <= 4));
+    }
+
+    #[test]
+    fn transpose_follows_keys_and_hold_keeps_the_last() {
+        use crate::midi_fx::MidiEvent;
+        for hold in [false, true] {
+            // One planet on C3, every beat.
+            let mut p = defaults(more::ORBITS);
+            p[0] = 1.0;
+            p[5] = 4.0;
+            let (ti, hi) = keys_params(MidiFxKind::Orbits);
+            p[ti] = 1.0;
+            p[hi] = if hold { 1.0 } else { 0.0 };
+            let spb = 24000.0;
+            let mut st = MidiFxState::new(MidiFxKind::Orbits);
+            let mut ons = Vec::new();
+            let release = (3.5 * spb / 256.0) as u64;
+            for b in 0..(8.0 * spb / 256.0) as u64 {
+                let now = b * 256;
+                let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0 };
+                // D3 pressed just after the first beat, let go halfway through the fourth.
+                let input = match b {
+                    1 => vec![MidiEvent::on(0, 62, 0.8)],
+                    b if b == release => vec![MidiEvent::off(0, 62)],
+                    _ => Vec::new(),
+                };
+                let mut out = Vec::new();
+                st.process(MidiFxKind::Orbits, &p, &[], &input, &mut out, &ctx);
+                ons.extend(out.iter().filter(|e| e.on).map(|e| ((now + e.offset as u64) as f64 / spb, e.pitch)));
+            }
+            // The key itself never sounds; the planet moves up a scale step while it is held.
+            let at = |beat: f64| ons.iter().find(|o| (o.0 - beat).abs() < 0.01).map(|o| o.1);
+            assert_eq!(at(0.0), Some(60));
+            assert_eq!(at(1.0), Some(62));
+            assert_eq!(at(3.0), Some(62));
+            assert_eq!(at(5.0), Some(if hold { 62 } else { 60 }), "hold {hold}");
+            assert_eq!(ons.len(), 8, "{ons:?}");
+        }
+    }
+
+    #[test]
+    fn every_sequencer_has_transpose_and_hold() {
+        for kind in MidiFxKind::SEQUENCERS {
+            let (ti, hi) = keys_params(kind);
+            assert_eq!(kind.specs()[ti].name, "Transpose", "{kind:?}");
+            assert_eq!(kind.specs()[hi].name, "Hold", "{kind:?}");
+        }
     }
 
     #[test]

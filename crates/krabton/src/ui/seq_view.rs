@@ -49,6 +49,13 @@ pub(crate) fn editor(ui: &mut Ui, id: Id, kind: MidiFxKind, params: &mut [f32], 
         MidiFxKind::Rain => super::seq_more_view::rain(ui, id, params, live, accent, height),
         MidiFxKind::Words => super::seq_more_view::words(ui, id, params, data, live, accent, height),
         MidiFxKind::Lorenz => super::seq_more_view::lorenz(ui, id, params, live, accent, height),
+        MidiFxKind::Loops => super::ambient_view::loops(ui, id, params, live, height),
+        MidiFxKind::Bloom => super::ambient_view::bloom(ui, id, params, data, live, accent, height),
+        MidiFxKind::Chimes => super::ambient_view::chimes(ui, id, params, live, accent, height),
+        MidiFxKind::DriftChords => super::ambient_view::drift_chords(ui, id, params, live, height),
+        MidiFxKind::Tintinnabuli => super::ambient_view::tintinnabuli(ui, id, params, live, accent, height),
+        MidiFxKind::Pedal => super::ambient_view::pedal(ui, id, params, live, accent, height),
+        MidiFxKind::GuitarChords => super::chords_view::guitar_chords(ui, id, params, data, live, accent, height),
         MidiFxKind::Drunk => drunk(ui, id, params, live, accent, height),
         MidiFxKind::Step => super::classic_view::step(ui, id, params, data, live, lane, accent, height),
         MidiFxKind::Acid => super::classic_view::acid(ui, id, params, data, live, accent, height),
@@ -603,6 +610,19 @@ mod tests {
         ];
         drive(MidiFxKind::Bounce, &mut p, &mut data, &mut 0, &frames);
         assert!(p[8] >= 3.0, "note {}", p[8]);
+    }
+
+    #[test]
+    fn bounce_dice_rolls_new_notes() {
+        let mut p = defaults(sequencers::BOUNCE);
+        let mut data = Vec::new();
+        let before: Vec<f32> = p[8..16].to_vec();
+        // The "notes" button sits at the top right, left of "drops".
+        let at = pos2(6.0 + 8.0 * 31.0 + 6.0 - 2.0 * 46.0 - 8.0 + 20.0, 8.0);
+        let frames = vec![vec![(at, Some(true))], vec![(at, Some(false))]];
+        drive(MidiFxKind::Bounce, &mut p, &mut data, &mut 0, &frames);
+        assert_ne!(p[8..16].to_vec(), before, "notes rolled");
+        assert!(p[8..16].iter().all(|n| (-5.0..=14.0).contains(n) && n.fract() == 0.0));
     }
 
     #[test]

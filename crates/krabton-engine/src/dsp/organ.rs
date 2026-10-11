@@ -218,6 +218,17 @@ impl OrganState {
         }
     }
 
+    /// For the display: [0] horn and [1] drum position in their turn (0..1),
+    /// [2] the strongest percussion and [3] the loudest voice (0..1).
+    pub fn visual(&self, out: &mut [f32; crate::engine::INST_VALS]) {
+        let (h, d) = self.rotary.phases();
+        out[0] = h;
+        out[1] = d;
+        let on = || self.voices.iter().filter(|v| v.active);
+        out[2] = on().map(|v| v.perc).fold(0.0, f32::max);
+        out[3] = on().map(|v| v.amp).fold(0.0, f32::max);
+    }
+
     pub fn all_off(&mut self) {
         for v in self.voices.iter_mut() {
             v.gate = false;

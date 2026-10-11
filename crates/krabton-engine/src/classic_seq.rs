@@ -22,7 +22,8 @@ pub static STEP: &[ParamSpec] = &[
     ParamSpec::lin("Swing", "Clock", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::int("Base Note", "Notes", 24.0, 96.0, 48.0, Unit::None),
     ParamSpec::lin("Velocity", "Notes", 0.1, 1.5, 1.0, Unit::Percent),
-];
+    ParamSpec::toggle("Transpose", "Keys", false),
+    ParamSpec::toggle("Hold", "Keys", false),];
 pub static ACID: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
     ParamSpec::int("Steps", "Clock", 1.0, 16.0, 16.0, Unit::None),
@@ -31,7 +32,9 @@ pub static ACID: &[ParamSpec] = &[
     ParamSpec::lin("Gate", "Notes", 0.1, 1.0, 0.55, Unit::Percent),
     ParamSpec::lin("Accent", "Notes", 0.0, 1.0, 0.6, Unit::Percent),
     ParamSpec::toggle("In Key", "Notes", true),
-    ParamSpec::toggle("Key Transpose", "Notes", false),
+    // Index 7 was "Key Transpose" before every sequencer had Transpose and Hold.
+    ParamSpec::toggle("Transpose", "Keys", false),
+    ParamSpec::toggle("Hold", "Keys", false),
 ];
 pub static DRUM_GRID: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
@@ -39,7 +42,8 @@ pub static DRUM_GRID: &[ParamSpec] = &[
     ParamSpec::lin("Swing", "Clock", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Velocity", "Hits", 0.05, 1.0, 0.75, Unit::Percent),
     ParamSpec::lin("Accent", "Hits", 0.0, 1.0, 0.3, Unit::Percent),
-];
+    ParamSpec::toggle("Transpose", "Keys", false),
+    ParamSpec::toggle("Hold", "Keys", false),];
 pub const CHORD_LENGTHS: &[&str] = &["1 beat", "2 beats", "1 bar", "2 bars"];
 const CHORD_BEATS: [f64; 4] = [1.0, 2.0, 4.0, 8.0];
 pub const RHYTHMS: &[&str] = &["Hold", "Quarters", "Eighths", "Offbeats", "Stabs", "Charleston", "Arp Up", "Arp Down"];
@@ -50,7 +54,8 @@ pub static PROGRESSION: &[ParamSpec] = &[
     ParamSpec::int("Base Note", "Notes", 36.0, 72.0, 48.0, Unit::None),
     ParamSpec::lin("Gate", "Notes", 0.1, 1.0, 0.9, Unit::Percent),
     ParamSpec::lin("Velocity", "Notes", 0.05, 1.0, 0.7, Unit::Percent),
-];
+    ParamSpec::toggle("Transpose", "Keys", false),
+    ParamSpec::toggle("Hold", "Keys", false),];
 
 // ---------------------------------------------------------------- Step data
 
@@ -390,7 +395,7 @@ impl SeqState {
         }
     }
 
-    fn swing_at(at: u64, k: i64, swing: f32, step_frames: f64) -> u64 {
+    pub(crate) fn swing_at(at: u64, k: i64, swing: f32, step_frames: f64) -> u64 {
         if k % 2 == 1 {
             at + (swing.clamp(0.0, 1.0) as f64 * 0.5 * step_frames) as u64
         } else {
@@ -429,10 +434,8 @@ impl SeqState {
         let at = Self::swing_at(at, k, p[2], step_frames);
         let gate_len = (p[4] as f64 * step_frames).max(1.0);
         let in_key = p[6] >= 0.5;
-        let transpose = match (p[7] >= 0.5, self.held_key) {
-            (true, Some(key)) => key as i32 - p[3].round() as i32,
-            _ => 0,
-        };
+        // Acid moves by semitones before keeping the line in key.
+        let transpose = self.shift.map(|(key, reference)| key - reference).unwrap_or(0);
         let mut pitch = p[3].round() as i32 + s.semitone as i32 + (s.octave as i32 - 1) * 12 + transpose;
         if in_key {
             pitch = ctx.scale.snap(pitch.clamp(0, 127) as u8) as i32;

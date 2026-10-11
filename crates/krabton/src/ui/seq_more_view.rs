@@ -20,13 +20,13 @@ fn ball_color(i: usize) -> Color32 {
 }
 
 /// The name of scale degree `degree` counted from the base note `base`.
-fn degree_name(live: &Live, base: f32, degree: i32) -> String {
+pub(super) fn degree_name(live: &Live, base: f32, degree: i32) -> String {
     let (b, _) = live.scale.locate(base.round() as i32);
     krabton_engine::note_name(live.scale.pitch_at(b + degree).clamp(0, 127) as u8)
 }
 
 /// Drag up or down on `rect` to step an integer parameter by one per `px` pixels.
-fn drag_steps(ui: &mut Ui, rect: Rect, id: Id, value: &mut f32, min: f32, max: f32, px: f32) -> (Response, bool) {
+pub(super) fn drag_steps(ui: &mut Ui, rect: Rect, id: Id, value: &mut f32, min: f32, max: f32, px: f32) -> (Response, bool) {
     let resp = ui.interact(rect, id, Sense::click_and_drag());
     let acc_id = id.with("acc");
     let mut changed = false;
@@ -51,7 +51,7 @@ fn drag_steps(ui: &mut Ui, rect: Rect, id: Id, value: &mut f32, min: f32, max: f
 
 /// A small box with a value in it that steps when dragged up or down.
 #[allow(clippy::too_many_arguments)]
-fn chip(ui: &mut Ui, rect: Rect, id: Id, label: &str, color: Color32, value: &mut f32, min: f32, max: f32, tip: &str) -> bool {
+pub(super) fn chip(ui: &mut Ui, rect: Rect, id: Id, label: &str, color: Color32, value: &mut f32, min: f32, max: f32, tip: &str) -> bool {
     let (resp, changed) = drag_steps(ui, rect, id, value, min, max, 7.0);
     let p = ui.painter();
     let hot = resp.hovered() || resp.dragged();
@@ -65,7 +65,7 @@ fn chip(ui: &mut Ui, rect: Rect, id: Id, label: &str, color: Color32, value: &mu
 }
 
 /// A trail of recent values kept in the UI's memory while the transport runs.
-fn trail<T: Clone + Send + Sync + 'static>(ui: &Ui, id: Id, new: Option<T>, max: usize) -> Vec<T> {
+pub(super) fn trail<T: Clone + Send + Sync + 'static>(ui: &Ui, id: Id, new: Option<T>, max: usize) -> Vec<T> {
     let mut v: Vec<T> = ui.ctx().memory(|m| m.data.get_temp(id).unwrap_or_default());
     if let Some(x) = new {
         v.push(x);
@@ -147,7 +147,44 @@ pub(crate) fn bounce(ui: &mut Ui, id: Id, params: &mut [f32], live: Live, height
         changed |= chip(ui, chip_r, id.with(("note", i)), &name, color, &mut params[8 + i], -14.0, 14.0, &format!("Ball {}'s note: drag up or down", i + 1));
     }
     text(ui.painter(), pos2(rect.left() + 6.0, rect.top() + 2.0), Align2::LEFT_TOP, format!("{n} balls"), small(), TEXT_DIM);
+    // Dice: new notes (in the scale, leaning on the chord) or new drop heights for every ball.
+    let bw = 46.0;
+    let nb = Rect::from_min_size(pos2(rect.right() - 2.0 * bw - 8.0, rect.top() + 1.0), vec2(bw, 14.0));
+    let db = Rect::from_min_size(pos2(rect.right() - bw - 4.0, rect.top() + 1.0), vec2(bw, 14.0));
+    if button(ui, nb, id.with("dice_notes"), "notes", false, ACCENT).on_hover_text("Roll new notes for every ball: in the scale, mostly chord tones").clicked() {
+        let mut seed = dice_seed();
+        for i in 0..MAX_BALLS {
+            params[8 + i] = dice_note(&mut seed);
+        }
+        changed = true;
+    }
+    if button(ui, db, id.with("dice_drops"), "drops", false, ACCENT).on_hover_text("Roll new drop heights for every ball").clicked() {
+        let mut seed = dice_seed();
+        for i in 0..MAX_BALLS {
+            params[16 + i] = (rnd(&mut seed) * sequencers::DROPS.len() as f32).floor().min((sequencers::DROPS.len() - 1) as f32);
+        }
+        changed = true;
+    }
     changed
+}
+
+fn dice_seed() -> u32 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(1) | 1
+}
+
+fn rnd(seed: &mut u32) -> f32 {
+    *seed ^= *seed << 13;
+    *seed ^= *seed >> 17;
+    *seed ^= *seed << 5;
+    (*seed >> 8) as f32 / 16_777_216.0
+}
+
+/// A scale degree from a fifth below to two octaves up, usually a chord
+/// tone (root, third, fifth), sometimes any step.
+fn dice_note(seed: &mut u32) -> f32 {
+    let octave = [-1.0, 0.0, 0.0, 1.0, 1.0, 2.0][(rnd(seed) * 6.0) as usize % 6];
+    let degree = if rnd(seed) < 0.7 { [0.0, 2.0, 4.0][(rnd(seed) * 3.0) as usize % 3] } else { (rnd(seed) * 7.0).floor() };
+    (octave * 7.0 + degree).clamp(-5.0, 14.0)
 }
 
 // ---------------------------------------------------------------- orbits

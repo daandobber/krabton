@@ -161,6 +161,9 @@ pub struct ShakerSynthState {
     buf_r: [f32; CHUNK],
     lp: [biquad::State; 2],
     hp: [biquad::State; 2],
+    /// Shakes and collisions of all voices so far (wrapping), for the display.
+    shakes: u32,
+    hits: u32,
 }
 
 /// How the parameters play a shaker (the model aside).
@@ -192,7 +195,21 @@ impl ShakerSynthState {
             buf_r: [0.0; CHUNK],
             lp: Default::default(),
             hp: Default::default(),
+            shakes: 0,
+            hits: 0,
         }
+    }
+
+    /// For the display: [0] energy of the main shakers, [1] of the layers,
+    /// [2] shakes and [3] collisions so far (counters that wrap at 2^24),
+    /// [4] sounding voices.
+    pub fn visual(&self, out: &mut [f32; crate::engine::INST_VALS]) {
+        let on = || self.voices.iter().filter(|v| v.active);
+        out[0] = on().map(|v| v.main.energy() * v.amp).sum();
+        out[1] = on().filter(|v| v.layered).map(|v| v.layer.energy() * v.amp).sum();
+        out[2] = (self.shakes & 0xff_ffff) as f32;
+        out[3] = (self.hits & 0xff_ffff) as f32;
+        out[4] = on().count() as f32;
     }
 
     pub fn note_on(&mut self, p: &[f32], note: u8, vel: f32) {
@@ -219,6 +236,8 @@ impl ShakerSynthState {
             v.main = Shaker::default();
             v.layer = Shaker::default();
         }
+        // The first shake happens right here: count it for the display too.
+        let before = v.main.shakes.wrapping_add(v.layer.shakes);
         v.main.start(m, energy, &s, self.sr);
         let layer = p[LAYER].round().max(0.0) as usize;
         v.layered = layer > 0;
@@ -227,6 +246,7 @@ impl ShakerSynthState {
             let ls = ShakeSettings { tune: tune * 2f32.powf(p[LAYER_TUNE].round() / 12.0), ..s };
             v.layer.start(lm, energy, &ls, self.sr);
         }
+        self.shakes = self.shakes.wrapping_add(v.main.shakes.wrapping_add(v.layer.shakes).wrapping_sub(before));
         v.note = note;
         v.gate = true;
         v.active = true;
@@ -290,6 +310,7 @@ impl ShakerSynthState {
             bl.fill(0.0);
             br.fill(0.0);
             for v in self.voices.iter_mut().filter(|v| v.active) {
+                let (s0, h0) = (v.main.shakes.wrapping_add(v.layer.shakes), v.main.hits.wrapping_add(v.layer.hits));
                 for i in 0..len {
                     let (mut yl, mut yr) = v.main.tick(&mut v.rng);
                     if v.layered {
@@ -303,6 +324,8 @@ impl ShakerSynthState {
                     bl[i] += yl * v.amp;
                     br[i] += yr * v.amp;
                 }
+                self.shakes = self.shakes.wrapping_add(v.main.shakes.wrapping_add(v.layer.shakes).wrapping_sub(s0));
+                self.hits = self.hits.wrapping_add(v.main.hits.wrapping_add(v.layer.hits).wrapping_sub(h0));
                 if v.is_done() {
                     v.active = false;
                 }
@@ -388,6 +411,23 @@ mod tests {
         };
         let (lo, hi) = (crossings(48), crossings(60));
         assert!(hi as f32 > lo as f32 * 1.5, "{lo} vs {hi}");
+    }
+
+    #[test]
+    fn the_display_sees_every_shake() {
+        let sr = 48000.0;
+        let p = preset("Maraca");
+        let mut s = ShakerSynthState::new(sr);
+        let mut vals = [0.0; crate::engine::INST_VALS];
+        s.note_on(&p, 60, 0.9);
+        s.visual(&mut vals);
+        assert_eq!(vals[2], 1.0, "the shake of the note itself");
+        assert!(vals[0] > 0.0);
+        let (mut l, mut r) = (vec![0.0; 4800], vec![0.0; 4800]);
+        s.render(&p, &mut l, &mut r);
+        s.visual(&mut vals);
+        assert_eq!(vals[2], 1.0, "one shake only");
+        assert!(vals[3] > 0.0, "collisions");
     }
 
     #[test]

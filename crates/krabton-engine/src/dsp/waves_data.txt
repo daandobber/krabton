@@ -1,0 +1,162 @@
+Waves: wavetable data for Krabton's Waves instrument.
+
+waves_data.bin holds 128 single-cycle waves of 600 samples each as
+little-endian signed 16-bit integers, 16 banks of 8 waves in the order
+below. Each wave has its DC offset removed and is normalized to peak;
+some are rotated (circularly shifted) or inverted, which does not
+change their sound, so that neighbouring waves morph smoothly.
+
+Credit: the waveforms come from the Adventure Kid Waveforms (AKWF) by
+Kristoffer Ekstrand: https://github.com/KristofferKarlAxelEkstrand/AKWF-FREE
+The AKWF collection is released under CC0 1.0 Universal (public domain
+dedication): "the person associating CC0 with a Work (the 'Affirmer')
+... voluntarily elects to apply CC0 to the Work and publicly distribute
+the Work under its terms" and "hereby overtly, fully, permanently,
+irrevocably and unconditionally waives, abandons, and surrenders all of
+Affirmer's Copyright and Related Rights".
+
+Index  Source file (paths as in the AKWF-FREE repository)
+ 0 Basic
+     0  AKWF/AKWF_bw_perfectwaves/AKWF_sin.wav
+     1  AKWF/AKWF_bw_perfectwaves/AKWF_tri.wav (rotated 299 samples, inverted)
+     2  AKWF/AKWF_bw_saw/AKWF_saw_0006.wav (rotated 295 samples, inverted)
+     3  AKWF/AKWF_bw_perfectwaves/AKWF_saw.wav (rotated 329 samples, inverted)
+     4  AKWF/AKWF_bw_perfectwaves/AKWF_squ.wav (rotated 28 samples)
+     5  AKWF/AKWF_bw_squ/AKWF_squ_0030.wav (rotated 227 samples, inverted)
+     6  AKWF/AKWF_bw_squ/AKWF_squ_0036.wav (rotated 224 samples, inverted)
+     7  AKWF/AKWF_bw_squ/AKWF_squ_0043.wav (rotated 221 samples, inverted)
+ 1 Bright Saws
+     8  AKWF/AKWF_bw_saw/AKWF_saw_0001.wav
+     9  AKWF/AKWF_bw_sawbright/AKWF_bsaw_0001.wav (rotated 1 samples)
+    10  AKWF/AKWF_bw_saw/AKWF_saw_0019.wav (rotated 336 samples, inverted)
+    11  AKWF/AKWF_bw_sawbright/AKWF_bsaw_0010.wav (rotated 1 samples)
+    12  AKWF/AKWF_bw_sawbright/AKWF_bsaw_0008.wav (rotated 1 samples)
+    13  AKWF/AKWF_bw_sawbright/AKWF_bsaw_0004.wav (rotated 1 samples)
+    14  AKWF/AKWF_bw_sawbright/AKWF_bsaw_0005.wav (rotated 1 samples)
+    15  AKWF/AKWF_bw_sawbright/AKWF_bsaw_0009.wav (rotated 1 samples)
+ 2 Vocal
+    16  AKWF/AKWF_hvoice/AKWF_hvoice_0007.wav
+    17  AKWF/AKWF_hvoice/AKWF_hvoice_0090.wav (rotated 585 samples)
+    18  AKWF/AKWF_hvoice/AKWF_hvoice_0003.wav (rotated 532 samples)
+    19  AKWF/AKWF_hvoice/AKWF_hvoice_0035.wav (rotated 12 samples)
+    20  AKWF/AKWF_hvoice/AKWF_hvoice_0091.wav (rotated 542 samples)
+    21  AKWF/AKWF_hvoice/AKWF_hvoice_0032.wav (rotated 359 samples, inverted)
+    22  AKWF/AKWF_hvoice/AKWF_hvoice_0064.wav (rotated 517 samples, inverted)
+    23  AKWF/AKWF_hvoice/AKWF_hvoice_0047.wav (rotated 12 samples, inverted)
+ 3 Strings
+    24  AKWF/AKWF_violin/AKWF_violin_0011.wav
+    25  AKWF/AKWF_violin/AKWF_violin_0009.wav (rotated 311 samples, inverted)
+    26  AKWF/AKWF_cello/AKWF_cello_0006.wav (rotated 529 samples)
+    27  AKWF/AKWF_violin/AKWF_violin_0005.wav (rotated 514 samples)
+    28  AKWF/AKWF_violin/AKWF_violin_0008.wav (rotated 491 samples)
+    29  AKWF/AKWF_cello/AKWF_cello_0016.wav (rotated 81 samples, inverted)
+    30  AKWF/AKWF_cello/AKWF_cello_0013.wav (rotated 343 samples)
+    31  AKWF/AKWF_cello/AKWF_cello_0014.wav (rotated 10 samples)
+ 4 Keys
+    32  AKWF/AKWF_piano/AKWF_piano_0010.wav
+    33  AKWF/AKWF_epiano/AKWF_epiano_0012.wav (rotated 296 samples, inverted)
+    34  AKWF/AKWF_epiano/AKWF_epiano_0003.wav (rotated 518 samples)
+    35  AKWF/AKWF_piano/AKWF_piano_0006.wav (rotated 279 samples, inverted)
+    36  AKWF/AKWF_epiano/AKWF_epiano_0006.wav (rotated 265 samples, inverted)
+    37  AKWF/AKWF_piano/AKWF_piano_0004.wav (rotated 275 samples, inverted)
+    38  AKWF/AKWF_piano/AKWF_piano_0001.wav (rotated 154 samples)
+    39  AKWF/AKWF_epiano/AKWF_epiano_0008.wav (rotated 282 samples, inverted)
+ 5 Organ
+    40  AKWF/AKWF_eorgan/AKWF_eorgan_0054.wav
+    41  AKWF/AKWF_eorgan/AKWF_eorgan_0067.wav (rotated 299 samples, inverted)
+    42  AKWF/AKWF_eorgan/AKWF_eorgan_0130.wav (rotated 421 samples)
+    43  AKWF/AKWF_eorgan/AKWF_eorgan_0089.wav (rotated 277 samples, inverted)
+    44  AKWF/AKWF_eorgan/AKWF_eorgan_0135.wav (rotated 369 samples)
+    45  AKWF/AKWF_eorgan/AKWF_eorgan_0076.wav (rotated 366 samples)
+    46  AKWF/AKWF_eorgan/AKWF_eorgan_0062.wav (rotated 366 samples)
+    47  AKWF/AKWF_eorgan/AKWF_eorgan_0039.wav (rotated 68 samples)
+ 6 FM
+    48  AKWF/AKWF_fmsynth/AKWF_fmsynth_0039.wav
+    49  AKWF/AKWF_fmsynth/AKWF_fmsynth_0037.wav (rotated 568 samples)
+    50  AKWF/AKWF_fmsynth/AKWF_fmsynth_0093.wav (rotated 284 samples, inverted)
+    51  AKWF/AKWF_fmsynth/AKWF_fmsynth_0080.wav (rotated 167 samples)
+    52  AKWF/AKWF_fmsynth/AKWF_fmsynth_0024.wav (rotated 39 samples, inverted)
+    53  AKWF/AKWF_fmsynth/AKWF_fmsynth_0013.wav (rotated 424 samples)
+    54  AKWF/AKWF_fmsynth/AKWF_fmsynth_0017.wav (rotated 445 samples, inverted)
+    55  AKWF/AKWF_fmsynth/AKWF_fmsynth_0008.wav (rotated 344 samples)
+ 7 Bells
+    56  AKWF/AKWF_overtone/AKWF_overtone_0011.wav
+    57  AKWF/AKWF_overtone/AKWF_overtone_0023.wav (rotated 332 samples)
+    58  AKWF/AKWF_overtone/AKWF_overtone_0026.wav (rotated 34 samples)
+    59  AKWF/AKWF_overtone/AKWF_overtone_0040.wav (rotated 361 samples)
+    60  AKWF/AKWF_overtone/AKWF_overtone_0039.wav (rotated 543 samples)
+    61  AKWF/AKWF_overtone/AKWF_overtone_0007.wav (rotated 12 samples)
+    62  AKWF/AKWF_overtone/AKWF_overtone_0033.wav (rotated 388 samples)
+    63  AKWF/AKWF_overtone/AKWF_overtone_0035.wav (rotated 403 samples, inverted)
+ 8 Chip
+    64  AKWF/AKWF_vgame/AKWF_vgame_0096.wav
+    65  AKWF/AKWF_vgame/AKWF_vgame_0101.wav (rotated 299 samples, inverted)
+    66  AKWF/AKWF_vgame/AKWF_vgame_0075.wav (rotated 351 samples, inverted)
+    67  AKWF/AKWF_vgame/AKWF_vgame_0099.wav (rotated 352 samples, inverted)
+    68  AKWF/AKWF_vgame/AKWF_vgame_0136.wav (rotated 518 samples)
+    69  AKWF/AKWF_vgame/AKWF_vgame_0059.wav (rotated 26 samples, inverted)
+    70  AKWF/AKWF_vgame/AKWF_vgame_0114.wav (rotated 410 samples, inverted)
+    71  AKWF/AKWF_vgame/AKWF_vgame_0113.wav (rotated 563 samples)
+ 9 Guitar
+    72  AKWF/AKWF_eguitar/AKWF_eguitar_0007.wav
+    73  AKWF/AKWF_eguitar/AKWF_eguitar_0003.wav (rotated 337 samples, inverted)
+    74  AKWF/AKWF_eguitar/AKWF_eguitar_0013.wav (rotated 339 samples, inverted)
+    75  AKWF/AKWF_eguitar/AKWF_eguitar_0016.wav (rotated 563 samples)
+    76  AKWF/AKWF_eguitar/AKWF_eguitar_0021.wav (rotated 280 samples, inverted)
+    77  AKWF/AKWF_eguitar/AKWF_eguitar_0020.wav (rotated 582 samples)
+    78  AKWF/AKWF_eguitar/AKWF_eguitar_0015.wav (rotated 113 samples, inverted)
+    79  AKWF/AKWF_eguitar/AKWF_eguitar_0014.wav (rotated 53 samples)
+10 Reed
+    80  AKWF/AKWF_clarinett/AKWF_clarinett_0019.wav
+    81  AKWF/AKWF_clarinett/AKWF_clarinett_0005.wav (rotated 280 samples, inverted)
+    82  AKWF/AKWF_clarinett/AKWF_clarinett_0003.wav (rotated 234 samples, inverted)
+    83  AKWF/AKWF_oboe/AKWF_oboe_0003.wav (rotated 19 samples)
+    84  AKWF/AKWF_clarinett/AKWF_clarinett_0020.wav (rotated 158 samples, inverted)
+    85  AKWF/AKWF_clarinett/AKWF_clarinett_0021.wav (rotated 122 samples, inverted)
+    86  AKWF/AKWF_oboe/AKWF_oboe_0011.wav (rotated 84 samples, inverted)
+    87  AKWF/AKWF_oboe/AKWF_oboe_0013.wav (rotated 77 samples, inverted)
+11 Flute
+    88  AKWF/AKWF_flute/AKWF_flute_0014.wav
+    89  AKWF/AKWF_flute/AKWF_flute_0015.wav (rotated 21 samples)
+    90  AKWF/AKWF_flute/AKWF_flute_0001.wav (rotated 21 samples)
+    91  AKWF/AKWF_flute/AKWF_flute_0004.wav (rotated 292 samples, inverted)
+    92  AKWF/AKWF_flute/AKWF_flute_0005.wav (rotated 475 samples)
+    93  AKWF/AKWF_sinharm/AKWF_sinharm_0006.wav (rotated 288 samples, inverted)
+    94  AKWF/AKWF_sinharm/AKWF_sinharm_0005.wav (rotated 288 samples, inverted)
+    95  AKWF/AKWF_sinharm/AKWF_sinharm_0016.wav (rotated 288 samples, inverted)
+12 Granular
+    96  AKWF/AKWF_granular/AKWF_granular_0022.wav
+    97  AKWF/AKWF_granular/AKWF_granular_0014.wav (rotated 243 samples, inverted)
+    98  AKWF/AKWF_granular/AKWF_granular_0001.wav (rotated 251 samples, inverted)
+    99  AKWF/AKWF_granular/AKWF_granular_0013.wav (rotated 190 samples)
+   100  AKWF/AKWF_granular/AKWF_granular_0041.wav (rotated 36 samples)
+   101  AKWF/AKWF_granular/AKWF_granular_0025.wav (rotated 181 samples)
+   102  AKWF/AKWF_granular/AKWF_granular_0011.wav (rotated 245 samples, inverted)
+   103  AKWF/AKWF_granular/AKWF_granular_0020.wav (rotated 97 samples, inverted)
+13 Hand Drawn
+   104  AKWF/AKWF_hdrawn/AKWF_hdrawn_0005.wav
+   105  AKWF/AKWF_hdrawn/AKWF_hdrawn_0034.wav (rotated 295 samples, inverted)
+   106  AKWF/AKWF_hdrawn/AKWF_hdrawn_0024.wav (rotated 429 samples)
+   107  AKWF/AKWF_hdrawn/AKWF_hdrawn_0049.wav (rotated 414 samples)
+   108  AKWF/AKWF_hdrawn/AKWF_hdrawn_0016.wav (rotated 9 samples)
+   109  AKWF/AKWF_hdrawn/AKWF_hdrawn_0037.wav (rotated 196 samples, inverted)
+   110  AKWF/AKWF_hdrawn/AKWF_hdrawn_0035.wav (rotated 470 samples, inverted)
+   111  AKWF/AKWF_hdrawn/AKWF_hdrawn_0026.wav (rotated 61 samples)
+14 Birds
+   112  AKWF/AKWF_birds/AKWF_birds_0012.wav
+   113  AKWF/AKWF_birds/AKWF_birds_0009.wav (rotated 307 samples, inverted)
+   114  AKWF/AKWF_birds/AKWF_birds_0013.wav (rotated 143 samples)
+   115  AKWF/AKWF_birds/AKWF_birds_0003.wav (rotated 136 samples)
+   116  AKWF/AKWF_birds/AKWF_birds_0014.wav (rotated 275 samples, inverted)
+   117  AKWF/AKWF_birds/AKWF_birds_0010.wav (rotated 266 samples, inverted)
+   118  AKWF/AKWF_birds/AKWF_birds_0011.wav (rotated 279 samples, inverted)
+   119  AKWF/AKWF_birds/AKWF_birds_0002.wav (rotated 48 samples)
+15 Raw
+   120  AKWF/AKWF_raw/AKWF_raw_0004.wav
+   121  AKWF/AKWF_raw/AKWF_raw_0026.wav (rotated 302 samples, inverted)
+   122  AKWF/AKWF_raw/AKWF_raw_0036.wav (rotated 184 samples, inverted)
+   123  AKWF/AKWF_raw/AKWF_raw_0017.wav (rotated 450 samples, inverted)
+   124  AKWF/AKWF_raw/AKWF_raw_0018.wav (rotated 271 samples, inverted)
+   125  AKWF/AKWF_raw/AKWF_raw_0033.wav (rotated 522 samples)
+   126  AKWF/AKWF_raw/AKWF_raw_0011.wav (rotated 522 samples)
+   127  AKWF/AKWF_raw/AKWF_raw_0031.wav (rotated 566 samples)

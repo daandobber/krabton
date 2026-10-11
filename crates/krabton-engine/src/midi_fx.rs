@@ -86,6 +86,13 @@ pub enum MidiFxKind {
     Rain,
     Words,
     Lorenz,
+    Loops,
+    Bloom,
+    Chimes,
+    DriftChords,
+    Tintinnabuli,
+    Pedal,
+    GuitarChords,
 }
 
 const ARP_STYLES: &[&str] = &["Up", "Down", "Up Down", "Down Up", "Converge", "Diverge", "Random", "Played", "Chord"];
@@ -187,7 +194,22 @@ impl MidiFxKind {
         MidiFxKind::Quantize,
     ];
 
-    pub const SEQUENCERS: [MidiFxKind; 19] = [
+    /// The sequencers' groups, in menu order.
+    pub const SEQUENCER_GROUPS: [&'static str; 4] = ["Classic", "Generative", "Physics & Chaos", "Ambient"];
+
+    /// Which group a sequencer belongs to (see `SEQUENCER_GROUPS`).
+    pub fn group(self) -> &'static str {
+        use MidiFxKind as K;
+        match self {
+            K::Step | K::Acid | K::DrumGrid | K::Progression | K::GuitarChords => "Classic",
+            K::Polymeter | K::Euclid | K::Turing | K::Life | K::Drunk | K::Markov | K::Words => "Generative",
+            K::Bounce | K::Orbits | K::Pong | K::Rain | K::Chaos | K::Automaton | K::Ant | K::Lorenz => "Physics & Chaos",
+            K::Loops | K::Bloom | K::Chimes | K::DriftChords | K::Tintinnabuli | K::Pedal => "Ambient",
+            _ => "MIDI Effects",
+        }
+    }
+
+    pub const SEQUENCERS: [MidiFxKind; 26] = [
         MidiFxKind::Step,
         MidiFxKind::Acid,
         MidiFxKind::DrumGrid,
@@ -207,6 +229,13 @@ impl MidiFxKind {
         MidiFxKind::Rain,
         MidiFxKind::Words,
         MidiFxKind::Lorenz,
+        MidiFxKind::Loops,
+        MidiFxKind::Bloom,
+        MidiFxKind::Chimes,
+        MidiFxKind::DriftChords,
+        MidiFxKind::Tintinnabuli,
+        MidiFxKind::Pedal,
+        MidiFxKind::GuitarChords,
     ];
 
     pub fn is_sequencer(self) -> bool {
@@ -223,6 +252,7 @@ impl MidiFxKind {
             MidiFxKind::Progression => crate::classic_seq::progression_default(),
             MidiFxKind::Life => sequencers::life_default(),
             MidiFxKind::Words => sequencers::more::words_default(),
+            MidiFxKind::GuitarChords => sequencers::strum::strum_default(),
             _ => Vec::new(),
         }
     }
@@ -248,6 +278,13 @@ impl MidiFxKind {
             MidiFxKind::Rain => "Rain",
             MidiFxKind::Words => "Words",
             MidiFxKind::Lorenz => "Lorenz",
+            MidiFxKind::Loops => "Loops",
+            MidiFxKind::Bloom => "Bloom",
+            MidiFxKind::Chimes => "Chimes",
+            MidiFxKind::DriftChords => "Drift Chords",
+            MidiFxKind::Tintinnabuli => "Tintinnabuli",
+            MidiFxKind::Pedal => "Pedal",
+            MidiFxKind::GuitarChords => "Guitar Chords",
 
             MidiFxKind::Arpeggiator => "Arpeggiator",
             MidiFxKind::Chord => "Chord",
@@ -287,6 +324,13 @@ impl MidiFxKind {
             MidiFxKind::Rain => "Raindrops at random times and pitches, in drizzles and storms",
             MidiFxKind::Words => "Type text and it plays as a melody, or as Morse code",
             MidiFxKind::Lorenz => "The Lorenz attractor's butterfly as a melody",
+            MidiFxKind::Loops => "Notes on their own long loops that drift in and out of phase, like tape loops: ambient chords that never repeat",
+            MidiFxKind::Bloom => "Click the pond to drop notes (higher is higher) that echo away, softer each time; left alone it blooms by itself",
+            MidiFxKind::Chimes => "Wind chimes: a wind that rises and falls strikes tuned tubes",
+            MidiFxKind::DriftChords => "Slowly changing chords: one voice moves a step, the others are held",
+            MidiFxKind::Tintinnabuli => "A stepwise melody with a voice on the nearest note of the tonic triad, over a held tonic",
+            MidiFxKind::Pedal => "A held drone note that now and then moves to the fifth, fourth or octave",
+            MidiFxKind::GuitarChords => "Guitar chords the way a guitarist plays them: real chord shapes in the key, strummed down and up in patterns, or picked",
 
             MidiFxKind::Arpeggiator => "Plays held notes one after another, tempo-synced",
             MidiFxKind::Chord => "Turns single notes into chords, also in the project key",
@@ -326,6 +370,13 @@ impl MidiFxKind {
             MidiFxKind::Rain => sequencers::more::RAIN,
             MidiFxKind::Words => sequencers::more::WORDS,
             MidiFxKind::Lorenz => sequencers::more::LORENZ,
+            MidiFxKind::Loops => sequencers::ambient::LOOPS,
+            MidiFxKind::Bloom => sequencers::ambient::BLOOM,
+            MidiFxKind::Chimes => sequencers::ambient::CHIMES,
+            MidiFxKind::DriftChords => sequencers::ambient::DRIFT_CHORDS,
+            MidiFxKind::Tintinnabuli => sequencers::ambient::TINTINNABULI,
+            MidiFxKind::Pedal => sequencers::ambient::PEDAL,
+            MidiFxKind::GuitarChords => sequencers::strum::SPECS,
 
             MidiFxKind::Arpeggiator => ARP,
             MidiFxKind::Chord => CHORD,
@@ -875,6 +926,16 @@ mod tests {
 
     fn ctx(now: u64, len: usize) -> MidiCtx {
         MidiCtx { now, len, samples_per_beat: 24000.0, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: 0.0, playing: true, sr: 48000.0 }
+    }
+
+    #[test]
+    fn every_sequencer_has_a_group() {
+        for k in MidiFxKind::SEQUENCERS {
+            assert!(MidiFxKind::SEQUENCER_GROUPS.contains(&k.group()), "{k:?}");
+        }
+        for k in MidiFxKind::ALL {
+            assert_eq!(k.group(), "MIDI Effects", "{k:?}");
+        }
     }
 
     /// Runs a device over `blocks` blocks of 256 frames; `input` holds (absolute frame, event).

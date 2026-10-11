@@ -209,13 +209,19 @@ pub fn instrument_specs(i: &Instrument) -> Option<&'static [ParamSpec]> {
         Instrument::Winds { .. } => Some(stk_winds::SPECS),
         Instrument::Organ { .. } => Some(organ::SPECS),
         Instrument::Rings { .. } => Some(rings_synth::SPECS),
+        Instrument::Monk { .. } => Some(crate::dsp::monk::SPECS),
+        Instrument::Piano { .. } => Some(crate::piano::SPECS),
+        Instrument::Bassline { .. } => Some(crate::dsp::bassline::SPECS),
+        Instrument::Drone { .. } => Some(crate::dsp::drone::SPECS),
+        Instrument::Waves { .. } => Some(crate::dsp::waves::SPECS),
+        Instrument::Guitar { .. } => Some(crate::dsp::guitar::SPECS),
         _ => None,
     }
 }
 
 fn instrument_params(i: &Instrument) -> Option<&[f32]> {
     match i {
-        Instrument::Synth { params, .. } | Instrument::Sampler { params, .. } | Instrument::Fm { params, .. } | Instrument::Macro { params, .. } | Instrument::Braids { params, .. } | Instrument::Elements { params, .. } | Instrument::Analog { params, .. } | Instrument::Shakers { params, .. } | Instrument::Modular { params, .. } | Instrument::Voice { params, .. } | Instrument::Mallets { params, .. } | Instrument::Strings { params, .. } | Instrument::Winds { params, .. } | Instrument::Organ { params, .. } | Instrument::Rings { params, .. } => Some(params),
+        Instrument::Synth { params, .. } | Instrument::Sampler { params, .. } | Instrument::Fm { params, .. } | Instrument::Macro { params, .. } | Instrument::Braids { params, .. } | Instrument::Elements { params, .. } | Instrument::Analog { params, .. } | Instrument::Shakers { params, .. } | Instrument::Modular { params, .. } | Instrument::Voice { params, .. } | Instrument::Mallets { params, .. } | Instrument::Strings { params, .. } | Instrument::Winds { params, .. } | Instrument::Organ { params, .. } | Instrument::Rings { params, .. } | Instrument::Monk { params, .. } | Instrument::Piano { params, .. } | Instrument::Bassline { params, .. } | Instrument::Drone { params, .. } | Instrument::Waves { params, .. } | Instrument::Guitar { params, .. } => Some(params),
         _ => None,
     }
 }

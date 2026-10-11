@@ -13,6 +13,7 @@ pub mod midi_tools;
 pub mod modular;
 pub mod modulation;
 pub mod params;
+pub mod piano;
 pub mod plugin;
 pub mod project;
 pub mod render;
@@ -23,7 +24,7 @@ pub mod routing;
 pub mod scale;
 pub mod scope;
 
-pub use engine::{Command, Engine, EngineHandle, EngineStatus, RecChunk};
+pub use engine::{Command, Engine, EngineHandle, EngineStatus, MidiRec, RecChunk};
 pub use project::*;
 pub use routing::{AudioInput, AudioOutput, MidiInput, Monitor, Tap};
 pub use sample::{SampleData, SampleRef};

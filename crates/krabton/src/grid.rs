@@ -215,6 +215,8 @@ impl App {
         let Some((t, d, kind)) = self.grid_sequencer() else { return };
         let h = self.grid.height;
         let lane_sel = self.grid.poly_lane;
+        // Where Bloom's loop is now, to stamp a dropped note with.
+        let bloom_phase = self.status().tracks.get(t).map(|ts| (ts.seq[3].load(std::sync::atomic::Ordering::Relaxed) & 0xffff) as u16).unwrap_or(0);
         let dev = &mut self.project.tracks[t].midi_devices[d];
         match kind {
             MidiFxKind::Life => {
@@ -288,6 +290,38 @@ impl App {
             }
             MidiFxKind::Chaos => {
                 dev.params[1] = 2.8 + x as f32 / (self.grid.width - 1) as f32 * 1.2;
+            }
+            MidiFxKind::GuitarChords => {
+                use krabton_engine::sequencers::strum as gs;
+                if dev.data.len() < gs::DATA_BYTES {
+                    dev.data = gs::strum_default();
+                }
+                if y == h - 1 && (x as usize) < gs::PATTERN_STEPS {
+                    let o = krabton_engine::classic_seq::PROG_SLOTS * krabton_engine::classic_seq::PROG_BYTES + x as usize;
+                    dev.data[o] = match dev.data[o] {
+                        gs::REST => gs::DOWN,
+                        gs::DOWN => gs::UP,
+                        _ => gs::REST,
+                    };
+                } else if y == h - 2 && (x as usize) < krabton_engine::classic_seq::PROG_SLOTS {
+                    dev.params[gs::CHORDS] = x as f32 + 1.0;
+                }
+            }
+            MidiFxKind::Bloom => {
+                // Drop a note: the higher the row, the higher the note. In
+                // Loop, pressing a lit note's pad takes it away.
+                use krabton_engine::sequencers::ambient::{bloom_add_tap, bloom_remove_tap, bloom_taps, TAPS};
+                let w = self.grid.width;
+                let looping = dev.params.get(TAPS).is_some_and(|v| *v >= 0.5);
+                let cell = |t: &krabton_engine::sequencers::ambient::Tap| ((t.across as u32 * (w - 1) + 127) / 255, (h - 1) - (t.height as u32 * (h - 1) + 127) / 255);
+                let hit = bloom_taps(&dev.data).position(|t| looping && cell(&t) == (x, y));
+                if let Some(i) = hit {
+                    bloom_remove_tap(&mut dev.data, i);
+                } else {
+                    let up = ((h - 1 - y.min(h - 1)) as f32 / (h - 1).max(1) as f32 * 255.0).round() as u8;
+                    let across = (x as f32 / (w - 1).max(1) as f32 * 255.0).round() as u8;
+                    bloom_add_tap(&mut dev.data, up, across, bloom_phase);
+                }
             }
             MidiFxKind::Automaton => {
                 if y == h - 1 && x < 8 {
@@ -675,6 +709,119 @@ impl App {
                             let done = (i as u32 + 1) * w / dev.data.len() as u32;
                             for x in 0..done.min(w) {
                                 self.grid.set(x, h - 1, 3);
+                            }
+                        }
+                    }
+                    MidiFxKind::Loops => {
+                        // A row per loop, its tape running left to right; bright as it plays.
+                        let n = (dev.params[0].round() as u32).clamp(1, 7);
+                        for i in 0..n.min(h) {
+                            let len = dev.params[6 + i as usize].round() as u32;
+                            self.grid.set((len * w / 65).min(w - 1), i, 2);
+                            if playing && first_seq {
+                                let phase = ((vis[0] >> (i * 8)) & 0xff) as u32;
+                                self.grid.set(phase * w / 256, i, if phase < 12 { 15 } else { 7 });
+                            }
+                        }
+                    }
+                    MidiFxKind::GuitarChords => {
+                        use krabton_engine::sequencers::strum as gs;
+                        // The chord on the neck: high string on top, frets across.
+                        let shape = if playing && first_seq && vis[1] != u64::MAX { Some(gs::unpack_shape(vis[1])) } else { None };
+                        if let Some(shape) = shape {
+                            for (s, f) in shape.iter().enumerate() {
+                                if let Some(f) = f {
+                                    self.grid.set((*f as u32).min(w - 1), 5 - s as u32, if *f == 0 { 6 } else { 15 });
+                                }
+                            }
+                        }
+                        let chords = dev.params[gs::CHORDS].round().clamp(1.0, 8.0) as u32;
+                        let slot = (vis[0] & 0xff) as u32;
+                        let step = ((vis[0] >> 8) & 0xff) as u32;
+                        for x in 0..chords.min(w) {
+                            self.grid.set(x, h - 2, if playing && first_seq && x == slot { 15 } else { 4 });
+                        }
+                        for x in 0..(gs::PATTERN_STEPS as u32).min(w) {
+                            let s = gs::pattern_at(&dev.data, x as usize);
+                            let b = if playing && first_seq && x == step { 15 } else if s == gs::REST { 0 } else if s == gs::UP || s == gs::SOFT_UP { 5 } else { 9 };
+                            self.grid.set(x, h - 1, b);
+                        }
+                    }
+                    MidiFxKind::Bloom => {
+                        // Your looping notes, dim; the last notes played where
+                        // they fell, bright. Higher rows are higher notes.
+                        if dev.params.get(krabton_engine::sequencers::ambient::TAPS).is_some_and(|v| *v >= 0.5) {
+                            for tp in krabton_engine::sequencers::ambient::bloom_taps(&dev.data) {
+                                self.grid.set((tp.across as u32 * (w - 1) + 127) / 255, (h - 1) - (tp.height as u32 * (h - 1) + 127) / 255, 4);
+                            }
+                        }
+                        if first_seq {
+                            let range = ((vis[1] >> 8) & 0xff).max(2) as i32;
+                            for k in (0..8u32).rev() {
+                                if (vis[0] >> (k * 8)) & 0xff != 0 {
+                                    let d = ((vis[0] >> (k * 8)) & 0xff) as i32 - 64;
+                                    let y = (h - 1) - (d.clamp(0, range) as u32 * (h - 1)) / range as u32;
+                                    let x = (((vis[2] >> (k * 8)) & 0xff) as u32 * (w - 1)) / 255;
+                                    self.grid.set(x, y, 15u8.saturating_sub(k as u8 * 2));
+                                }
+                            }
+                        }
+                    }
+                    MidiFxKind::Chimes => {
+                        // The tubes hanging from the top, longest on the left; the wind on the bottom row.
+                        let n = (dev.params[2].round() as u32).clamp(3, 9);
+                        for j in 0..n {
+                            let x = j * (w - 1) / (n - 1);
+                            let len = (h - 2) - j * (h - 4) / (n - 1);
+                            let hits = ((vis[0] >> (j * 4)) & 0xf) as u8;
+                            for y in 0..len {
+                                self.grid.set(x, y, if playing && first_seq && hits & 1 == 1 && y + 1 == len { 12 } else { 3 });
+                            }
+                        }
+                        let wind = if playing && first_seq { (vis[1] & 0xffff) as f32 / 1000.0 } else { dev.params[0] };
+                        for x in 0..((wind * w as f32).round() as u32).min(w) {
+                            self.grid.set(x, h - 1, 4);
+                        }
+                    }
+                    MidiFxKind::DriftChords => {
+                        // A row per voice, from the bottom: where in the range it sits now.
+                        if playing && first_seq {
+                            let n = (vis[1] & 0xff) as u32;
+                            let range = ((vis[1] >> 8) & 0xff).max(1) as i32;
+                            for i in 0..n.min(h) {
+                                let d = ((vis[0] >> (i * 8)) & 0xff) as i32 - 64;
+                                self.grid.set((d.clamp(0, range) as u32 * (w - 1)) / range as u32, h - 1 - i, 15 - i as u8);
+                            }
+                        }
+                    }
+                    MidiFxKind::Tintinnabuli => {
+                        // The melody (bright) and its triad voice (dim), a column per step.
+                        if playing && first_seq {
+                            let m = (vis[0] & 0xff) as i32 - 64;
+                            let t = ((vis[0] >> 8) & 0xff) as i32 - 64;
+                            let x = (vis[1] as u32) % w;
+                            let y = |d: i32| ((h as i32 - 2) - (d + 4).clamp(0, h as i32 * 2 - 3) / 2) as u32;
+                            self.grid.set(x, y(t), 6);
+                            self.grid.set(x, y(m), 15);
+                            if (vis[0] >> 16) & 1 == 1 {
+                                for x in 0..w {
+                                    self.grid.set(x, h - 1, 3);
+                                }
+                            }
+                        }
+                    }
+                    MidiFxKind::Pedal => {
+                        // The held note as a block: the tonic in the middle, moves to either side.
+                        if playing && first_seq {
+                            let root = (vis[0] & 0xff) as i32 - 64;
+                            let x = (((root + 7).clamp(0, 14) as u32) * (w - 2)) / 14;
+                            for y in 2..h - 2 {
+                                self.grid.set(x, y, 12);
+                                self.grid.set(x + 1, y, 12);
+                            }
+                            let change = [1u32, 2, 4, 8, 0][(dev.params[0].round().max(0.0) as usize).min(4)];
+                            for k in 0..change {
+                                self.grid.set(k * 2, h - 1, if vis[1] as u32 % change == k { 15 } else { 3 });
                             }
                         }
                     }

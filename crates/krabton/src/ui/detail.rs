@@ -45,9 +45,22 @@ impl App {
         } else {
             text(ui.painter(), pos2(x + 8.0, tabs.center().y), Align2::LEFT_CENTER, title, body(), TEXT_DIM);
         }
+        // Fold the panel away (the strip at the bottom brings it back).
+        let fold = Rect::from_center_size(pos2(tabs.right() - 16.0, tabs.center().y), vec2(22.0, TABS_H - 6.0));
+        let fresp = ui.interact(fold, Id::new("detail_fold"), Sense::click()).on_hover_text("Hide the clip and device view (Ctrl+Alt+L)");
+        let c = fold.center();
+        let col = if fresp.hovered() { TEXT } else { TEXT_DIM };
+        ui.painter().add(egui::Shape::convex_polygon(vec![c + vec2(-5.0, -2.0), c + vec2(5.0, -2.0), c + vec2(0.0, 3.0)], col, Stroke::NONE));
+        if fresp.clicked() {
+            self.toggle_detail();
+        }
 
         match self.detail {
             DetailTab::Clip => self.ui_clip_detail(ui, content),
+            // In the Rack every track's devices are already above.
+            DetailTab::Devices if self.view == crate::app::View::Rack => {
+                ui.painter().text(content.center(), Align2::CENTER_CENTER, "The devices are in the Rack above", body(), TEXT_DIM);
+            }
             DetailTab::Devices => self.ui_devices(ui, content),
             DetailTab::Grid => self.ui_grid_panel(ui, content),
             DetailTab::Mod => self.ui_mod_panel(ui, content),

@@ -175,8 +175,24 @@ impl App {
         {
             let mut mui = child(ui, master_header.union(master_slots));
             let p = mui.painter().clone();
-            rect_fill(&p, master_header.shrink(0.5), 0.0, PANEL3);
-            text(&p, master_header.center(), Align2::CENTER_CENTER, "Master", body(), TEXT);
+            // Click the header for the master's effects; drop effects on it to add them there.
+            let head = mui.interact(master_header, Id::new("master_head"), Sense::click());
+            let selected = self.sel_track == TrackSel::Master;
+            let hovering = head.dnd_hover_payload::<BrowserItem>().is_some();
+            rect_fill(&p, master_header.shrink(0.5), 0.0, if selected || head.hovered() { shade(PANEL3, 1.25) } else { PANEL3 });
+            if hovering {
+                rect_line(&p, master_header.shrink(1.0), 2.0, 1.5, ACCENT);
+            }
+            text(&p, master_header.center(), Align2::CENTER_CENTER, "Master", body(), if selected { ACCENT } else { TEXT });
+            if head.clicked() {
+                self.sel_track = TrackSel::Master;
+                self.show_devices();
+            }
+            if let Some(item) = drop_payload::<BrowserItem>(&head) {
+                self.apply_item(&item, DropTarget::Chain(TrackSel::Master));
+                self.sel_track = TrackSel::Master;
+            }
+            head.on_hover_text("The master: click for its effects, or drop effects here");
             // Shows or hides the In/Out section, like Live's I-O button.
             let b = Rect::from_min_size(pos2(master_header.right() - 30.0, master_header.top() + 4.0), vec2(26.0, master_header.height() - 8.0));
             let shown = !self.session.hide_io;
@@ -543,6 +559,18 @@ impl App {
                 if ui.button("Copy to Arrangement").on_hover_text("Places the clip at the playhead on this track's timeline").clicked() {
                     self.copy_clip_to_arrangement(sel);
                     ui.close();
+                }
+                if kind == TrackKind::Audio {
+                    ui.menu_button("Export Audio", |ui| {
+                        if ui.button("WAV...").on_hover_text("This clip on its own, as it plays").clicked() {
+                            self.export_clip(sel, false);
+                            ui.close();
+                        }
+                        if ui.button("MP3...").on_hover_text("320 kbit/s, through LAME or ffmpeg on this computer").clicked() {
+                            self.export_clip(sel, true);
+                            ui.close();
+                        }
+                    });
                 }
                 if ui.button("Delete         Del").clicked() {
                     self.delete_clip(sel);

@@ -240,6 +240,7 @@ impl App {
     /// finishes takes.
     pub fn poll_recording(&mut self) {
         self.ensure_input();
+        self.poll_midi_recording();
         let spb = self.samples_per_beat();
         while let Ok(c) = self.engine.recorded.try_recv() {
             let Some(take) = self.takes.iter_mut().find(|t| t.track == c.track && t.end.is_none_or(|e| t.last_beat < e)) else { continue };

@@ -22,6 +22,13 @@ pub struct Layout {
     pub clip_side_w: f32,
     /// Display widths of devices, by device name.
     pub displays: BTreeMap<String, f32>,
+    /// The Rack: the height of a row of devices, and tracks as columns.
+    pub rack_h: f32,
+    pub rack_columns: bool,
+    /// The detail panel (clip editor, devices) folded away: in Session and
+    /// Arrangement, and (shown) in the Rack, where it starts folded.
+    pub detail_hidden: bool,
+    pub rack_detail: bool,
 }
 
 impl Layout {

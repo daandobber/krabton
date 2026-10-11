@@ -55,6 +55,11 @@ impl Rotary {
         }
     }
 
+    /// Where the horn and the drum are in their turn (0..1).
+    pub fn phases(&self) -> (f32, f32) {
+        (self.horn_phase, self.drum_phase)
+    }
+
     pub fn process(&mut self, p: &[f32], l: &mut [f32], r: &mut [f32], ctx: &FxCtx) {
         let n = l.len().min(r.len());
         let sr = ctx.sr;

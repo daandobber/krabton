@@ -14,6 +14,8 @@ crossbeam-channel.workspace = true
 hound.workspace = true
 # FLAC decoding for samples (pure Rust, Apache-2.0).
 claxon = "0.4.3"
+# Memory-maps the grand piano's samples (MIT or Apache-2.0).
+memmap2 = "0.9"
 krabton-braids = { path = "../krabton-braids" }
 krabton-elements = { path = "../krabton-elements" }
 krabton-airwindows = { path = "../krabton-airwindows" }

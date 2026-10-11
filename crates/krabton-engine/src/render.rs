@@ -103,6 +103,33 @@ pub fn render_with_plugins(
     (Some(out), engine.take_processors())
 }
 
+/// The audio of a clip as it plays, at the sample's own rate (interleaved
+/// stereo): `length` beats from `offset` into the clip, which loops every
+/// `loop_len` beats, with the clip's gain and the short fades playback uses.
+pub fn clip_audio(a: &crate::project::AudioClip, loop_len: f64, offset: f64, length: f64) -> (u32, Vec<f32>) {
+    let s = &a.sample;
+    let fpb = s.sample_rate as f64 * 60.0 / a.bpm.max(1.0);
+    let gain = crate::dsp::db_to_gain(a.gain_db);
+    let loop_len = loop_len.max(1.0 / 64.0);
+    let frames = s.frames() as f64;
+    let loop_frames = (loop_len * fpb).min(frames);
+    const FADE: f64 = 48.0;
+    let n = (length.max(0.0) * fpb).round() as usize;
+    let mut out = Vec::with_capacity(n * 2);
+    for i in 0..n {
+        let pos = (offset + i as f64 / fpb).rem_euclid(loop_len) * fpb;
+        if pos >= frames {
+            out.extend_from_slice(&[0.0, 0.0]);
+            continue;
+        }
+        let e = (pos.min(loop_frames - pos).min(frames - pos) / FADE).clamp(0.0, 1.0) as f32;
+        let (x, y) = s.read(pos);
+        out.push(x * gain * e);
+        out.push(y * gain * e);
+    }
+    (s.sample_rate, out)
+}
+
 /// Writes interleaved stereo float samples as a 24-bit WAV file.
 pub fn write_wav(path: &Path, sample_rate: u32, interleaved: &[f32]) -> Result<(), String> {
     let spec = hound::WavSpec { channels: 2, sample_rate, bits_per_sample: 24, sample_format: hound::SampleFormat::Int };
@@ -117,6 +144,23 @@ pub fn write_wav(path: &Path, sample_rate: u32, interleaved: &[f32]) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clip_audio_is_the_clip_as_it_plays() {
+        use crate::project::AudioClip;
+        use crate::sample::{SampleData, SampleRef};
+        // One second of a ramp at 120 BPM: two beats.
+        let ramp: Vec<f32> = (0..1000).map(|i| i as f32 / 1000.0).collect();
+        let a = AudioClip { sample: SampleRef(std::sync::Arc::new(SampleData::from_buffers("ramp", None, 1000, ramp.clone(), ramp))), bpm: 120.0, gain_db: 0.0 };
+        let (sr, out) = clip_audio(&a, 2.0, 0.0, 2.0);
+        assert_eq!(sr, 1000);
+        assert_eq!(out.len(), 2000);
+        assert!((out[2 * 500] - 0.5).abs() < 1e-3);
+        // From beat 1 for two beats: the second half, then the loop again.
+        let (_, out) = clip_audio(&a, 2.0, 1.0, 2.0);
+        assert!((out[2 * 100] - 0.6).abs() < 1e-3);
+        assert!((out[2 * 600] - 0.1).abs() < 1e-3);
+    }
 
     #[test]
     fn renders_demo_scene() {

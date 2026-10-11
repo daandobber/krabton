@@ -50,6 +50,7 @@ impl App {
         let (tid, kind, input, monitor, output, midi_in, midi_channel) = (t.id, t.kind, t.input, t.monitor, t.output, t.midi_in, t.midi_channel);
         let tracks: Vec<(usize, String, u64)> = self.project.tracks.iter().enumerate().map(|(j, t)| (j, format!("{}-{}", j + 1, t.name), t.id)).collect();
         let sources: Vec<bool> = (0..tracks.len()).map(|j| self.project.can_route(j, i)).collect();
+        let midi_sources: Vec<bool> = (0..tracks.len()).map(|j| self.project.can_route_midi(j, i)).collect();
         let targets: Vec<bool> = (0..tracks.len()).map(|j| self.project.can_route(i, j)).collect();
         let name_of = |id: u64| tracks.iter().find(|t| t.2 == id).map(|t| t.1.clone()).unwrap_or_else(|| "?".into());
         let channels = match status.input_channels.load(std::sync::atomic::Ordering::Relaxed) as usize {
@@ -132,12 +133,22 @@ impl App {
                 MidiInput::Keyboard => "Computer Keyboard".to_string(),
                 MidiInput::Device => device.clone(),
                 MidiInput::None => "No Input".to_string(),
+                MidiInput::Track(id) => name_of(id),
             };
             combo(ui, row(y), Id::new(("io_midi", tid)), &from, true, |ui| {
                 ui.selectable_value(&mut new_midi_in, MidiInput::AllIns, "All Ins");
                 ui.selectable_value(&mut new_midi_in, MidiInput::Keyboard, "Computer Keyboard");
                 ui.selectable_value(&mut new_midi_in, MidiInput::Device, &device);
                 ui.selectable_value(&mut new_midi_in, MidiInput::None, "No Input");
+                // The notes other MIDI tracks play, sequencers included.
+                if midi_sources.iter().any(|&ok| ok) {
+                    ui.separator();
+                    for (j, name, id) in &tracks {
+                        if midi_sources[*j] {
+                            ui.selectable_value(&mut new_midi_in, MidiInput::Track(*id), name).on_hover_text("The notes this track plays, after its MIDI effects");
+                        }
+                    }
+                }
             });
             y += ROW;
             let r2 = Rect::from_min_size(pos2(x + 7.0, y), vec2(w - 7.0, ROW - 1.0));

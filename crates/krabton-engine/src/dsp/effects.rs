@@ -56,6 +56,16 @@ pub enum EffectKind {
     Shimmer,
     Spring,
     PitchDelay,
+    Grains,
+    Overdrive,
+    DistortionPedal,
+    Fuzz,
+    Octaver,
+    Squash,
+    Wah,
+    Tremolo,
+    Vibe,
+    Amp,
     /// A hosted effect plug-in (`Device::plugin`), not in `ALL`.
     Plugin,
 }
@@ -169,7 +179,7 @@ static UTILITY: &[ParamSpec] = &[
 ];
 
 impl EffectKind {
-    pub const ALL: [EffectKind; 49] = [
+    pub const ALL: [EffectKind; 59] = [
         EffectKind::Eq3,
         EffectKind::AutoFilter,
         EffectKind::Compressor,
@@ -204,6 +214,16 @@ impl EffectKind {
         EffectKind::Shimmer,
         EffectKind::Spring,
         EffectKind::PitchDelay,
+        EffectKind::Grains,
+        EffectKind::Overdrive,
+        EffectKind::DistortionPedal,
+        EffectKind::Fuzz,
+        EffectKind::Octaver,
+        EffectKind::Squash,
+        EffectKind::Wah,
+        EffectKind::Tremolo,
+        EffectKind::Vibe,
+        EffectKind::Amp,
         EffectKind::AwGalactic,
         EffectKind::AwVerbity2,
         EffectKind::AwChamber,
@@ -245,6 +265,16 @@ impl EffectKind {
             EffectKind::Shimmer => "Reverb & Resonance",
             EffectKind::Spring => "Reverb & Resonance",
             EffectKind::PitchDelay => "Delay & Loop",
+            EffectKind::Grains => "Delay & Loop",
+            EffectKind::Overdrive => "Pedals",
+            EffectKind::DistortionPedal => "Pedals",
+            EffectKind::Fuzz => "Pedals",
+            EffectKind::Octaver => "Pedals",
+            EffectKind::Squash => "Pedals",
+            EffectKind::Wah => "Pedals",
+            EffectKind::Tremolo => "Pedals",
+            EffectKind::Vibe => "Pedals",
+            EffectKind::Amp => "Pedals",
 
             EffectKind::AwGalactic => "Airwindows",
             EffectKind::AwVerbity2 => "Airwindows",
@@ -280,11 +310,11 @@ impl EffectKind {
     }
 
     /// The categories in menu order.
-    pub const CATEGORIES: [&'static str; 9] = ["Delay & Loop", "Distortion", "Dynamics", "EQ & Filters", "Modulation", "Pitch", "Reverb & Resonance", "Utilities", "Airwindows"];
+    pub const CATEGORIES: [&'static str; 10] = ["Delay & Loop", "Distortion", "Dynamics", "EQ & Filters", "Modulation", "Pedals", "Pitch", "Reverb & Resonance", "Utilities", "Airwindows"];
 
     /// Devices with their own display (they send audio and meters to the UI).
     pub fn has_display(self) -> bool {
-        matches!(self, EffectKind::Scope | EffectKind::LensEq | EffectKind::LensComp | EffectKind::LensLimiter)
+        matches!(self, EffectKind::Scope | EffectKind::LensEq | EffectKind::LensComp | EffectKind::LensLimiter | EffectKind::Grains)
     }
 
     pub fn name(self) -> &'static str {
@@ -338,6 +368,16 @@ impl EffectKind {
             EffectKind::Shimmer => "Shimmer",
             EffectKind::Spring => "Spring",
             EffectKind::PitchDelay => "Pitch Delay",
+            EffectKind::Grains => "Grains",
+            EffectKind::Overdrive => "Overdrive",
+            EffectKind::DistortionPedal => "Distortion",
+            EffectKind::Fuzz => "Fuzz",
+            EffectKind::Octaver => "Octaver",
+            EffectKind::Squash => "Squash",
+            EffectKind::Wah => "Wah",
+            EffectKind::Tremolo => "Tremolo",
+            EffectKind::Vibe => "Vibe",
+            EffectKind::Amp => "Amp",
 
             EffectKind::Plugin => "Plug-in",
         }
@@ -393,6 +433,16 @@ impl EffectKind {
             EffectKind::Shimmer => "A hall with a pitch shifter in its loop: every pass an octave (or any interval) higher or lower",
             EffectKind::Spring => "A spring reverb tank: the chirp and boing of amps and dub mixers, with drips",
             EffectKind::PitchDelay => "A delay whose echoes are pitched in semitone steps: each repeat one more step up or down, or all by one interval",
+            EffectKind::Grains => "Granular texture processor: grains from an 8-second buffer with random time, size, shape and pitch, regular or random density, freeze, feedback, reverb and tape or lo-fi buffers",
+            EffectKind::Overdrive => "The green mid-boost overdrive: only the mids and highs are driven, the lows stay tight beside them. Drive, tone, level",
+            EffectKind::DistortionPedal => "The op-amp distortion pedal: up to 66 dB of gain that narrows as it rises, clipping diodes and a filter against the fizz",
+            EffectKind::Fuzz => "Three fuzzes: lopsided vintage transistors that sputter as notes die, a wall of two stages with a scooped tone, and octave-up fuzz",
+            EffectKind::Octaver => "The analog octave divider: one and two octaves below that follow your playing, plus an octave up. One note at a time",
+            EffectKind::Squash => "The squashy pedal compressor: notes ring on at one level, Blend brings the pick attack back",
+            EffectKind::Wah => "The wah: a resonant peak from heel (350 Hz) to toe (2.3 kHz). Rock the Pedal knob, let your playing open it (Auto) or let it wobble",
+            EffectKind::Tremolo => "The amp's tremolo: sine, triangle, choppy or harmonic (lows and highs in turn), synced or free, up to a stereo pan",
+            EffectKind::Vibe => "The photocell vibe: four all-pass stages moved by one lamp that heats faster than it cools, as chorus or vibrato",
+            EffectKind::Amp => "A guitar amp with speaker cabinet: clean, crunch or lead preamp, bass, mid, treble, a power stage that sags, presence and 1x12, 2x12 or 4x12 cabinets",
             EffectKind::Rings => "The Rings resonator rung by the track's audio: drums and noise become tuned strings, bells and chords",
             EffectKind::Plugin => "A CLAP effect plug-in",
         }
@@ -449,6 +499,16 @@ impl EffectKind {
             EffectKind::Shimmer => super::fx::hall::SHIMMER_SPECS,
             EffectKind::Spring => super::fx::spring::SPECS,
             EffectKind::PitchDelay => super::fx::pitch_delay::SPECS,
+            EffectKind::Grains => super::fx::grains::SPECS,
+            EffectKind::Overdrive => super::fx::pedals::overdrive::SPECS,
+            EffectKind::DistortionPedal => super::fx::pedals::distortion::SPECS,
+            EffectKind::Fuzz => super::fx::pedals::fuzz::SPECS,
+            EffectKind::Octaver => super::fx::pedals::octaver::SPECS,
+            EffectKind::Squash => super::fx::pedals::squash::SPECS,
+            EffectKind::Wah => super::fx::pedals::wah::SPECS,
+            EffectKind::Tremolo => super::fx::pedals::tremolo::SPECS,
+            EffectKind::Vibe => super::fx::pedals::vibe::SPECS,
+            EffectKind::Amp => super::fx::pedals::amp::SPECS,
 
             EffectKind::Plugin => &[],
         }
@@ -500,6 +560,16 @@ pub enum EffectState {
     Shimmer(Box<super::fx::hall::Hall>),
     Spring(Box<super::fx::spring::SpringReverb>),
     PitchDelay(Box<super::fx::pitch_delay::PitchDelay>),
+    Grains(Box<super::fx::grains::Grains>),
+    Overdrive(Box<super::fx::pedals::Overdrive>),
+    DistortionPedal(Box<super::fx::pedals::Distortion>),
+    Fuzz(Box<super::fx::pedals::Fuzz>),
+    Octaver(Box<super::fx::pedals::Octaver>),
+    Squash(Box<super::fx::pedals::Squash>),
+    Wah(Box<super::fx::pedals::Wah>),
+    Tremolo(Box<super::fx::pedals::Tremolo>),
+    Vibe(Box<super::fx::pedals::Vibe>),
+    Amp(Box<super::fx::pedals::Amp>),
 
     /// An Airwindows effect.
     Airwindows(EffectKind, Box<dyn krabton_airwindows::Effect>),
@@ -585,6 +655,16 @@ impl EffectState {
             EffectKind::Shimmer => EffectState::Shimmer(Box::new(super::fx::hall::Hall::new(sr))),
             EffectKind::Spring => EffectState::Spring(Box::new(super::fx::spring::SpringReverb::new(sr))),
             EffectKind::PitchDelay => EffectState::PitchDelay(Box::new(super::fx::pitch_delay::PitchDelay::new(sr))),
+            EffectKind::Grains => EffectState::Grains(Box::new(super::fx::grains::Grains::new(sr))),
+            EffectKind::Overdrive => EffectState::Overdrive(Box::new(super::fx::pedals::Overdrive::new(sr))),
+            EffectKind::DistortionPedal => EffectState::DistortionPedal(Box::new(super::fx::pedals::Distortion::new(sr))),
+            EffectKind::Fuzz => EffectState::Fuzz(Box::new(super::fx::pedals::Fuzz::new(sr))),
+            EffectKind::Octaver => EffectState::Octaver(Box::new(super::fx::pedals::Octaver::new(sr))),
+            EffectKind::Squash => EffectState::Squash(Box::new(super::fx::pedals::Squash::new())),
+            EffectKind::Wah => EffectState::Wah(Box::new(super::fx::pedals::Wah::new())),
+            EffectKind::Tremolo => EffectState::Tremolo(Box::new(super::fx::pedals::Tremolo::new(sr))),
+            EffectKind::Vibe => EffectState::Vibe(Box::new(super::fx::pedals::Vibe::new())),
+            EffectKind::Amp => EffectState::Amp(Box::new(super::fx::pedals::Amp::new(sr))),
 
             EffectKind::Plugin => EffectState::Plugin { instance: 0, proc: None },
         }
@@ -612,6 +692,7 @@ impl EffectState {
             EffectState::LensEq(s) => Some(&mut s.taps),
             EffectState::LensComp(s) => Some(&mut s.taps),
             EffectState::LensLimiter(s) => Some(&mut s.taps),
+            EffectState::Grains(s) => Some(&mut s.taps),
             _ => None,
         }
     }
@@ -653,6 +734,16 @@ impl EffectState {
             EffectState::Shimmer(_) => EffectKind::Shimmer,
             EffectState::Spring(_) => EffectKind::Spring,
             EffectState::PitchDelay(_) => EffectKind::PitchDelay,
+            EffectState::Grains(_) => EffectKind::Grains,
+            EffectState::Overdrive(_) => EffectKind::Overdrive,
+            EffectState::DistortionPedal(_) => EffectKind::DistortionPedal,
+            EffectState::Fuzz(_) => EffectKind::Fuzz,
+            EffectState::Octaver(_) => EffectKind::Octaver,
+            EffectState::Squash(_) => EffectKind::Squash,
+            EffectState::Wah(_) => EffectKind::Wah,
+            EffectState::Tremolo(_) => EffectKind::Tremolo,
+            EffectState::Vibe(_) => EffectKind::Vibe,
+            EffectState::Amp(_) => EffectKind::Amp,
 
             EffectState::Plugin { .. } => EffectKind::Plugin,
         }
@@ -885,6 +976,16 @@ impl EffectState {
             }
             EffectState::Spring(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::PitchDelay(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
+            EffectState::Grains(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
+            EffectState::Overdrive(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
+            EffectState::DistortionPedal(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
+            EffectState::Fuzz(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
+            EffectState::Octaver(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
+            EffectState::Squash(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
+            EffectState::Wah(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
+            EffectState::Tremolo(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
+            EffectState::Vibe(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
+            EffectState::Amp(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Plugin { proc, .. } => {
                 if let Some(pr) = proc {
                     pr.process_effect(&mut l[..n], &mut r[..n]);

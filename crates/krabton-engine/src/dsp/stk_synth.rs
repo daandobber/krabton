@@ -1,6 +1,6 @@
 //! Physical models from the Synthesis ToolKit (Perry R. Cook and Gary P.
 //! Scavone, MIT-style license; see `krabton_stk`), as four polyphonic
-//! instruments: Winds, Strings, Mallets and Voice. Each has a model choice
+//! instruments: Winds, Strings and Mallets. Each has a model choice
 //! and up to seven controls, which are that model's own STK controls.
 
 use super::{db_to_gain, midi_to_freq};
@@ -18,7 +18,6 @@ pub enum Family {
     Winds,
     Strings,
     Mallets,
-    Voice,
 }
 
 /// A model of a family: the STK instrument, its preset (ModalBar,
@@ -40,9 +39,6 @@ const fn pre(id: &'static str, name: &'static str, preset: usize, trim: f32) -> 
     Model { id, name, preset: Some(preset), phoneme: None, trim }
 }
 
-const fn ph(name: &'static str, phoneme: usize) -> Model {
-    Model { id: "voicform", name, preset: None, phoneme: Some(phoneme), trim: 0.75 }
-}
 
 pub static WINDS: &[Model] = &[
     m("flute", "Flute", 1.2),
@@ -69,47 +65,12 @@ pub static MALLETS: &[Model] = &[
     pre("bandedwg", "Glass Harmonica", 2, 14.0),
     pre("bandedwg", "Tibetan Bowl", 3, 4.0),
 ];
-pub static VOICE: &[Model] = &[
-    ph("Eee", 0),
-    ph("Ihh", 1),
-    ph("Ehh", 2),
-    ph("Aaa", 3),
-    ph("Ahh", 4),
-    ph("Aww", 5),
-    ph("Ohh", 6),
-    ph("Uhh", 7),
-    ph("Uuu", 8),
-    ph("Ooo", 9),
-    ph("Rrr", 10),
-    ph("Lll", 11),
-    ph("Mmm", 12),
-    ph("Nnn", 13),
-    ph("Nng", 14),
-    ph("Ngg", 15),
-    ph("Fff", 16),
-    ph("Sss", 17),
-    ph("Thh", 18),
-    ph("Shh", 19),
-    ph("Xxx", 20),
-    ph("Hee", 21),
-    ph("Hoo", 22),
-    ph("Hah", 23),
-    ph("Bbb", 24),
-    ph("Ddd", 25),
-    ph("Jjj", 26),
-    ph("Ggg", 27),
-    ph("Vvv", 28),
-    ph("Zzz", 29),
-    ph("Thz", 30),
-    ph("Zhh", 31),
-];
 
 pub fn models(f: Family) -> &'static [Model] {
     match f {
         Family::Winds => WINDS,
         Family::Strings => STRINGS,
         Family::Mallets => MALLETS,
-        Family::Voice => VOICE,
     }
 }
 
@@ -118,7 +79,6 @@ pub fn specs(f: Family) -> &'static [ParamSpec] {
         Family::Winds => super::stk_winds::SPECS,
         Family::Strings => super::stk_strings::SPECS,
         Family::Mallets => super::stk_mallets::SPECS,
-        Family::Voice => super::stk_voice::SPECS,
     }
 }
 
@@ -194,7 +154,6 @@ pub fn preset_names(f: Family) -> &'static [&'static str] {
         Family::Winds => &["Flute", "Breathy Flute", "Clarinet", "Soft Clarinet", "Saxophone", "Growl Sax", "Brass", "Bright Brass", "Blown Bottle", "Blow Hole", "Whistle"],
         Family::Strings => &["Bowed", "Pressed Bow", "Plucked", "Mandolin", "Sitar", "Stiff String"],
         Family::Mallets => &["Marimba", "Vibraphone", "Agogo", "Wood 1", "Reso", "Wood 2", "Beats", "Two Fixed", "Clump", "Uniform Bar", "Tuned Bar", "Glass Harmonica", "Tibetan Bowl"],
-        Family::Voice => &["Eee", "Ahh", "Ooo", "Ohh", "Mmm", "Hum", "Whisper", "Choir Aah"],
     }
 }
 
@@ -207,9 +166,6 @@ pub fn preset(f: Family, name: &str) -> Vec<f32> {
         (Family::Winds, "Growl Sax") => (by_name("Saxophone"), &[(4, 90.0), (1, 45.0)]),
         (Family::Winds, "Bright Brass") => (by_name("Brass"), &[(2, 66.0), (1, 15.0)]),
         (Family::Strings, "Pressed Bow") => (by_name("Bowed"), &[(2, 100.0), (1, 20.0)]),
-        (Family::Voice, "Hum") => (by_name("Nnn"), &[]),
-        (Family::Voice, "Whisper") => (by_name("Hah"), &[(2, 64.0)]),
-        (Family::Voice, "Choir Aah") => (by_name("Ahh"), &[(1, 50.0), (11, 70.0)]),
         _ => (by_name(name), &[]),
     };
     let mut p = defaults_for(f, model);
@@ -221,7 +177,7 @@ pub fn preset(f: Family, name: &str) -> Vec<f32> {
     }
     // Struck and plucked notes ring on: more voices.
     p[VOICES] = match f {
-        Family::Winds | Family::Voice => 4.0,
+        Family::Winds => 4.0,
         _ => 6.0,
     };
     p
@@ -387,7 +343,7 @@ mod tests {
 
     #[test]
     fn every_preset_sounds_and_stops() {
-        for f in [Family::Winds, Family::Strings, Family::Mallets, Family::Voice] {
+        for f in [Family::Winds, Family::Strings, Family::Mallets] {
             for name in preset_names(f) {
                 let p = preset(f, name);
                 let mut s = StkState::new(f, 48000.0);
@@ -417,8 +373,7 @@ mod tests {
     fn controls_show_the_models_own_names() {
         let c = controls(&WINDS[1]);
         assert_eq!(c[0].map(|c| c.name), Some("Reed Stiffness"));
-        // Mallets choose their preset with the model; Voice its phoneme.
+        // Mallets choose their preset with the model.
         assert!(controls(&MALLETS[0]).iter().flatten().all(|c| c.number != 16));
-        assert!(controls(&VOICE[0]).iter().flatten().all(|c| c.number != 4));
     }
 }

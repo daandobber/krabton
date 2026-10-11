@@ -340,7 +340,7 @@ struct Dev {
     kind: Option<&'static str>,
 }
 
-fn devices() -> [Dev; 13] {
+fn devices() -> [Dev; 19] {
     [
         Dev {
             name: "Analog",
@@ -371,7 +371,7 @@ fn devices() -> [Dev; 13] {
             kind: None,
         },
         Dev {
-            name: "Shakers",
+            name: "Particles",
             hint: "Perry Cook's PhISEM shakers played with notes: maraca, cabasa, tambourine, sleigh bells, bamboo, cans, rocks; shake once, a few times or while held",
             presets: shaker_synth::preset_names(),
             make: BrowserItem::Shakers,
@@ -385,12 +385,18 @@ fn devices() -> [Dev; 13] {
             make: BrowserItem::Modular,
             kind: None,
         },
-        Dev { name: "Voice", hint: "A singing voice from formant filters, 32 vowels and consonants, from the Synthesis ToolKit", presets: stk_voice::preset_names(), make: BrowserItem::Voice, kind: None },
+        Dev { name: "Voice", hint: "A singing voice: 32 vowels and consonants to morph between, choirs, glide, and chant with undertones and overtones", presets: stk_voice::preset_names(), make: BrowserItem::Voice, kind: None },
         Dev { name: "Mallets", hint: "Marimba, vibraphone, agogo, woods, glass harmonica and Tibetan bowl: struck physical models from the Synthesis ToolKit", presets: stk_mallets::preset_names(), make: BrowserItem::Mallets, kind: None },
         Dev { name: "Strings", hint: "Bowed, plucked, mandolin, sitar and stiff strings: string physical models from the Synthesis ToolKit", presets: stk_strings::preset_names(), make: BrowserItem::Strings, kind: None },
         Dev { name: "Winds", hint: "Flute, clarinet, saxophone, brass, blown bottle, blow hole and whistle: blown physical models from the Synthesis ToolKit", presets: stk_winds::preset_names(), make: BrowserItem::Winds, kind: None },
         Dev { name: "Organ", hint: "Tonewheel organ: nine drawbars, percussion, key click, scanner vibrato and chorus, drive and a rotating speaker", presets: organ::preset_names(), make: BrowserItem::Organ, kind: None },
         Dev { name: "Rings", hint: "Resonator after Mutable Instruments Rings: modal, sympathetic and inharmonic strings, FM voice, chords, and the Disastrous Peace string synth", presets: rings_synth::preset_names(), make: BrowserItem::Rings, kind: None },
+        Dev { name: "Grand Piano", hint: "A concert grand: the Salamander Grand Piano (a Yamaha C5 in 16 velocity layers, downloaded once), with sustain pedal, key and string noises, una corda, lid and a hall", presets: krabton_engine::piano::preset_names(), make: BrowserItem::Piano, kind: None },
+        Dev { name: "Monk", hint: "A chanting monk made of FOF grains (ported from MonkSynth): vowel, head size, glide, a choir of up to ten, and an echo", presets: krabton_engine::dsp::monk::preset_names(), make: BrowserItem::Monk, kind: None },
+        Dev { name: "Bassline", hint: "Acid bass: a port of Open303 by Robin Schmidt. Saw to square, the squelchy filter with its envelope, accent (velocity 100 and up) and slide (play legato). Drag the filter in the screen", presets: krabton_engine::dsp::bassline::preset_names(), make: BrowserItem::Bassline, kind: None },
+        Dev { name: "Drone", hint: "A drone that keeps moving: tanpura strings with a buzzing bridge, a PADsynth pad, swelling FM pairs and wind, all drifting slowly. Hold a key for minutes", presets: krabton_engine::dsp::drone::preset_names(), make: BrowserItem::Drone, kind: None },
+        Dev { name: "Waves", hint: "Wavetable synth: two oscillators morphing through 16 banks of single-cycle waves (Adventure Kid Waveforms), unison, warps, sub, filter, envelopes and an LFO. Drag a stack to move through it", presets: krabton_engine::dsp::waves::preset_names(), make: BrowserItem::Waves, kind: None },
+        Dev { name: "Guitar", hint: "A six-string guitar, steel or nylon acoustic or electric with pickups: notes go on the strings and frets a guitarist would use, chords are strummed. Put pedals after it", presets: krabton_engine::dsp::guitar::preset_names(), make: BrowserItem::Guitar, kind: None },
     ]
 }
 
@@ -436,7 +442,12 @@ fn midi_nodes() -> Vec<Node> {
         kinds.sort_by_key(|k| k.name());
         kinds.into_iter().map(|k| Node::item(format!("midi/{}", k.name()), k.name(), Icon::Device, k.description(), BrowserItem::MidiFx(k))).collect::<Vec<_>>()
     };
-    let mut out = vec![Node::folder("Sequencers", Icon::Folder, items(&MidiFxKind::SEQUENCERS))];
+    // Sequencers in a folder per group, then the MIDI effects.
+    let groups = MidiFxKind::SEQUENCER_GROUPS.iter().map(|g| {
+        let kinds: Vec<MidiFxKind> = MidiFxKind::SEQUENCERS.into_iter().filter(|k| k.group() == *g).collect();
+        Node::folder(*g, Icon::Folder, items(&kinds))
+    });
+    let mut out = vec![Node::folder("Sequencers", Icon::Folder, groups.collect())];
     out.extend(items(&MidiFxKind::ALL));
     out
 }

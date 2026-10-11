@@ -24,6 +24,8 @@ use std::time::Instant;
 pub enum View {
     Session,
     Arrangement,
+    /// Every track's devices at once.
+    Rack,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -103,6 +105,18 @@ pub enum BrowserItem {
     Organ(&'static str),
     /// A Rings preset.
     Rings(&'static str),
+    /// A Monk preset.
+    Monk(&'static str),
+    /// A Bassline preset.
+    Bassline(&'static str),
+    /// A Drone preset.
+    Drone(&'static str),
+    /// A Waves preset.
+    Waves(&'static str),
+    /// A Guitar preset.
+    Guitar(&'static str),
+    /// A Grand Piano preset.
+    Piano(&'static str),
     /// A copy of a clip in this project.
     Clip { id: u64, name: String },
     /// An SFZ instrument, played by the Sampler.
@@ -125,7 +139,7 @@ impl BrowserItem {
             BrowserItem::Braids(p) => format!("Braids: {p}"),
             BrowserItem::Elements(p) => format!("Elements: {p}"),
             BrowserItem::Analog(p) => format!("Analog: {p}"),
-            BrowserItem::Shakers(p) => format!("Shakers: {p}"),
+            BrowserItem::Shakers(p) => format!("Particles: {p}"),
             BrowserItem::Modular(p) => format!("Modular: {p}"),
             BrowserItem::Voice(p) => format!("Voice: {p}"),
             BrowserItem::Mallets(p) => format!("Mallets: {p}"),
@@ -133,6 +147,12 @@ impl BrowserItem {
             BrowserItem::Winds(p) => format!("Winds: {p}"),
             BrowserItem::Organ(p) => format!("Organ: {p}"),
             BrowserItem::Rings(p) => format!("Rings: {p}"),
+            BrowserItem::Monk(p) => format!("Monk: {p}"),
+            BrowserItem::Bassline(p) => format!("Bassline: {p}"),
+            BrowserItem::Drone(p) => format!("Drone: {p}"),
+            BrowserItem::Waves(p) => format!("Waves: {p}"),
+            BrowserItem::Guitar(p) => format!("Guitar: {p}"),
+            BrowserItem::Piano(p) => format!("Grand Piano: {p}"),
             BrowserItem::Drums(k) => k.to_string(),
             BrowserItem::Sampler => "Sampler".into(),
             BrowserItem::Effect(k) => k.name().into(),
@@ -330,6 +350,8 @@ pub struct App {
     pub rec_counter: u32,
     pub rec_quantize: bool,
     rec_notes: HashMap<(u64, u8), RecNote>,
+    /// The grand piano's samples being installed.
+    pub piano_install: Option<crate::piano_lib::Install>,
 
     pub meters: Vec<(f32, f32)>,
     pub return_meters: Vec<(f32, f32)>,
@@ -362,6 +384,9 @@ pub struct App {
     pub(crate) frame: u64,
     /// Close the window at the end of this frame (script action `quit`).
     quit_requested: bool,
+    /// `shot=path`: where the next picture of the window goes, and whether
+    /// it was asked for yet.
+    shot: Option<(String, bool)>,
     /// A size changed: save the layout once the mouse is up.
     pub layout_dirty: bool,
 }
@@ -369,6 +394,12 @@ pub struct App {
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         theme::apply(&cc.egui_ctx);
+        // Test windows show widget id clashes in red, as debug builds do.
+        if std::env::var_os("KRABTON_TEST_WINDOW").is_some() {
+            cc.egui_ctx.options_mut(|o| o.warn_on_id_clash = true);
+        }
+        // The grand piano's samples, if installed (engines made from here on play them).
+        krabton_engine::piano::library::set_shared(crate::piano_lib::open_installed());
         let project = krabton_engine::demo::demo_project();
         let snapshot = Arc::new(project.clone());
 
@@ -444,6 +475,7 @@ impl App {
             rec_counter: 0,
             rec_quantize: true,
             rec_notes: HashMap::new(),
+            piano_install: None,
             meters: Vec::new(),
             return_meters: Vec::new(),
             master_meter: (0.0, 0.0),
@@ -467,6 +499,7 @@ impl App {
             script_input: std::collections::VecDeque::new(),
             frame: 0,
             quit_requested: false,
+            shot: None,
             layout_dirty: false,
         };
         app.apply_prefs();
@@ -865,7 +898,7 @@ impl App {
                 }
                 self.toast(format!("Loading {} ...", info.name));
             }
-            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) => {
+            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) => {
                 let inst = match item {
                     BrowserItem::Synth(p) => Instrument::synth(p),
                     BrowserItem::Macro(p) => Instrument::macro_osc(p),
@@ -880,6 +913,12 @@ impl App {
                     BrowserItem::Winds(p) => Instrument::winds(p),
                     BrowserItem::Organ(p) => Instrument::organ(p),
                     BrowserItem::Rings(p) => Instrument::rings(p),
+                    BrowserItem::Monk(p) => Instrument::monk(p),
+                    BrowserItem::Piano(p) => Instrument::piano(p),
+                    BrowserItem::Bassline(p) => Instrument::bassline(p),
+                    BrowserItem::Drone(p) => Instrument::drone(p),
+                    BrowserItem::Waves(p) => Instrument::waves(p),
+                    BrowserItem::Guitar(p) => Instrument::guitar(p),
                     BrowserItem::Drums(k) => Instrument::drums(k),
                     _ => Instrument::sampler(None),
                 };
@@ -1298,15 +1337,27 @@ impl App {
     }
 
     pub fn note_off(&mut self, pitch: u8, ids: &[u64]) {
-        let status = self.status();
         for &id in ids {
             self.cmd(Command::NoteOff { track: id, pitch });
-            let Some(rn) = self.rec_notes.remove(&(id, pitch)) else { continue };
-            let Some(ti) = self.project.track_index(id) else { continue };
+            self.finish_rec_note(id, pitch, None);
+        }
+    }
+
+    /// Writes a recorded note into its clip once it ends: at `end` (the
+    /// position in the clip) or where the clip is now.
+    fn finish_rec_note(&mut self, id: u64, pitch: u8, end: Option<f64>) {
+        let status = self.status();
+        {
+            let Some(rn) = self.rec_notes.remove(&(id, pitch)) else { return };
+            let Some(ti) = self.project.track_index(id) else { return };
             let ts = &status.tracks[ti];
-            let now = if ts.playing_slot.load(Ordering::Relaxed) == rn.scene as i32 { ts.clip_pos.load() } else { rn.start + 0.25 };
+            let now = match end {
+                Some(e) => e,
+                None if ts.playing_slot.load(Ordering::Relaxed) == rn.scene as i32 => ts.clip_pos.load(),
+                None => rn.start + 0.25,
+            };
             let quant = self.rec_quantize;
-            let Some(Some(clip)) = self.project.tracks[ti].slots.get_mut(rn.scene) else { continue };
+            let Some(Some(clip)) = self.project.tracks[ti].slots.get_mut(rn.scene) else { return };
             let len = clip.length.max(0.0625);
             let mut length = now - rn.start;
             if length <= 0.0 {
@@ -1321,6 +1372,33 @@ impl App {
                 notes.push(Note::new(pitch, start, length, rn.vel));
             }
         }
+    }
+
+    /// Notes armed tracks took from other tracks: recorded like played ones.
+    pub fn poll_midi_recording(&mut self) {
+        let playing = self.is_playing();
+        while let Ok(m) = self.engine.midi_recorded.try_recv() {
+            if !self.recording || !playing || m.slot < 0 {
+                continue;
+            }
+            if m.on {
+                self.rec_notes.insert((m.track, m.pitch), RecNote { scene: m.slot as usize, start: m.pos, vel: m.vel });
+            } else {
+                self.finish_rec_note(m.track, m.pitch, Some(m.pos));
+            }
+        }
+    }
+
+    /// The tracks a recording writes notes into: the ones that hear the
+    /// keyboard, and armed tracks that take notes from another track.
+    fn midi_record_targets(&self) -> Vec<usize> {
+        let mut v = self.note_targets();
+        for (ti, t) in self.project.tracks.iter().enumerate() {
+            if t.arm && !v.contains(&ti) && self.project.midi_source(ti).is_some() {
+                v.push(ti);
+            }
+        }
+        v
     }
 
     pub fn toggle_record(&mut self) {
@@ -1338,7 +1416,7 @@ impl App {
         }
         let status = self.status();
         let bars = self.project.beats_per_bar_f() * 4.0;
-        for ti in self.note_targets() {
+        for ti in self.midi_record_targets() {
             let ts = &status.tracks[ti];
             if ts.playing_slot.load(Ordering::Relaxed) >= 0 || ts.queued_slot.load(Ordering::Relaxed) >= 0 {
                 continue;
@@ -1376,6 +1454,37 @@ impl App {
                         self.note_off(played, &ids);
                     }
                 }
+                MidiMsg::Sustain { down, channel } => {
+                    for ti in self.note_targets_from(Some(channel)) {
+                        let track = self.project.tracks[ti].id;
+                        self.cmd(Command::Sustain { track, down });
+                    }
+                }
+            }
+        }
+    }
+
+    /// Starts downloading and preparing the grand piano's samples.
+    pub fn start_piano_install(&mut self) {
+        let busy = self.piano_install.as_ref().and_then(|s| s.lock().ok().map(|s| !matches!(*s, crate::piano_lib::InstallState::Failed(_)))).unwrap_or(false);
+        if !busy && krabton_engine::piano::library::shared().is_none() {
+            self.piano_install = Some(crate::piano_lib::start_install());
+        }
+    }
+
+    /// Follows the piano install; when it is done every Grand Piano gets the samples.
+    fn poll_piano_install(&mut self) {
+        let Some(state) = self.piano_install.clone() else { return };
+        let ready = state.lock().map(|s| *s == crate::piano_lib::InstallState::Ready).unwrap_or(false);
+        if ready {
+            self.piano_install = None;
+            match crate::piano_lib::open_installed() {
+                Some(lib) => {
+                    krabton_engine::piano::library::set_shared(Some(lib.clone()));
+                    self.cmd(Command::SetPianoLibrary(Some(lib)));
+                    self.toast("The grand piano is installed");
+                }
+                None => self.toast("The grand piano was downloaded but could not be opened"),
             }
         }
     }
@@ -1427,6 +1536,7 @@ impl App {
         if m.command || m.ctrl {
             match key {
                 Key::B if m.alt => self.browser.visible = !self.browser.visible,
+                Key::L if m.alt => self.toggle_detail(),
                 Key::H => self.show_history = !self.show_history,
                 Key::F => {
                     self.browser.visible = true;
@@ -1452,6 +1562,7 @@ impl App {
                 }
                 Key::A => self.piano_select_all(),
                 Key::U => self.piano_quantize(),
+                Key::R if m.shift => self.view = if self.view == View::Rack { View::Session } else { View::Rack },
                 Key::R => self.export.open = true,
                 _ => {}
             }
@@ -1603,12 +1714,40 @@ impl App {
         }
     }
 
+    /// Saves an audio clip on its own, as it plays (its loop, offset and
+    /// gain, no effects), as WAV or MP3.
+    pub fn export_clip(&mut self, sel: ClipSel, mp3: bool) {
+        let (loop_len, offset, length) = match sel {
+            ClipSel::Slot { .. } => {
+                let Some(c) = self.clip_ref(sel) else { return };
+                (c.length, 0.0, c.length)
+            }
+            ClipSel::Arr { track, id } => {
+                let Some(ac) = self.project.tracks.get(track).and_then(|t| t.arrangement.iter().find(|a| a.id == id)) else { return };
+                (ac.clip.length, ac.offset, ac.length)
+            }
+        };
+        let Some(clip) = self.clip_ref(sel) else { return };
+        let ClipContent::Audio(a) = &clip.content else { return };
+        let ext = if mp3 { "mp3" } else { "wav" };
+        let name = format!("{}.{ext}", clip.name);
+        let (sr, audio) = render::clip_audio(a, loop_len, offset, length);
+        let filter = if mp3 { "MP3 audio" } else { "WAV audio" };
+        let Some(path) = rfd::FileDialog::new().add_filter(filter, &[ext]).set_file_name(name).save_file() else { return };
+        let result = if mp3 { crate::mp3::encode(&path, sr, &audio) } else { render::write_wav(&path, sr, &audio) };
+        match result {
+            Ok(()) => self.toast(format!("Saved {}", path.display())),
+            Err(e) => self.toast(format!("Export failed: {e}")),
+        }
+    }
+
     pub fn start_export(&mut self) {
         if self.export_job.is_some() {
             return;
         }
         let name = format!("{}.wav", self.project.name);
-        let Some(path) = rfd::FileDialog::new().add_filter("WAV audio", &["wav"]).set_file_name(name).save_file() else { return };
+        let Some(path) = rfd::FileDialog::new().add_filter("WAV audio", &["wav"]).add_filter("MP3 audio", &["mp3"]).set_file_name(name).save_file() else { return };
+        let mp3 = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("mp3"));
         let project = self.project.clone();
         let bar = project.beats_per_bar_f();
         let source = match self.export.source {
@@ -1632,6 +1771,7 @@ impl App {
         let handle = std::thread::spawn(move || {
             let (audio, leftovers) = render::render_with_plugins(&project, source, sr, bar, Some(&pr), processors);
             let result = match audio {
+                Some(buf) if mp3 => crate::mp3::encode(&path, sr, &buf).map(|_| path.display().to_string()),
                 Some(buf) => render::write_wav(&path, sr, &buf).map(|_| path.display().to_string()),
                 None => Err("Export cancelled".into()),
             };
@@ -1682,6 +1822,43 @@ impl App {
         upd(&mut self.master_meter, &st.master);
     }
 
+    /// Whether the detail panel (clip editor, devices) is out: the Rack has
+    /// its own setting.
+    pub(crate) fn detail_shown(&self) -> bool {
+        if self.view == View::Rack {
+            self.prefs.layout.rack_detail
+        } else {
+            !self.prefs.layout.detail_hidden
+        }
+    }
+
+    pub(crate) fn toggle_detail(&mut self) {
+        if self.view == View::Rack {
+            self.prefs.layout.rack_detail = !self.prefs.layout.rack_detail;
+        } else {
+            self.prefs.layout.detail_hidden = !self.prefs.layout.detail_hidden;
+        }
+        self.layout_dirty = true;
+    }
+
+    /// The `shot` script action: asks egui for the window's picture and
+    /// saves it when it arrives.
+    fn take_shot(&mut self, ctx: &Context) {
+        let Some((path, asked)) = self.shot.clone() else { return };
+        if !asked {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
+            self.shot = Some((path, true));
+            return;
+        }
+        let image = ctx.input(|i| i.events.iter().find_map(|e| if let egui::Event::Screenshot { image, .. } = e { Some(image.clone()) } else { None }));
+        if let Some(image) = image {
+            if let Err(e) = crate::shot::save(&path, &image) {
+                eprintln!("shot: {e}");
+            }
+            self.shot = None;
+        }
+    }
+
     /// Executes scripted debug actions that are due (see `KRABTON_SCRIPT`).
     fn run_script(&mut self) {
         while let Some((at, _)) = self.script.first() {
@@ -1697,6 +1874,9 @@ impl App {
                 "stop" => self.cmd(Command::Stop),
                 "arrangement" => self.view = View::Arrangement,
                 "session" => self.view = View::Session,
+                "rackview" => self.view = View::Rack,
+                "detail" => self.toggle_detail(),
+                "rackcolumns" => self.prefs.layout.rack_columns = !self.prefs.layout.rack_columns,
                 "devices" => self.detail = DetailTab::Devices,
                 "grid" => self.detail = DetailTab::Grid,
                 "press" => {
@@ -1742,6 +1922,43 @@ impl App {
                     let names = krabton_engine::dsp::analog::preset_names();
                     let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
                     self.apply_item(&BrowserItem::Analog(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "piano" => {
+                    let names = krabton_engine::piano::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Piano(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "pianoinstall" => self.start_piano_install(),
+                "bassline" => {
+                    let names = krabton_engine::dsp::bassline::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Bassline(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "drone" => {
+                    let names = krabton_engine::dsp::drone::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Drone(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "waves" => {
+                    let names = krabton_engine::dsp::waves::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Waves(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "guitar" => {
+                    let names = krabton_engine::dsp::guitar::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Guitar(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "monk" => {
+                    let names = krabton_engine::dsp::monk::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Monk(p), DropTarget::NewTrack);
                     self.detail = DetailTab::Devices;
                 }
                 "rings" => {
@@ -1927,6 +2144,7 @@ impl App {
                     }
                 }
                 "quit" => self.quit_requested = true,
+                "shot" => self.shot = Some((arg.to_string(), false)),
                 "fxparam" => {
                     // fxparam=device,param,value sets a parameter of a device in the selected chain.
                     let f: Vec<f32> = arg.split(',').filter_map(|v| v.trim().parse().ok()).collect();
@@ -2077,7 +2295,9 @@ impl eframe::App for App {
         self.sync_plugins();
         self.frame += 1;
         self.run_script();
+        self.take_shot(ctx);
         self.poll_midi();
+        self.poll_piano_install();
         self.poll_recording();
         self.poll_export();
         self.handle_keys(ctx);
@@ -2123,19 +2343,38 @@ impl eframe::App for App {
                     }
                 });
         }
-        let r = egui::TopBottomPanel::bottom("detail")
-            .resizable(true)
-            .default_height(crate::prefs::Layout::or(self.prefs.layout.detail_h, 290.0))
-            .height_range(120.0..=2000.0)
-            .frame(egui::Frame::new().fill(theme::PANEL).inner_margin(egui::Margin::same(0)))
-            .show(ctx, |ui| self.ui_detail(ui))
-            .response
-            .rect;
-        crate::widgets::grip_dots(&fg, egui::pos2(r.center().x, r.top()), false, theme::TEXT_DIM);
-        self.remember_size(|l| &mut l.detail_h, r.height());
+        if self.detail_shown() {
+            let r = egui::TopBottomPanel::bottom("detail")
+                .resizable(true)
+                .default_height(crate::prefs::Layout::or(self.prefs.layout.detail_h, 290.0))
+                .height_range(120.0..=2000.0)
+                .frame(egui::Frame::new().fill(theme::PANEL).inner_margin(egui::Margin::same(0)))
+                .show(ctx, |ui| self.ui_detail(ui))
+                .response
+                .rect;
+            crate::widgets::grip_dots(&fg, egui::pos2(r.center().x, r.top()), false, theme::TEXT_DIM);
+            self.remember_size(|l| &mut l.detail_h, r.height());
+        } else {
+            // Folded away: a thin strip to bring it back.
+            egui::TopBottomPanel::bottom("detail_hidden")
+                .resizable(false)
+                .exact_height(14.0)
+                .frame(egui::Frame::new().fill(theme::PANEL))
+                .show(ctx, |ui| {
+                    let r = ui.max_rect();
+                    let resp = ui.interact(r, ui.id().with("show_detail"), egui::Sense::click()).on_hover_text("Show the clip and device view (Ctrl+Alt+L)");
+                    let c = egui::pos2(r.left() + 14.0, r.center().y);
+                    let col = if resp.hovered() { theme::TEXT } else { theme::TEXT_DIM };
+                    ui.painter().add(egui::Shape::convex_polygon(vec![c + egui::vec2(-4.0, 2.0), c + egui::vec2(0.0, -3.0), c + egui::vec2(4.0, 2.0)], col, egui::Stroke::NONE));
+                    if resp.clicked() {
+                        self.toggle_detail();
+                    }
+                });
+        }
         egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::BG)).show(ctx, |ui| match self.view {
             View::Session => self.ui_session(ui),
             View::Arrangement => self.ui_arrangement(ui),
+            View::Rack => self.ui_device_rack(ui),
         });
         self.ui_dialogs(ctx);
         self.draw_drag_ghost(ctx);

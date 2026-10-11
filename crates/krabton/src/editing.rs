@@ -193,7 +193,8 @@ impl App {
                 // The next paste goes right after this one.
                 self.cmd(krabton_engine::Command::SetPosition(start + length));
             }
-            View::Session => {
+            // Pasting in the Rack goes into the session, like in Session.
+            View::Session | View::Rack => {
                 let scene = match self.sel_clip {
                     Some(ClipSel::Slot { track: t, scene }) if t == track => scene,
                     _ => self.sel_scene,
@@ -226,6 +227,12 @@ impl App {
         }
         match self.view {
             View::Session => self.arrow_session(dx, -dy),
+            // Up and down pick the track in the Rack.
+            View::Rack => {
+                if dy != 0 {
+                    self.step_track(-dy);
+                }
+            }
             View::Arrangement => {
                 if dy != 0 {
                     self.step_track(-dy);

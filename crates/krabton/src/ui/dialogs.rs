@@ -79,6 +79,8 @@ impl App {
                 }
                 ui.add_space(4.0);
                 ui.label(RichText::new("Plaits uses the Plaits DSP code by Emilie Gillet (Mutable Instruments, MIT) via mi-plaits-dsp by Oliver Rockstedt (MIT). Braids and Elements are Rust ports of Emilie Gillet's Braids and Elements code (MIT).").small().color(TEXT_DIM));
+                ui.label(RichText::new("Grand Piano plays the Salamander Grand Piano V3 by Alexander Holm (CC BY 3.0), downloaded on first use. Monk is a port of MonkSynth by Jonathan Taylor (MIT).").small().color(TEXT_DIM));
+                ui.label(RichText::new("Bassline is a port of Open303 by Robin Schmidt (MIT). Waves plays the Adventure Kid Waveforms by Kristoffer Ekstrand (CC0).").small().color(TEXT_DIM));
                 ui.label(RichText::new("Not affiliated with Ableton or Mutable Instruments. MIT licensed.").small().color(TEXT_DIM));
             });
             self.show_about = open;

@@ -234,6 +234,8 @@ struct Voice {
     fenv: Adsr,
     filt: [Svf; 2],
     rng: Rng,
+    /// The filter's cutoff at the last control step (Hz), for displays.
+    fc: f32,
 }
 
 impl Voice {
@@ -252,6 +254,7 @@ impl Voice {
             fenv: Adsr::new(),
             filt: [Svf::new(); 2],
             rng: Rng::new(seed),
+            fc: 1000.0,
         }
     }
 }
@@ -278,6 +281,38 @@ impl SynthState {
             v.rng = Rng::new(0x1234_5678 ^ (i as u32 * 7919 + 1));
         }
         Self { voices, lfo_phase: 0.0, counter: 0, last_freq: 220.0, held: [0; 16], held_len: 0 }
+    }
+
+    /// For the display, laid out as `AnalogState::visual`.
+    pub fn visual(&self, out: &mut [f32; crate::engine::INST_VALS]) {
+        // The newest voices first, without allocating (this runs on the audio thread).
+        let mut newest: [Option<&Voice>; 6] = [None; 6];
+        let mut below = u64::MAX;
+        for slot in newest.iter_mut() {
+            *slot = self.voices.iter().filter(|v| v.active && v.age < below).max_by_key(|v| v.age);
+            match slot {
+                Some(v) => below = v.age,
+                None => break,
+            }
+        }
+        let on = || newest.iter().map_while(|v| *v);
+        let stage = |s: Stage| match s {
+            Stage::Idle => 0.0,
+            Stage::Attack => 1.0,
+            Stage::Decay | Stage::Sustain => 2.0,
+            Stage::Release => 3.0,
+        };
+        out[0] = on().count() as f32;
+        for (k, v) in on().enumerate() {
+            out[1 + k * 4] = v.amp.level;
+            out[2 + k * 4] = stage(v.amp.stage);
+            out[3 + k * 4] = v.fenv.level;
+            out[4 + k * 4] = stage(v.fenv.stage);
+        }
+        if let Some(v) = newest[0] {
+            out[25] = v.fc;
+            out[26] = v.note as f32;
+        }
     }
 
     pub fn active_voices(&self) -> usize {
@@ -443,6 +478,7 @@ impl SynthState {
                 let f = v.freq * pitch_mod;
                 let oct = fe * env_amt + lfo * lfo_cut + keytrack * (v.note as f32 - 60.0) / 12.0;
                 let fc = cutoff * 2f32.powf(oct);
+                v.fc = fc;
                 v.filt[0].set(fc, res, sr);
                 v.filt[1].set(fc, res, sr);
                 let base = f / sr;

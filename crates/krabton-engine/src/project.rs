@@ -440,6 +440,18 @@ pub enum Instrument {
     Organ { preset: String, params: Vec<f32> },
     /// Rings: Resonator after Mutable Instruments Rings: modal, sympathetic and inharmonic strings, FM voice, chords, and the Disastrous Peace string synth.
     Rings { preset: String, params: Vec<f32> },
+    /// Monk: a chanting voice of FOF grains, ported from MonkSynth.
+    Monk { preset: String, params: Vec<f32> },
+    /// Grand Piano: the Salamander Grand Piano samples (downloaded once).
+    Piano { preset: String, params: Vec<f32> },
+    /// Bassline: an acid bass synth, a port of Open303.
+    Bassline { preset: String, params: Vec<f32> },
+    /// Drone: tanpura strings, PADsynth pad, swelling FM pairs and air, slowly evolving.
+    Drone { preset: String, params: Vec<f32> },
+    /// Waves: a wavetable synth on the Adventure Kid Waveforms.
+    Waves { preset: String, params: Vec<f32> },
+    /// Guitar: six plucked waveguide strings, played like a guitarist would, acoustic or electric.
+    Guitar { preset: String, params: Vec<f32> },
 }
 
 impl Instrument {
@@ -508,6 +520,30 @@ impl Instrument {
         Instrument::Rings { preset: preset.to_string(), params: rings_synth::preset(preset) }
     }
 
+    pub fn piano(preset: &str) -> Self {
+        Instrument::Piano { preset: preset.to_string(), params: crate::piano::preset(preset) }
+    }
+
+    pub fn monk(preset: &str) -> Self {
+        Instrument::Monk { preset: preset.to_string(), params: crate::dsp::monk::preset(preset) }
+    }
+
+    pub fn bassline(preset: &str) -> Self {
+        Instrument::Bassline { preset: preset.to_string(), params: crate::dsp::bassline::preset(preset) }
+    }
+
+    pub fn drone(preset: &str) -> Self {
+        Instrument::Drone { preset: preset.to_string(), params: crate::dsp::drone::preset(preset) }
+    }
+
+    pub fn waves(preset: &str) -> Self {
+        Instrument::Waves { preset: preset.to_string(), params: crate::dsp::waves::preset(preset) }
+    }
+
+    pub fn guitar(preset: &str) -> Self {
+        Instrument::Guitar { preset: preset.to_string(), params: crate::dsp::guitar::preset(preset) }
+    }
+
     pub fn kind_name(&self) -> &'static str {
         match self {
             Instrument::Synth { .. } => "Synth",
@@ -519,7 +555,7 @@ impl Instrument {
             Instrument::Braids { .. } => "Braids",
             Instrument::Elements { .. } => "Elements",
             Instrument::Analog { .. } => "Analog",
-            Instrument::Shakers { .. } => "Shakers",
+            Instrument::Shakers { .. } => "Particles",
             Instrument::Modular { .. } => "Modular",
             Instrument::Voice { .. } => "Voice",
             Instrument::Mallets { .. } => "Mallets",
@@ -527,6 +563,12 @@ impl Instrument {
             Instrument::Winds { .. } => "Winds",
             Instrument::Organ { .. } => "Organ",
             Instrument::Rings { .. } => "Rings",
+            Instrument::Monk { .. } => "Monk",
+            Instrument::Piano { .. } => "Grand Piano",
+            Instrument::Bassline { .. } => "Bassline",
+            Instrument::Drone { .. } => "Drone",
+            Instrument::Waves { .. } => "Waves",
+            Instrument::Guitar { .. } => "Guitar",
         }
     }
 
@@ -539,7 +581,7 @@ impl Instrument {
             Instrument::Sampler { sample, .. } => sample.as_ref().map(|s| s.name.clone()).unwrap_or_else(|| "Empty".into()),
             Instrument::Plugin(p) => p.name.clone(),
             Instrument::Fm { voice, .. } => Dx7Voice::from_slice(voice).map(|v| v.name()).unwrap_or_else(|| "FM".into()),
-            Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Modular { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } => preset.clone(),
+            Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Modular { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } | Instrument::Monk { preset, .. } | Instrument::Piano { preset, .. } | Instrument::Bassline { preset, .. } | Instrument::Drone { preset, .. } | Instrument::Waves { preset, .. } | Instrument::Guitar { preset, .. } => preset.clone(),
         }
     }
 
@@ -711,6 +753,10 @@ pub struct Project {
     #[serde(default)]
     pub sections: Vec<SongSection>,
     pub next_id: u64,
+    /// Heights the user gave devices in the Rack view, by device id (an
+    /// instrument by its track's id). The engine ignores them.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub rack_heights: std::collections::BTreeMap<u64, f32>,
 }
 
 /// A part of the song on the arranger track (Intro, Verse, Chorus...), as in
@@ -758,6 +804,7 @@ impl Project {
             mod_routes: Vec::new(),
             sections: Vec::new(),
             next_id: 1,
+            rack_heights: Default::default(),
         };
         let mut reverb = p.make_device(EffectKind::Reverb);
         reverb.params[5] = 1.0;
@@ -1197,6 +1244,12 @@ impl Project {
                 Some(Instrument::Winds { params, .. }) => params::fix_len(params, stk_winds::SPECS),
                 Some(Instrument::Organ { params, .. }) => params::fix_len(params, organ::SPECS),
                 Some(Instrument::Rings { params, .. }) => params::fix_len(params, rings_synth::SPECS),
+                Some(Instrument::Monk { params, .. }) => params::fix_len(params, crate::dsp::monk::SPECS),
+                Some(Instrument::Piano { params, .. }) => params::fix_len(params, crate::piano::SPECS),
+                Some(Instrument::Bassline { params, .. }) => params::fix_len(params, crate::dsp::bassline::SPECS),
+                Some(Instrument::Drone { params, .. }) => params::fix_len(params, crate::dsp::drone::SPECS),
+                Some(Instrument::Waves { params, .. }) => params::fix_len(params, crate::dsp::waves::SPECS),
+                Some(Instrument::Guitar { params, .. }) => params::fix_len(params, crate::dsp::guitar::SPECS),
                 // Shakers became an instrument; their kits are the Drum Rack's.
                 Some(Instrument::Drums { engine, .. }) if *engine == drums::DrumEngine::Shakers => *engine = drums::DrumEngine::Rack,
                 Some(Instrument::Plugin(p)) => max_id = max_id.max(p.instance + 1),

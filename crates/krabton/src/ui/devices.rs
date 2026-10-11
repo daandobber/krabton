@@ -44,7 +44,25 @@ pub(crate) fn param_grid(ui: &mut Ui, id: Id, specs: &[ParamSpec], values: &mut 
 }
 
 /// [`param_grid`] that also shows and edits modulation of these parameters.
-pub(crate) fn param_grid_mod(ui: &mut Ui, id: Id, specs: &[ParamSpec], values: &mut [f32], accent: Color32, height: f32, mut mv: Option<&mut ModView>) -> bool {
+pub(crate) fn param_grid_mod(ui: &mut Ui, id: Id, specs: &[ParamSpec], values: &mut [f32], accent: Color32, height: f32, mv: Option<&mut ModView>) -> bool {
+    param_grid_screens(ui, id, specs, values, accent, height, mv, 0.0, &|_| false, |_, _, _, _| false)
+}
+
+/// [`param_grid_mod`] with a small screen as the first column of the groups
+/// `has_screen` names, `screen_w` wide; `draw` paints it (and may change values).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn param_grid_screens(
+    ui: &mut Ui,
+    id: Id,
+    specs: &[ParamSpec],
+    values: &mut [f32],
+    accent: Color32,
+    height: f32,
+    mut mv: Option<&mut ModView>,
+    screen_w: f32,
+    has_screen: &dyn Fn(&str) -> bool,
+    mut draw: impl FnMut(&mut Ui, &str, Rect, &mut [f32]) -> bool,
+) -> bool {
     let mut groups: Vec<(&str, Vec<usize>)> = Vec::new();
     for (i, s) in specs.iter().enumerate() {
         match groups.iter_mut().find(|g| g.0 == s.group) {
@@ -53,7 +71,8 @@ pub(crate) fn param_grid_mod(ui: &mut Ui, id: Id, specs: &[ParamSpec], values: &
         }
     }
     let rows = (((height - 16.0) / CELL_H).floor() as usize).clamp(1, 3);
-    let widths: Vec<f32> = groups.iter().map(|g| g.1.len().div_ceil(rows) as f32 * CELL_W + 10.0).collect();
+    let extra = |name: &str| if has_screen(name) { screen_w + 4.0 } else { 0.0 };
+    let widths: Vec<f32> = groups.iter().map(|g| g.1.len().div_ceil(rows) as f32 * CELL_W + 10.0 + extra(g.0)).collect();
     let total: f32 = widths.iter().sum();
     let (rect, _) = ui.allocate_exact_size(vec2(total, rows as f32 * CELL_H + 16.0), Sense::hover());
     let p = ui.painter().clone();
@@ -64,9 +83,14 @@ pub(crate) fn param_grid_mod(ui: &mut Ui, id: Id, specs: &[ParamSpec], values: &
         if gi > 0 {
             p.line_segment([pos2(x, rect.top() + 2.0), pos2(x, rect.bottom() - 2.0)], Stroke::new(1.0_f32, LINE_SOFT));
         }
+        let shift = extra(name);
+        if shift > 0.0 {
+            let screen = Rect::from_min_size(pos2(x + 5.0, rect.top() + 14.0), vec2(screen_w, rows as f32 * CELL_H - 4.0));
+            changed |= draw(ui, name, screen, values);
+        }
         for (k, &pi) in idxs.iter().enumerate() {
             let (col, row) = (k / rows, k % rows);
-            let cell = Rect::from_min_size(pos2(x + 5.0 + col as f32 * CELL_W, rect.top() + 14.0 + row as f32 * CELL_H), vec2(CELL_W - 2.0, CELL_H - 2.0));
+            let cell = Rect::from_min_size(pos2(x + 5.0 + shift + col as f32 * CELL_W, rect.top() + 14.0 + row as f32 * CELL_H), vec2(CELL_W - 2.0, CELL_H - 2.0));
             if let Some(v) = values.get_mut(pi) {
                 if param_cell(ui, cell, id.with(pi), &specs[pi], v, accent) {
                     changed = true;
@@ -146,37 +170,88 @@ impl App {
         let mut dui = ui.new_child(UiBuilder::new().max_rect(body.shrink(4.0)));
         dui.set_clip_rect(body);
         let h = (body.height() - 34.0).max(80.0);
-        let mut actions = Vec::new();
-        let mut midi_actions = Vec::new();
         egui::ScrollArea::horizontal().auto_shrink([false, false]).show(&mut dui, |ui| {
             ui.horizontal_top(|ui| {
                 self.mod_strip(ui, h);
+                self.device_chain(ui, sel, h, false);
+            });
+        });
+    }
+
+    /// The height of the device `key` in the Rack (`h` unless resized).
+    pub(crate) fn rack_height(&self, key: u64, h: f32) -> f32 {
+        self.project.rack_heights.get(&key).copied().unwrap_or(h)
+    }
+
+    /// The grip along the bottom of a device in the Rack: drag it for the
+    /// device's own height, double-click for the Rack's height again.
+    fn rack_grip(&mut self, ui: &mut Ui, key: u64, rect: Rect, now: f32) {
+        let strip = Rect::from_min_max(pos2(rect.left() + 10.0, rect.bottom() - 4.0), pos2(rect.right() - 10.0, rect.bottom() + 3.0));
+        let resp = splitter(ui, Id::new(("rack_h", key)), strip, false);
+        grip_dots(ui.painter(), pos2(rect.center().x, rect.bottom() - 1.0), false, if resp.hovered() || resp.dragged() { ACCENT } else { TEXT_DIM });
+        if resp.dragged() {
+            let v = (now + resp.drag_delta().y).clamp(110.0, 1000.0);
+            self.project.rack_heights.insert(key, v);
+        }
+        if resp.double_clicked() {
+            self.project.rack_heights.remove(&key);
+        }
+        resp.on_hover_text("Drag: this device's height · double-click: back to the Rack's height");
+    }
+
+    /// The devices of one track (or return, or the master): MIDI effects,
+    /// instrument, audio effects, in the direction of `ui` (side by side in a
+    /// horizontal ui, under each other in a vertical one). Moves and removals
+    /// are applied after drawing. `resizable` (the Rack) gives every device
+    /// its own height, with a grip to drag it.
+    pub(crate) fn device_chain(&mut self, ui: &mut Ui, sel: TrackSel, h: f32, resizable: bool) {
+        let mut actions = Vec::new();
+        let mut midi_actions = Vec::new();
+        {
+            {
                 if let TrackSel::Track(i) = sel {
                     // MIDI effects come first, like in Live: notes flow left to right.
                     if self.project.tracks.get(i).map(|t| t.kind == krabton_engine::TrackKind::Midi).unwrap_or(false) {
                         let n = self.project.tracks[i].midi_devices.len();
                         for d in 0..n {
-                            if let Some(a) = self.midi_fx_panel(ui, i, d, h) {
+                            let key = self.project.tracks[i].midi_devices[d].id;
+                            let hd = if resizable { self.rack_height(key, h) } else { h };
+                            let r = ui.scope(|ui| self.midi_fx_panel(ui, i, d, hd));
+                            if let Some(a) = r.inner {
                                 midi_actions.push(a);
+                            }
+                            if resizable {
+                                self.rack_grip(ui, key, r.response.rect, hd);
                             }
                         }
                         self.add_midi_fx_slot(ui, i, h);
                     }
                     if self.project.tracks.get(i).map(|t| t.instrument.is_some()).unwrap_or(false) {
-                        self.instrument_panel(ui, i, h);
+                        let key = self.project.tracks[i].id;
+                        let hd = if resizable { self.rack_height(key, h) } else { h };
+                        let r = ui.scope(|ui| self.instrument_panel(ui, i, hd));
+                        if resizable {
+                            self.rack_grip(ui, key, r.response.rect, hd);
+                        }
                     } else if self.project.tracks.get(i).map(|t| t.kind == krabton_engine::TrackKind::Midi).unwrap_or(false) {
                         self.empty_instrument_slot(ui, i, h);
                     }
                 }
                 let n = self.chain_mut(sel).map(|c| c.len()).unwrap_or(0);
                 for d in 0..n {
-                    if let Some(a) = self.effect_panel(ui, sel, d, h) {
+                    let key = self.chain_mut(sel).and_then(|c| c.get(d)).map(|dev| dev.id).unwrap_or(0);
+                    let hd = if resizable { self.rack_height(key, h) } else { h };
+                    let r = ui.scope(|ui| self.effect_panel(ui, sel, d, hd));
+                    if let Some(a) = r.inner {
                         actions.push(a);
+                    }
+                    if resizable {
+                        self.rack_grip(ui, key, r.response.rect, hd);
                     }
                 }
                 self.add_effect_slot(ui, sel, h);
-            });
-        });
+            }
+        }
         if let (TrackSel::Track(i), false) = (sel, midi_actions.is_empty()) {
             if let Some(chain) = self.project.tracks.get_mut(i).map(|t| &mut t.midi_devices) {
                 for a in midi_actions {
@@ -223,12 +298,15 @@ impl App {
             EffectKind::Scope => 360.0,
             EffectKind::LensEq => 620.0,
             EffectKind::LensComp => 420.0,
+            EffectKind::Grains => 360.0,
             _ => 400.0,
         };
         let mut width = self.prefs.layout.display(kind.name(), default_w);
         let width_before = width;
         let plugin_status = plugin.as_ref().map(|p| self.plugins.status(p.instance));
         let mut toggle_editor = false;
+        let mut stomp = false;
+        let on = enabled;
         let (changed, action) = device_frame(ui, &title, Some(&mut enabled), h, |ui| {
             if let (Some(p), Some(st)) = (&plugin, &plugin_status) {
                 ui.vertical(|ui| {
@@ -269,6 +347,16 @@ impl App {
                     param_grid_mod(ui, id, kind.specs(), &mut params, accent, h - 24.0, mv.as_mut())
                 })
                 .inner
+            } else if kind.category() == "Pedals" {
+                ui.horizontal_top(|ui| {
+                    let (a, s) = crate::ui::pedal_view::pedal_face(ui, id.with("face"), kind, &mut params, on, (h - 30.0).max(80.0));
+                    stomp = s;
+                    ui.add_space(6.0);
+                    a | param_grid_mod(ui, id, kind.specs(), &mut params, accent, h - 24.0, mv.as_mut())
+                })
+                .inner
+            } else if kind == EffectKind::Grains {
+                crate::ui::grains_view::grains_panel(ui, id, dev_id, &mut params, accent, h, mv.as_mut(), &status, &mut width)
             } else if kind == EffectKind::LensEq {
                 crate::ui::lens::eq_panel(ui, id, dev_id, &mut params, accent, h, mv.as_mut(), &status, &mut width)
             } else if kind == EffectKind::LensComp {
@@ -280,6 +368,9 @@ impl App {
             }
         });
         self.apply_mod_view(mv);
+        if stomp {
+            enabled = !enabled;
+        }
         if let (true, Some(p)) = (toggle_editor, &plugin) {
             self.toggle_effect_editor(p.instance, &p.name);
         }
@@ -369,25 +460,40 @@ impl App {
         resp.on_hover_text("Add a sequencer or MIDI effect (arpeggiator, chord, ...)");
         if ui.ctx().memory(|m| m.data.get_temp::<bool>(menu_id).unwrap_or(false)) {
             let mut close = false;
-            egui::Area::new(menu_id.with("area")).fixed_pos(r.left_top() + vec2(4.0, 4.0)).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
+            egui::Area::new(menu_id.with("area")).fixed_pos(r.left_top() + vec2(4.0, 4.0)).order(egui::Order::Foreground).constrain(true).show(ui.ctx(), |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    ui.label(RichText::new("Sequencers").small().color(PLAY));
-                    for k in MidiFxKind::SEQUENCERS {
-                        if ui.button(k.name()).on_hover_text(k.description()).clicked() {
-                            self.apply_item(&BrowserItem::MidiFx(k), crate::app::DropTarget::Track(track));
-                            close = true;
+                    // A column per group of sequencers, then the MIDI effects,
+                    // side by side like the audio effects' menu.
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                    ui.horizontal_top(|ui| {
+                        for group in MidiFxKind::SEQUENCER_GROUPS {
+                            ui.vertical(|ui| {
+                                ui.set_min_width(118.0);
+                                ui.label(RichText::new(group).small().color(PLAY));
+                                for k in MidiFxKind::SEQUENCERS.into_iter().filter(|k| k.group() == group) {
+                                    if ui.button(k.name()).on_hover_text(k.description()).clicked() {
+                                        self.apply_item(&BrowserItem::MidiFx(k), crate::app::DropTarget::Track(track));
+                                        close = true;
+                                    }
+                                }
+                            });
                         }
-                    }
-                    ui.label(RichText::new("MIDI effects").small().color(SELECT));
-                    for k in MidiFxKind::ALL {
-                        if ui.button(k.name()).on_hover_text(k.description()).clicked() {
-                            let dev = self.project.make_midi_device(k);
-                            if let Some(t) = self.project.tracks.get_mut(track) {
-                                t.midi_devices.push(dev);
+                        ui.add_space(10.0);
+                        ui.vertical(|ui| {
+                            ui.set_min_width(118.0);
+                            ui.label(RichText::new("MIDI Effects").small().color(SELECT));
+                            for k in MidiFxKind::ALL {
+                                if ui.button(k.name()).on_hover_text(k.description()).clicked() {
+                                    let dev = self.project.make_midi_device(k);
+                                    if let Some(t) = self.project.tracks.get_mut(track) {
+                                        t.midi_devices.push(dev);
+                                    }
+                                    close = true;
+                                }
                             }
-                            close = true;
-                        }
-                    }
+                        });
+                    });
+                    ui.add_space(4.0);
                     if ui.button("Cancel").clicked() {
                         close = true;
                     }
@@ -423,23 +529,48 @@ impl App {
             }
         }
         resp.context_menu(|ui| effect_menu(self, ui, sel));
+        // One menu per chain: the Rack shows a slot for every track.
+        let key = match sel {
+            TrackSel::Track(i) => (0u8, i),
+            TrackSel::Return(j) => (1, j),
+            TrackSel::Master => (2, 0),
+        };
+        let open_id = Id::new(("fx_menu_open", key));
         if resp.clicked() {
             // Left-click opens the same menu via a popup.
-            ui.ctx().memory_mut(|m| m.data.insert_temp(Id::new("fx_menu_open"), true));
+            ui.ctx().memory_mut(|m| m.data.insert_temp(open_id, true));
         }
-        let open = ui.ctx().memory(|m| m.data.get_temp::<bool>(Id::new("fx_menu_open")).unwrap_or(false));
+        let open = ui.ctx().memory(|m| m.data.get_temp::<bool>(open_id).unwrap_or(false));
         if open {
-            let area = egui::Area::new(Id::new("fx_menu")).fixed_pos(r.left_top() + vec2(4.0, 4.0)).order(egui::Order::Foreground);
+            let area = egui::Area::new(Id::new(("fx_menu", key))).fixed_pos(r.left_top() + vec2(4.0, 4.0)).order(egui::Order::Foreground).constrain(true);
             let mut close = false;
             area.show(ui.ctx(), |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    // A column per category, four to a row.
+                    // Categories side by side, a few stacked in a column when
+                    // they are short, so the menu stays wide rather than tall.
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-                    for row in EffectKind::CATEGORIES.chunks(4) {
-                        ui.horizontal_top(|ui| {
-                            for &cat in row {
-                                ui.vertical(|ui| {
-                                    ui.set_min_width(130.0);
+                    let size = |cat: &str| EffectKind::ALL.iter().filter(|k| k.category() == cat).count() + 1;
+                    let limit = EffectKind::CATEGORIES.iter().map(|c| size(c)).max().unwrap_or(1);
+                    let mut columns: Vec<Vec<&str>> = Vec::new();
+                    let mut height = 0;
+                    for &cat in EffectKind::CATEGORIES.iter() {
+                        if columns.is_empty() || height + size(cat) > limit {
+                            columns.push(Vec::new());
+                            height = 0;
+                        }
+                        height += size(cat);
+                        if let Some(c) = columns.last_mut() {
+                            c.push(cat);
+                        }
+                    }
+                    ui.horizontal_top(|ui| {
+                        for column in &columns {
+                            ui.vertical(|ui| {
+                                ui.set_min_width(124.0);
+                                for (n, &cat) in column.iter().enumerate() {
+                                    if n > 0 {
+                                        ui.add_space(6.0);
+                                    }
                                     ui.label(RichText::new(cat).small().color(TEXT_DIM));
                                     for k in EffectKind::ALL.into_iter().filter(|k| k.category() == cat) {
                                         if ui.button(k.name()).on_hover_text(k.description()).clicked() {
@@ -450,11 +581,11 @@ impl App {
                                             close = true;
                                         }
                                     }
-                                });
-                            }
-                        });
-                        ui.add_space(4.0);
-                    }
+                                }
+                            });
+                        }
+                    });
+                    ui.add_space(4.0);
                     let plugins: Vec<krabton_clap::PluginInfo> = self.plugins.effects().cloned().collect();
                     if !plugins.is_empty() {
                         ui.separator();
@@ -476,7 +607,7 @@ impl App {
                 });
             });
             if close || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                ui.ctx().memory_mut(|m| m.data.insert_temp(Id::new("fx_menu_open"), false));
+                ui.ctx().memory_mut(|m| m.data.insert_temp(open_id, false));
             }
         }
     }
@@ -500,6 +631,14 @@ impl App {
         let mut toggle_editor = false;
         let mut open_rack = false;
         let mut mv = self.mod_view(ModOwner::Instrument(track_id));
+        // The engine reports the sound of one instrument for its screen: the
+        // selected track's (in the Rack the others show none).
+        let status = self.status();
+        let watched = self.sel_track == TrackSel::Track(i);
+        if watched {
+            status.inst_watch.store(track_id, std::sync::atomic::Ordering::Relaxed);
+        }
+        let live = if watched { super::inst_screen::InstLive::read(&status) } else { super::inst_screen::InstLive::default() };
         let (_, action) = device_frame(ui, title, None, h, |ui| {
             ui.horizontal_top(|ui| {
                 ui.vertical(|ui| match &mut new_inst {
@@ -545,7 +684,7 @@ impl App {
                                 }
                             });
                         });
-                        param_grid_mod(ui, Id::new(("synth", track_id)), synth::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
+                        super::inst_screen::synth_grid(ui, Id::new(("synth", track_id)), params, &live, h - 48.0, mv.as_mut());
                     }
                     Instrument::Analog { preset, params } => {
                         ui.horizontal(|ui| {
@@ -560,7 +699,140 @@ impl App {
                             });
                             ui.label(RichText::new("classic analog polysynth").small().color(TEXT_DIM));
                         });
-                        param_grid_mod(ui, Id::new(("analog", track_id)), analog::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
+                        super::inst_screen::analog_grid(ui, Id::new(("analog", track_id)), params, &live, h - 48.0, mv.as_mut());
+                    }
+                    Instrument::Piano { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("piano_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in krabton_engine::piano::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = krabton_engine::piano::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new(krabton_engine::piano::library::CREDIT).small().color(TEXT_DIM));
+                        });
+                        let lib = if krabton_engine::piano::library::shared().is_some() {
+                            super::inst_screen::PianoLib::Ready
+                        } else {
+                            match self.piano_install.as_ref().and_then(|s| s.lock().ok().map(|s| s.clone())) {
+                                None => super::inst_screen::PianoLib::Missing,
+                                Some(crate::piano_lib::InstallState::Failed(e)) => super::inst_screen::PianoLib::Failed(e),
+                                Some(crate::piano_lib::InstallState::Listing) => super::inst_screen::PianoLib::Installing("Asking GitHub for the samples".into(), 0.0),
+                                Some(crate::piano_lib::InstallState::Downloading { done, total, bytes, total_bytes }) => {
+                                    super::inst_screen::PianoLib::Installing(format!("Downloading {done} of {total} ({} of {} MB)", bytes / 1_000_000, total_bytes / 1_000_000), 0.85 * bytes as f32 / total_bytes.max(1) as f32)
+                                }
+                                Some(crate::piano_lib::InstallState::Building { done, total }) => super::inst_screen::PianoLib::Installing(format!("Preparing {done} of {total}"), 0.85 + 0.15 * done as f32 / total.max(1) as f32),
+                                Some(crate::piano_lib::InstallState::Ready) => super::inst_screen::PianoLib::Installing("Opening".into(), 1.0),
+                            }
+                        };
+                        let mut install = false;
+                        ui.horizontal_top(|ui| {
+                            let (_, clicked) = super::inst_screen::piano_screen(ui, Id::new(("piano_screen", track_id)), params, &live, h - 48.0, lib);
+                            install = clicked;
+                            ui.add_space(6.0);
+                            param_grid_mod(ui, Id::new(("piano", track_id)), krabton_engine::piano::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
+                        });
+                        if install {
+                            self.start_piano_install();
+                        }
+                    }
+                    Instrument::Bassline { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("bassline_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in krabton_engine::dsp::bassline::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = krabton_engine::dsp::bassline::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("acid bass after Open303: accent at velocity 100+, slide by playing legato").small().color(TEXT_DIM));
+                        });
+                        ui.horizontal_top(|ui| {
+                            super::engine_screens::bassline_screen(ui, Id::new(("bassline_screen", track_id)), params, &live, h - 48.0);
+                            ui.add_space(6.0);
+                            param_grid_mod(ui, Id::new(("bassline", track_id)), krabton_engine::dsp::bassline::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
+                        });
+                    }
+                    Instrument::Drone { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("drone_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in krabton_engine::dsp::drone::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = krabton_engine::dsp::drone::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("tanpura, pad, swells and air, slowly evolving: hold a key").small().color(TEXT_DIM));
+                        });
+                        ui.horizontal_top(|ui| {
+                            super::engine_screens::drone_screen(ui, Id::new(("drone_screen", track_id)), params, &live, h - 48.0);
+                            ui.add_space(6.0);
+                            param_grid_mod(ui, Id::new(("drone", track_id)), krabton_engine::dsp::drone::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
+                        });
+                    }
+                    Instrument::Waves { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("waves_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in krabton_engine::dsp::waves::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = krabton_engine::dsp::waves::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("wavetables from the Adventure Kid Waveforms (CC0): drag a stack to move through it").small().color(TEXT_DIM));
+                        });
+                        ui.horizontal_top(|ui| {
+                            super::engine_screens::waves_screen(ui, Id::new(("waves_screen", track_id)), params, &live, h - 48.0);
+                            ui.add_space(6.0);
+                            param_grid_mod(ui, Id::new(("waves", track_id)), krabton_engine::dsp::waves::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
+                        });
+                    }
+                    Instrument::Guitar { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("guitar_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in krabton_engine::dsp::guitar::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = krabton_engine::dsp::guitar::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("six waveguide strings, placed and strummed like a guitarist: put pedals after it").small().color(TEXT_DIM));
+                        });
+                        ui.horizontal_top(|ui| {
+                            super::engine_screens::guitar_screen(ui, Id::new(("guitar_screen", track_id)), params, &live, h - 48.0);
+                            ui.add_space(6.0);
+                            param_grid_mod(ui, Id::new(("guitar", track_id)), krabton_engine::dsp::guitar::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
+                        });
+                    }
+                    Instrument::Monk { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("monk_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in krabton_engine::dsp::monk::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = krabton_engine::dsp::monk::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("chanting monk of FOF grains (after MonkSynth): drag in the screen for vowel and head").small().color(TEXT_DIM));
+                        });
+                        ui.horizontal_top(|ui| {
+                            super::inst_screen::monk_screen(ui, Id::new(("monk_screen", track_id)), params, &live, h - 48.0);
+                            ui.add_space(6.0);
+                            param_grid_mod(ui, Id::new(("monk", track_id)), krabton_engine::dsp::monk::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
+                        });
                     }
                     Instrument::Rings { preset, params } => {
                         ui.horizontal(|ui| {
@@ -575,7 +847,11 @@ impl App {
                             });
                             ui.label(RichText::new("struck resonator: modal, strings, FM, chords").small().color(TEXT_DIM));
                         });
-                        param_grid_mod(ui, Id::new(("rings_synth", track_id)), rings_synth::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
+                        ui.horizontal_top(|ui| {
+                            super::inst_screen::rings_screen(ui, params, &live, h - 48.0);
+                            ui.add_space(6.0);
+                            param_grid_mod(ui, Id::new(("rings_synth", track_id)), rings_synth::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
+                        });
                     }
                     Instrument::Organ { preset, params } => {
                         ui.horizontal(|ui| {
@@ -590,7 +866,11 @@ impl App {
                             });
                             ui.label(RichText::new("tonewheel organ: drawbars, percussion, vibrato, rotary").small().color(TEXT_DIM));
                         });
-                        param_grid_mod(ui, Id::new(("organ", track_id)), organ::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
+                        ui.horizontal_top(|ui| {
+                            super::inst_screen::organ_screen(ui, Id::new(("organ_screen", track_id)), params, &live, h - 48.0);
+                            ui.add_space(6.0);
+                            param_grid_mod(ui, Id::new(("organ", track_id)), organ::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
+                        });
                     }
                     Instrument::Winds { preset, params } => {
                         ui.horizontal(|ui| {
@@ -605,7 +885,7 @@ impl App {
                             });
                             ui.label(RichText::new("blown physical models (STK)").small().color(TEXT_DIM));
                         });
-                        stk_controls(ui, track_id, krabton_engine::dsp::stk_synth::Family::Winds, params, h, mv.as_mut());
+                        stk_controls(ui, track_id, krabton_engine::dsp::stk_synth::Family::Winds, params, h, mv.as_mut(), &live);
                     }
                     Instrument::Strings { preset, params } => {
                         ui.horizontal(|ui| {
@@ -620,7 +900,7 @@ impl App {
                             });
                             ui.label(RichText::new("string physical models (STK)").small().color(TEXT_DIM));
                         });
-                        stk_controls(ui, track_id, krabton_engine::dsp::stk_synth::Family::Strings, params, h, mv.as_mut());
+                        stk_controls(ui, track_id, krabton_engine::dsp::stk_synth::Family::Strings, params, h, mv.as_mut(), &live);
                     }
                     Instrument::Mallets { preset, params } => {
                         ui.horizontal(|ui| {
@@ -635,7 +915,7 @@ impl App {
                             });
                             ui.label(RichText::new("struck physical models (STK)").small().color(TEXT_DIM));
                         });
-                        stk_controls(ui, track_id, krabton_engine::dsp::stk_synth::Family::Mallets, params, h, mv.as_mut());
+                        stk_controls(ui, track_id, krabton_engine::dsp::stk_synth::Family::Mallets, params, h, mv.as_mut(), &live);
                     }
                     Instrument::Voice { preset, params } => {
                         ui.horizontal(|ui| {
@@ -648,9 +928,13 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("formant voice (STK)").small().color(TEXT_DIM));
+                            ui.label(RichText::new("singing voice: vowels, choir, glide, chant with undertones and overtones").small().color(TEXT_DIM));
                         });
-                        stk_controls(ui, track_id, krabton_engine::dsp::stk_synth::Family::Voice, params, h, mv.as_mut());
+                        ui.horizontal_top(|ui| {
+                            super::inst_screen::voice_screen(ui, Id::new(("voice_screen", track_id)), params, &live, h - 48.0);
+                            ui.add_space(6.0);
+                            param_grid_mod(ui, Id::new(("voice", track_id)), stk_voice::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
+                        });
                     }
                     Instrument::Modular { preset, params, patch } => {
                         ui.horizontal(|ui| {
@@ -681,9 +965,13 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("PhISEM shakers: the key tunes them, Hold keeps shaking").small().color(TEXT_DIM));
+                            ui.label(RichText::new("shakers, rattles and grains (PhISEM): the key tunes them, Hold keeps shaking").small().color(TEXT_DIM));
                         });
-                        param_grid_mod(ui, Id::new(("shakers", track_id)), shaker_synth::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
+                        ui.horizontal_top(|ui| {
+                            super::inst_screen::particles(ui, Id::new(("shakers_screen", track_id)), params, &live, h - 48.0);
+                            ui.add_space(6.0);
+                            param_grid_mod(ui, Id::new(("shakers", track_id)), shaker_synth::SPECS, params, ACCENT, h - 48.0, mv.as_mut());
+                        });
                     }
                     Instrument::Macro { preset, params } => {
                         ui.horizontal(|ui| {
@@ -748,6 +1036,8 @@ impl App {
                         });
                         ui.horizontal_top(|ui| {
                             elements_model_picker(ui, track_id, params, h - 48.0);
+                            ui.add_space(6.0);
+                            super::inst_screen::elements_screen(ui, Id::new(("elements_screen", track_id)), params, &live, h - 48.0);
                             ui.add_space(6.0);
                             let mut specs = elements_synth::SPECS.to_vec();
                             specs[elements_synth::GEOMETRY].name = elements_synth::geometry_name(params[elements_synth::MODEL]);
@@ -1171,7 +1461,7 @@ fn macro_model_picker(ui: &mut Ui, track_id: u64, params: &mut [f32], height: f3
 
 /// The model and controls of an STK instrument: the knobs carry the
 /// current model's own control names.
-fn stk_controls(ui: &mut Ui, track_id: u64, family: krabton_engine::dsp::stk_synth::Family, params: &mut Vec<f32>, h: f32, mv: Option<&mut ModView>) {
+fn stk_controls(ui: &mut Ui, track_id: u64, family: krabton_engine::dsp::stk_synth::Family, params: &mut Vec<f32>, h: f32, mv: Option<&mut ModView>, live: &super::inst_screen::InstLive) {
     use krabton_engine::dsp::stk_synth as stk;
     let specs = stk::specs(family);
     if params.len() < specs.len() {
@@ -1200,7 +1490,11 @@ fn stk_controls(ui: &mut Ui, track_id: u64, family: krabton_engine::dsp::stk_syn
         s.name = stk::short_name(c.name);
         s.default = c.default / 128.0;
     }
-    param_grid_mod(ui, Id::new(("stk", track_id)), &view, &mut params[..stk::CTL0 + used], ACCENT, h - 72.0, mv);
+    ui.horizontal_top(|ui| {
+        super::inst_screen::stk_screen(ui, Id::new(("stk_screen", track_id)), family, params, live, h - 72.0);
+        ui.add_space(6.0);
+        param_grid_mod(ui, Id::new(("stk", track_id)), &view, &mut params[..stk::CTL0 + used], ACCENT, h - 72.0, mv);
+    });
 }
 
 fn effect_menu(app: &mut App, ui: &mut Ui, sel: TrackSel) {

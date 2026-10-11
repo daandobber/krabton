@@ -21,5 +21,6 @@ rfd = "0.15"
 # Loads PulseAudio's client library at run time (Linux sound without ALSA plugins).
 libloading = "0.8"
 crossbeam-channel.workspace = true
+hound.workspace = true
 serde.workspace = true
 serde_json.workspace = true

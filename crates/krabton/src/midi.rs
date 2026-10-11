@@ -8,6 +8,8 @@ use midir::{Ignore, MidiInput, MidiInputConnection};
 pub enum MidiMsg {
     NoteOn { pitch: u8, velocity: f32, channel: u8 },
     NoteOff { pitch: u8 },
+    /// The sustain pedal (CC 64).
+    Sustain { down: bool, channel: u8 },
 }
 
 pub struct Midi {
@@ -61,6 +63,7 @@ impl Midi {
                     let m = match status {
                         0x90 if d2 > 0 => MidiMsg::NoteOn { pitch: d1, velocity: d2 as f32 / 127.0, channel },
                         0x90 | 0x80 => MidiMsg::NoteOff { pitch: d1 },
+                        0xB0 if d1 == 64 => MidiMsg::Sustain { down: d2 >= 64, channel },
                         _ => return,
                     };
                     let _ = tx.send(m);

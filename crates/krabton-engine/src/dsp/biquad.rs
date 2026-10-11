@@ -20,6 +20,12 @@ pub struct Coefs {
     pub a2: f64,
 }
 
+impl Default for Coefs {
+    fn default() -> Self {
+        Self::IDENTITY
+    }
+}
+
 impl Coefs {
     pub const IDENTITY: Coefs = Coefs { b0: 1.0, b1: 0.0, b2: 0.0, a1: 0.0, a2: 0.0 };
 

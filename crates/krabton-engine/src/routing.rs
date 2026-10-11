@@ -81,6 +81,9 @@ pub enum MidiInput {
     /// Only the connected MIDI device.
     Device,
     None,
+    /// Another MIDI track: the notes it plays (after its MIDI effects, so a
+    /// sequencer's notes too).
+    Track(u64),
 }
 
 impl MidiInput {
@@ -90,7 +93,7 @@ impl MidiInput {
             MidiInput::AllIns => true,
             MidiInput::Keyboard => !from_device,
             MidiInput::Device => from_device,
-            MidiInput::None => false,
+            MidiInput::None | MidiInput::Track(_) => false,
         }
     }
 }
@@ -149,12 +152,41 @@ impl Project {
         from != to && from < self.tracks.len() && self.tracks.get(to).is_some_and(|t| t.kind == TrackKind::Audio) && !self.feeds(to, from)
     }
 
+    /// The track whose notes MIDI track `ti` takes ("MIDI From" a track).
+    pub fn midi_source(&self, ti: usize) -> Option<usize> {
+        let t = self.tracks.get(ti)?;
+        let MidiInput::Track(id) = t.midi_in else { return None };
+        if t.kind != TrackKind::Midi {
+            return None;
+        }
+        self.track_index(id).filter(|&si| si != ti && self.tracks[si].kind == TrackKind::Midi)
+    }
+
+    /// Whether MIDI track `to` can take the notes of `from` without making
+    /// a loop.
+    pub fn can_route_midi(&self, from: usize, to: usize) -> bool {
+        let midi = |i: usize| self.tracks.get(i).is_some_and(|t| t.kind == TrackKind::Midi);
+        if from == to || !midi(from) || !midi(to) {
+            return false;
+        }
+        // Follow where `from` takes its notes from: it must not come back to `to`.
+        let mut at = from;
+        for _ in 0..self.tracks.len() {
+            match self.midi_source(at) {
+                Some(s) if s == to => return false,
+                Some(s) => at = s,
+                None => return true,
+            }
+        }
+        false
+    }
+
     /// Track indices in processing order: every track after the tracks it
-    /// takes audio from. Tracks caught in a loop keep their place at the end
+    /// takes audio (or notes) from. Tracks caught in a loop keep their place at the end
     /// (they hear the previous block of each other).
     pub fn routing_order(&self) -> Vec<usize> {
         let n = self.tracks.len();
-        let sources: Vec<Vec<usize>> = (0..n).map(|ti| self.audio_sources(ti).into_iter().map(|(s, _)| s).collect()).collect();
+        let sources: Vec<Vec<usize>> = (0..n).map(|ti| self.audio_sources(ti).into_iter().map(|(s, _)| s).chain(self.midi_source(ti)).collect()).collect();
         let mut done = vec![false; n];
         let mut order = Vec::with_capacity(n);
         loop {

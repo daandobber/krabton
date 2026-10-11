@@ -178,6 +178,9 @@ pub struct Shaker {
     holding: bool,
     /// Samples to the next shake.
     countdown: f32,
+    /// Shakes and collisions so far (wrapping), for displays.
+    pub shakes: u32,
+    pub hits: u32,
     interval: f32,
     humanize: f32,
 }
@@ -236,7 +239,13 @@ impl Shaker {
 
     /// One shake: its energy comes in, at once with a first collision, or
     /// swelling.
+    /// How agitated the shaker is (0..1).
+    pub fn energy(&self) -> f32 {
+        self.energy
+    }
+
     fn shake(&mut self) {
+        self.shakes = self.shakes.wrapping_add(1);
         if self.swell_coef < 1.0 {
             self.incoming += self.shake_energy;
         } else {
@@ -275,6 +284,7 @@ impl Shaker {
         }
         self.energy *= self.system_decay;
         if rng.unipolar() < self.chance {
+            self.hits = self.hits.wrapping_add(1);
             self.level += self.collision_gain * self.energy;
             if self.spread > 0.0 {
                 let pan = self.spread * rng.bipolar();

@@ -1,18 +1,25 @@
 //! All views. Each submodule adds `impl App` methods for its part of the UI.
 
+pub mod ambient_view;
 pub mod arrangement;
 pub mod browser;
+pub mod chords_view;
 pub mod classic_view;
 pub mod detail;
 pub mod devices;
 pub mod dialogs;
+pub mod engine_screens;
 pub mod fm_panel;
+pub mod grains_view;
+pub mod inst_screen;
 pub mod io_section;
 pub mod lens;
 pub mod grid_panel;
 pub mod modulation;
+pub mod pedal_view;
 pub mod piano_roll;
 pub mod rack;
+pub mod rack_view;
 pub mod scope;
 pub mod seq_more_view;
 pub mod seq_view;

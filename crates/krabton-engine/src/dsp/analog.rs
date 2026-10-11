@@ -410,6 +410,8 @@ struct Voice {
     tol_cutoff: f32,
     tol_time: f32,
     tol_detune: f32,
+    /// The filter's cutoff at the last control step (Hz), for displays.
+    cut_hz: f32,
 }
 
 impl Voice {
@@ -445,6 +447,7 @@ impl Voice {
             tol_cutoff,
             tol_time,
             tol_detune,
+            cut_hz: 1000.0,
         }
     }
 
@@ -752,6 +755,41 @@ impl AnalogState {
         }
     }
 
+    /// For the display: [0] voices shown (newest first, at most 6), then per
+    /// voice from [1] four values: amp envelope level and stage, filter
+    /// envelope level and stage (stage 1 attack, 2 decay/sustain, 3 release);
+    /// [25] the newest voice's cutoff (Hz) and [26] its pitch.
+    pub fn visual(&self, out: &mut [f32; crate::engine::INST_VALS]) {
+        // The newest voices first, without allocating (this runs on the audio thread).
+        let mut newest: [Option<&Voice>; 6] = [None; 6];
+        let mut below = u64::MAX;
+        for slot in newest.iter_mut() {
+            *slot = self.voices.iter().filter(|v| v.active && v.age < below).max_by_key(|v| v.age);
+            match slot {
+                Some(v) => below = v.age,
+                None => break,
+            }
+        }
+        let on = || newest.iter().map_while(|v| *v);
+        let stage = |s: Stage| match s {
+            Stage::Idle => 0.0,
+            Stage::Attack => 1.0,
+            Stage::Decay => 2.0,
+            Stage::Release => 3.0,
+        };
+        out[0] = on().count() as f32;
+        for (k, v) in on().enumerate() {
+            out[1 + k * 4] = v.aenv.level;
+            out[2 + k * 4] = stage(v.aenv.stage);
+            out[3 + k * 4] = v.fenv.level;
+            out[4 + k * 4] = stage(v.fenv.stage);
+        }
+        if let Some(v) = newest[0] {
+            out[25] = v.cut_hz;
+            out[26] = v.pitch;
+        }
+    }
+
     pub fn active_voices(&self) -> usize {
         self.voices.iter().filter(|v| v.active).count()
     }
@@ -930,6 +968,7 @@ fn render_voice(v: &mut Voice, c: &Ctrl, lfo: &[f32], out_l: &mut [f32], out_r: 
             + mod_lfo * c.lfo_filter
             + v.tol_cutoff * c.vintage * 1.5;
         let f = midi_to_freq(cut).clamp(15.0, c.fmax);
+        v.cut_hz = f;
         let g_target = (PI * f / fs2).tan();
         let g_step = (g_target - v.g) / len as f32;
 

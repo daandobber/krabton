@@ -231,6 +231,33 @@ impl App {
         if nt == 0 {
             p.text(lanes.center(), Align2::CENTER_CENTER, "No tracks yet: drop an instrument from the browser", body(), TEXT_DIM);
         }
+        // The master, always at the bottom of the headers: click for its
+        // effects, or drop effects on it.
+        {
+            let mr = Rect::from_min_max(pos2(heads.left(), heads.bottom() - 26.0), pos2(heads.right() - 4.0, heads.bottom() - 2.0));
+            let resp = hui.interact(mr, Id::new("arr_master"), Sense::click());
+            let selected = self.sel_track == TrackSel::Master;
+            let hp = hui.painter().clone();
+            rect_fill(&hp, mr, 3.0, if selected || resp.hovered() { shade(PANEL3, 1.25) } else { PANEL3 });
+            if resp.dnd_hover_payload::<BrowserItem>().is_some() {
+                rect_line(&hp, mr, 3.0, 1.5, ACCENT);
+            }
+            rect_fill(&hp, Rect::from_min_size(mr.min, vec2(3.0, mr.height())), 1.0, ACCENT);
+            hp.text(pos2(mr.left() + 10.0, mr.center().y), Align2::LEFT_CENTER, "Master", body(), if selected { ACCENT } else { TEXT });
+            let n = self.project.master.devices.len();
+            if n > 0 {
+                hp.text(pos2(mr.right() - 6.0, mr.center().y), Align2::RIGHT_CENTER, format!("{n} fx"), small(), TEXT_DIM);
+            }
+            if resp.clicked() {
+                self.sel_track = TrackSel::Master;
+                self.show_devices();
+            }
+            if let Some(item) = drop_payload::<BrowserItem>(&resp) {
+                self.apply_item(&item, DropTarget::Chain(TrackSel::Master));
+                self.sel_track = TrackSel::Master;
+            }
+            resp.on_hover_text("The master: click for its effects, or drop effects here");
+        }
         // Drop area below the last lane creates a new track.
         let below = Rect::from_min_max(pos2(lanes.left(), lane_y(nt)), pos2(lanes.right(), lane_y(nt) + 50.0));
         if below.intersects(lanes) {
@@ -776,6 +803,7 @@ impl App {
         }
 
         let name = ac.clip.name.clone();
+        let is_audio = matches!(ac.clip.content, ClipContent::Audio(_));
         resp.context_menu(|ui| {
             if ui.button("Rename").clicked() {
                 self.renaming = Some((RenameTarget::Clip(sel), name.clone()));
@@ -789,6 +817,18 @@ impl App {
             if ui.button(format!("Copy to Session (scene {})", scene + 1)).on_hover_text("Puts a copy in this track's slot of the selected scene").clicked() {
                 self.arr_clip_to_slot((i, cid), (i, scene));
                 ui.close();
+            }
+            if is_audio {
+                ui.menu_button("Export Audio", |ui| {
+                    if ui.button("WAV...").on_hover_text("This clip on its own, as it plays").clicked() {
+                        self.export_clip(sel, false);
+                        ui.close();
+                    }
+                    if ui.button("MP3...").on_hover_text("320 kbit/s, through LAME or ffmpeg on this computer").clicked() {
+                        self.export_clip(sel, true);
+                        ui.close();
+                    }
+                });
             }
             if ui.button("Delete         Del").clicked() {
                 self.delete_clip(sel);

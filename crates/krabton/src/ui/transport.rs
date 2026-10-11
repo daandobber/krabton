@@ -113,9 +113,10 @@ impl App {
                 ui.label(RichText::new(format!("CPU {:>3.0}%", cpu * 100.0)).color(if cpu > 0.8 { REC } else { TEXT_DIM }).small());
                 ui.separator();
                 let dragging_clip = egui::DragAndDrop::payload::<crate::app::SlotDrag>(ui.ctx()).is_some() || egui::DragAndDrop::payload::<crate::app::ArrClipDrag>(ui.ctx()).is_some();
-                for (v, label) in [(View::Arrangement, "Arrangement"), (View::Session, "Session")] {
+                for (v, label) in [(View::Rack, "Rack"), (View::Arrangement, "Arrangement"), (View::Session, "Session")] {
                     let on = self.view == v;
-                    let resp = ui.add(egui::Button::new(RichText::new(label).color(if on { TEXT_DARK } else { TEXT })).fill(if on { ACCENT } else { PANEL3 })).on_hover_text("Tab switches views (also while dragging a clip)");
+                    let tip = if v == View::Rack { "Every track's devices at once (Ctrl+Shift+R)" } else { "Tab switches views (also while dragging a clip)" };
+                    let resp = ui.add(egui::Button::new(RichText::new(label).color(if on { TEXT_DARK } else { TEXT })).fill(if on { ACCENT } else { PANEL3 })).on_hover_text(tip);
                     if resp.clicked() {
                         self.view = v;
                     }
