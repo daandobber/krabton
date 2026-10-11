@@ -13,6 +13,7 @@ pub mod echo;
 pub mod flanger;
 pub mod freq_shifter;
 pub mod gate;
+pub mod glitch;
 pub mod grains;
 pub mod multiband;
 pub mod pedals;

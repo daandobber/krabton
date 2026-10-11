@@ -1683,7 +1683,7 @@ impl Engine {
             for (dev, (_, st)) in track.devices.iter().zip(devices.iter_mut()) {
                 if dev.enabled {
                     let params = mods.params(ModOwner::Device(dev.id)).unwrap_or(&dev.params);
-                    run_device(st, dev.id, params, &mut l[..seg], &mut r[..seg], &ctx, status);
+                    run_device(st, dev, params, &mut l[..seg], &mut r[..seg], &ctx, status);
                 }
             }
             signal.level = l[..seg].iter().chain(&r[..seg]).fold(0.0f32, |m, x| m.max(x.abs()));
@@ -1730,7 +1730,7 @@ impl Engine {
             for (dev, (_, st)) in ret.devices.iter().zip(rt.devices.iter_mut()) {
                 if dev.enabled {
                     let params = mods.params(ModOwner::Device(dev.id)).unwrap_or(&dev.params);
-                    run_device(st, dev.id, params, &mut rt.l[..seg], &mut rt.r[..seg], &ctx, status);
+                    run_device(st, dev, params, &mut rt.l[..seg], &mut rt.r[..seg], &ctx, status);
                 }
             }
             let mm = mods.return_mix(j);
@@ -1752,7 +1752,7 @@ impl Engine {
             for (dev, (_, st)) in project.master.devices.iter().zip(m.devices.iter_mut()) {
                 if dev.enabled {
                     let params = mods.params(ModOwner::Device(dev.id)).unwrap_or(&dev.params);
-                    run_device(st, dev.id, params, &mut m.l[..seg], &mut m.r[..seg], &ctx, status);
+                    run_device(st, dev, params, &mut m.l[..seg], &mut m.r[..seg], &ctx, status);
                 }
             }
             let vol = fader_gain(project.master.volume_db);
@@ -1848,6 +1848,16 @@ impl Engine {
 }
 
 fn sync_devices(devs: &[Device], rts: &mut Vec<(u64, EffectState)>, sr: f32, trash: &mut Vec<GarbageInner>, parked: &mut Vec<(u64, Box<dyn AudioProcessor>)>) {
+    sync_chain(devs, rts, sr, trash, parked);
+    // Effects inside effects (the Glitch Sequencer's slots).
+    for (d, (_, st)) in devs.iter().zip(rts.iter_mut()) {
+        if let EffectState::Glitch(g) = st {
+            sync_chain(&d.children, &mut g.children, sr, trash, parked);
+        }
+    }
+}
+
+fn sync_chain(devs: &[Device], rts: &mut Vec<(u64, EffectState)>, sr: f32, trash: &mut Vec<GarbageInner>, parked: &mut Vec<(u64, Box<dyn AudioProcessor>)>) {
     let same = devs.len() == rts.len() && devs.iter().zip(rts.iter()).all(|(d, (id, st))| d.id == *id && st.kind() == d.kind);
     if same {
         return;
@@ -1876,11 +1886,16 @@ fn sync_devices(devs: &[Device], rts: &mut Vec<(u64, EffectState)>, sr: f32, tra
 }
 
 /// Runs an audio effect, sending what goes in and out of it to its display.
-fn run_device(st: &mut EffectState, id: u64, params: &[f32], l: &mut [f32], r: &mut [f32], ctx: &FxCtx, status: &EngineStatus) {
+fn run_device(st: &mut EffectState, dev: &Device, params: &[f32], l: &mut [f32], r: &mut [f32], ctx: &FxCtx, status: &EngineStatus) {
+    let id = dev.id;
     if let Some(t) = st.taps() {
         t.before(&status.scopes, id, l, r);
     }
-    st.process(params, l, r, ctx);
+    match st {
+        // The Glitch Sequencer plays its pattern and the effects in its slots.
+        EffectState::Glitch(g) => g.process(params, &dev.children, &dev.data, l, r, ctx),
+        _ => st.process(params, l, r, ctx),
+    }
     if let Some(t) = st.taps() {
         t.after(&status.scopes, &status.meters, id, l, r);
     }

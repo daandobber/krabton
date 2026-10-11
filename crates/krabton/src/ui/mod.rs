@@ -11,6 +11,7 @@ pub mod devices;
 pub mod dialogs;
 pub mod engine_screens;
 pub mod fm_panel;
+pub mod glitch_view;
 pub mod grains_view;
 pub mod inst_screen;
 pub mod io_section;

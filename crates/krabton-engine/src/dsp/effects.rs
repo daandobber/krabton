@@ -57,6 +57,7 @@ pub enum EffectKind {
     Spring,
     PitchDelay,
     Grains,
+    Glitch,
     Overdrive,
     DistortionPedal,
     Fuzz,
@@ -179,7 +180,7 @@ static UTILITY: &[ParamSpec] = &[
 ];
 
 impl EffectKind {
-    pub const ALL: [EffectKind; 59] = [
+    pub const ALL: [EffectKind; 60] = [
         EffectKind::Eq3,
         EffectKind::AutoFilter,
         EffectKind::Compressor,
@@ -215,6 +216,7 @@ impl EffectKind {
         EffectKind::Spring,
         EffectKind::PitchDelay,
         EffectKind::Grains,
+        EffectKind::Glitch,
         EffectKind::Overdrive,
         EffectKind::DistortionPedal,
         EffectKind::Fuzz,
@@ -266,6 +268,7 @@ impl EffectKind {
             EffectKind::Spring => "Reverb & Resonance",
             EffectKind::PitchDelay => "Delay & Loop",
             EffectKind::Grains => "Delay & Loop",
+            EffectKind::Glitch => "Delay & Loop",
             EffectKind::Overdrive => "Pedals",
             EffectKind::DistortionPedal => "Pedals",
             EffectKind::Fuzz => "Pedals",
@@ -314,7 +317,7 @@ impl EffectKind {
 
     /// Devices with their own display (they send audio and meters to the UI).
     pub fn has_display(self) -> bool {
-        matches!(self, EffectKind::Scope | EffectKind::LensEq | EffectKind::LensComp | EffectKind::LensLimiter | EffectKind::Grains)
+        matches!(self, EffectKind::Scope | EffectKind::LensEq | EffectKind::LensComp | EffectKind::LensLimiter | EffectKind::Grains | EffectKind::Glitch)
     }
 
     pub fn name(self) -> &'static str {
@@ -369,6 +372,7 @@ impl EffectKind {
             EffectKind::Spring => "Spring",
             EffectKind::PitchDelay => "Pitch Delay",
             EffectKind::Grains => "Grains",
+            EffectKind::Glitch => "Glitch Sequencer",
             EffectKind::Overdrive => "Overdrive",
             EffectKind::DistortionPedal => "Distortion",
             EffectKind::Fuzz => "Fuzz",
@@ -434,6 +438,7 @@ impl EffectKind {
             EffectKind::Spring => "A spring reverb tank: the chirp and boing of amps and dub mixers, with drips",
             EffectKind::PitchDelay => "A delay whose echoes are pitched in semitone steps: each repeat one more step up or down, or all by one interval",
             EffectKind::Grains => "Granular texture processor: grains from an 8-second buffer with random time, size, shape and pitch, regular or random density, freeze, feedback, reverb and tape or lo-fi buffers",
+            EffectKind::Glitch => "A step sequencer of glitches: every step picks Retrigger, Reverse, Shuffle, Tape Stop, Stretch, Crush, Gate, Filter, Delay, or one of four slots holding any other effect; chance per step, variation, four patterns",
             EffectKind::Overdrive => "The green mid-boost overdrive: only the mids and highs are driven, the lows stay tight beside them. Drive, tone, level",
             EffectKind::DistortionPedal => "The op-amp distortion pedal: up to 66 dB of gain that narrows as it rises, clipping diodes and a filter against the fizz",
             EffectKind::Fuzz => "Three fuzzes: lopsided vintage transistors that sputter as notes die, a wall of two stages with a scooped tone, and octave-up fuzz",
@@ -500,6 +505,7 @@ impl EffectKind {
             EffectKind::Spring => super::fx::spring::SPECS,
             EffectKind::PitchDelay => super::fx::pitch_delay::SPECS,
             EffectKind::Grains => super::fx::grains::SPECS,
+            EffectKind::Glitch => super::fx::glitch::SPECS,
             EffectKind::Overdrive => super::fx::pedals::overdrive::SPECS,
             EffectKind::DistortionPedal => super::fx::pedals::distortion::SPECS,
             EffectKind::Fuzz => super::fx::pedals::fuzz::SPECS,
@@ -561,6 +567,7 @@ pub enum EffectState {
     Spring(Box<super::fx::spring::SpringReverb>),
     PitchDelay(Box<super::fx::pitch_delay::PitchDelay>),
     Grains(Box<super::fx::grains::Grains>),
+    Glitch(Box<super::fx::glitch::Glitch>),
     Overdrive(Box<super::fx::pedals::Overdrive>),
     DistortionPedal(Box<super::fx::pedals::Distortion>),
     Fuzz(Box<super::fx::pedals::Fuzz>),
@@ -656,6 +663,7 @@ impl EffectState {
             EffectKind::Spring => EffectState::Spring(Box::new(super::fx::spring::SpringReverb::new(sr))),
             EffectKind::PitchDelay => EffectState::PitchDelay(Box::new(super::fx::pitch_delay::PitchDelay::new(sr))),
             EffectKind::Grains => EffectState::Grains(Box::new(super::fx::grains::Grains::new(sr))),
+            EffectKind::Glitch => EffectState::Glitch(Box::new(super::fx::glitch::Glitch::new(sr))),
             EffectKind::Overdrive => EffectState::Overdrive(Box::new(super::fx::pedals::Overdrive::new(sr))),
             EffectKind::DistortionPedal => EffectState::DistortionPedal(Box::new(super::fx::pedals::Distortion::new(sr))),
             EffectKind::Fuzz => EffectState::Fuzz(Box::new(super::fx::pedals::Fuzz::new(sr))),
@@ -693,6 +701,7 @@ impl EffectState {
             EffectState::LensComp(s) => Some(&mut s.taps),
             EffectState::LensLimiter(s) => Some(&mut s.taps),
             EffectState::Grains(s) => Some(&mut s.taps),
+            EffectState::Glitch(s) => Some(&mut s.taps),
             _ => None,
         }
     }
@@ -735,6 +744,7 @@ impl EffectState {
             EffectState::Spring(_) => EffectKind::Spring,
             EffectState::PitchDelay(_) => EffectKind::PitchDelay,
             EffectState::Grains(_) => EffectKind::Grains,
+            EffectState::Glitch(_) => EffectKind::Glitch,
             EffectState::Overdrive(_) => EffectKind::Overdrive,
             EffectState::DistortionPedal(_) => EffectKind::DistortionPedal,
             EffectState::Fuzz(_) => EffectKind::Fuzz,
@@ -977,6 +987,9 @@ impl EffectState {
             EffectState::Spring(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::PitchDelay(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Grains(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
+            // Without its device (no slots, the default pattern); the engine
+            // runs it with both through `run_device`.
+            EffectState::Glitch(s) => s.process(p, &[], &[], &mut l[..n], &mut r[..n], ctx),
             EffectState::Overdrive(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::DistortionPedal(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Fuzz(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),

@@ -315,6 +315,9 @@ impl App {
                 match copy {
                     Some(mut dev) => {
                         dev.id = self.project.alloc_id();
+                        for c in &mut dev.children {
+                            c.id = self.project.alloc_id();
+                        }
                         if let Some(c) = self.chain_mut(sel) {
                             c.insert(d + 1, dev);
                         }
@@ -347,6 +350,9 @@ impl App {
         let id = Id::new(("device", dev.id));
         let mut enabled = dev.enabled;
         let mut params = dev.params.clone();
+        let mut data = dev.data.clone();
+        let mut children = dev.children.clone();
+        let mut glitch_edit = crate::ui::glitch_view::GlitchEdit::default();
         let accent = if enabled { ACCENT } else { TEXT_DIM };
         let mut mv = self.mod_view(ModOwner::Device(dev_id));
         let status = self.status();
@@ -412,6 +418,10 @@ impl App {
                     a | param_grid_mod(ui, id, kind.specs(), &mut params, accent, h - 24.0, mv.as_mut())
                 })
                 .inner
+            } else if kind == EffectKind::Glitch {
+                let (c, e) = crate::ui::glitch_view::glitch_panel(ui, id, dev_id, &mut params, &mut data, &mut children, accent, h - 24.0, &status);
+                glitch_edit = e;
+                c
             } else if kind == EffectKind::Grains {
                 crate::ui::grains_view::grains_panel(ui, id, dev_id, &mut params, accent, h, mv.as_mut(), &status, &mut width)
             } else if kind == EffectKind::LensEq {
@@ -435,10 +445,25 @@ impl App {
             self.prefs.layout.displays.insert(kind.name().to_string(), width);
             self.layout_dirty = true;
         }
+        // The Glitch Sequencer's slots: a new effect, or one taken out.
+        let mut slots_changed = false;
+        if let Some(k) = glitch_edit.add {
+            if children.len() < krabton_engine::dsp::fx::glitch::SLOTS {
+                children.push(self.project.make_device(k));
+                slots_changed = true;
+            }
+        }
+        if let Some(s) = glitch_edit.remove.filter(|s| *s < children.len()) {
+            children.remove(s);
+            krabton_engine::dsp::fx::glitch::remove_slot(&mut data, s);
+            slots_changed = true;
+        }
         let dev = self.chain_mut(sel)?.get_mut(d)?;
         dev.enabled = enabled;
-        if changed {
+        if changed || slots_changed {
             dev.params = params;
+            dev.data = data;
+            dev.children = children;
         }
         action.map(|a| match a {
             ChainActionKind::Remove => ChainAction::Remove(d),
