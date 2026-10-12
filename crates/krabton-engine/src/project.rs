@@ -218,11 +218,109 @@ pub struct Clip {
     /// Loop length in beats.
     pub length: f64,
     pub content: ClipContent,
+    /// Parameters that follow a line while the clip plays (Live's clip
+    /// envelopes): drawn, or recorded from the knobs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub envelopes: Vec<Envelope>,
+}
+
+/// A clip envelope: what it moves, and the line it follows.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Envelope {
+    pub target: crate::modulation::ModTarget,
+    /// (beat in the clip, 0..1 of the parameter's range), in order of beat.
+    pub points: Vec<(f64, f32)>,
+}
+
+impl Envelope {
+    /// The value at `beat`: straight lines between the points, flat before
+    /// the first and after the last.
+    pub fn value_at(&self, beat: f64) -> Option<f32> {
+        let pts = &self.points;
+        let first = pts.first()?;
+        if beat <= first.0 {
+            return Some(first.1);
+        }
+        let i = pts.partition_point(|p| p.0 <= beat);
+        if i >= pts.len() {
+            return pts.last().map(|p| p.1);
+        }
+        let (a, b) = (pts[i - 1], pts[i]);
+        let t = if b.0 > a.0 { ((beat - a.0) / (b.0 - a.0)) as f32 } else { 1.0 };
+        Some(a.1 + (b.1 - a.1) * t)
+    }
+
+    /// Puts a point at `beat` (replacing one within `snap` beats of it) and
+    /// keeps the points in order.
+    pub fn set(&mut self, beat: f64, value: f32, snap: f64) {
+        let value = value.clamp(0.0, 1.0);
+        self.points.retain(|p| (p.0 - beat).abs() > snap);
+        let i = self.points.partition_point(|p| p.0 < beat);
+        self.points.insert(i, (beat.max(0.0), value));
+    }
+
+    /// Leaves out the points between `from` and `to` that the line would
+    /// pass within `tol` of anyway (Douglas-Peucker), so a recorded knob
+    /// move keeps its shape with a handful of points.
+    pub fn simplify(&mut self, from: f64, to: f64, tol: f32) {
+        let lo = self.points.partition_point(|p| p.0 < from);
+        let hi = self.points.partition_point(|p| p.0 <= to);
+        if hi < lo + 3 {
+            return;
+        }
+        let seg = self.points[lo..hi].to_vec();
+        let mut keep = vec![false; seg.len()];
+        keep[0] = true;
+        keep[seg.len() - 1] = true;
+        let mut todo = vec![(0, seg.len() - 1)];
+        while let Some((a, b)) = todo.pop() {
+            let (pa, pb) = (seg[a], seg[b]);
+            let mut worst = (tol, None);
+            for (i, p) in seg.iter().enumerate().take(b).skip(a + 1) {
+                let f = if pb.0 > pa.0 { ((p.0 - pa.0) / (pb.0 - pa.0)) as f32 } else { 0.0 };
+                let d = (p.1 - (pa.1 + (pb.1 - pa.1) * f)).abs();
+                if d > worst.0 {
+                    worst = (d, Some(i));
+                }
+            }
+            if let (_, Some(i)) = worst {
+                keep[i] = true;
+                todo.push((a, i));
+                todo.push((i, b));
+            }
+        }
+        let mut i = 0;
+        self.points.retain(|_| {
+            let k = i < lo || i >= hi || keep[i - lo];
+            i += 1;
+            k
+        });
+    }
+}
+
+/// Volume envelopes run over the fader's travel (0 dB near 84%), as the
+/// fader does.
+pub fn fader_pos_to_db(pos: f32) -> f32 {
+    let gmax = 10f32.powf(FADER_MAX_DB / 20.0);
+    let g = (pos.clamp(0.0, 1.0) * gmax.powf(0.25)).powi(4);
+    if g <= 1e-6 {
+        return FADER_MIN_DB;
+    }
+    (20.0 * g.log10()).clamp(FADER_MIN_DB, FADER_MAX_DB)
+}
+
+pub fn db_to_fader_pos(db: f32) -> f32 {
+    if db <= FADER_MIN_DB + 0.05 {
+        return 0.0;
+    }
+    let g = 10f32.powf(db / 20.0);
+    let gmax = 10f32.powf(FADER_MAX_DB / 20.0);
+    (g.powf(0.25) / gmax.powf(0.25)).clamp(0.0, 1.0)
 }
 
 impl Clip {
     pub fn new_midi(id: u64, name: impl Into<String>, color: Rgb, length: f64) -> Self {
-        Self { id, name: name.into(), color, length, content: ClipContent::Midi { notes: Vec::new() } }
+        Self { id, name: name.into(), color, length, content: ClipContent::Midi { notes: Vec::new() }, envelopes: Vec::new() }
     }
 
     /// Creates an audio clip, guessing the source tempo the way Live's
@@ -247,7 +345,7 @@ impl Clip {
         }
         let audio = AudioClip { sample: sample.clone(), bpm, gain_db: 0.0 };
         let length = audio.sample_beats().max(0.25);
-        Self { id, name: sample.name.clone(), color, length, content: ClipContent::Audio(audio) }
+        Self { id, name: sample.name.clone(), color, length, content: ClipContent::Audio(audio), envelopes: Vec::new() }
     }
 
     pub fn is_midi(&self) -> bool {
@@ -305,6 +403,10 @@ pub struct DrumPad {
     /// Pads in the same group (1-4) cut each other off; 0: none.
     #[serde(default)]
     pub choke: u8,
+    /// A recorded drum: velocity layers (soft to loud), each with its round
+    /// robins. Empty: `sample` or the voice plays.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub layers: Vec<Vec<SampleRef>>,
 }
 
 fn half() -> f32 {
@@ -342,6 +444,7 @@ impl DrumPad {
             a: 0.5,
             b: 0.5,
             choke: 0,
+            layers: Vec::new(),
         }
     }
 }
@@ -446,6 +549,8 @@ pub enum Instrument {
     Piano { preset: String, params: Vec<f32> },
     /// Bassline: an acid bass synth, a port of Open303.
     Bassline { preset: String, params: Vec<f32> },
+    /// Mono 101: the small mono synth of the early eighties.
+    Mono101 { preset: String, params: Vec<f32> },
     /// Drone: tanpura strings, PADsynth pad, swelling FM pairs and air, slowly evolving.
     Drone { preset: String, params: Vec<f32> },
     /// Waves: a wavetable synth on the Adventure Kid Waveforms.
@@ -534,6 +639,10 @@ impl Instrument {
         Instrument::Bassline { preset: preset.to_string(), params: crate::dsp::bassline::preset(preset) }
     }
 
+    pub fn mono101(preset: &str) -> Self {
+        Instrument::Mono101 { preset: preset.to_string(), params: crate::dsp::mono101::preset(preset) }
+    }
+
     pub fn drone(preset: &str) -> Self {
         Instrument::Drone { preset: preset.to_string(), params: crate::dsp::drone::preset(preset) }
     }
@@ -572,6 +681,7 @@ impl Instrument {
             Instrument::Monk { .. } => "Monk",
             Instrument::Piano { .. } => "Grand Piano",
             Instrument::Bassline { .. } => "Bassline",
+            Instrument::Mono101 { .. } => "Mono 101",
             Instrument::Drone { .. } => "Drone",
             Instrument::Waves { .. } => "Waves",
             Instrument::Guitar { .. } => "Guitar",
@@ -588,7 +698,7 @@ impl Instrument {
             Instrument::Sampler { sample, .. } => sample.as_ref().map(|s| s.name.clone()).unwrap_or_else(|| "Empty".into()),
             Instrument::Plugin(p) => p.name.clone(),
             Instrument::Fm { voice, .. } => Dx7Voice::from_slice(voice).map(|v| v.name()).unwrap_or_else(|| "FM".into()),
-            Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Modular { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } | Instrument::Monk { preset, .. } | Instrument::Piano { preset, .. } | Instrument::Bassline { preset, .. } | Instrument::Drone { preset, .. } | Instrument::Waves { preset, .. } | Instrument::Guitar { preset, .. } | Instrument::WindChimes { preset, .. } => preset.clone(),
+            Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Modular { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } | Instrument::Monk { preset, .. } | Instrument::Piano { preset, .. } | Instrument::Bassline { preset, .. } | Instrument::Mono101 { preset, .. } | Instrument::Drone { preset, .. } | Instrument::Waves { preset, .. } | Instrument::Guitar { preset, .. } | Instrument::WindChimes { preset, .. } => preset.clone(),
         }
     }
 
@@ -598,6 +708,14 @@ impl Instrument {
         match self {
             Instrument::Plugin(p) => p.name.clone(),
             i => i.kind_name().to_string(),
+        }
+    }
+
+    /// The notes a drum kit plays, a bit per note (0 for other instruments).
+    pub fn drum_notes(&self) -> u128 {
+        match self {
+            Instrument::Drums { pads, .. } => pads.iter().fold(0, |m, p| m | 1u128 << (p.note & 127)),
+            _ => 0,
         }
     }
 
@@ -1227,6 +1345,10 @@ impl Project {
             // A plug-in device without its plug-in has nothing to play.
             devs.retain(|d| (d.kind == EffectKind::Plugin) == d.plugin.is_some());
             for d in devs.iter_mut() {
+                // The first Glitch Sequencer's patterns and knobs were laid out otherwise.
+                if d.kind == EffectKind::Glitch && crate::dsp::fx::glitch::migrate(&mut d.data) {
+                    d.params = params::defaults(d.kind.specs());
+                }
                 params::fix_len(&mut d.params, d.kind.specs());
                 *max_id = (*max_id).max(d.id + 1);
                 if let Some(p) = &d.plugin {
@@ -1275,6 +1397,7 @@ impl Project {
                 Some(Instrument::Monk { params, .. }) => params::fix_len(params, crate::dsp::monk::SPECS),
                 Some(Instrument::Piano { params, .. }) => params::fix_len(params, crate::piano::SPECS),
                 Some(Instrument::Bassline { params, .. }) => params::fix_len(params, crate::dsp::bassline::SPECS),
+                Some(Instrument::Mono101 { params, .. }) => params::fix_len(params, crate::dsp::mono101::SPECS),
                 Some(Instrument::Drone { params, .. }) => params::fix_len(params, crate::dsp::drone::SPECS),
                 Some(Instrument::Waves { params, .. }) => params::fix_len(params, crate::dsp::waves::SPECS),
                 Some(Instrument::Guitar { params, .. }) => params::fix_len(params, crate::dsp::guitar::SPECS),
@@ -1341,6 +1464,50 @@ impl Project {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_old_glitch_sequencer_is_brought_up_to_date() {
+        let mut p = Project::new_default();
+        let mut d = p.make_device(EffectKind::Glitch);
+        // As the first version saved it: 25 knobs, 4 patterns of 32 steps.
+        d.params = vec![0.5; 25];
+        d.data = vec![0u8; 256];
+        d.data[0] = 9; // Delay on the first step
+        d.data[1] = 100;
+        p.tracks[0].devices.push(d);
+        p.sanitize();
+        let d = p.tracks[0].devices.last().unwrap();
+        assert_eq!(d.params, params::defaults(crate::dsp::fx::glitch::SPECS));
+        assert!(crate::dsp::fx::glitch::is_current(&d.data));
+        assert_eq!(crate::dsp::fx::glitch::blocks(&d.data, 0, 32)[0].module, 9);
+        // A new one is left as it is.
+        let fresh = p.make_device(EffectKind::Glitch);
+        p.tracks[0].devices.push(fresh.clone());
+        p.sanitize();
+        assert_eq!(p.tracks[0].devices.last().unwrap().data, fresh.data);
+    }
+
+    #[test]
+    fn simplify_keeps_the_shape_of_a_recorded_move_with_few_points() {
+        let mut e = Envelope { target: crate::modulation::ModTarget::Volume(1), points: vec![(0.0, 0.5)] };
+        // A ramp up, then a ramp down, sampled every 1/64 beat.
+        for k in 1..=128 {
+            let b = k as f64 / 64.0;
+            let v = if b <= 1.0 { 0.5 + 0.4 * b as f32 } else { 0.9 - 0.4 * (b - 1.0) as f32 };
+            e.set(b, v, 1e-6);
+        }
+        e.set(3.0, 0.2, 1e-6);
+        let before = e.clone();
+        e.simplify(0.0, 2.0, 0.004);
+        assert!(e.points.len() <= 5, "{:?}", e.points);
+        assert_eq!(e.points.first(), before.points.first());
+        assert_eq!(e.points.last(), Some(&(3.0, 0.2)), "points outside the range stay");
+        for k in 0..=300 {
+            let b = k as f64 / 100.0;
+            let (x, y) = (before.value_at(b).unwrap(), e.value_at(b).unwrap());
+            assert!((x - y).abs() < 0.005, "beat {b}: {x} vs {y}");
+        }
+    }
 
     #[test]
     fn note_names_follow_live() {

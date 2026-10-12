@@ -376,9 +376,9 @@ impl App {
             } else if scale_on {
                 // Scale rows lit, the root brighter, everything else dark.
                 if scale.is_root(pitch) {
-                    mix(PANEL2, ACCENT, 0.22)
+                    mix(PANEL2, accent_now(), 0.22)
                 } else if scale.contains(pitch) {
-                    mix(PANEL2, ACCENT, 0.07)
+                    mix(PANEL2, accent_now(), 0.07)
                 } else {
                     shade(PANEL2, 0.62)
                 }
@@ -481,10 +481,10 @@ impl App {
         // Insert marker: where Ctrl+V puts notes.
         if let Some(at) = self.piano.paste_at {
             let x = bx(at);
-            gp.line_segment([pos2(x, grid_rect.top()), pos2(x, grid_rect.bottom())], Stroke::new(1.0_f32, ACCENT));
+            gp.line_segment([pos2(x, grid_rect.top()), pos2(x, grid_rect.bottom())], Stroke::new(1.0_f32, accent_now()));
             p.with_clip_rect(ruler).add(egui::Shape::convex_polygon(
                 vec![pos2(x - 4.0, ruler.top()), pos2(x + 4.0, ruler.top()), pos2(x, ruler.top() + 6.0)],
-                ACCENT,
+                accent_now(),
                 Stroke::NONE,
             ));
         }
@@ -505,7 +505,7 @@ impl App {
             let black = !drums && is_black(pitch);
             let held = self.piano.preview.as_ref().map(|p| p.0 == pitch).unwrap_or(false);
             let fill = if held {
-                ACCENT
+                accent_now()
             } else if drums {
                 PANEL3
             } else if black {
@@ -523,7 +523,7 @@ impl App {
             }
             if scale_on && scale.contains(pitch) {
                 // Scale notes get a dot on the keyboard, the root in full accent.
-                let c = if scale.is_root(pitch) { ACCENT } else { shade(ACCENT, 0.55) };
+                let c = if scale.is_root(pitch) { accent_now() } else { shade(accent_now(), 0.55) };
                 kp.circle_filled(pos2(r.left() + 6.0, r.center().y), 2.5, c);
             }
             let label = drums || folded || pitch % 12 == 0 || (scale_on && scale.is_root(pitch));

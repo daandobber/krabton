@@ -43,6 +43,8 @@ pub struct MidiCtx {
     pub beat: f64,
     pub playing: bool,
     pub sr: f32,
+    /// The notes the track's drum kit plays (bit per note; 0: not a kit).
+    pub drum_notes: u128,
 }
 
 impl MidiCtx {
@@ -93,6 +95,7 @@ pub enum MidiFxKind {
     Tintinnabuli,
     Pedal,
     GuitarChords,
+    Drummer,
 }
 
 const ARP_STYLES: &[&str] = &["Up", "Down", "Up Down", "Down Up", "Converge", "Diverge", "Random", "Played", "Chord"];
@@ -201,7 +204,7 @@ impl MidiFxKind {
     pub fn group(self) -> &'static str {
         use MidiFxKind as K;
         match self {
-            K::Step | K::Acid | K::DrumGrid | K::Progression | K::GuitarChords => "Classic",
+            K::Step | K::Acid | K::DrumGrid | K::Progression | K::GuitarChords | K::Drummer => "Classic",
             K::Polymeter | K::Euclid | K::Turing | K::Life | K::Drunk | K::Markov | K::Words => "Generative",
             K::Bounce | K::Orbits | K::Pong | K::Rain | K::Chaos | K::Automaton | K::Ant | K::Lorenz => "Physics & Chaos",
             K::Loops | K::Bloom | K::Chimes | K::DriftChords | K::Tintinnabuli | K::Pedal => "Ambient",
@@ -209,7 +212,7 @@ impl MidiFxKind {
         }
     }
 
-    pub const SEQUENCERS: [MidiFxKind; 26] = [
+    pub const SEQUENCERS: [MidiFxKind; 27] = [
         MidiFxKind::Step,
         MidiFxKind::Acid,
         MidiFxKind::DrumGrid,
@@ -236,6 +239,7 @@ impl MidiFxKind {
         MidiFxKind::Tintinnabuli,
         MidiFxKind::Pedal,
         MidiFxKind::GuitarChords,
+        MidiFxKind::Drummer,
     ];
 
     pub fn is_sequencer(self) -> bool {
@@ -253,6 +257,7 @@ impl MidiFxKind {
             MidiFxKind::Life => sequencers::life_default(),
             MidiFxKind::Words => sequencers::more::words_default(),
             MidiFxKind::GuitarChords => sequencers::strum::strum_default(),
+            MidiFxKind::Drummer => sequencers::drummer::drummer_default(),
             _ => Vec::new(),
         }
     }
@@ -285,6 +290,7 @@ impl MidiFxKind {
             MidiFxKind::Tintinnabuli => "Tintinnabuli",
             MidiFxKind::Pedal => "Pedal",
             MidiFxKind::GuitarChords => "Guitar Chords",
+            MidiFxKind::Drummer => "Drummer",
 
             MidiFxKind::Arpeggiator => "Arpeggiator",
             MidiFxKind::Chord => "Chord",
@@ -331,6 +337,7 @@ impl MidiFxKind {
             MidiFxKind::Tintinnabuli => "A stepwise melody with a voice on the nearest note of the tonic triad, over a held tonic",
             MidiFxKind::Pedal => "A held drone note that now and then moves to the fifth, fourth or octave",
             MidiFxKind::GuitarChords => "Guitar chords the way a guitarist plays them: real chord shapes in the key, strummed down and up in patterns, or picked",
+            MidiFxKind::Drummer => "A drummer who plays styles (rock, funk, house, boom bap, bossa nova, jazz...): ghost notes, accents, fills with a crash after, humanized; edit the groove in its grid",
 
             MidiFxKind::Arpeggiator => "Plays held notes one after another, tempo-synced",
             MidiFxKind::Chord => "Turns single notes into chords, also in the project key",
@@ -377,6 +384,7 @@ impl MidiFxKind {
             MidiFxKind::Tintinnabuli => sequencers::ambient::TINTINNABULI,
             MidiFxKind::Pedal => sequencers::ambient::PEDAL,
             MidiFxKind::GuitarChords => sequencers::strum::SPECS,
+            MidiFxKind::Drummer => sequencers::drummer::SPECS,
 
             MidiFxKind::Arpeggiator => ARP,
             MidiFxKind::Chord => CHORD,
@@ -925,7 +933,7 @@ mod tests {
     use crate::params::defaults;
 
     fn ctx(now: u64, len: usize) -> MidiCtx {
-        MidiCtx { now, len, samples_per_beat: 24000.0, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: 0.0, playing: true, sr: 48000.0 }
+        MidiCtx { now, len, samples_per_beat: 24000.0, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: 0.0, playing: true, sr: 48000.0, drum_notes: 0 }
     }
 
     #[test]

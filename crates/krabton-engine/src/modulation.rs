@@ -212,6 +212,7 @@ pub fn instrument_specs(i: &Instrument) -> Option<&'static [ParamSpec]> {
         Instrument::Monk { .. } => Some(crate::dsp::monk::SPECS),
         Instrument::Piano { .. } => Some(crate::piano::SPECS),
         Instrument::Bassline { .. } => Some(crate::dsp::bassline::SPECS),
+        Instrument::Mono101 { .. } => Some(crate::dsp::mono101::SPECS),
         Instrument::Drone { .. } => Some(crate::dsp::drone::SPECS),
         Instrument::Waves { .. } => Some(crate::dsp::waves::SPECS),
         Instrument::Guitar { .. } => Some(crate::dsp::guitar::SPECS),
@@ -220,9 +221,9 @@ pub fn instrument_specs(i: &Instrument) -> Option<&'static [ParamSpec]> {
     }
 }
 
-fn instrument_params(i: &Instrument) -> Option<&[f32]> {
+pub fn instrument_params(i: &Instrument) -> Option<&[f32]> {
     match i {
-        Instrument::Synth { params, .. } | Instrument::Sampler { params, .. } | Instrument::Fm { params, .. } | Instrument::Macro { params, .. } | Instrument::Braids { params, .. } | Instrument::Elements { params, .. } | Instrument::Analog { params, .. } | Instrument::Shakers { params, .. } | Instrument::Modular { params, .. } | Instrument::Voice { params, .. } | Instrument::Mallets { params, .. } | Instrument::Strings { params, .. } | Instrument::Winds { params, .. } | Instrument::Organ { params, .. } | Instrument::Rings { params, .. } | Instrument::Monk { params, .. } | Instrument::Piano { params, .. } | Instrument::Bassline { params, .. } | Instrument::Drone { params, .. } | Instrument::Waves { params, .. } | Instrument::Guitar { params, .. } | Instrument::WindChimes { params, .. } => Some(params),
+        Instrument::Synth { params, .. } | Instrument::Sampler { params, .. } | Instrument::Fm { params, .. } | Instrument::Macro { params, .. } | Instrument::Braids { params, .. } | Instrument::Elements { params, .. } | Instrument::Analog { params, .. } | Instrument::Shakers { params, .. } | Instrument::Modular { params, .. } | Instrument::Voice { params, .. } | Instrument::Mallets { params, .. } | Instrument::Strings { params, .. } | Instrument::Winds { params, .. } | Instrument::Organ { params, .. } | Instrument::Rings { params, .. } | Instrument::Monk { params, .. } | Instrument::Piano { params, .. } | Instrument::Bassline { params, .. } | Instrument::Mono101 { params, .. } | Instrument::Drone { params, .. } | Instrument::Waves { params, .. } | Instrument::Guitar { params, .. } | Instrument::WindChimes { params, .. } => Some(params),
         _ => None,
     }
 }
@@ -424,10 +425,39 @@ pub struct MixMod {
     pub gain: f32,
     pub pan: f32,
     pub sends: [f32; 8],
+    /// A clip envelope's volume (dB), pan and sends, in place of the
+    /// mixer's (NaN: none).
+    pub vol_db: f32,
+    pub pan_abs: f32,
+    pub sends_abs: [f32; 8],
 }
 
 impl MixMod {
-    const NONE: MixMod = MixMod { gain: 1.0, pan: 0.0, sends: [0.0; 8] };
+    const NONE: MixMod = MixMod { gain: 1.0, pan: 0.0, sends: [0.0; 8], vol_db: f32::NAN, pan_abs: f32::NAN, sends_abs: [f32::NAN; 8] };
+
+    /// The volume to use: the envelope's, else the mixer's.
+    pub fn volume(&self, mixer_db: f32) -> f32 {
+        if self.vol_db.is_nan() {
+            mixer_db
+        } else {
+            self.vol_db
+        }
+    }
+
+    pub fn pan_base(&self, mixer_pan: f32) -> f32 {
+        if self.pan_abs.is_nan() {
+            mixer_pan
+        } else {
+            self.pan_abs
+        }
+    }
+
+    pub fn send_base(&self, j: usize, mixer_send: f32) -> f32 {
+        match self.sends_abs.get(j) {
+            Some(v) if !v.is_nan() => *v,
+            _ => mixer_send,
+        }
+    }
 }
 
 /// The audio-thread side of the matrix. Per-modulator state lives in fixed
@@ -445,6 +475,8 @@ pub struct ModRuntime {
     track_mix: Vec<MixMod>,
     return_mix: Vec<MixMod>,
     free_beat: f64,
+    /// Some clip has envelopes (then this runs even without modulators).
+    has_env: bool,
 }
 
 impl Default for ModRuntime {
@@ -466,12 +498,14 @@ impl ModRuntime {
             track_mix: Vec::with_capacity(128),
             return_mix: Vec::with_capacity(8),
             free_beat: 0.0,
+            has_env: false,
         }
     }
 
-    /// True when the project has modulators (the engine then runs at control rate).
+    /// True when the project has modulators or clip envelopes (the engine
+    /// then runs at control rate).
     pub fn active(&self) -> bool {
-        self.n > 0
+        self.n > 0 || self.has_env
     }
 
     /// Rebuilds the routing for a new project snapshot, keeping modulator
@@ -505,6 +539,23 @@ impl ModRuntime {
         self.track_mix.resize(p.tracks.len(), MixMod::NONE);
         self.return_mix.clear();
         self.return_mix.resize(p.returns.len(), MixMod::NONE);
+        // Clip envelopes need a parameter set for whatever they move.
+        self.has_env = false;
+        for t in &p.tracks {
+            let clips = t.slots.iter().flatten().chain(t.arrangement.iter().map(|a| &a.clip));
+            for c in clips {
+                for e in &c.envelopes {
+                    self.has_env = true;
+                    if let ModTarget::Param { owner, .. } = e.target {
+                        if !self.slots.iter().any(|s| s.owner == owner) {
+                            if let Some((path, specs)) = resolve(p, owner) {
+                                self.slots.push(Slot { owner, path, specs, params: Vec::with_capacity(specs.len()) });
+                            }
+                        }
+                    }
+                }
+            }
+        }
         for r in &p.mod_routes {
             let Some(source) = self.ids[..self.n].iter().position(|&id| id == r.source) else { continue };
             let dest = match r.target {
@@ -558,8 +609,9 @@ impl ModRuntime {
 
     /// Advances every modulator by one control block and recomputes the
     /// modulated parameters.
-    pub fn tick(&mut self, p: &Project, signals: &[TrackSignal], clock: ModClock, playing: bool) {
-        if self.n == 0 {
+    /// `envs` are the clip envelopes' values now (0..1 of each range).
+    pub fn tick(&mut self, p: &Project, signals: &[TrackSignal], clock: ModClock, playing: bool, envs: &[(ModTarget, f32)]) {
+        if self.n == 0 && !self.has_env {
             return;
         }
         self.free_beat += clock.frames as f64 / clock.samples_per_beat;
@@ -604,6 +656,39 @@ impl ModRuntime {
         }
         for m in self.track_mix.iter_mut().chain(self.return_mix.iter_mut()) {
             *m = MixMod { gain: 0.0, ..MixMod::NONE };
+        }
+        // Clip envelopes set the values the modulators then move.
+        for &(target, v) in envs {
+            match target {
+                ModTarget::Param { owner, param } => {
+                    if let Some(s) = self.slots.iter_mut().find(|s| s.owner == owner && !matches!(s.path, Path::Modulator(_))) {
+                        if let (Some(spec), Some(x)) = (s.specs.get(param as usize), s.params.get_mut(param as usize)) {
+                            *x = spec.from_norm(v);
+                        }
+                    }
+                }
+                ModTarget::Volume(id) | ModTarget::Pan(id) => {
+                    let m = match (p.track_index(id), p.returns.iter().position(|x| x.id == id)) {
+                        (Some(t), _) => self.track_mix.get_mut(t),
+                        (None, Some(j)) => self.return_mix.get_mut(j),
+                        _ => None,
+                    };
+                    if let Some(m) = m {
+                        if matches!(target, ModTarget::Volume(_)) {
+                            m.vol_db = crate::project::fader_pos_to_db(v);
+                        } else {
+                            m.pan_abs = v * 2.0 - 1.0;
+                        }
+                    }
+                }
+                ModTarget::Send { track, send } => {
+                    if let Some(m) = p.track_index(track).and_then(|t| self.track_mix.get_mut(t)) {
+                        if let Some(s) = m.sends_abs.get_mut(send as usize) {
+                            *s = v;
+                        }
+                    }
+                }
+            }
         }
         // ...then the routed offsets are summed per parameter and applied once.
         let mut param_offsets = [(usize::MAX, 0usize, 0.0f32); 64];
@@ -898,7 +983,7 @@ mod tests {
         let base = p.tracks[1].devices[0].params[1];
         let mut seen = Vec::new();
         for k in 0..400 {
-            rt.tick(&p, &[], clock(k as f64 * 64.0 / 24000.0), true);
+            rt.tick(&p, &[], clock(k as f64 * 64.0 / 24000.0), true, &[]);
             seen.push(rt.params(ModOwner::Device(dev_id)).unwrap()[1]);
         }
         let (lo, hi) = seen.iter().fold((f32::MAX, f32::MIN), |(a, b), &v| (a.min(v), b.max(v)));
@@ -924,17 +1009,17 @@ mod tests {
         let mut rt = ModRuntime::new();
         rt.rebuild(&p);
         let mut sig = [TrackSignal { ons: 1, pitch: 60, velocity: 1.0, held: 1, level: 0.0 }];
-        rt.tick(&p, &sig, clock(0.0), true);
+        rt.tick(&p, &sig, clock(0.0), true, &[]);
         sig[0].ons = 0;
         for _ in 0..200 {
-            rt.tick(&p, &sig, clock(0.0), true);
+            rt.tick(&p, &sig, clock(0.0), true, &[]);
         }
         assert!((rt.outputs[0] - 0.5).abs() < 0.02, "sustain {}", rt.outputs[0]);
         // Input = 0.5 (half the bipolar range from center) -> inverted.
         assert!(rt.outputs[1] < -0.2, "shaper {}", rt.outputs[1]);
         sig[0].held = 0;
         for _ in 0..800 {
-            rt.tick(&p, &sig, clock(0.0), true);
+            rt.tick(&p, &sig, clock(0.0), true, &[]);
         }
         assert!(rt.outputs[0] < 0.01, "released {}", rt.outputs[0]);
     }
@@ -952,7 +1037,7 @@ mod tests {
         rt.rebuild(&p);
         let loud = [TrackSignal { level: 0.9, ..Default::default() }];
         for _ in 0..100 {
-            rt.tick(&p, &loud, clock(0.0), true);
+            rt.tick(&p, &loud, clock(0.0), true, &[]);
         }
         assert!(rt.track_mix(1).gain < 0.05, "ducked gain {}", rt.track_mix(1).gain);
         assert!((rt.track_mix(0).gain - 1.0).abs() < 1e-6);

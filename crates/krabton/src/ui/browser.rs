@@ -340,7 +340,7 @@ struct Dev {
     kind: Option<&'static str>,
 }
 
-fn devices() -> [Dev; 20] {
+fn devices() -> [Dev; 21] {
     [
         Dev {
             name: "Analog",
@@ -394,6 +394,7 @@ fn devices() -> [Dev; 20] {
         Dev { name: "Grand Piano", hint: "A concert grand: the Salamander Grand Piano (a Yamaha C5 in 16 velocity layers, downloaded once), with sustain pedal, key and string noises, una corda, lid and a hall", presets: krabton_engine::piano::preset_names(), make: BrowserItem::Piano, kind: None },
         Dev { name: "Monk", hint: "A chanting monk made of FOF grains (ported from MonkSynth): vowel, head size, glide, a choir of up to ten, and an echo", presets: krabton_engine::dsp::monk::preset_names(), make: BrowserItem::Monk, kind: None },
         Dev { name: "Bassline", hint: "Acid bass: a port of Open303 by Robin Schmidt. Saw to square, the squelchy filter with its envelope, accent (velocity 100 and up) and slide (play legato). Drag the filter in the screen", presets: krabton_engine::dsp::bassline::preset_names(), make: BrowserItem::Bassline, kind: None },
+        Dev { name: "Mono 101", hint: "The small mono of the early eighties: saw, pulse with PWM, a sub oscillator (an octave or two down) and noise into a self-oscillating four-pole filter, one envelope (or the gate for the amplifier), LFO, portamento. Behaviour and presets after HUSH ONE by Charles Vestal (MIT)", presets: krabton_engine::dsp::mono101::preset_names(), make: BrowserItem::Mono101, kind: None },
         Dev { name: "Drone", hint: "A drone that keeps moving: tanpura strings with a buzzing bridge, a PADsynth pad, swelling FM pairs and wind, all drifting slowly. Hold a key for minutes", presets: krabton_engine::dsp::drone::preset_names(), make: BrowserItem::Drone, kind: None },
         Dev { name: "Waves", hint: "Wavetable synth: two oscillators morphing through 16 banks of single-cycle waves (Adventure Kid Waveforms), unison, warps, sub, filter, envelopes and an LFO. Drag a stack to move through it", presets: krabton_engine::dsp::waves::preset_names(), make: BrowserItem::Waves, kind: None },
         Dev { name: "Guitar", hint: "A six-string guitar, steel or nylon acoustic or electric with pickups: notes go on the strings and frets a guitarist would use, chords are strummed. Put pedals after it", presets: krabton_engine::dsp::guitar::preset_names(), make: BrowserItem::Guitar, kind: None },

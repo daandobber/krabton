@@ -5,6 +5,7 @@ use crate::theme::*;
 use crate::widgets::*;
 use egui::{pos2, vec2, Align2, Id, Rect, Sense, Stroke, Ui, UiBuilder};
 use krabton_engine::engine::{EngineStatus, QUEUE_STOP};
+use krabton_engine::modulation::ModTarget;
 use krabton_engine::{fader_gain, Command, TrackKind, PALETTE};
 use std::sync::atomic::Ordering;
 use std::time::Instant;
@@ -736,6 +737,9 @@ impl App {
                     *s = n;
                 }
             }
+            if let Some(now) = self.envelope_now(i, ModTarget::Send { track: id, send: j as u16 }) {
+                knob_auto_mark(&p, kr, now);
+            }
             text(&p, pos2(c.x, kr.bottom() + 6.0), Align2::CENTER_CENTER, (b'A' + j as u8) as char, small(), TEXT_DIM);
             resp.on_hover_text(format!("Send {} : {:.0} %", (b'A' + j as u8) as char, v * 100.0));
         }
@@ -749,6 +753,9 @@ impl App {
             if let Some(n) = new {
                 self.project.tracks[i].mixer.pan = (n * 2.0 - 1.0).clamp(-1.0, 1.0);
             }
+            if let Some(now) = self.envelope_now(i, ModTarget::Pan(id)) {
+                knob_auto_mark(&p, pr, now);
+            }
             resp.on_hover_text(pan_text(pan));
             text(&p, pos2(pan_c.x, pr.bottom() + 6.0), Align2::CENTER_CENTER, pan_text(pan), small(), TEXT_DIM);
         }
@@ -759,6 +766,9 @@ impl App {
         let fr = Rect::from_min_size(pos2(area.center().x - 22.0, area.top()), vec2(22.0, area.height()));
         if fader(ui, fr, Id::new(("vol", id)), &mut vol, color) {
             self.project.tracks[i].mixer.volume_db = vol;
+        }
+        if let Some(now) = self.envelope_now(i, ModTarget::Volume(id)) {
+            fader_auto_mark(&p, fr, now);
         }
         let (ml, mr) = self.meters.get(i).copied().unwrap_or((0.0, 0.0));
         meter(&p, Rect::from_min_size(pos2(area.center().x + 6.0, area.top() + 4.0), vec2(9.0, area.height() - 8.0)), ml, mr);

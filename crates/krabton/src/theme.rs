@@ -34,6 +34,42 @@ pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     Color32::from_rgb(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()))
 }
 
+thread_local! {
+    static TRACK_ACCENT: std::cell::Cell<Option<Color32>> = const { std::cell::Cell::new(None) };
+}
+
+/// The accent colour: the colour of the track whose devices or clip are
+/// being drawn (see [`AccentScope`]), else [`ACCENT`].
+pub fn accent_now() -> Color32 {
+    TRACK_ACCENT.with(|c| c.get()).unwrap_or(ACCENT)
+}
+
+/// While it lives, [`accent_now`] is a track's colour (lightened where needed,
+/// so it carries dark text and stands out on the panels); `None` is the
+/// usual accent.
+pub struct AccentScope(Option<Color32>);
+
+impl AccentScope {
+    pub fn new(track: Option<Color32>) -> Self {
+        let c = track.map(|c| {
+            let lum = 0.299 * c.r() as f32 + 0.587 * c.g() as f32 + 0.114 * c.b() as f32;
+            if lum < 150.0 {
+                mix(c, Color32::WHITE, (150.0 - lum) / (255.0 - lum))
+            } else {
+                c
+            }
+        });
+        Self(TRACK_ACCENT.with(|cell| cell.replace(c)))
+    }
+}
+
+impl Drop for AccentScope {
+    fn drop(&mut self) {
+        let prev = self.0;
+        TRACK_ACCENT.with(|c| c.set(prev));
+    }
+}
+
 /// Readable text color on top of `c`.
 pub fn text_on(c: Color32) -> Color32 {
     let lum = 0.299 * c.r() as f32 + 0.587 * c.g() as f32 + 0.114 * c.b() as f32;

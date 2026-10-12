@@ -1,5 +1,6 @@
 //! DSP building blocks plus the instruments and effects built from them.
 
+pub mod acoustic;
 pub mod analog;
 pub mod bassline;
 pub mod biquad;
@@ -19,9 +20,12 @@ pub mod fx;
 pub mod guitar;
 pub mod macro_osc;
 pub mod monk;
+pub mod mono101;
 pub mod effects;
 pub mod organ;
 pub mod reverb;
+pub mod real_drums;
+pub mod retro;
 pub mod rings_synth;
 pub mod sampler;
 pub mod shaker_synth;

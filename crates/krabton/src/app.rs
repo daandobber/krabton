@@ -109,6 +109,8 @@ pub enum BrowserItem {
     Monk(&'static str),
     /// A Bassline preset.
     Bassline(&'static str),
+    /// A Mono 101 preset.
+    Mono101(&'static str),
     /// A Drone preset.
     Drone(&'static str),
     /// A Waves preset.
@@ -151,6 +153,7 @@ impl BrowserItem {
             BrowserItem::Rings(p) => format!("Rings: {p}"),
             BrowserItem::Monk(p) => format!("Monk: {p}"),
             BrowserItem::Bassline(p) => format!("Bassline: {p}"),
+            BrowserItem::Mono101(p) => format!("Mono 101: {p}"),
             BrowserItem::Drone(p) => format!("Drone: {p}"),
             BrowserItem::Waves(p) => format!("Waves: {p}"),
             BrowserItem::Guitar(p) => format!("Guitar: {p}"),
@@ -355,6 +358,9 @@ pub struct App {
     rec_notes: HashMap<(u64, u8), RecNote>,
     /// The grand piano's samples being installed.
     pub piano_install: Option<crate::piano_lib::Install>,
+    /// Downloading Real Drums' recordings, and whether they are here.
+    pub(crate) drum_install: Option<crate::drum_lib::Install>,
+    pub(crate) real_drums_here: bool,
 
     pub meters: Vec<(f32, f32)>,
     pub return_meters: Vec<(f32, f32)>,
@@ -390,6 +396,21 @@ pub struct App {
     /// `shot=path`: where the next picture of the window goes, and whether
     /// it was asked for yet.
     shot: Option<(String, bool)>,
+    /// The clip view shows envelopes (instead of notes or audio), which one,
+    /// and whether dragging draws.
+    pub(crate) env_view: bool,
+    pub(crate) env_target: Option<krabton_engine::modulation::ModTarget>,
+    pub(crate) env_draw: bool,
+    /// Automation Arm: knobs turned while clips play are recorded into them.
+    pub(crate) auto_arm: bool,
+    /// The Glitch Sequencer shown in a window of its own (by device id).
+    pub(crate) glitch_window: Option<u64>,
+    /// Size of everything asked for by a script (see `run_script`).
+    script_zoom: Option<f32>,
+    pub(crate) auto_prev: std::collections::HashMap<(usize, krabton_engine::modulation::ModTarget), f32>,
+    /// The knob moves being recorded: their clip, where they started and
+    /// last wrote, and the frame of that write.
+    pub(crate) auto_last: std::collections::HashMap<(usize, krabton_engine::modulation::ModTarget), (ClipSel, f64, f64, u64)>,
     /// A size changed: save the layout once the mouse is up.
     pub layout_dirty: bool,
 }
@@ -479,6 +500,8 @@ impl App {
             rec_quantize: true,
             rec_notes: HashMap::new(),
             piano_install: None,
+            drum_install: None,
+            real_drums_here: krabton_engine::dsp::real_drums::installed(),
             meters: Vec::new(),
             return_meters: Vec::new(),
             master_meter: (0.0, 0.0),
@@ -503,6 +526,14 @@ impl App {
             frame: 0,
             quit_requested: false,
             shot: None,
+            env_view: false,
+            env_target: None,
+            env_draw: false,
+            auto_arm: false,
+            glitch_window: None,
+            script_zoom: None,
+            auto_prev: Default::default(),
+            auto_last: Default::default(),
             layout_dirty: false,
         };
         app.apply_prefs();
@@ -827,6 +858,7 @@ impl App {
                         // A fitting instrument for each sequencer.
                         let inst = match kind {
                             K::Euclid | K::DrumGrid => Instrument::drums("909 Classic"),
+                            K::Drummer => Instrument::drums("Studio Kit"),
                             K::Acid => Instrument::synth("Acid"),
                             K::Progression => Instrument::synth("Soft Pad"),
                             _ => Instrument::synth("Pluck"),
@@ -901,7 +933,7 @@ impl App {
                 }
                 self.toast(format!("Loading {} ...", info.name));
             }
-            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) => {
+            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) => {
                 let inst = match item {
                     BrowserItem::Synth(p) => Instrument::synth(p),
                     BrowserItem::Macro(p) => Instrument::macro_osc(p),
@@ -919,6 +951,7 @@ impl App {
                     BrowserItem::Monk(p) => Instrument::monk(p),
                     BrowserItem::Piano(p) => Instrument::piano(p),
                     BrowserItem::Bassline(p) => Instrument::bassline(p),
+                    BrowserItem::Mono101(p) => Instrument::mono101(p),
                     BrowserItem::Drone(p) => Instrument::drone(p),
                     BrowserItem::Waves(p) => Instrument::waves(p),
                     BrowserItem::Guitar(p) => Instrument::guitar(p),
@@ -1477,6 +1510,32 @@ impl App {
     }
 
     /// Follows the piano install; when it is done every Grand Piano gets the samples.
+    pub(crate) fn start_drum_install(&mut self) {
+        let busy = self.drum_install.as_ref().and_then(|s| s.lock().ok().map(|s| !matches!(*s, crate::drum_lib::State::Failed(_)))).unwrap_or(false);
+        if !busy && !self.real_drums_here {
+            self.drum_install = Some(crate::drum_lib::start());
+        }
+    }
+
+    /// Real Drums arrived: the kits that use them load their recordings.
+    fn poll_drum_install(&mut self) {
+        let Some(state) = self.drum_install.clone() else { return };
+        let done = state.lock().map(|s| *s == crate::drum_lib::State::Ready).unwrap_or(false);
+        if !done {
+            return;
+        }
+        self.drum_install = None;
+        self.real_drums_here = true;
+        for t in self.project.tracks.iter_mut() {
+            if let Some(Instrument::Drums { kit, pads, .. }) = t.instrument.as_mut() {
+                if kit == "Real Kit" || kit == "Real Percussion" {
+                    *pads = krabton_engine::dsp::drums::kit(kit);
+                }
+            }
+        }
+        self.toast("Real Drums are here: the recorded kits play their recordings now");
+    }
+
     fn poll_piano_install(&mut self) {
         let Some(state) = self.piano_install.clone() else { return };
         let ready = state.lock().map(|s| *s == crate::piano_lib::InstallState::Ready).unwrap_or(false);
@@ -1850,6 +1909,11 @@ impl App {
     fn take_shot(&mut self, ctx: &Context) {
         let Some((path, asked)) = self.shot.clone() else { return };
         if !asked {
+            // A minimized window has nothing to read back (and egui_glow panics on it).
+            let gone = ctx.input(|i| i.viewport().minimized == Some(true) || i.screen_rect().width() < 1.0 || i.viewport().inner_rect.is_some_and(|r| r.width() < 1.0 || r.height() < 1.0));
+            if gone {
+                return;
+            }
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
             self.shot = Some((path, true));
             return;
@@ -1880,6 +1944,13 @@ impl App {
                 "session" => self.view = View::Session,
                 "rackview" => self.view = View::Rack,
                 "detail" => self.toggle_detail(),
+                "envelopes" => {
+                    self.env_view = true;
+                    self.detail = DetailTab::Clip;
+                }
+                "autoarm" => self.auto_arm = !self.auto_arm,
+                "zoom" => self.script_zoom = nums.first().map(|&z| (z as f32 / 100.0).clamp(0.5, 3.0)),
+                "glitchwin" => self.glitch_window = self.project.all_devices().find(|d| d.kind == krabton_engine::dsp::effects::EffectKind::Glitch).map(|d| d.id),
                 "rackcolumns" => self.prefs.layout.rack_columns = !self.prefs.layout.rack_columns,
                 "devices" => self.detail = DetailTab::Devices,
                 "grid" => self.detail = DetailTab::Grid,
@@ -1935,6 +2006,13 @@ impl App {
                     self.detail = DetailTab::Devices;
                 }
                 "pianoinstall" => self.start_piano_install(),
+                "druminstall" => self.start_drum_install(),
+                "mono101" => {
+                    let names = krabton_engine::dsp::mono101::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Mono101(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
                 "bassline" => {
                     let names = krabton_engine::dsp::bassline::preset_names();
                     let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
@@ -2305,9 +2383,17 @@ impl eframe::App for App {
         self.sync_plugins();
         self.frame += 1;
         self.run_script();
+        if let Some(z) = self.script_zoom.take() {
+            ctx.set_zoom_factor(z);
+        }
         self.take_shot(ctx);
+        self.record_automation();
+        if self.frame % 30 == 0 {
+            self.release_unused_displays();
+        }
         self.poll_midi();
         self.poll_piano_install();
+        self.poll_drum_install();
         self.poll_recording();
         self.poll_export();
         self.handle_keys(ctx);
@@ -2325,7 +2411,7 @@ impl eframe::App for App {
             .frame(egui::Frame::new().fill(theme::BG).inner_margin(egui::Margin::symmetric(8, 2)))
             .show(ctx, |ui| self.ui_statusbar(ui));
         // The browser runs from top to bottom, next to the detail view, as in Live.
-        let fg = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("panel_grips")));
+        let fg = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("panel_grips")));
         if self.browser.visible {
             let r = egui::SidePanel::left("browser")
                 .resizable(true)

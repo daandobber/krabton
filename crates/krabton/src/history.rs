@@ -119,7 +119,13 @@ fn describe_track(a: &Track, b: &Track) -> String {
                         ClipContent::Midi { notes } => Some(notes.clone()),
                         _ => None,
                     };
-                    return if notes(cx) != notes(cy) { format!("Edit notes in {}", cy.name) } else { format!("{t}: clip {}", cy.name) };
+                    return if notes(cx) != notes(cy) {
+                        format!("Edit notes in {}", cy.name)
+                    } else if cx.envelopes != cy.envelopes {
+                        format!("Envelopes in {}", cy.name)
+                    } else {
+                        format!("{t}: clip {}", cy.name)
+                    };
                 }
                 _ => {}
             }

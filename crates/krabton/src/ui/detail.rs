@@ -12,6 +12,8 @@ const TOOLS_H: f32 = 28.0;
 
 impl App {
     pub(crate) fn ui_detail(&mut self, ui: &mut Ui) {
+        // The selected track's colour is the accent of its clip and devices.
+        let _accent = AccentScope::new(self.track_accent(self.sel_track));
         let full = ui.available_rect_before_wrap();
         ui.allocate_rect(full, Sense::hover());
         let tabs = Rect::from_min_size(full.min, vec2(full.width(), TABS_H));
@@ -22,7 +24,7 @@ impl App {
         let mut x = tabs.left() + 6.0;
         for (tab, label) in [(DetailTab::Clip, "Clip"), (DetailTab::Devices, "Devices"), (DetailTab::Mod, "Mod"), (DetailTab::Grid, "Grid")] {
             let r = Rect::from_min_size(pos2(x, tabs.top() + 3.0), vec2(70.0, TABS_H - 6.0));
-            if button(ui, r, Id::new(("detail_tab", label)), label, self.detail == tab, ACCENT).on_hover_text("Shift+Tab toggles").clicked() {
+            if button(ui, r, Id::new(("detail_tab", label)), label, self.detail == tab, accent_now()).on_hover_text("Shift+Tab toggles").clicked() {
                 self.detail = tab;
             }
             x += 74.0;
@@ -95,17 +97,33 @@ impl App {
             self.layout_dirty = true;
         }
 
-        match &clip.content {
-            ClipContent::Midi { .. } => {
-                let bar = Rect::from_min_size(main.min, vec2(main.width(), TOOLS_H));
-                let roll = Rect::from_min_max(pos2(main.left(), bar.bottom()), main.max);
-                rect_fill(ui.painter(), bar, 0.0, PANEL);
-                let mut tui = ui.new_child(UiBuilder::new().max_rect(bar.shrink2(vec2(6.0, 2.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
-                tui.set_clip_rect(bar);
-                self.midi_tools_bar(&mut tui);
-                self.ui_piano_roll(ui, roll, sel);
+        let bar = Rect::from_min_size(main.min, vec2(main.width(), TOOLS_H));
+        let below = Rect::from_min_max(pos2(main.left(), bar.bottom()), main.max);
+        rect_fill(ui.painter(), bar, 0.0, PANEL);
+        let mut tui = ui.new_child(UiBuilder::new().max_rect(bar.shrink2(vec2(6.0, 2.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
+        tui.set_clip_rect(bar);
+        // Notes (or the audio) and the envelopes, Live's clip view tabs.
+        let midi = clip.is_midi();
+        let n_env = clip.envelopes.iter().filter(|e| !e.points.is_empty()).count();
+        let first = if midi { "Notes" } else { "Audio" };
+        if tui.add(egui::Button::new(RichText::new(first).color(if !self.env_view { TEXT_DARK } else { TEXT })).fill(if !self.env_view { accent_now() } else { PANEL3 })).clicked() {
+            self.env_view = false;
+        }
+        let env_label = if n_env > 0 { format!("Envelopes ({n_env})") } else { "Envelopes".to_string() };
+        if tui.add(egui::Button::new(RichText::new(env_label).color(if self.env_view { TEXT_DARK } else { TEXT })).fill(if self.env_view { accent_now() } else { PANEL3 })).on_hover_text("Lines that move the mixer, the instrument and the effects while the clip plays: draw them, or record knob moves with Automation Arm").clicked() {
+            self.env_view = true;
+        }
+        tui.separator();
+        if self.env_view {
+            self.ui_envelopes(ui, below, sel);
+        } else {
+            match &clip.content {
+                ClipContent::Midi { .. } => {
+                    self.midi_tools_bar(&mut tui);
+                    self.ui_piano_roll(ui, below, sel);
+                }
+                ClipContent::Audio(_) => self.ui_audio_clip(ui, below, sel),
             }
-            ClipContent::Audio(_) => self.ui_audio_clip(ui, main, sel),
         }
     }
 
@@ -115,18 +133,18 @@ impl App {
         use krabton_engine::midi_tools::ArpStyle;
         ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
         let on = self.project.scale_mode;
-        if ui.add(egui::Button::new(RichText::new("Scale").color(if on { TEXT_DARK } else { TEXT })).fill(if on { ACCENT } else { PANEL3 })).on_hover_text("Scale mode: highlight the project scale").clicked() {
+        if ui.add(egui::Button::new(RichText::new("Scale").color(if on { TEXT_DARK } else { TEXT })).fill(if on { accent_now() } else { PANEL3 })).on_hover_text("Scale mode: highlight the project scale").clicked() {
             self.project.scale_mode = !on;
         }
         if ui.button(self.project.scale.name()).on_hover_text("Change the key and scale of the project").clicked() {
             self.open_scale_dialog();
         }
         let fold = self.piano.fold;
-        if ui.add_enabled(on, egui::Button::new(RichText::new("Fold").color(if fold && on { TEXT_DARK } else { TEXT })).fill(if fold && on { ACCENT } else { PANEL3 })).on_hover_text("Only show the notes of the scale").clicked() {
+        if ui.add_enabled(on, egui::Button::new(RichText::new("Fold").color(if fold && on { TEXT_DARK } else { TEXT })).fill(if fold && on { accent_now() } else { PANEL3 })).on_hover_text("Only show the notes of the scale").clicked() {
             self.piano.fold = !fold;
         }
         let gh = self.piano.ghosts;
-        if ui.add(egui::Button::new(RichText::new("Ghosts").color(if gh { TEXT_DARK } else { TEXT })).fill(if gh { ACCENT } else { PANEL3 })).on_hover_text("Show the notes of the other tracks that play alongside, faintly").clicked() {
+        if ui.add(egui::Button::new(RichText::new("Ghosts").color(if gh { TEXT_DARK } else { TEXT })).fill(if gh { accent_now() } else { PANEL3 })).on_hover_text("Show the notes of the other tracks that play alongside, faintly").clicked() {
             self.piano.ghosts = !gh;
         }
         ui.separator();
@@ -175,7 +193,7 @@ impl App {
             self.piano_tool(NoteTool::Humanize);
         }
         ui.separator();
-        if ui.add(egui::Button::new(RichText::new("Seed").color(TEXT_DARK)).fill(shade(ACCENT, 0.85))).on_hover_text("Generate a random melody in the scale (click again for another one)").clicked() {
+        if ui.add(egui::Button::new(RichText::new("Seed").color(TEXT_DARK)).fill(shade(accent_now(), 0.85))).on_hover_text("Generate a random melody in the scale (click again for another one)").clicked() {
             self.piano_tool(NoteTool::Seed);
         }
     }
@@ -334,11 +352,11 @@ impl App {
                         }
                     });
                     let dm = self.piano.draw_mode;
-                    if ui.add(egui::Button::new(RichText::new("Draw").color(if dm { TEXT_DARK } else { TEXT })).fill(if dm { ACCENT } else { PANEL3 })).on_hover_text("Draw mode (B): click to add/remove notes").clicked() {
+                    if ui.add(egui::Button::new(RichText::new("Draw").color(if dm { TEXT_DARK } else { TEXT })).fill(if dm { accent_now() } else { PANEL3 })).on_hover_text("Draw mode (B): click to add/remove notes").clicked() {
                         self.piano.draw_mode = !dm;
                     }
                     let pv = self.prefs.note_preview;
-                    if ui.add(egui::Button::new(RichText::new("Preview").color(if pv { TEXT_DARK } else { TEXT })).fill(if pv { ACCENT } else { PANEL3 })).on_hover_text("Hear notes while placing and moving them").clicked() {
+                    if ui.add(egui::Button::new(RichText::new("Preview").color(if pv { TEXT_DARK } else { TEXT })).fill(if pv { accent_now() } else { PANEL3 })).on_hover_text("Hear notes while placing and moving them").clicked() {
                         self.prefs.note_preview = !pv;
                         self.prefs.save();
                     }
@@ -471,7 +489,7 @@ impl App {
             let c = if (x as f64) < clip.length * ppb { base } else { shade(base, 0.4) };
             p.line_segment([pos2(xx, mid - mx * half), pos2(xx, mid - mn * half + 0.5)], Stroke::new(1.0_f32, c));
         }
-        p.line_segment([pos2(loop_r.right(), r.top()), pos2(loop_r.right(), r.bottom())], Stroke::new(2.0_f32, ACCENT));
+        p.line_segment([pos2(loop_r.right(), r.top()), pos2(loop_r.right(), r.bottom())], Stroke::new(2.0_f32, accent_now()));
         if let Some(pos) = self.clip_play_pos(sel) {
             let x = r.left() + (pos * ppb) as f32;
             p.line_segment([pos2(x, r.top()), pos2(x, r.bottom())], Stroke::new(1.5_f32, Color32::WHITE));

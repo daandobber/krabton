@@ -701,7 +701,7 @@ mod tests {
             for pass in passes.iter_mut() {
                 for b in 0..(8.0 * spb / 256.0) as u64 {
                     let now = b * 256;
-                    let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0 };
+                    let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0 };
                     let mut out = Vec::new();
                     st.process(kind, &p, &[], &[], &mut out, &ctx);
                     pass.extend(out.iter().filter(|e| e.on).map(|e| (now + e.offset as u64, e.pitch)));
@@ -734,7 +734,7 @@ mod tests {
         let mut st = SeqState::new();
         st.extra.ca = 1 << 8;
         st.extra.ca_steps = 1;
-        let ctx = MidiCtx { now: 0, len: 256, samples_per_beat: 24000.0, scale: Default::default(), scale_on: true, beat: 0.0, playing: true, sr: 48000.0 };
+        let ctx = MidiCtx { now: 0, len: 256, samples_per_beat: 24000.0, scale: Default::default(), scale_on: true, beat: 0.0, playing: true, sr: 48000.0, drum_notes: 0 };
         let mut out = Vec::new();
         st.automaton(&p, 0, 6000.0, &mut out, &ctx);
         assert_eq!(st.extra.ca, (1 << 7) | (1 << 9));
@@ -749,7 +749,7 @@ mod tests {
         let ons = run(MidiFxKind::Ant, &p, &[], 4.0);
         assert_eq!(ons.len(), 16);
         let mut st = SeqState::new();
-        let ctx = MidiCtx { now: 0, len: 256, samples_per_beat: 24000.0, scale: Default::default(), scale_on: true, beat: 0.0, playing: true, sr: 48000.0 };
+        let ctx = MidiCtx { now: 0, len: 256, samples_per_beat: 24000.0, scale: Default::default(), scale_on: true, beat: 0.0, playing: true, sr: 48000.0, drum_notes: 0 };
         let mut out = Vec::new();
         for _ in 0..4 {
             st.ant(&p, 0, 6000.0, &mut out, &ctx);

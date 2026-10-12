@@ -84,6 +84,17 @@ impl App {
             if resp.on_hover_text("Record (F9): armed audio tracks record into session slots, or onto the arrangement in Arrangement view; armed MIDI tracks overdub notes").clicked() {
                 self.toggle_record();
             }
+            // Automation Arm: knob moves go into the clips that play.
+            let (r, resp) = ui.allocate_exact_size(vec2(28.0, 24.0), Sense::click());
+            let arm = self.auto_arm;
+            rect_fill(ui.painter(), r, 2.0, if arm { shade(REC, 0.4) } else { PANEL3 });
+            let c = r.center();
+            let col = if arm { REC } else { TEXT_DIM };
+            ui.painter().add(egui::Shape::line(vec![c + vec2(-9.0, 5.0), c + vec2(-4.0, -1.0), c + vec2(0.0, 3.0), c + vec2(5.0, -5.0), c + vec2(9.0, -2.0)], egui::Stroke::new(2.0_f32, col)));
+            ui.painter().circle_filled(c + vec2(9.0, 6.0), 2.5, col);
+            if resp.on_hover_text("Automation Arm: while clips play, turning a knob of their track writes its moves into the clip (see Envelopes in the clip view)").clicked() {
+                self.auto_arm = !arm;
+            }
             let overridden = self.project.tracks.iter().enumerate().any(|(i, _)| status.tracks.get(i).map(|t| t.overridden.load(Ordering::Relaxed)).unwrap_or(false));
             let has_arr = self.project.tracks.iter().any(|t| !t.arrangement.is_empty());
             if overridden && has_arr {

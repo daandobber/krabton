@@ -9,6 +9,7 @@ mod grid;
 mod history;
 mod midi;
 mod mp3;
+mod drum_lib;
 mod piano_lib;
 mod plugins;
 mod prefs;

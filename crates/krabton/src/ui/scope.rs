@@ -592,7 +592,7 @@ pub fn scope_view(ui: &mut Ui, rect: Rect, id: Id, buf: Option<&ScopeBuffer>, sr
         };
         p.text(rect.right_bottom() + vec2(-5.0, -3.0), Align2::RIGHT_BOTTOM, gain_label, font.clone(), TEXT_DIM);
         if o.freeze {
-            p.text(rect.left_bottom() + vec2(5.0, -3.0), Align2::LEFT_BOTTOM, "FROZEN", font, ACCENT);
+            p.text(rect.left_bottom() + vec2(5.0, -3.0), Align2::LEFT_BOTTOM, "FROZEN", font, accent_now());
         }
         if buf.is_none() {
             p.text(rect.center(), Align2::CENTER_CENTER, "no signal yet", small(), TEXT_DIM);

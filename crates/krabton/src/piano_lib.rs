@@ -57,7 +57,7 @@ fn curl() -> std::process::Command {
     cmd
 }
 
-fn fetch(url: &str, to: &Path) -> Result<(), String> {
+pub(crate) fn fetch(url: &str, to: &Path) -> Result<(), String> {
     let part = to.with_extension("part");
     let status = curl()
         .args(["-sSfL", "--retry", "3", "--retry-delay", "2", "-o"])

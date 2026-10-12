@@ -118,6 +118,7 @@ impl App {
             return;
         };
         let title = format!("Modular - {}", self.project.tracks[ti].name);
+        let _accent = AccentScope::new(Some(rgb(self.project.tracks[ti].color)));
         let mut open = true;
         let rack = &mut self.rack;
         let Some(Instrument::Modular { preset, params, patch }) = &mut self.project.tracks[ti].instrument else {
@@ -309,7 +310,7 @@ fn rack_ui(ui: &mut Ui, track_id: u64, rack: &mut RackUi, preset: &mut String, p
                 let x = (((pos.x - grab.x - origin.x) / HP).round().max(0.0) as u16).min(ROW_HP - hp);
                 let row = ((pos.y - origin.y) / ROW_H).floor().max(0.0) as u16;
                 let ghost = Rect::from_min_size(origin + vec2(x as f32 * HP, row as f32 * ROW_H + RAIL), vec2(hp as f32 * HP, ROW_H - 2.0 * RAIL));
-                fg.rect_stroke(ghost, 3.0, Stroke::new(2.0_f32, ACCENT), egui::StrokeKind::Inside);
+                fg.rect_stroke(ghost, 3.0, Stroke::new(2.0_f32, accent_now()), egui::StrokeKind::Inside);
                 if released {
                     let (fx, frow) = patch.free_spot(hp, row, x, Some(id));
                     if let Some(m) = patch.modules.iter_mut().find(|m| m.id == id) {

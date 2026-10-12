@@ -9,7 +9,7 @@ use krabton_engine::classic_seq::{self as cs, ACID_BYTES, DRUM_LANES, PROG_BYTES
 use krabton_engine::note_name;
 
 fn small_btn(ui: &mut Ui, r: Rect, id: Id, label: &str) -> bool {
-    button(ui, r, id, label, false, ACCENT).clicked()
+    button(ui, r, id, label, false, accent_now()).clicked()
 }
 
 /// Press-and-drag painting (the value is chosen on press).

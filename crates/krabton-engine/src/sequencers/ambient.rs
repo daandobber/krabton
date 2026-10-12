@@ -709,7 +709,7 @@ mod tests {
         let mut done = Vec::new();
         for b in 0..(beats * spb / 256.0) as u64 {
             let now = b * 256;
-            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0 };
+            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0 };
             let mut out = Vec::new();
             st.process(kind, p, &[], &[], &mut out, &ctx);
             for e in &out {
@@ -754,7 +754,7 @@ mod tests {
             if b == (spb / 256.0) as u64 {
                 data.extend_from_slice(&[1, 0, 255, 128, 0, 0]);
             }
-            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat, playing: true, sr: 48000.0 };
+            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat, playing: true, sr: 48000.0, drum_notes: 0 };
             let mut out = Vec::new();
             st.process(MidiFxKind::Bloom, &p, &data, &[], &mut out, &ctx);
             ons.extend(out.iter().filter(|e| e.on).map(|e| ((now + e.offset as u64) as f64 / spb, e.pitch)));
@@ -773,7 +773,7 @@ mod tests {
             if b == 10 {
                 data.extend_from_slice(&[1, 0, 0, 0, 0, 0]);
             }
-            let ctx = MidiCtx { now: b * 256, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: 0.0, playing: false, sr: 48000.0 };
+            let ctx = MidiCtx { now: b * 256, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: 0.0, playing: false, sr: 48000.0, drum_notes: 0 };
             let mut out = Vec::new();
             st.process(MidiFxKind::Bloom, &p, &data, &[], &mut out, &ctx);
             heard += out.iter().filter(|e| e.on && e.pitch == 60).count();
@@ -790,7 +790,7 @@ mod tests {
         while beat < to {
             edit(beat, data);
             let now = (beat * spb) as u64;
-            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat, playing: true, sr: 48000.0 };
+            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat, playing: true, sr: 48000.0, drum_notes: 0 };
             let mut out = Vec::new();
             st.process(MidiFxKind::Bloom, p, data, &[], &mut out, &ctx);
             ons.extend(out.iter().filter(|e| e.on).map(|e| (beat + e.offset as f64 / spb, e.pitch)));

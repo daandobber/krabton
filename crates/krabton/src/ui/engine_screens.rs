@@ -8,7 +8,6 @@ use crate::theme::*;
 use crate::widgets::*;
 use egui::{pos2, vec2, Align2, Color32, Id, Pos2, Rect, Sense, Shape, Stroke, Ui};
 
-const ORANGE: Color32 = Color32::from_rgb(0xff, 0x8c, 0x2e);
 const RED: Color32 = Color32::from_rgb(0xff, 0x4e, 0x62);
 const YELLOW: Color32 = Color32::from_rgb(0xff, 0xd4, 0x3b);
 const GREEN: Color32 = Color32::from_rgb(0x30, 0xd9, 0x8f);
@@ -121,16 +120,16 @@ pub(crate) fn bassline_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLiv
     for (i, &g) in ghosts.iter().enumerate() {
         let a = (i + 1) as f32 / ghosts.len() as f32;
         let x = x_of(g);
-        painter.line_segment([pos2(x, plot.bottom() - 6.0), pos2(x, plot.bottom())], Stroke::new(2.0_f32, ORANGE.gamma_multiply(0.15 + 0.5 * a)));
+        painter.line_segment([pos2(x, plot.bottom() - 6.0), pos2(x, plot.bottom())], Stroke::new(2.0_f32, accent_now().gamma_multiply(0.15 + 0.5 * a)));
     }
     if sounding {
         let amp = live.vals[1].clamp(0.0, 1.5);
-        painter.add(Shape::line(curve(live.vals[0]), Stroke::new(2.0_f32, mix(ORANGE, YELLOW, (amp - 0.5).max(0.0)))));
+        painter.add(Shape::line(curve(live.vals[0]), Stroke::new(2.0_f32, mix(accent_now(), YELLOW, (amp - 0.5).max(0.0)))));
         let x = x_of(live.vals[0]);
-        painter.line_segment([pos2(x, plot.top()), pos2(x, plot.bottom())], Stroke::new(1.0_f32, ORANGE.gamma_multiply(0.4)));
+        painter.line_segment([pos2(x, plot.top()), pos2(x, plot.bottom())], Stroke::new(1.0_f32, accent_now().gamma_multiply(0.4)));
     }
     ui.ctx().memory_mut(|m| m.data.insert_temp(ghosts_id, ghosts));
-    caption(&painter, rect.left_top() + vec2(10.0, 8.0), Align2::LEFT_TOP, &format!("cutoff {:.0} hz  res {:.0}%", if sounding { live.vals[0] } else { p[CUTOFF] }, res * 100.0), ORANGE);
+    caption(&painter, rect.left_top() + vec2(10.0, 8.0), Align2::LEFT_TOP, &format!("cutoff {:.0} hz  res {:.0}%", if sounding { live.vals[0] } else { p[CUTOFF] }, res * 100.0), accent_now());
     if sounding {
         let n = live.vals[2].round().clamp(0.0, 127.0) as u8;
         caption(&painter, pos2(rect.right() - 10.0, rect.top() + 8.0), Align2::RIGHT_TOP, &krabton_engine::note_name(n), YELLOW);
@@ -226,7 +225,7 @@ pub(crate) fn drone_screen(ui: &mut Ui, id: Id, p: &[f32], live: &InstLive, heig
         caption(&painter, pos2(x, y - 2.0), Align2::LEFT_BOTTOM, labels[k], if layer(k) > 0.01 { colors[k] } else { DIM });
     }
     let title = if on { format!("{}  ·  {} voice{}", krabton_engine::note_name(v[14].round().clamp(0.0, 127.0) as u8), v[0] as usize, if v[0] as usize == 1 { "" } else { "s" }) } else { "hold a key".to_string() };
-    caption(&painter, rect.left_top() + vec2(10.0, 6.0), Align2::LEFT_TOP, &title, ORANGE);
+    caption(&painter, rect.left_top() + vec2(10.0, 6.0), Align2::LEFT_TOP, &title, accent_now());
     caption(&painter, pos2(rect.right() - 10.0, rect.top() + 6.0), Align2::RIGHT_TOP, &format!("evolve {:.0}%", p[EVOLVE].clamp(0.0, 1.0) * 100.0), DIM);
     if on {
         ui.ctx().request_repaint();
@@ -267,7 +266,7 @@ pub(crate) fn waves_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, 
         let bank = (p[bank_i].round().max(0.0) as usize).min(BANKS.len() - 1);
         let audible = p[level_i] > 0.0;
         let pos = if on { live.vals[1 + k] } else { p[pos_i].clamp(0.0, 1.0) * (BANK_SIZE - 1) as f32 };
-        let color = if k == 0 { ORANGE } else { BLUE };
+        let color = if k == 0 { accent_now() } else { BLUE };
         // Back to front: wave 7 at the top right, wave 0 at the bottom left.
         let ww = r.width() - 40.0;
         let wh = 22.0;
@@ -410,7 +409,7 @@ pub(crate) fn guitar_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive,
     let model = MODELS[(p[MODEL].round().max(0.0) as usize).min(MODELS.len() - 1)];
     let mode = (p.get(STRING_MODE).copied().unwrap_or(0.0).round().max(0.0) as usize).min(STRING_MODES.len() - 1);
     let title = if mode == 0 { format!("{}  ·  {}", model, TUNINGS[tuning]) } else { format!("{}  ·  {}  ·  {}", model, TUNINGS[tuning], STRING_MODES[mode].to_lowercase()) };
-    caption(&painter, rect.left_top() + vec2(10.0, 6.0), Align2::LEFT_TOP, &title, ORANGE);
+    caption(&painter, rect.left_top() + vec2(10.0, 6.0), Align2::LEFT_TOP, &title, accent_now());
     if capo > 0 {
         caption(&painter, pos2(rect.right() - 10.0, rect.top() + 6.0), Align2::RIGHT_TOP, &format!("capo {capo}"), DIM);
     }
@@ -456,7 +455,7 @@ pub(crate) fn wind_chimes_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &Inst
     let look = super::chime_view::ChimeLook { shape: s, color: super::chime_view::material_color(mat), thickness: p[THICKNESS], names };
     let t = ui.input(|i| i.time) as f32;
     super::chime_view::draw(&painter, rect, &look, &st, t);
-    caption(&painter, rect.left_top() + vec2(10.0, 6.0), Align2::LEFT_TOP, &format!("{} · {} tubes", MATERIALS[mat], s.tubes), ORANGE);
+    caption(&painter, rect.left_top() + vec2(10.0, 6.0), Align2::LEFT_TOP, &format!("{} · {} tubes", MATERIALS[mat], s.tubes), accent_now());
     caption(&painter, pos2(rect.right() - 10.0, rect.top() + 6.0), Align2::RIGHT_TOP, &format!("wind {:.0}%", if on { v[2] } else { p[WIND] } * 100.0), DIM);
     resp.on_hover_text("Drag left or right: the wind. Every strike is the clapper meeting a tube; play a key to touch one");
     changed

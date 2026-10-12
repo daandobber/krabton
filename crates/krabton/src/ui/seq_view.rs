@@ -22,6 +22,8 @@ pub(crate) struct Live {
     pub playing: bool,
     /// The project scale (for note and chord names).
     pub scale: krabton_engine::Scale,
+    /// The notes of the track's drum kit (0: no kit).
+    pub kit: u128,
 }
 
 impl Live {
@@ -56,6 +58,7 @@ pub(crate) fn editor(ui: &mut Ui, id: Id, kind: MidiFxKind, params: &mut [f32], 
         MidiFxKind::Tintinnabuli => super::ambient_view::tintinnabuli(ui, id, params, live, accent, height),
         MidiFxKind::Pedal => super::ambient_view::pedal(ui, id, params, live, accent, height),
         MidiFxKind::GuitarChords => super::chords_view::guitar_chords(ui, id, params, data, live, accent, height),
+        MidiFxKind::Drummer => super::drummer_view::drummer(ui, id, params, data, live, accent, height),
         MidiFxKind::Drunk => drunk(ui, id, params, live, accent, height),
         MidiFxKind::Step => super::classic_view::step(ui, id, params, data, live, lane, accent, height),
         MidiFxKind::Acid => super::classic_view::acid(ui, id, params, data, live, accent, height),
@@ -96,7 +99,7 @@ fn paint_value(ui: &Ui, resp: &egui::Response, id: Id, current: impl FnOnce() ->
 }
 
 fn small_button(ui: &mut Ui, r: Rect, id: Id, label: &str) -> bool {
-    button(ui, r, id, label, false, ACCENT).clicked()
+    button(ui, r, id, label, false, accent_now()).clicked()
 }
 
 // ---------------------------------------------------------------- polymeter
@@ -551,8 +554,8 @@ mod tests {
                     if i == 0 {
                         origin = ui.cursor().min;
                     }
-                    let live = Live { vis: None, playing: false, scale: krabton_engine::Scale::default() };
-                    editor(ui, Id::new("t"), kind, params, data, live, lane, ACCENT, 190.0);
+                    let live = Live { vis: None, playing: false, scale: krabton_engine::Scale::default(), kit: 0 };
+                    editor(ui, Id::new("t"), kind, params, data, live, lane, accent_now(), 190.0);
                 });
             });
         }

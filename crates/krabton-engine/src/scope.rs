@@ -11,11 +11,11 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 pub const SCOPE_LEN: usize = 32768;
 /// Device taps that can show audio at the same time (an analyzer device
 /// uses two: before and after it).
-pub const MAX_SCOPES: usize = 24;
+pub const MAX_SCOPES: usize = 48;
 /// Added to a device id for the tap in front of the device.
 pub const PRE_KEY: u64 = 1 << 63;
 /// Devices that can publish meter values at the same time.
-pub const MAX_METER_DEVICES: usize = 32;
+pub const MAX_METER_DEVICES: usize = 128;
 /// Values per device in the meter bank.
 pub const METER_VALUES: usize = 32;
 

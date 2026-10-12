@@ -43,6 +43,9 @@ pub(crate) struct Link {
 pub(crate) struct ModView {
     owner: ModOwner,
     links: Vec<Link>,
+    /// Params a clip on this track has an envelope for (a red dot).
+    /// Parameters a clip envelope moves, with its value now (while one plays).
+    automated: Vec<(usize, Option<f32>)>,
     mapping: Option<(u64, Color32)>,
     /// (source, param, amount) to store after drawing.
     edits: Vec<(u64, usize, f32)>,
@@ -61,18 +64,33 @@ fn span(spec: &ParamSpec) -> f32 {
 /// Draws modulation on a cell made by `param_cell`, and handles mapping:
 /// click or drag in map mode, or a dropped modulator chip.
 pub(crate) fn cell_overlay(ui: &mut Ui, cell: Rect, id: Id, spec: &ParamSpec, value: f32, param: usize, mv: &mut ModView) {
+    let ctrl = Rect::from_min_max(pos2(cell.left(), cell.top() + 13.0), pos2(cell.right(), cell.bottom() - 13.0));
+    let size = ctrl.height().min(cell.width()).min(36.0);
+    knob_overlay(ui, cell, Rect::from_center_size(ctrl.center(), vec2(size, size)), id, spec, value, param, mv);
+}
+
+/// [`cell_overlay`] for a knob anywhere in `cell` (the area that takes
+/// mapping clicks and dropped modulators).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn knob_overlay(ui: &mut Ui, cell: Rect, knob: Rect, id: Id, spec: &ParamSpec, value: f32, param: usize, mv: &mut ModView) {
     let p = ui.painter().clone();
     let links: Vec<Link> = mv.links.iter().filter(|l| l.param == param).copied().collect();
-    let base = spec.to_norm(value);
+    let auto = mv.automated.iter().find(|a| a.0 == param).map(|a| a.1);
+    // A playing envelope sets the value the modulation starts from.
+    let base = auto.flatten().unwrap_or_else(|| spec.to_norm(value));
     let sp = span(spec);
-    let ctrl = Rect::from_min_max(pos2(cell.left(), cell.top() + 13.0), pos2(cell.right(), cell.bottom() - 13.0));
     let knob_like = !matches!(spec.kind, ParamKind::Choice(_) | ParamKind::Toggle);
+    if let Some(now) = auto {
+        p.circle_filled(pos2(cell.right() - 4.0, cell.top() + 4.0), 3.0, REC);
+        if let (Some(v), true) = (now, knob_like) {
+            knob_auto_mark(&p, knob, v);
+        }
+    }
     if !links.is_empty() {
         let live = (base + links.iter().map(|l| l.amount * l.output * sp).sum::<f32>()).clamp(0.0, 1.0);
         if knob_like {
-            let size = ctrl.height().min(cell.width()).min(36.0);
-            let c = ctrl.center();
-            let r = size * 0.5 - 2.0;
+            let c = knob.center();
+            let r = knob.width() * 0.5 - 2.0;
             for (k, l) in links.iter().enumerate() {
                 let rr = r + 3.0 + k as f32 * 2.5;
                 let to = (base + l.amount * sp).clamp(0.0, 1.0);
@@ -84,11 +102,46 @@ pub(crate) fn cell_overlay(ui: &mut Ui, cell: Rect, id: Id, spec: &ParamSpec, va
             let ang = KNOB_START + KNOB_RANGE * live;
             p.circle_filled(pos2(c.x + (r + 3.0) * ang.cos(), c.y + (r + 3.0) * ang.sin()), 2.5, Color32::WHITE);
         } else {
-            let bar = Rect::from_min_size(pos2(cell.left() + 4.0, ctrl.center().y + 11.0), vec2(cell.width() - 8.0, 3.0));
+            let bar = Rect::from_min_size(pos2(cell.left() + 4.0, knob.center().y + 11.0), vec2(cell.width() - 8.0, 3.0));
             rect_fill(&p, bar, 1.0, PANEL3);
             p.circle_filled(pos2(bar.left() + bar.width() * live, bar.center().y), 2.5, links[0].color);
         }
     }
+    map_and_drop(ui, cell, id, spec, param, &links, mv);
+}
+
+/// [`cell_overlay`] for a vertical slider (`track` is its slot): the
+/// envelope's value now in red, each modulation's range as a bar beside the
+/// slot and its live value as a dot.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn slider_overlay(ui: &mut Ui, cell: Rect, track: Rect, id: Id, spec: &ParamSpec, value: f32, param: usize, mv: &mut ModView) {
+    let p = ui.painter().clone();
+    let links: Vec<Link> = mv.links.iter().filter(|l| l.param == param).copied().collect();
+    let auto = mv.automated.iter().find(|a| a.0 == param).map(|a| a.1);
+    let base = auto.flatten().unwrap_or_else(|| spec.to_norm(value));
+    let sp = span(spec);
+    let y = |v: f32| track.bottom() - v.clamp(0.0, 1.0) * track.height();
+    if let Some(now) = auto {
+        p.circle_filled(pos2(cell.right() - 4.0, cell.top() + 4.0), 3.0, REC);
+        if let Some(v) = now {
+            p.line_segment([pos2(track.left() - 4.0, y(v)), pos2(track.right() + 4.0, y(v))], Stroke::new(2.0_f32, REC));
+        }
+    }
+    if !links.is_empty() {
+        for (k, l) in links.iter().enumerate() {
+            let x = track.right() + 4.0 + k as f32 * 3.0;
+            let to = base + l.amount * sp;
+            p.line_segment([pos2(x, y(base)), pos2(x, y(to))], Stroke::new(2.0_f32, l.color));
+        }
+        let live = (base + links.iter().map(|l| l.amount * l.output * sp).sum::<f32>()).clamp(0.0, 1.0);
+        p.circle_filled(pos2(track.center().x, y(live)), 2.5, Color32::WHITE);
+    }
+    map_and_drop(ui, cell, id, spec, param, &links, mv);
+}
+
+/// Mapping (click or drag in map mode) and dropped modulator chips, on any cell.
+fn map_and_drop(ui: &mut Ui, cell: Rect, id: Id, spec: &ParamSpec, param: usize, links: &[Link], mv: &mut ModView) {
+    let p = ui.painter().clone();
     if let Some((src, color)) = mv.mapping {
         rect_line(&p, cell.shrink(1.0), 4.0, 1.0, color);
         let resp = ui.interact(cell, id.with("map"), Sense::click_and_drag());
@@ -187,7 +240,27 @@ impl App {
 
     /// Modulation for a parameter set, or None when there are no modulators.
     pub(crate) fn mod_view(&self, owner: ModOwner) -> Option<ModView> {
-        if self.project.modulators.is_empty() {
+        // Params that clips of this owner's track move.
+        let track = self.project.tracks.iter().position(|t| match owner {
+            ModOwner::Instrument(id) => t.id == id,
+            ModOwner::Device(id) => t.devices.iter().any(|d| d.id == id),
+            ModOwner::MidiDevice(id) => t.midi_devices.iter().any(|d| d.id == id),
+            ModOwner::Modulator(_) => false,
+        });
+        let mut automated: Vec<(usize, Option<f32>)> = Vec::new();
+        if let Some(ti) = track {
+            let t = &self.project.tracks[ti];
+            for c in t.slots.iter().flatten().chain(t.arrangement.iter().map(|a| &a.clip)) {
+                for e in &c.envelopes {
+                    if let ModTarget::Param { owner: o, param } = e.target {
+                        if o == owner && !e.points.is_empty() && !automated.iter().any(|a| a.0 == param as usize) {
+                            automated.push((param as usize, self.envelope_now(ti, e.target)));
+                        }
+                    }
+                }
+            }
+        }
+        if self.project.modulators.is_empty() && automated.is_empty() {
             return None;
         }
         let links = self
@@ -203,7 +276,7 @@ impl App {
             })
             .collect();
         let mapping = self.mod_learn.and_then(|id| self.project.modulators.iter().position(|m| m.id == id).map(|i| (id, mod_color(i))));
-        Some(ModView { owner, links, mapping, edits: Vec::new() })
+        Some(ModView { owner, links, automated, mapping, edits: Vec::new() })
     }
 
     /// Stores the connections made on a parameter set.
@@ -689,7 +762,7 @@ mod tests {
     }
 
     fn view(mapping: Option<u64>) -> ModView {
-        ModView { owner: ModOwner::Device(1), links: Vec::new(), mapping: mapping.map(|id| (id, MOD_COLORS[0])), edits: Vec::new() }
+        ModView { owner: ModOwner::Device(1), links: Vec::new(), automated: Vec::new(), mapping: mapping.map(|id| (id, MOD_COLORS[0])), edits: Vec::new() }
     }
 
     #[test]

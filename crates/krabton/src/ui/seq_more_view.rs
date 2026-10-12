@@ -11,7 +11,7 @@ use krabton_engine::sequencers::{self, more, MAX_BALLS};
 use std::f32::consts::TAU;
 
 fn ball_color(i: usize) -> Color32 {
-    let c = [ACCENT, SELECT, PLAY, Color32::from_rgb(0xe0, 0x84, 0xff)][i % 4];
+    let c = [accent_now(), SELECT, PLAY, Color32::from_rgb(0xe0, 0x84, 0xff)][i % 4];
     if i >= 4 {
         mix(c, Color32::WHITE, 0.35)
     } else {
@@ -151,14 +151,14 @@ pub(crate) fn bounce(ui: &mut Ui, id: Id, params: &mut [f32], live: Live, height
     let bw = 46.0;
     let nb = Rect::from_min_size(pos2(rect.right() - 2.0 * bw - 8.0, rect.top() + 1.0), vec2(bw, 14.0));
     let db = Rect::from_min_size(pos2(rect.right() - bw - 4.0, rect.top() + 1.0), vec2(bw, 14.0));
-    if button(ui, nb, id.with("dice_notes"), "notes", false, ACCENT).on_hover_text("Roll new notes for every ball: in the scale, mostly chord tones").clicked() {
+    if button(ui, nb, id.with("dice_notes"), "notes", false, accent_now()).on_hover_text("Roll new notes for every ball: in the scale, mostly chord tones").clicked() {
         let mut seed = dice_seed();
         for i in 0..MAX_BALLS {
             params[8 + i] = dice_note(&mut seed);
         }
         changed = true;
     }
-    if button(ui, db, id.with("dice_drops"), "drops", false, ACCENT).on_hover_text("Roll new drop heights for every ball").clicked() {
+    if button(ui, db, id.with("dice_drops"), "drops", false, accent_now()).on_hover_text("Roll new drop heights for every ball").clicked() {
         let mut seed = dice_seed();
         for i in 0..MAX_BALLS {
             params[16 + i] = (rnd(&mut seed) * sequencers::DROPS.len() as f32).floor().min((sequencers::DROPS.len() - 1) as f32);
@@ -267,13 +267,13 @@ pub(crate) fn chaos(ui: &mut Ui, id: Id, params: &mut [f32], live: Live, height:
     p.add(Shape::mesh(mesh));
     let r = params[1].clamp(r0, r1);
     let lx = plot.left() + (r - r0) / (r1 - r0) * plot.width();
-    p.line_segment([pos2(lx, plot.top()), pos2(lx, plot.bottom())], Stroke::new(1.5_f32, ACCENT));
+    p.line_segment([pos2(lx, plot.top()), pos2(lx, plot.bottom())], Stroke::new(1.5_f32, accent_now()));
     let x_now = live.on().map(|v| (v[0] & 0xffff) as f32 / 65535.0);
     let hist = trail(ui, id.with("hist"), x_now, 12);
     if x_now.is_some() {
         for (k, x) in hist.iter().enumerate() {
             let a = (k + 1) as f32 / hist.len() as f32;
-            p.circle_filled(pos2(lx, plot.bottom() - x * plot.height()), 1.5 + 2.5 * a, mix(ACCENT, Color32::WHITE, a).gamma_multiply(0.3 + 0.7 * a));
+            p.circle_filled(pos2(lx, plot.bottom() - x * plot.height()), 1.5 + 2.5 * a, mix(accent_now(), Color32::WHITE, a).gamma_multiply(0.3 + 0.7 * a));
         }
     }
     let state = if r < 3.0 {

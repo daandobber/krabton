@@ -16,7 +16,6 @@ use std::f32::consts::{PI, TAU};
 pub const SCREEN_BG: Color32 = Color32::from_rgb(0x0a, 0x0b, 0x0e);
 const BLUE: Color32 = Color32::from_rgb(0x4d, 0x8d, 0xff);
 const GREEN: Color32 = Color32::from_rgb(0x30, 0xd9, 0x8f);
-const ORANGE: Color32 = Color32::from_rgb(0xff, 0x8c, 0x2e);
 const RED: Color32 = Color32::from_rgb(0xff, 0x4e, 0x62);
 const YELLOW: Color32 = Color32::from_rgb(0xff, 0xd4, 0x3b);
 const WHITE: Color32 = Color32::from_rgb(0xf0, 0xf0, 0xf0);
@@ -39,10 +38,12 @@ impl Default for InstLive {
 }
 
 impl InstLive {
-    pub(crate) fn read(status: &EngineStatus) -> Self {
+    /// What the instrument on track `t` sounds like now.
+    pub(crate) fn read(status: &EngineStatus, t: usize) -> Self {
+        let Some(ts) = status.tracks.get(t) else { return Self::default() };
         let (mut l, mut r) = (Vec::new(), Vec::new());
-        status.inst_scope.read(4096, &mut l, &mut r);
-        Self { wave: l, notes: status.inst_notes(), vals: status.inst_values() }
+        ts.inst_scope.read(4096, &mut l, &mut r);
+        Self { wave: l, notes: ts.inst_notes(), vals: ts.inst_values() }
     }
 
     /// Loudness of the last few milliseconds (RMS).
@@ -139,7 +140,7 @@ pub(crate) fn particles(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, hei
     let painter = ui.painter_at(rect);
     let model = (p[MODEL].round().max(0.0) as usize).min(MODEL_NAMES.len() - 1);
     let layer = (p[LAYER].round().max(0.0) as usize).min(LAYERS.len() - 1);
-    let color_of = |m: usize| [ORANGE, YELLOW, GREEN, BLUE, WHITE, GREEN, YELLOW, BLUE, RED, ORANGE, RED][m % 11];
+    let color_of = |m: usize| [accent_now(), YELLOW, GREEN, BLUE, WHITE, GREEN, YELLOW, BLUE, RED, accent_now(), RED][m % 11];
     // 0 dot, 1 jingle (ring), 2 stick, 3 dust.
     let glyph_of = |m: usize| [0, 0, 0, 1, 1, 2, 3, 1, 0, 0, 0][m % 11];
     let jar = Rect::from_min_max(pos2(rect.left() + 20.0, rect.top() + 22.0), pos2(rect.right() - 12.0, rect.bottom() - 12.0));
@@ -363,7 +364,7 @@ pub(crate) fn organ_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, 
         let a = drum - 0.7 + 1.4 * i as f32 / 16.0;
         c + vec2(a.cos(), a.sin()) * rad * 0.62
     }).collect();
-    painter.add(Shape::line(arc, Stroke::new(6.0_f32, ORANGE.gamma_multiply(0.8))));
+    painter.add(Shape::line(arc, Stroke::new(6.0_f32, accent_now().gamma_multiply(0.8))));
     let horn = live.vals[0] * TAU;
     let d = vec2(horn.cos(), horn.sin());
     let side = vec2(-d.y, d.x);
@@ -372,7 +373,7 @@ pub(crate) fn organ_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, 
     painter.add(Shape::convex_polygon(vec![c + d * rad * 0.55 + side * 2.0, mouth + side * 8.0, mouth - side * 8.0, c + d * rad * 0.55 - side * 2.0], WHITE, Stroke::NONE));
     painter.circle_filled(c - d * rad * 0.45, 4.0, DIM);
     painter.circle_filled(c, 3.0, WHITE);
-    caption(&painter, pos2(c.x, c.y + rad + 4.0), Align2::CENTER_TOP, ["rotary off", "slow", "fast"][speed], if speed == 2 { ORANGE } else { TEXT_DIM });
+    caption(&painter, pos2(c.x, c.y + rad + 4.0), Align2::CENTER_TOP, ["rotary off", "slow", "fast"][speed], if speed == 2 { accent_now() } else { TEXT_DIM });
     rot.on_hover_text("Click: off, slow, fast");
 
     // Percussion lamp.
@@ -514,7 +515,7 @@ pub(crate) fn synth_grid(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, he
 
 fn sub_grid(ui: &mut Ui, id: Id, s: &'static SubLayout, p: &mut [f32], live: &InstLive, height: f32, mv: Option<&mut super::modulation::ModView>) -> bool {
     let part = |name: &str| s.groups.iter().find(|g| g.0 == name).map(|g| g.1);
-    let changed = super::devices::param_grid_screens(ui, id, s.specs, p, ACCENT, height, mv, 104.0, &|name| part(name).is_some(), |ui, name, rect, p| {
+    let changed = super::devices::param_grid_screens(ui, id, s.specs, p, accent_now(), height, mv, 104.0, &|name| part(name).is_some(), |ui, name, rect, p| {
         let Some(which) = part(name) else { return false };
         let painter = ui.painter_at(rect);
         rect_fill(&painter, rect, 4.0, SCREEN_BG);
@@ -598,9 +599,9 @@ fn filter_part(painter: &Painter, rect: Rect, s: &SubLayout, p: &[f32], live: &I
             .collect()
     };
     let live_cut = if live.vals[0] > 0.0 { live.vals[25] } else { 0.0 };
-    painter.add(Shape::line(curve(p[s.cutoff]), Stroke::new(if live_cut > 0.0 { 1.0_f32 } else { 1.8 }, if live_cut > 0.0 { DIM } else { ORANGE })));
+    painter.add(Shape::line(curve(p[s.cutoff]), Stroke::new(if live_cut > 0.0 { 1.0_f32 } else { 1.8 }, if live_cut > 0.0 { DIM } else { accent_now() })));
     if live_cut > 0.0 {
-        painter.add(Shape::line(curve(live_cut), Stroke::new(1.8_f32, ORANGE)));
+        painter.add(Shape::line(curve(live_cut), Stroke::new(1.8_f32, accent_now())));
     }
     let kname = match kind {
         Flt::Lp24 => "lp24",
@@ -611,14 +612,14 @@ fn filter_part(painter: &Painter, rect: Rect, s: &SubLayout, p: &[f32], live: &I
     };
     let fc = if live_cut > 0.0 { live_cut } else { p[s.cutoff] };
     let fc_s = if fc >= 1000.0 { format!("{:.1}k", fc / 1000.0) } else { format!("{fc:.0}") };
-    caption(painter, rect.left_top() + vec2(5.0, 4.0), Align2::LEFT_TOP, &format!("{kname} {fc_s}"), ORANGE);
+    caption(painter, rect.left_top() + vec2(5.0, 4.0), Align2::LEFT_TOP, &format!("{kname} {fc_s}"), accent_now());
 }
 
 /// An envelope with handles to drag (attack; decay and sustain; release)
 /// and the voices running along it.
 fn env_part(ui: &mut Ui, id: Id, rect: Rect, s: &SubLayout, p: &mut [f32], live: &InstLive, amp: bool) -> bool {
     let idx = if amp { s.amp } else { s.flt };
-    let color = if amp { GREEN } else { ORANGE };
+    let color = if amp { GREEN } else { accent_now() };
     let env_r = Rect::from_min_max(rect.left_top() + vec2(6.0, 16.0), rect.right_bottom() - vec2(6.0, 6.0));
     let seg_max = env_r.width() * 0.27;
     let sus_w = env_r.width() - 3.0 * seg_max;
@@ -737,7 +738,7 @@ pub(crate) fn rings_screen(ui: &mut Ui, p: &[f32], live: &InstLive, height: f32)
     let rect = screen(ui, w, height);
     let painter = ui.painter_at(rect);
     let model = (p[MODEL].round().max(0.0) as usize).min(MODELS.len() - 1);
-    let color = [BLUE, GREEN, ORANGE, RED, YELLOW, WHITE][model % 6];
+    let color = [BLUE, GREEN, accent_now(), RED, YELLOW, WHITE][model % 6];
     let strings = [1, 2, 4][(p[POLYPHONY].round().max(0.0) as usize).min(2)];
     let t = ui.input(|i| i.time) as f32;
     let level = (live.level() * 6.0).min(1.0);
@@ -823,7 +824,7 @@ pub(crate) fn elements_screen(ui: &mut Ui, id: Id, p: &[f32], live: &InstLive, h
         painter.line_segment([pos2(x, y), pos2(x + 5.0, y)], Stroke::new(1.5_f32, ac.gamma_multiply(1.0 - ph)));
     }
     // Strike: a mallet that swings in when struck.
-    let sc = mix(DIM, ORANGE, strike);
+    let sc = mix(DIM, accent_now(), strike);
     let swing = flash * strike;
     let head = pos2(col_x + 8.0 - swing * 6.0, rows[2] - 8.0 + swing * 6.0);
     painter.line_segment([pos2(col_x - 20.0, rows[2] + 6.0), head], Stroke::new(1.5_f32, sc));
@@ -854,9 +855,9 @@ pub(crate) fn elements_screen(ui: &mut Ui, id: Id, p: &[f32], live: &InstLive, h
         })
         .collect();
     let model = (p[MODEL].round().max(0.0) as usize).min(MODEL_NAMES.len() - 1);
-    let rc = mix(WHITE, mix(BLUE, ORANGE, geometry), 0.6);
+    let rc = mix(WHITE, mix(BLUE, accent_now(), geometry), 0.6);
     painter.add(Shape::closed_line(pts, Stroke::new(1.8_f32, if level > 0.01 { rc } else { DIM })));
-    for (k, (v, col)) in [(bow, BLUE), (blow, GREEN), (strike, ORANGE)].iter().enumerate() {
+    for (k, (v, col)) in [(bow, BLUE), (blow, GREEN), (strike, accent_now())].iter().enumerate() {
         if *v > 0.01 {
             let y = rows[k];
             painter.line_segment([pos2(col_x + 24.0, y), pos2(c.x - rad - 6.0, c.y + (k as f32 - 1.0) * 8.0)], Stroke::new(1.0_f32, col.gamma_multiply(0.25 + 0.6 * v * level.max(0.2))));
@@ -1218,7 +1219,7 @@ fn banded_screen(painter: &Painter, rect: Rect, k: usize, level: f32, t: f32, fr
     } else {
         // The bow (or stick) rubbing, pressed as hard as Bow Pressure.
         painter.circle_filled(contact, 3.0 + pressure * 4.0, WHITE.gamma_multiply(0.4 + 0.6 * level.max(0.2)));
-        painter.circle_stroke(contact, 6.0 + pressure * 8.0, Stroke::new(1.0_f32, ORANGE.gamma_multiply(pressure * level.max(0.3))));
+        painter.circle_stroke(contact, 6.0 + pressure * 8.0, Stroke::new(1.0_f32, accent_now().gamma_multiply(pressure * level.max(0.3))));
     }
     let mut x = rect.left() + 8.0;
     let y = rect.bottom() - 9.0;
@@ -1226,7 +1227,7 @@ fn banded_screen(painter: &Painter, rect: Rect, k: usize, level: f32, t: f32, fr
         caption(painter, pos2(x, y), Align2::LEFT_CENTER, "struck", WHITE);
         x += 54.0;
     } else {
-        x += legend(painter, pos2(x, y), ORANGE, "press", pressure);
+        x += legend(painter, pos2(x, y), accent_now(), "press", pressure);
         x += legend(painter, pos2(x, y), WHITE, "motion", motion);
     }
     x += legend(painter, pos2(x, y), YELLOW, "ring", gain);
@@ -1241,7 +1242,7 @@ fn strings_screen(ui: &mut Ui, k: usize, name: &str, level: f32, recent: &[(u8, 
     let painter = ui.painter_at(rect);
     let t = ui.input(|i| i.time) as f32;
     let bowed = k == 0;
-    let color = [GREEN, ORANGE, YELLOW, RED, BLUE][k % 5];
+    let color = [GREEN, accent_now(), YELLOW, RED, BLUE][k % 5];
     caption(&painter, pos2(rect.left() + 8.0, rect.top() + 6.0), Align2::LEFT_TOP, name, color);
     let n = recent.len().clamp(1, 4);
     let area = Rect::from_min_max(pos2(rect.left() + 36.0, rect.top() + 24.0), pos2(rect.right() - 12.0, rect.bottom() - 12.0));
@@ -1284,7 +1285,7 @@ fn winds_screen(ui: &mut Ui, k: usize, name: &str, level: f32, recent: &[(u8, f3
     let rect = screen(ui, w, height);
     let painter = ui.painter_at(rect);
     let t = ui.input(|i| i.time) as f32;
-    let color = [BLUE, GREEN, YELLOW, ORANGE, BLUE, GREEN, WHITE][k % 7];
+    let color = [BLUE, GREEN, YELLOW, accent_now(), BLUE, GREEN, WHITE][k % 7];
     caption(&painter, pos2(rect.left() + 8.0, rect.top() + 6.0), Align2::LEFT_TOP, name, color);
     let note = recent.first().map(|r| r.0).unwrap_or(60);
     let cy = rect.center().y + 6.0;
@@ -1401,9 +1402,9 @@ pub(crate) fn monk_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, h
     }
     let px = rect.left() + 10.0 + head * (rect.width() - 20.0);
     let py = rect.bottom() - 10.0 - p[VOWEL].clamp(0.0, 1.0) * (rect.height() - 20.0);
-    painter.line_segment([pos2(px, rect.top() + 4.0), pos2(px, rect.bottom() - 4.0)], Stroke::new(1.0_f32, ORANGE.gamma_multiply(0.25)));
-    painter.line_segment([pos2(rect.left() + 4.0, py), pos2(rect.right() - 4.0, py)], Stroke::new(1.0_f32, ORANGE.gamma_multiply(0.25)));
-    painter.circle_stroke(pos2(px, py), 5.0, Stroke::new(1.5_f32, ORANGE));
+    painter.line_segment([pos2(px, rect.top() + 4.0), pos2(px, rect.bottom() - 4.0)], Stroke::new(1.0_f32, accent_now().gamma_multiply(0.25)));
+    painter.line_segment([pos2(rect.left() + 4.0, py), pos2(rect.right() - 4.0, py)], Stroke::new(1.0_f32, accent_now().gamma_multiply(0.25)));
+    painter.circle_stroke(pos2(px, py), 5.0, Stroke::new(1.5_f32, accent_now()));
     // The echo rings out to the right.
     let echo = p[ECHO].clamp(0.0, 1.0);
     let spacing = 10.0 + 22.0 * p[ECHO_TIME].clamp(0.0, 1.0);
@@ -1478,7 +1479,7 @@ pub(crate) fn monk_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, h
     }
     let vowel_names = ["u", "o", "a", "e", "i"];
     let vn = vowel_names[((vowel * 4.0).round() as usize).min(4)];
-    caption(&painter, rect.left_top() + vec2(8.0, 6.0), Align2::LEFT_TOP, &format!("vowel {vn}"), ORANGE);
+    caption(&painter, rect.left_top() + vec2(8.0, 6.0), Align2::LEFT_TOP, &format!("vowel {vn}"), accent_now());
     caption(&painter, pos2(rect.right() - 8.0, rect.top() + 6.0), Align2::RIGHT_TOP, &format!("head {:.0}", head * 100.0), TEXT_DIM);
     if p[GLIDE] > 0.001 {
         caption(&painter, pos2(rect.right() - 8.0, rect.top() + 20.0), Align2::RIGHT_TOP, &format!("glide {:.0}", p[GLIDE] * 100.0), TEXT_DIM);
@@ -1570,7 +1571,7 @@ pub(crate) fn piano_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, 
         let x = x0 + 4.0 + (x1 - x0 - 8.0) * (k as f32 + 1.0) / 88.0;
         let up = pedal || held[k] || held[k + 1] || held[k + 2];
         let y = damper_y - if up { 5.0 } else { 0.0 };
-        rect_fill(&painter, Rect::from_center_size(pos2(x, y), vec2(4.0, 3.0)), 1.0, if up { ORANGE.gamma_multiply(dim) } else { DIM.gamma_multiply(dim) });
+        rect_fill(&painter, Rect::from_center_size(pos2(x, y), vec2(4.0, 3.0)), 1.0, if up { accent_now().gamma_multiply(dim) } else { DIM.gamma_multiply(dim) });
     }
     // The keyboard.
     keys(&painter, kb, live.notes, 21, 108, GREEN);
@@ -1599,14 +1600,14 @@ pub(crate) fn piano_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, 
             resp.on_hover_text(format!("Click: {tip} on or off"));
         }
         let painter = ui.painter_at(rect);
-        rect_fill(&painter, r, 2.0, if *on { ORANGE } else { DIM.gamma_multiply(dim) });
+        rect_fill(&painter, r, 2.0, if *on { accent_now() } else { DIM.gamma_multiply(dim) });
     }
     let painter = ui.painter_at(rect);
     caption(&painter, rect.left_top() + vec2(8.0, 6.0), Align2::LEFT_TOP, "grand piano · yamaha c5", WHITE.gamma_multiply(dim));
     match lib {
         PianoLib::Ready => {
             if pedal {
-                caption(&painter, pos2(rect.right() - 8.0, rect.top() + 6.0), Align2::RIGHT_TOP, "pedal", ORANGE);
+                caption(&painter, pos2(rect.right() - 8.0, rect.top() + 6.0), Align2::RIGHT_TOP, "pedal", accent_now());
             }
             if level > 0.005 || live.vals[0] > 0.0 {
                 ui.ctx().request_repaint();
@@ -1616,7 +1617,7 @@ pub(crate) fn piano_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, 
             let b = Rect::from_center_size(pos2(rect.center().x, rect.center().y - 8.0), vec2(220.0, 26.0));
             let resp = ui.interact(b, id.with("install"), Sense::click());
             let painter = ui.painter_at(rect);
-            rect_fill(&painter, b, 4.0, if resp.hovered() { mix(ACCENT, WHITE, 0.2) } else { ACCENT });
+            rect_fill(&painter, b, 4.0, if resp.hovered() { mix(accent_now(), WHITE, 0.2) } else { accent_now() });
             painter.text(b.center(), Align2::CENTER_CENTER, "Download the concert grand", egui::FontId::proportional(13.0), TEXT_DARK);
             let note = match &lib {
                 PianoLib::Failed(e) => e.clone(),
@@ -1630,7 +1631,7 @@ pub(crate) fn piano_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, 
         PianoLib::Installing(what, frac) => {
             let bar = Rect::from_center_size(pos2(rect.center().x, rect.center().y - 6.0), vec2(220.0, 8.0));
             rect_fill(&painter, bar, 3.0, FAINT);
-            rect_fill(&painter, Rect::from_min_size(bar.min, vec2(bar.width() * frac.clamp(0.0, 1.0), bar.height())), 3.0, ACCENT);
+            rect_fill(&painter, Rect::from_min_size(bar.min, vec2(bar.width() * frac.clamp(0.0, 1.0), bar.height())), 3.0, accent_now());
             painter.text(pos2(bar.center().x, bar.bottom() + 12.0), Align2::CENTER_CENTER, what, small(), TEXT);
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
         }

@@ -16,6 +16,7 @@
 
 pub mod ambient;
 pub mod strum;
+pub mod drummer;
 pub mod more;
 
 use crate::dsp::Rng;
@@ -269,6 +270,7 @@ pub struct SeqState {
     next_beat: f64,
     pub(crate) extra: Box<more::Extra>,
     pub(crate) ambient: Box<ambient::Ambient>,
+    pub(crate) drum: drummer::DrummerState,
     pos: i32,
     /// Packed state for the UI / grid (layout depends on the sequencer).
     pub visual: [u64; 4],
@@ -302,6 +304,7 @@ impl SeqState {
             next_beat: f64::NEG_INFINITY,
             extra: Box::default(),
             ambient: Box::default(),
+            drum: drummer::DrummerState::default(),
             pos: 0,
             visual: [0; 4],
         }
@@ -394,7 +397,7 @@ impl SeqState {
             self.shift = None;
         }
         // Acid and Guitar Chords move their own notes (a semitone line, chord shapes).
-        self.shift_in_note = !matches!(kind, K::Acid | K::GuitarChords);
+        self.shift_in_note = !matches!(kind, K::Acid | K::GuitarChords | K::Drummer);
         if ctx.playing {
             self.flush_pending(ctx, out);
         }
@@ -450,6 +453,7 @@ impl SeqState {
                             K::DrumGrid => self.drum_grid(k, p, data, at, step_frames, out, ctx),
                             K::Progression => self.progression(k, p, data, at, step_frames, out, ctx),
                             K::GuitarChords => self.strum(k, p, data, at, step_frames, out, ctx),
+                            K::Drummer => self.drummer(k, p, data, at, step_frames, out, ctx),
                             K::Chaos => self.chaos(p, at, step_frames, out, ctx),
                             K::Automaton => self.automaton(p, at, step_frames, out, ctx),
                             K::Ant => self.ant(p, at, step_frames, out, ctx),
@@ -694,7 +698,7 @@ mod tests {
         let blocks = (beats * spb / 256.0) as u64;
         for b in 0..blocks {
             let now = b * 256;
-            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0 };
+            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0 };
             let mut out = Vec::new();
             st.process(kind, p, data, &[], &mut out, &ctx);
             for e in out.iter().filter(|e| e.on) {
@@ -813,7 +817,7 @@ mod tests {
             let release = (3.5 * spb / 256.0) as u64;
             for b in 0..(8.0 * spb / 256.0) as u64 {
                 let now = b * 256;
-                let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0 };
+                let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0 };
                 // D3 pressed just after the first beat, let go halfway through the fourth.
                 let input = match b {
                     1 => vec![MidiEvent::on(0, 62, 0.8)],
@@ -846,7 +850,7 @@ mod tests {
     #[test]
     fn silent_when_stopped() {
         let mut st = MidiFxState::new(MidiFxKind::Euclid);
-        let ctx = MidiCtx { now: 0, len: 256, samples_per_beat: 24000.0, scale: Scale::default(), scale_on: true, beat: 0.0, playing: false, sr: 48000.0 };
+        let ctx = MidiCtx { now: 0, len: 256, samples_per_beat: 24000.0, scale: Scale::default(), scale_on: true, beat: 0.0, playing: false, sr: 48000.0, drum_notes: 0 };
         let mut out = Vec::new();
         st.process(MidiFxKind::Euclid, &defaults(EUCLID), &[], &[], &mut out, &ctx);
         assert!(out.is_empty());

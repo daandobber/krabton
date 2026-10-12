@@ -107,7 +107,7 @@ pub(crate) fn arc_points(center: Pos2, r: f32, a0: f32, a1: f32) -> Vec<Pos2> {
 /// Without this, controls whose value is rounded (integer parameters) or
 /// clamped (faders at -inf) lose every small mouse movement between frames
 /// and feel stuck.
-fn drag_position(ui: &Ui, resp: &Response, id: Id, current: f32, delta: f32) -> Option<f32> {
+pub(crate) fn drag_position(ui: &Ui, resp: &Response, id: Id, current: f32, delta: f32) -> Option<f32> {
     let key = id.with("drag_pos");
     if resp.drag_started() {
         ui.ctx().memory_mut(|m| m.data.insert_temp(key, current));
@@ -127,7 +127,7 @@ fn drag_position(ui: &Ui, resp: &Response, id: Id, current: f32, delta: f32) -> 
 
 /// The position to draw while dragging (follows the mouse smoothly even
 /// when the value itself moves in steps).
-fn shown_position(ui: &Ui, resp: &Response, id: Id, current: f32) -> f32 {
+pub(crate) fn shown_position(ui: &Ui, resp: &Response, id: Id, current: f32) -> f32 {
     if resp.dragged() {
         ui.ctx().memory(|m| m.data.get_temp::<f32>(id.with("drag_pos"))).unwrap_or(current)
     } else {
@@ -157,20 +157,87 @@ pub fn knob_with_speed(ui: &mut Ui, rect: Rect, id: Id, norm: f32, default_norm:
         new = Some(default_norm);
     }
     let v = new.unwrap_or_else(|| shown_position(ui, &resp, id, norm));
-    let p = ui.painter();
+    ring_face(ui.painter(), rect, v, bipolar, color, resp.hovered() || resp.dragged());
+    (resp, new)
+}
+
+/// The ring under a knob's arc.
+pub(crate) const RING_TRACK: Color32 = Color32::from_rgb(0x3a, 0x3a, 0x3f);
+
+/// Krabton's knob: a thick ring on a dark disc, the value as a light arc
+/// (white under the pointer), and a short tick in the accent colour.
+pub(crate) fn ring_face(p: &Painter, rect: Rect, v: f32, bipolar: bool, color: Color32, hot: bool) {
     let c = rect.center();
-    let r = rect.width().min(rect.height()) * 0.5 - 2.0;
-    p.circle_filled(c, r, KNOB);
-    p.add(Shape::line(arc_points(c, r - 2.0, KNOB_START, KNOB_START + KNOB_RANGE), Stroke::new(2.5_f32, LINE)));
-    let (from, to): (f32, f32) = if bipolar { (0.5, v) } else { (0.0, v) };
-    let (a, b) = (KNOB_START + KNOB_RANGE * from.min(to), KNOB_START + KNOB_RANGE * from.max(to));
-    if b - a > 0.001 {
-        p.add(Shape::line(arc_points(c, r - 2.0, a, b), Stroke::new(2.5_f32, color)));
+    let r = rect.width().min(rect.height()) * 0.5 - 3.0;
+    let w = (r * 0.36).clamp(3.0, 5.0);
+    p.circle_filled(c, r + 3.0, Color32::from_rgb(0x12, 0x12, 0x14));
+    p.add(Shape::line(arc_points(c, r, KNOB_START, KNOB_START + KNOB_RANGE), Stroke::new(w, RING_TRACK)));
+    let (a, b) = if bipolar { (0.5f32.min(v), 0.5f32.max(v)) } else { (0.0, v) };
+    let fill = if hot { Color32::WHITE } else { mix(Color32::from_gray(228), color, 0.18) };
+    if b - a > 0.004 {
+        p.add(Shape::line(arc_points(c, r, KNOB_START + KNOB_RANGE * a, KNOB_START + KNOB_RANGE * b), Stroke::new(w, fill)));
     }
     let ang = KNOB_START + KNOB_RANGE * v;
-    let tip = pos2(c.x + (r - 3.0) * ang.cos(), c.y + (r - 3.0) * ang.sin());
-    p.line_segment([c, tip], Stroke::new(2.0_f32, if resp.hovered() || resp.dragged() { Color32::WHITE } else { TEXT }));
-    (resp, new)
+    let dir = vec2(ang.cos(), ang.sin());
+    p.line_segment([c + dir * (r - w - 2.0), c + dir * (r + w * 0.4)], Stroke::new(2.0_f32, color));
+}
+
+/// A vertical slider for any parameter, laid out like [`param_cell`]: the
+/// name on top, the value below; drawn like the mixer's faders. Returns
+/// whether it changed and the slot (for overlays).
+pub fn param_slider(ui: &mut Ui, rect: Rect, id: Id, spec: &ParamSpec, value: &mut f32, accent: Color32) -> (bool, Rect) {
+    let p = ui.painter().clone();
+    let label = Rect::from_min_size(rect.min, vec2(rect.width(), 12.0));
+    let mut font = small();
+    let width = p.layout_no_wrap(spec.name.to_string(), font.clone(), TEXT_DIM).size().x;
+    if width > rect.width() {
+        font.size = (font.size * rect.width() / width).max(8.0);
+    }
+    p.with_clip_rect(label).text(label.center(), Align2::CENTER_CENTER, spec.name, font, TEXT_DIM);
+    let value_rect = Rect::from_min_size(pos2(rect.left(), rect.bottom() - 12.0), vec2(rect.width(), 12.0));
+    let track = Rect::from_center_size(pos2(rect.center().x, (label.bottom() + value_rect.top()) * 0.5), vec2(4.0, value_rect.top() - label.bottom() - 14.0));
+    let hit = Rect::from_min_max(pos2(rect.left(), track.top() - 6.0), pos2(rect.right(), track.bottom() + 6.0));
+    let resp = ui.interact(hit, id, Sense::click_and_drag());
+    let fine = ui.input(|i| i.modifiers.shift);
+    let d = -resp.drag_delta().y / track.height().max(1.0) * if fine { 0.2 } else { 1.0 };
+    let mut changed = false;
+    if let Some(n) = drag_position(ui, &resp, id, spec.to_norm(*value), d) {
+        let v = spec.from_norm(n);
+        if v != *value {
+            *value = v;
+            changed = true;
+        }
+    }
+    if resp.double_clicked() {
+        *value = spec.default;
+        changed = true;
+    }
+    let shown = shown_position(ui, &resp, id, spec.to_norm(*value));
+    rect_fill(&p, track, 2.0, BG);
+    let y = track.bottom() - shown * track.height();
+    let bipolar = spec.min < 0.0 && spec.max > 0.0;
+    let from = if bipolar { track.center().y } else { track.bottom() };
+    rect_fill(&p, Rect::from_min_max(pos2(track.left(), y.min(from)), pos2(track.right(), y.max(from))), 2.0, shade(accent, 0.8));
+    let thumb = Rect::from_center_size(pos2(track.center().x, y), vec2((rect.width() - 10.0).min(22.0), 8.0));
+    rect_fill(&p, thumb, 2.0, if resp.hovered() || resp.dragged() { Color32::WHITE } else { TEXT });
+    p.with_clip_rect(value_rect).text(value_rect.center(), Align2::CENTER_CENTER, spec.format(*value), small(), TEXT);
+    resp.on_hover_text(format!("{}: {}\nDrag (Shift: fine), double-click to reset", spec.name, spec.format(*value)));
+    (changed, track)
+}
+
+/// Where a clip envelope has a knob now, as a red dot on its rim.
+pub fn knob_auto_mark(p: &Painter, rect: Rect, norm: f32) {
+    let c = rect.center();
+    let r = rect.width().min(rect.height()) * 0.5 - 2.0;
+    let ang = KNOB_START + KNOB_RANGE * norm.clamp(0.0, 1.0);
+    p.circle_filled(pos2(c.x + (r - 2.0) * ang.cos(), c.y + (r - 2.0) * ang.sin()), 3.0, REC);
+}
+
+/// Where a clip envelope has a fader now (0..1 of its travel), as a red line.
+pub fn fader_auto_mark(p: &Painter, rect: Rect, pos: f32) {
+    let track = Rect::from_center_size(rect.center(), vec2(4.0, rect.height() - 8.0));
+    let y = track.bottom() - pos.clamp(0.0, 1.0) * track.height();
+    p.line_segment([pos2(rect.left(), y), pos2(rect.right(), y)], Stroke::new(2.0_f32, REC));
 }
 
 /// Height of a parameter cell made by [`param_cell`].

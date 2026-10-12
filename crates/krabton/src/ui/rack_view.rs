@@ -10,6 +10,7 @@ use crate::app::{App, Deferred, TrackSel};
 use crate::theme::*;
 use crate::widgets::*;
 use egui::{pos2, vec2, Align2, Color32, FontId, Id, Rect, RichText, Sense, Ui};
+use krabton_engine::modulation::ModTarget;
 use krabton_engine::{fader_gain, TrackKind};
 
 /// The mixer strip's width in rows, and its height on top of a column.
@@ -106,11 +107,12 @@ impl App {
     /// name, mute, solo and arm, volume with its meter, pan, the sends, and
     /// buttons to add devices.
     fn rack_strip(&mut self, ui: &mut Ui, sel: TrackSel, size: egui::Vec2) {
+        let _accent = AccentScope::new(self.track_accent(sel));
         let (r, _) = ui.allocate_exact_size(size, Sense::hover());
         let (name, color, key) = match sel {
             TrackSel::Track(i) => (self.project.tracks[i].name.clone(), rgb(self.project.tracks[i].color), self.project.tracks[i].id),
             TrackSel::Return(j) => (self.project.returns[j].name.clone(), rgb(self.project.returns[j].color), self.project.returns[j].id),
-            TrackSel::Master => ("Master".to_string(), ACCENT, u64::MAX),
+            TrackSel::Master => ("Master".to_string(), accent_now(), u64::MAX),
         };
         let selected = self.sel_track == sel;
         let p = ui.painter().clone();
@@ -145,7 +147,7 @@ impl App {
         match sel {
             TrackSel::Track(i) => {
                 let (mute, solo, arm, kind) = (self.project.tracks[i].mixer.mute, self.project.tracks[i].mixer.solo, self.project.tracks[i].arm, self.project.tracks[i].kind);
-                if button(ui, b(0.0), Id::new(("rack_act", key)), &format!("{}", i + 1), !mute, ACCENT).on_hover_text("Track on/off (mute)").clicked() {
+                if button(ui, b(0.0), Id::new(("rack_act", key)), &format!("{}", i + 1), !mute, accent_now()).on_hover_text("Track on/off (mute)").clicked() {
                     self.project.tracks[i].mixer.mute = !mute;
                 }
                 if button(ui, b(1.0), Id::new(("rack_solo", key)), "S", solo, SOLO).on_hover_text("Solo (Ctrl+click for more than one)").clicked() {
@@ -168,7 +170,7 @@ impl App {
             }
             TrackSel::Return(j) => {
                 let mute = self.project.returns[j].mixer.mute;
-                if button(ui, b(0.0), Id::new(("rack_act", key)), &format!("{}", (b'A' + j as u8) as char), !mute, ACCENT).on_hover_text("Return on/off").clicked() {
+                if button(ui, b(0.0), Id::new(("rack_act", key)), &format!("{}", (b'A' + j as u8) as char), !mute, accent_now()).on_hover_text("Return on/off").clicked() {
                     self.project.returns[j].mixer.mute = !mute;
                 }
             }
@@ -190,6 +192,14 @@ impl App {
                 TrackSel::Master => self.project.master.volume_db = vol,
             }
         }
+        // What the playing clip's envelopes do now, in red.
+        let now = |app: &App, target: fn(u64) -> ModTarget| match sel {
+            TrackSel::Track(i) => app.envelope_now(i, target(app.project.tracks[i].id)),
+            _ => None,
+        };
+        if let Some(v) = now(self, ModTarget::Volume) {
+            fader_auto_mark(&p, fr, v);
+        }
         meter(&p, Rect::from_min_size(pos2(fr.right() + 5.0, area.top() + 4.0), vec2(9.0, area.height() - 8.0)), meter_lr.0, meter_lr.1);
         let db = if fader_gain(vol) == 0.0 { "-inf".to_string() } else { format!("{vol:.1} dB") };
         p.text(pos2(area.left(), area.bottom() + 3.0), Align2::LEFT_TOP, db, small(), TEXT_DIM);
@@ -202,7 +212,7 @@ impl App {
         };
         if let Some(pan) = pan {
             let pr = Rect::from_min_size(pos2(kx, by + 26.0), vec2(28.0, 28.0));
-            let (resp, new) = knob(ui, pr, Id::new(("rack_pan", key)), (pan + 1.0) * 0.5, 0.5, true, ACCENT);
+            let (resp, new) = knob(ui, pr, Id::new(("rack_pan", key)), (pan + 1.0) * 0.5, 0.5, true, accent_now());
             if let Some(n) = new {
                 let v = (n * 2.0 - 1.0).clamp(-1.0, 1.0);
                 match sel {
@@ -210,6 +220,9 @@ impl App {
                     TrackSel::Return(j) => self.project.returns[j].mixer.pan = v,
                     TrackSel::Master => {}
                 }
+            }
+            if let Some(v) = now(self, ModTarget::Pan) {
+                knob_auto_mark(&p, pr, v);
             }
             resp.on_hover_text("Pan");
             p.text(pos2(pr.right() + 6.0, pr.center().y - 6.0), Align2::LEFT_CENTER, "Pan", small(), TEXT_DIM);
@@ -229,6 +242,9 @@ impl App {
                     if let Some(s) = self.project.tracks[i].mixer.sends.get_mut(j) {
                         *s = nv;
                     }
+                }
+                if let Some(now) = self.envelope_now(i, ModTarget::Send { track: self.project.tracks[i].id, send: j as u16 }) {
+                    knob_auto_mark(&p, kr, now);
                 }
                 resp.on_hover_text(format!("Send to {}: {:.0} %", self.project.returns[j].name, v * 100.0));
                 p.text(pos2(c.x, kr.bottom() + 6.0), Align2::CENTER_CENTER, (b'A' + j as u8) as char, small(), TEXT_DIM);
@@ -251,7 +267,7 @@ impl App {
                     }
                 }
                 let fr = Rect::from_min_size(pos2(row1.left() + half + 4.0, row1.top()), vec2(half, 20.0));
-                if button(ui, fr, Id::new(("rack_add_fx", key)), "+ Effect", false, ACCENT).on_hover_text("Add an audio effect").clicked() {
+                if button(ui, fr, Id::new(("rack_add_fx", key)), "+ Effect", false, accent_now()).on_hover_text("Add an audio effect").clicked() {
                     ui.ctx().memory_mut(|m| m.data.insert_temp(fx_menu, true));
                 }
                 if midi {
@@ -267,7 +283,7 @@ impl App {
             }
             _ => {
                 let fx_menu = Id::new(("rack_fx_menu", key));
-                if button(ui, row1, Id::new(("rack_add_fx", key)), "+ Effect", false, ACCENT).on_hover_text("Add an audio effect").clicked() {
+                if button(ui, row1, Id::new(("rack_add_fx", key)), "+ Effect", false, accent_now()).on_hover_text("Add an audio effect").clicked() {
                     ui.ctx().memory_mut(|m| m.data.insert_temp(fx_menu, true));
                 }
                 self.effect_popup(ui, sel, fx_menu, at);

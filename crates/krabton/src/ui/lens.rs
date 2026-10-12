@@ -762,7 +762,7 @@ mod tests {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     origin = ui.cursor().min;
                     let mut v = p.clone();
-                    if eq_panel(ui, Id::new(("device", 7u64)), 7, &mut v, ACCENT, 290.0, None, status, &mut 620.0) {
+                    if eq_panel(ui, Id::new(("device", 7u64)), 7, &mut v, accent_now(), 290.0, None, status, &mut 620.0) {
                         *p = v;
                     }
                 });

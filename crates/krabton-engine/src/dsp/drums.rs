@@ -4,6 +4,8 @@
 //! synthetic kicks, snares and hi-hats of Plaits, MIT licensed, through
 //! mi-plaits-dsp), a PhISEM shaker (see `shakers`), or a sample.
 
+use super::acoustic::AcousticVoice;
+use super::retro::RetroVoice;
 use super::machines::MachineVoice;
 use super::shakers::{self, Shaker, ShakerModel};
 use super::*;
@@ -86,6 +88,49 @@ pub enum DrumVoice {
     FmZap,
     FmPerc,
     FmNoise,
+    AcKick,
+    AcSnare,
+    AcBrush,
+    AcStick,
+    AcTomHigh,
+    AcTomMid,
+    AcTomFloor,
+    AcHatClosed,
+    AcHatPedal,
+    AcHatOpen,
+    AcRide,
+    AcRideBell,
+    AcCrash,
+    AcChina,
+    RbKick,
+    RbSnare,
+    RbHat,
+    RbCymbal,
+    RbBongoHigh,
+    RbBongoLow,
+    RbClaves,
+    RbGuiro,
+    RbMaracas,
+    HxKick,
+    HxSnare,
+    HxTomHigh,
+    HxTomMid,
+    HxTomLow,
+    DgKick,
+    DgSnare,
+    DgClap,
+    DgRim,
+    DgHat,
+    DgOpenHat,
+    DgTomHigh,
+    DgTomLow,
+    DgCowbell,
+    PkKick,
+    PkSnare,
+    PkHat,
+    PkOpenHat,
+    PkCymbal,
+    PkClap,
 }
 
 /// Where a voice comes from.
@@ -95,6 +140,10 @@ pub enum Family {
     Machine,
     Mutable,
     Shaker,
+    /// Modelled acoustic drums (see `acoustic`).
+    Acoustic,
+    /// More drum machines (see `retro`).
+    Retro,
 }
 
 impl DrumVoice {
@@ -151,8 +200,29 @@ impl DrumVoice {
     pub const ELECTRO: [DrumVoice; 1] = [DrumVoice::ElectroTom];
     pub const M606: [DrumVoice; 7] = [DrumVoice::M606Kick, DrumVoice::M606Snare, DrumVoice::M606LowTom, DrumVoice::M606HighTom, DrumVoice::M606ClosedHat, DrumVoice::M606OpenHat, DrumVoice::M606Cymbal];
     pub const FM: [DrumVoice; 8] = [DrumVoice::FmKick, DrumVoice::FmSnare, DrumVoice::FmTom, DrumVoice::FmHat, DrumVoice::FmBell, DrumVoice::FmZap, DrumVoice::FmPerc, DrumVoice::FmNoise];
+    pub const ACOUSTIC: [DrumVoice; 14] = [
+        DrumVoice::AcKick,
+        DrumVoice::AcSnare,
+        DrumVoice::AcBrush,
+        DrumVoice::AcStick,
+        DrumVoice::AcTomHigh,
+        DrumVoice::AcTomMid,
+        DrumVoice::AcTomFloor,
+        DrumVoice::AcHatClosed,
+        DrumVoice::AcHatPedal,
+        DrumVoice::AcHatOpen,
+        DrumVoice::AcRide,
+        DrumVoice::AcRideBell,
+        DrumVoice::AcCrash,
+        DrumVoice::AcChina,
+    ];
+    /// Hand percussion that goes with an acoustic kit.
+    pub const KIT_PERC: [DrumVoice; 4] = [DrumVoice::Tambourine, DrumVoice::Cowbell, DrumVoice::Clap, DrumVoice::Maraca];
+    pub const RETRO: [DrumVoice; 29] = [DrumVoice::RbKick, DrumVoice::RbSnare, DrumVoice::RbHat, DrumVoice::RbCymbal, DrumVoice::RbBongoHigh, DrumVoice::RbBongoLow, DrumVoice::RbClaves, DrumVoice::RbGuiro, DrumVoice::RbMaracas, DrumVoice::HxKick, DrumVoice::HxSnare, DrumVoice::HxTomHigh, DrumVoice::HxTomMid, DrumVoice::HxTomLow, DrumVoice::DgKick, DrumVoice::DgSnare, DrumVoice::DgClap, DrumVoice::DgRim, DrumVoice::DgHat, DrumVoice::DgOpenHat, DrumVoice::DgTomHigh, DrumVoice::DgTomLow, DrumVoice::DgCowbell, DrumVoice::PkKick, DrumVoice::PkSnare, DrumVoice::PkHat, DrumVoice::PkOpenHat, DrumVoice::PkCymbal, DrumVoice::PkClap];
     /// The voices as the pad menu groups them.
-    pub const GROUPS: [(&'static str, &'static [DrumVoice]); 9] = [
+    pub const GROUPS: [(&'static str, &'static [DrumVoice]); 11] = [
+        ("Acoustic", &Self::ACOUSTIC),
+        ("Retro", &Self::RETRO),
         ("Classic", &Self::CLASSIC),
         ("808", &Self::M808),
         ("909", &Self::M909),
@@ -171,6 +241,10 @@ impl DrumVoice {
             Family::Mutable
         } else if Self::SHAKERS.contains(&self) {
             Family::Shaker
+        } else if Self::ACOUSTIC.contains(&self) {
+            Family::Acoustic
+        } else if Self::RETRO.contains(&self) {
+            Family::Retro
         } else {
             Family::Classic
         }
@@ -242,6 +316,49 @@ impl DrumVoice {
             DrumVoice::FmZap => "FM Zap",
             DrumVoice::FmPerc => "FM Perc",
             DrumVoice::FmNoise => "FM Noise",
+            DrumVoice::AcKick => "Kick Drum",
+            DrumVoice::AcSnare => "Snare Drum",
+            DrumVoice::AcBrush => "Brush Snare",
+            DrumVoice::AcStick => "Side Stick",
+            DrumVoice::AcTomHigh => "High Tom",
+            DrumVoice::AcTomMid => "Mid Tom",
+            DrumVoice::AcTomFloor => "Floor Tom",
+            DrumVoice::AcHatClosed => "Hi-Hat Closed",
+            DrumVoice::AcHatPedal => "Hi-Hat Pedal",
+            DrumVoice::AcHatOpen => "Hi-Hat Open",
+            DrumVoice::AcRide => "Ride",
+            DrumVoice::AcRideBell => "Ride Bell",
+            DrumVoice::AcCrash => "Crash",
+            DrumVoice::AcChina => "China",
+            DrumVoice::RbKick => "Box Kick",
+            DrumVoice::RbSnare => "Box Snare",
+            DrumVoice::RbHat => "Box Hat",
+            DrumVoice::RbCymbal => "Box Cymbal",
+            DrumVoice::RbBongoHigh => "Box Bongo High",
+            DrumVoice::RbBongoLow => "Box Bongo Low",
+            DrumVoice::RbClaves => "Box Claves",
+            DrumVoice::RbGuiro => "Box Guiro",
+            DrumVoice::RbMaracas => "Box Maracas",
+            DrumVoice::HxKick => "Hex Kick",
+            DrumVoice::HxSnare => "Hex Snare",
+            DrumVoice::HxTomHigh => "Hex Tom High",
+            DrumVoice::HxTomMid => "Hex Tom Mid",
+            DrumVoice::HxTomLow => "Hex Tom Low",
+            DrumVoice::DgKick => "Digital Kick",
+            DrumVoice::DgSnare => "Digital Snare",
+            DrumVoice::DgClap => "Digital Clap",
+            DrumVoice::DgRim => "Digital Rim",
+            DrumVoice::DgHat => "Digital Hat",
+            DrumVoice::DgOpenHat => "Digital Open Hat",
+            DrumVoice::DgTomHigh => "Digital Tom High",
+            DrumVoice::DgTomLow => "Digital Tom Low",
+            DrumVoice::DgCowbell => "Digital Cowbell",
+            DrumVoice::PkKick => "Pocket Kick",
+            DrumVoice::PkSnare => "Pocket Snare",
+            DrumVoice::PkHat => "Pocket Hat",
+            DrumVoice::PkOpenHat => "Pocket Open Hat",
+            DrumVoice::PkCymbal => "Pocket Cymbal",
+            DrumVoice::PkClap => "Pocket Clap",
             _ => "",
         }
     }
@@ -300,6 +417,49 @@ impl DrumVoice {
             DrumVoice::FmZap => 39,
             DrumVoice::FmPerc => 37,
             DrumVoice::FmNoise => 46,
+            DrumVoice::AcKick => 36,
+            DrumVoice::AcStick => 37,
+            DrumVoice::AcSnare => 38,
+            DrumVoice::AcBrush => 40,
+            DrumVoice::AcTomFloor => 43,
+            DrumVoice::AcTomMid => 47,
+            DrumVoice::AcTomHigh => 50,
+            DrumVoice::AcHatClosed => 42,
+            DrumVoice::AcHatPedal => 44,
+            DrumVoice::AcHatOpen => 46,
+            DrumVoice::AcCrash => 49,
+            DrumVoice::AcRide => 51,
+            DrumVoice::AcChina => 52,
+            DrumVoice::AcRideBell => 53,
+            DrumVoice::RbKick => 36,
+            DrumVoice::RbSnare => 38,
+            DrumVoice::RbHat => 42,
+            DrumVoice::RbCymbal => 49,
+            DrumVoice::RbBongoHigh => 60,
+            DrumVoice::RbBongoLow => 61,
+            DrumVoice::RbClaves => 75,
+            DrumVoice::RbGuiro => 73,
+            DrumVoice::RbMaracas => 70,
+            DrumVoice::HxKick => 36,
+            DrumVoice::HxSnare => 38,
+            DrumVoice::HxTomHigh => 50,
+            DrumVoice::HxTomMid => 47,
+            DrumVoice::HxTomLow => 43,
+            DrumVoice::DgKick => 36,
+            DrumVoice::DgSnare => 38,
+            DrumVoice::DgClap => 39,
+            DrumVoice::DgRim => 37,
+            DrumVoice::DgHat => 42,
+            DrumVoice::DgOpenHat => 46,
+            DrumVoice::DgTomHigh => 48,
+            DrumVoice::DgTomLow => 45,
+            DrumVoice::DgCowbell => 56,
+            DrumVoice::PkKick => 36,
+            DrumVoice::PkSnare => 38,
+            DrumVoice::PkHat => 42,
+            DrumVoice::PkOpenHat => 46,
+            DrumVoice::PkCymbal => 49,
+            DrumVoice::PkClap => 39,
         }
     }
 
@@ -307,6 +467,20 @@ impl DrumVoice {
     pub fn macros(self) -> [Option<&'static str>; 2] {
         match self.family() {
             Family::Classic => [None, None],
+            Family::Acoustic => match self {
+                DrumVoice::AcKick => [Some("Beater"), None],
+                DrumVoice::AcSnare | DrumVoice::AcBrush => [Some("Wires"), None],
+                DrumVoice::AcTomHigh | DrumVoice::AcTomMid | DrumVoice::AcTomFloor => [Some("Bend"), None],
+                DrumVoice::AcRide => [Some("Bell"), None],
+                DrumVoice::AcCrash | DrumVoice::AcChina => [Some("Size"), None],
+                _ => [None, None],
+            },
+            Family::Retro => match self {
+                DrumVoice::HxKick => [Some("Drop"), None],
+                DrumVoice::HxTomHigh | DrumVoice::HxTomMid | DrumVoice::HxTomLow => [Some("Sweep"), None],
+                DrumVoice::DgSnare => [Some("Gate"), None],
+                _ => [None, None],
+            },
             Family::Machine => match self {
                 DrumVoice::M808Snare | DrumVoice::M909Snare | DrumVoice::Cr78Snare => [Some("Snappy"), None],
                 DrumVoice::M909Kick => [Some("Attack"), None],
@@ -363,6 +537,12 @@ pub enum DrumEngine {
     /// Every voice, and samples.
     #[default]
     Rack,
+    /// Modelled acoustic kits.
+    Acoustic,
+    /// Recorded kits (see `real_drums`).
+    RealDrums,
+    /// More machines (see `retro`).
+    Retro,
     M808,
     M909,
     Cr78,
@@ -379,11 +559,15 @@ static G909: [(&str, &[DrumVoice]); 1] = [("909", &DrumVoice::M909)];
 static GCR78: [(&str, &[DrumVoice]); 1] = [("CR-78", &DrumVoice::CR78)];
 static GMUTABLE: [(&str, &[DrumVoice]); 1] = [("Mutable", &DrumVoice::MUTABLE)];
 static GSHAKERS: [(&str, &[DrumVoice]); 1] = [("Shakers", &DrumVoice::SHAKERS)];
+static GACOUSTIC: [(&str, &[DrumVoice]); 2] = [("Acoustic", &DrumVoice::ACOUSTIC), ("Percussion", &DrumVoice::KIT_PERC)];
+static REAL_PERC: [DrumVoice; 7] = [DrumVoice::Tambourine, DrumVoice::Cowbell, DrumVoice::Clap, DrumVoice::Maraca, DrumVoice::Cr78Bongo, DrumVoice::M808Conga, DrumVoice::M808Claves];
+static GRETRO: [(&str, &[DrumVoice]); 1] = [("Retro", &DrumVoice::RETRO)];
+static GREAL: [(&str, &[DrumVoice]); 2] = [("Acoustic", &DrumVoice::ACOUSTIC), ("Percussion", &REAL_PERC)];
 
 impl DrumEngine {
     /// The engines to choose from. `Shakers` is only kept for old projects:
     /// its kits are the Drum Rack's now, and Shakers is an instrument.
-    pub const ALL: [DrumEngine; 7] = [DrumEngine::M808, DrumEngine::M909, DrumEngine::M606, DrumEngine::Cr78, DrumEngine::Mutable, DrumEngine::FmDrums, DrumEngine::Rack];
+    pub const ALL: [DrumEngine; 10] = [DrumEngine::RealDrums, DrumEngine::Acoustic, DrumEngine::Retro, DrumEngine::M808, DrumEngine::M909, DrumEngine::M606, DrumEngine::Cr78, DrumEngine::Mutable, DrumEngine::FmDrums, DrumEngine::Rack];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -395,6 +579,9 @@ impl DrumEngine {
             DrumEngine::Shakers => "Shakers",
             DrumEngine::M606 => "606",
             DrumEngine::FmDrums => "FM Drums",
+            DrumEngine::Acoustic => "Acoustic Drums",
+            DrumEngine::RealDrums => "Real Drums",
+            DrumEngine::Retro => "Retro Machines",
         }
     }
 
@@ -408,6 +595,9 @@ impl DrumEngine {
             DrumEngine::Shakers => "Perry Cook's PhISEM shakers: maraca, cabasa, tambourine, sleigh bells, bamboo, cans, rocks and more",
             DrumEngine::M606 => "The 606, rebuilt from its circuits: tight kick, snare, two toms, six-square hats and cymbal; the acid house drummer",
             DrumEngine::FmDrums => "Two-operator FM drums: kick, snare, tom, hat, bell, zap, perc and noise, with an FM knob on every pad",
+            DrumEngine::Retro => "More drum machines: a seventies rhythm box (bongos, claves, guiro), the hexagonal electronic kit with its sweeping toms, the crunchy 8-bit digital eighties, a pocket rhythm machine",
+            DrumEngine::RealDrums => "Recorded drums: a kit and hand percussion with velocity layers and round robins (CC0 samples from the VCSL, downloaded on first use; until then modelled stand-ins play)",
+            DrumEngine::Acoustic => "A real drum kit, modelled: kick, snare with its wires, side stick, three toms, hi-hat (closed, pedal, open), ride and its bell, crashes; every hit a little different, harder hits brighter",
         }
     }
 
@@ -422,6 +612,9 @@ impl DrumEngine {
             DrumEngine::Shakers => &GSHAKERS,
             DrumEngine::M606 => &G606,
             DrumEngine::FmDrums => &GFM,
+            DrumEngine::Acoustic => &GACOUSTIC,
+            DrumEngine::RealDrums => &GREAL,
+            DrumEngine::Retro => &GRETRO,
         }
     }
 
@@ -434,6 +627,9 @@ impl DrumEngine {
             DrumEngine::Shakers => &[],
             DrumEngine::M606 => &["606 Classic", "606 Acid House"],
             DrumEngine::FmDrums => &["FM Kit", "FM Industrial", "FM Glitch"],
+            DrumEngine::Acoustic => &["Studio Kit", "Rock Kit", "Jazz Kit", "Funk Kit", "Vintage Kit", "Brush Kit"],
+            DrumEngine::RealDrums => &["Real Kit", "Real Percussion"],
+            DrumEngine::Retro => &["Rhythm Box", "Hexagon", "Digital 80s", "Pocket Rhythm"],
             DrumEngine::Rack => &["Classic 808", "Classic 909", "Classic Lo-Fi", "Hybrid", "Electro", "606 Electro", "Shaker Kit", "Hand Percussion", "Found Sounds"],
         }
     }
@@ -464,6 +660,135 @@ pub fn kit_names() -> Vec<&'static str> {
     DrumEngine::ALL.iter().flat_map(|e| e.kits().iter().copied()).collect()
 }
 
+/// An acoustic kit of sixteen pads, on the General MIDI notes.
+fn acoustic_kit(name: &str) -> Vec<DrumPad> {
+    use DrumVoice::*;
+    let brush = name == "Brush Kit";
+    let mut pads = vec![
+        pad("Kick", AcKick, 36, |p| {
+            p.a = 0.5;
+            p.level_db = 0.0;
+        }),
+        pad("Side Stick", AcStick, 37, |p| p.level_db = -7.0),
+        pad("Snare", if brush { AcBrush } else { AcSnare }, 38, |p| p.level_db = -1.0),
+        pad("Clap", Clap, 39, |p| p.level_db = -8.0),
+        pad("Hi-Hat", AcHatClosed, 42, |p| {
+            p.choke = 1;
+            p.level_db = -8.0;
+        }),
+        pad("Pedal Hat", AcHatPedal, 44, |p| {
+            p.choke = 1;
+            p.level_db = -9.0;
+        }),
+        pad("Open Hat", AcHatOpen, 46, |p| {
+            p.choke = 1;
+            p.level_db = -9.0;
+        }),
+        pad("Floor Tom", AcTomFloor, 43, |p| p.level_db = -3.0),
+        pad("Mid Tom", AcTomMid, 47, |p| p.level_db = -3.0),
+        pad("High Tom", AcTomHigh, 50, |p| p.level_db = -3.0),
+        pad("Crash", AcCrash, 49, |p| p.level_db = -7.0),
+        pad("Ride", AcRide, 51, |p| p.level_db = -7.0),
+        pad("China", AcChina, 52, |p| p.level_db = -9.0),
+        pad("Ride Bell", AcRideBell, 53, |p| p.level_db = -8.0),
+        pad("Tambourine", Tambourine, 54, |p| p.level_db = -10.0),
+        pad("Cowbell", Cowbell, 56, |p| p.level_db = -13.0),
+    ];
+    let each = |pads: &mut Vec<DrumPad>, v: DrumVoice, f: &dyn Fn(&mut DrumPad)| {
+        for p in pads.iter_mut().filter(|p| p.voice == v) {
+            f(p);
+        }
+    };
+    let toms = [AcTomHigh, AcTomMid, AcTomFloor];
+    match name {
+        "Rock Kit" => {
+            each(&mut pads, AcKick, &|p| {
+                p.tune = -1.0;
+                p.decay = 1.2;
+                p.a = 0.8;
+            });
+            each(&mut pads, AcSnare, &|p| {
+                p.tune = -1.5;
+                p.decay = 1.3;
+                p.tone = 0.6;
+                p.a = 0.6;
+            });
+            for t in toms {
+                each(&mut pads, t, &|p| {
+                    p.tune = -2.0;
+                    p.decay = 1.3;
+                });
+            }
+            each(&mut pads, AcCrash, &|p| {
+                p.a = 0.85;
+                p.tone = 0.6;
+            });
+        }
+        "Jazz Kit" | "Brush Kit" => {
+            each(&mut pads, AcKick, &|p| {
+                p.tune = 7.0;
+                p.decay = 1.4;
+                p.a = 0.15;
+                p.level_db = -4.0;
+            });
+            each(&mut pads, AcSnare, &|p| {
+                p.tune = 3.0;
+                p.decay = 0.8;
+                p.a = 0.3;
+            });
+            for t in toms {
+                each(&mut pads, t, &|p| {
+                    p.tune = 5.0;
+                    p.decay = 1.2;
+                    p.a = 0.2;
+                });
+            }
+            each(&mut pads, AcHatClosed, &|p| p.tone = 0.35);
+            each(&mut pads, AcHatOpen, &|p| p.tone = 0.35);
+            each(&mut pads, AcRide, &|p| {
+                p.level_db = -5.0;
+                p.decay = 1.3;
+                p.tone = 0.4;
+            });
+            each(&mut pads, AcCrash, &|p| p.a = 0.3);
+        }
+        "Funk Kit" => {
+            each(&mut pads, AcKick, &|p| {
+                p.decay = 0.55;
+                p.tone = 0.6;
+                p.a = 0.7;
+            });
+            each(&mut pads, AcSnare, &|p| {
+                p.tune = 4.0;
+                p.tone = 0.75;
+                p.decay = 0.8;
+            });
+            each(&mut pads, AcHatClosed, &|p| p.tone = 0.65);
+            for t in toms {
+                each(&mut pads, t, &|p| p.decay = 0.8);
+            }
+        }
+        "Vintage Kit" => {
+            for p in pads.iter_mut().filter(|p| p.voice.family() == Family::Acoustic) {
+                p.tone = 0.3;
+            }
+            each(&mut pads, AcKick, &|p| {
+                p.decay = 0.8;
+                p.a = 0.3;
+            });
+            for t in toms {
+                each(&mut pads, t, &|p| p.decay = 0.7);
+            }
+            each(&mut pads, AcSnare, &|p| {
+                p.decay = 0.9;
+                p.a = 0.8;
+            });
+        }
+        _ => {}
+    }
+    pads
+}
+
 /// A pad playing `voice` on `note`, named `name`, set up by `f`.
 fn pad(name: &str, voice: DrumVoice, note: u8, f: impl FnOnce(&mut DrumPad)) -> DrumPad {
     let mut p = DrumPad::new(voice);
@@ -485,6 +810,73 @@ pub fn kit(name: &str) -> Vec<DrumPad> {
     };
     let hat = |p: &mut DrumPad| p.choke = 1;
     match current_name(name) {
+        // ---------------------------------------------------------- Acoustic
+        n @ ("Studio Kit" | "Rock Kit" | "Jazz Kit" | "Funk Kit" | "Vintage Kit" | "Brush Kit") => acoustic_kit(n),
+        n @ ("Real Kit" | "Real Percussion") => super::real_drums::kit(n),
+        // ---------------------------------------------------------- Retro
+        "Rhythm Box" => vec![
+            pad("Bass Drum", RbKick, 36, |p| p.level_db = 0.0),
+            pad("Snare", RbSnare, 38, |_| {}),
+            pad("Hat", RbHat, 42, |p| p.level_db = -6.0),
+            pad("Cymbal", RbCymbal, 49, |p| p.level_db = -8.0),
+            pad("High Bongo", RbBongoHigh, 60, |_| {}),
+            pad("Low Bongo", RbBongoLow, 61, |_| {}),
+            pad("Maracas", RbMaracas, 70, |p| p.level_db = -6.0),
+            pad("Guiro", RbGuiro, 73, |p| p.level_db = -6.0),
+            pad("Claves", RbClaves, 75, |p| p.level_db = -8.0),
+        ],
+        "Hexagon" => vec![
+            pad("Kick", HxKick, 36, |p| p.level_db = 0.0),
+            pad("Snare", HxSnare, 38, |_| {}),
+            pad("Clap", DgClap, 39, |p| p.level_db = -6.0),
+            pad("Closed Hat", DgHat, 42, |p| {
+                p.choke = 1;
+                p.level_db = -8.0;
+            }),
+            pad("Tom 3", HxTomLow, 43, |_| {}),
+            pad("Open Hat", DgOpenHat, 46, |p| {
+                p.choke = 1;
+                p.level_db = -8.0;
+            }),
+            pad("Tom 2", HxTomMid, 47, |_| {}),
+            pad("Tom 1", HxTomHigh, 50, |_| {}),
+        ],
+        "Digital 80s" => vec![
+            pad("Kick", DgKick, 36, |p| p.level_db = 0.0),
+            pad("Rim", DgRim, 37, |p| p.level_db = -8.0),
+            pad("Snare", DgSnare, 38, |_| {}),
+            pad("Clap", DgClap, 39, |p| p.level_db = -4.0),
+            pad("Closed Hat", DgHat, 42, |p| {
+                p.choke = 1;
+                p.level_db = -7.0;
+            }),
+            pad("Low Tom", DgTomLow, 45, |_| {}),
+            pad("Open Hat", DgOpenHat, 46, |p| {
+                p.choke = 1;
+                p.level_db = -7.0;
+            }),
+            pad("High Tom", DgTomHigh, 48, |_| {}),
+            pad("Cowbell", DgCowbell, 56, |p| p.level_db = -9.0),
+        ],
+        "Pocket Rhythm" => vec![
+            pad("Low Kick", PkKick, 35, |p| {
+                p.tune = -4.0;
+                p.level_db = 0.0;
+            }),
+            pad("Kick", PkKick, 36, |p| p.level_db = 0.0),
+            pad("Snare", PkSnare, 38, |_| {}),
+            pad("Clap", PkClap, 39, |p| p.level_db = -4.0),
+            pad("High Snare", PkSnare, 40, |p| p.tune = 3.0),
+            pad("Closed Hat", PkHat, 42, |p| {
+                p.choke = 1;
+                p.level_db = -7.0;
+            }),
+            pad("Open Hat", PkOpenHat, 46, |p| {
+                p.choke = 1;
+                p.level_db = -7.0;
+            }),
+            pad("Cymbal", PkCymbal, 49, |p| p.level_db = -9.0),
+        ],
         // ---------------------------------------------------------- 808
         "808 Classic" => vec![
             pad("Kick", M808Kick, 36, |_| {}),
@@ -1081,6 +1473,9 @@ struct PadVoice {
     choke: f32,
     choking: bool,
     sample_pos: f64,
+    /// The recorded layer and round robin playing (pads with layers).
+    layer: usize,
+    rr: usize,
     model: Model,
     model_sr: f32,
     /// Tell the model it was hit, on its next block.
@@ -1089,6 +1484,8 @@ struct PadVoice {
     quiet: u32,
     shaker: Shaker,
     machine: MachineVoice,
+    acoustic: Box<AcousticVoice>,
+    retro: RetroVoice,
 }
 
 impl PadVoice {
@@ -1110,12 +1507,16 @@ impl PadVoice {
             choke: 1.0,
             choking: false,
             sample_pos: 0.0,
+            layer: 0,
+            rr: 0,
             model: Model::None,
             model_sr: 0.0,
             model_hit: false,
             quiet: 0,
             shaker: Shaker::default(),
             machine: MachineVoice::default(),
+            acoustic: Box::default(),
+            retro: RetroVoice::default(),
         }
     }
 
@@ -1155,6 +1556,8 @@ impl PadVoice {
                 }
             }
             Family::Machine => self.machine.trigger(pad.voice, vel, tr, d, tone, pad.a, sr),
+            Family::Acoustic => self.acoustic.trigger(pad.voice, vel, tr, d, tone, pad.a, pad.b, sr),
+            Family::Retro => self.retro.trigger(pad.voice, vel, tr, d, tone, pad.a, sr),
             Family::Classic => {}
         }
         match pad.voice {
@@ -1196,7 +1599,15 @@ impl PadVoice {
             }
             _ => {}
         }
-        if let Some(s) = &pad.sample {
+        if !pad.layers.is_empty() {
+            // The layer for this velocity (a little overlap at the borders,
+            // as hands vary), and the next of its round robins.
+            let n = pad.layers.len();
+            let x = (self.vel * n as f32 + 0.3 * self.rng.bipolar()).clamp(0.0, n as f32 - 0.001);
+            self.layer = x as usize;
+            self.rr = (self.rr + 1) % pad.layers[self.layer].len().max(1);
+        }
+        if let Some(s) = played_sample(pad, self.layer, self.rr) {
             // Samples fade out over their length times the decay setting.
             let secs = s.duration() as f32 * d.min(1.0);
             self.amp_coef = if d >= 1.0 { 1.0 } else { decay_coef(secs.max(0.01), sr) };
@@ -1253,6 +1664,20 @@ impl PadVoice {
 
     #[inline]
     fn tick(&mut self, pad: &DrumPad, tr: f32, sr: f32) -> f32 {
+        if pad.voice.family() == Family::Retro {
+            let y = self.retro.tick(pad.voice, &mut self.rng);
+            if !self.retro.is_active() {
+                self.active = false;
+            }
+            return y;
+        }
+        if pad.voice.family() == Family::Acoustic {
+            let y = self.acoustic.tick(tr);
+            if !self.acoustic.is_active() {
+                self.active = false;
+            }
+            return y;
+        }
         if pad.voice.family() == Family::Machine {
             let y = self.machine.tick(pad.voice, tr, &mut self.rng);
             if !self.machine.is_active() {
@@ -1345,6 +1770,14 @@ impl PadVoice {
     }
 }
 
+/// The recording a pad plays: its layer's round robin, or its sample.
+fn played_sample(pad: &DrumPad, layer: usize, rr: usize) -> Option<&crate::sample::SampleRef> {
+    match pad.layers.get(layer) {
+        Some(l) if !l.is_empty() => l.get(rr % l.len()),
+        _ => pad.sample.as_ref(),
+    }
+}
+
 pub struct DrumState {
     voices: [PadVoice; MAX_PADS],
 }
@@ -1407,11 +1840,12 @@ impl DrumState {
             if !v.active {
                 continue;
             }
-            let vel_gain = v.vel.powf(1.3).max(0.02);
+            // Recorded layers carry most of the dynamics themselves.
+            let vel_gain = if pad.layers.is_empty() { v.vel.powf(1.3) } else { v.vel.powf(0.5) }.max(0.02);
             let gain = db_to_gain(pad.level_db) * vel_gain * 0.32;
             let (pl, pr) = pan_gains(pad.pan);
             let tr = 2f32.powf(pad.tune / 12.0);
-            if let Some(s) = &pad.sample {
+            if let Some(s) = played_sample(pad, v.layer, v.rr) {
                 let rate = tr as f64 * s.sample_rate as f64 / sr as f64;
                 let frames = s.frames() as f64;
                 for i in 0..n {
@@ -1516,7 +1950,7 @@ mod tests {
     fn every_kit_loads_and_plays() {
         for name in kit_names() {
             let pads = kit(name);
-            assert_eq!(pads.len(), 8, "{name}");
+            assert!((8..=MAX_PADS).contains(&pads.len()), "{name}");
             let mut d = DrumState::new();
             for pad in &pads {
                 d.note_on(&pads, pad.note, 0.9, 48000.0);
@@ -1526,6 +1960,32 @@ mod tests {
             let peak = l.iter().fold(0.0f32, |m, v| m.max(v.abs()));
             assert!(peak > 0.05 && peak < 4.0, "{name}: {peak}");
         }
+    }
+
+    #[test]
+    fn recorded_layers_follow_the_velocity_and_take_turns() {
+        use crate::sample::{SampleData, SampleRef};
+        // Two layers (a soft and a loud level) with two round robins each,
+        // told apart by their level: 0.1, 0.2 (soft) and 0.8, 0.9 (loud).
+        let take = |v: f32| SampleRef::new(SampleData::from_buffers("t", None, 48000, vec![v; 4800], vec![v; 4800]));
+        let mut pad = DrumPad::new(DrumVoice::AcSnare);
+        pad.level_db = 0.0;
+        pad.layers = vec![vec![take(0.1), take(0.2)], vec![take(0.8), take(0.9)]];
+        let pads = vec![pad];
+        let mut d = DrumState::new();
+        let mut levels = Vec::new();
+        for vel in [0.1, 0.1, 1.0, 1.0] {
+            d.note_on(&pads, pads[0].note, vel, 48000.0);
+            let (mut l, mut r) = (vec![0.0; 64], vec![0.0; 64]);
+            d.render(&pads, &mut l, &mut r, 48000.0);
+            // Undo the pad's gain to see which take played.
+            let gain = db_to_gain(0.0) * vel.powf(0.5) * 0.32 * pan_gains(0.0).0;
+            levels.push(l[10] / gain);
+        }
+        let near = |a: f32, b: f32| (a - b).abs() < 0.02;
+        assert!(near(levels[0], 0.1) || near(levels[0], 0.2), "{levels:?}");
+        assert!(!near(levels[0], levels[1]), "round robins take turns: {levels:?}");
+        assert!(levels[2] > 0.7 && levels[3] > 0.7 && !near(levels[2], levels[3]), "{levels:?}");
     }
 
     #[test]

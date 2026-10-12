@@ -14,7 +14,7 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 
 fn voice_color(i: usize) -> Color32 {
     [
-        ACCENT,
+        accent_now(),
         SELECT,
         PLAY,
         Color32::from_rgb(0xe0, 0x84, 0xff),
@@ -92,7 +92,7 @@ pub(crate) fn loops(ui: &mut Ui, id: Id, params: &mut [f32], live: Live, height:
         changed |= chip(ui, nr, id.with(("note", i)), &name, TEXT, &mut params[13 + i], -14.0, 14.0, "Drag up or down: this loop's note, in the scale");
     }
     let dr = Rect::from_min_size(pos2(lx + 12.0, rect.bottom() - 17.0), vec2(80.0, 14.0));
-    if button(ui, dr, id.with("dice"), "dice", false, ACCENT).on_hover_text("New notes and new loop lengths: the loops drift apart in another way").clicked() {
+    if button(ui, dr, id.with("dice"), "dice", false, accent_now()).on_hover_text("New notes and new loop lengths: the loops drift apart in another way").clicked() {
         let mut seed = dice_seed();
         // Lengths that rarely meet, notes that mostly fit the chord.
         const LENGTHS: [f32; 12] = [11.0, 13.0, 17.0, 19.0, 21.0, 23.0, 25.0, 29.0, 31.0, 34.0, 37.0, 43.0];
@@ -536,8 +536,8 @@ mod tests {
             let _ = ctx.run(input, |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     let v = [vis[0].rotate_left(f as u32 * 8), vis[1] + f, vis[2], vis[3]];
-                    let live = Live { vis: Some(v), playing: true, scale: krabton_engine::Scale::default() };
-                    super::super::seq_view::editor(ui, Id::new("t"), kind, &mut params, &mut Vec::new(), live, &mut 0, ACCENT, 160.0);
+                    let live = Live { vis: Some(v), playing: true, scale: krabton_engine::Scale::default(), kit: 0 };
+                    super::super::seq_view::editor(ui, Id::new("t"), kind, &mut params, &mut Vec::new(), live, &mut 0, accent_now(), 160.0);
                 });
             });
         }
@@ -561,8 +561,8 @@ mod tests {
             let _ = ctx.run(input, |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     origin = ui.cursor().min;
-                    let live = Live { vis: None, playing: false, scale: krabton_engine::Scale::default() };
-                    super::super::seq_view::editor(ui, Id::new("t"), MidiFxKind::Bloom, &mut params, &mut data, live, &mut 0, ACCENT, 160.0);
+                    let live = Live { vis: None, playing: false, scale: krabton_engine::Scale::default(), kit: 0 };
+                    super::super::seq_view::editor(ui, Id::new("t"), MidiFxKind::Bloom, &mut params, &mut data, live, &mut 0, accent_now(), 160.0);
                 });
             });
         }

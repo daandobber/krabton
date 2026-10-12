@@ -93,10 +93,10 @@ fn draw_algorithm(ui: &Ui, rect: Rect, alg: usize, op_mask: u8) {
     let bus_y = rect.bottom() - 8.0;
     let carriers: Vec<usize> = (0..6).filter(|&k| a.carriers & (1 << k) != 0).collect();
     if let (Some(&first), Some(&last)) = (carriers.first(), carriers.last()) {
-        p.line_segment([pos2(center(first).x, bus_y), pos2(center(last).x, bus_y)], Stroke::new(2.0_f32, ACCENT));
+        p.line_segment([pos2(center(first).x, bus_y), pos2(center(last).x, bus_y)], Stroke::new(2.0_f32, accent_now()));
     }
     for &k in &carriers {
-        p.line_segment([center(k) + vec2(0.0, size * 0.5), pos2(center(k).x, bus_y)], Stroke::new(1.5_f32, ACCENT));
+        p.line_segment([center(k) + vec2(0.0, size * 0.5), pos2(center(k).x, bus_y)], Stroke::new(1.5_f32, accent_now()));
     }
     // Feedback loop.
     let (from, to) = (center(a.fb_from), center(a.fb_to));
@@ -109,7 +109,7 @@ fn draw_algorithm(ui: &Ui, rect: Rect, alg: usize, op_mask: u8) {
         pos2(to.x, top),
         to - vec2(0.0, size * 0.5),
     ];
-    p.add(egui::Shape::line(pts, Stroke::new(1.2_f32, shade(ACCENT, 0.7))));
+    p.add(egui::Shape::line(pts, Stroke::new(1.2_f32, shade(accent_now(), 0.7))));
     // Operator boxes.
     for k in 0..6 {
         let r = Rect::from_center_size(center(k), vec2(size, size));
@@ -117,11 +117,11 @@ fn draw_algorithm(ui: &Ui, rect: Rect, alg: usize, op_mask: u8) {
         let carrier = a.carriers & (1 << k) != 0;
         let fill = match (on, carrier) {
             (false, _) => PANEL2,
-            (true, true) => ACCENT,
+            (true, true) => accent_now(),
             (true, false) => PANEL3,
         };
         rect_fill(p, r, 2.0, fill);
-        rect_line(p, r, 2.0, 1.0, if on { ACCENT } else { LINE });
+        rect_line(p, r, 2.0, 1.0, if on { accent_now() } else { LINE });
         p.text(r.center(), Align2::CENTER_CENTER, k + 1, small(), if carrier && on { TEXT_DARK } else { TEXT });
     }
     p.text(pos2(rect.left() + 4.0, rect.top() + 2.0), Align2::LEFT_TOP, format!("Alg {}", alg + 1), small(), TEXT_DIM);
@@ -180,7 +180,7 @@ impl App {
             // Voice and bank.
             ui.vertical(|ui| {
                 ui.set_width(210.0);
-                ui.label(RichText::new(voice.name()).strong().size(17.0).color(ACCENT));
+                ui.label(RichText::new(voice.name()).strong().size(17.0).color(accent_now()));
                 ui.label(RichText::new("6-op FM, DX7 voice compatible").small().color(TEXT_DIM));
                 let bank_names: Vec<String> = self.fm_banks.iter().map(|b| b.name.clone()).collect();
                 egui::ComboBox::from_id_salt(("fm_bank", track_id)).width(190.0).selected_text(bank.as_str()).show_ui(ui, |ui| {
@@ -281,7 +281,7 @@ impl App {
                         let label = RichText::new(format!("OP{}", op + 1)).color(if !on {
                             TEXT_DIM
                         } else if carrier {
-                            ACCENT
+                            accent_now()
                         } else {
                             TEXT
                         });
@@ -309,7 +309,7 @@ impl App {
                             voice.set_op(op, dx7::KVS, v);
                         }
                         let (er, _) = ui.allocate_exact_size(vec2(64.0, 16.0), Sense::hover());
-                        draw_envelope(ui, er, &voice, op, if carrier { ACCENT } else { TEXT_DIM });
+                        draw_envelope(ui, er, &voice, op, if carrier { accent_now() } else { TEXT_DIM });
                         ui.end_row();
                     }
                 });
@@ -318,7 +318,7 @@ impl App {
             // Engine macros (MiniDexed-style tone generator settings).
             ui.vertical(|ui| {
                 ui.label(RichText::new("FM").small().color(TEXT_DIM));
-                crate::ui::devices::param_grid_mod(ui, Id::new(("fm_params", track_id)), fm::SPECS, params, ACCENT, h - 40.0, mv);
+                crate::ui::devices::param_grid_mod(ui, Id::new(("fm_params", track_id)), fm::SPECS, params, accent_now(), h - 40.0, mv);
             });
         });
         if voice != before {

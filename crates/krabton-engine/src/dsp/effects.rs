@@ -438,7 +438,7 @@ impl EffectKind {
             EffectKind::Spring => "A spring reverb tank: the chirp and boing of amps and dub mixers, with drips",
             EffectKind::PitchDelay => "A delay whose echoes are pitched in semitone steps: each repeat one more step up or down, or all by one interval",
             EffectKind::Grains => "Granular texture processor: grains from an 8-second buffer with random time, size, shape and pitch, regular or random density, freeze, feedback, reverb and tape or lo-fi buffers",
-            EffectKind::Glitch => "A step sequencer of glitches: every step picks Retrigger, Reverse, Shuffle, Tape Stop, Stretch, Crush, Gate, Filter, Delay, or one of four slots holding any other effect; chance per step, variation, four patterns",
+            EffectKind::Glitch => "A sequencer of glitches: paint blocks of Tape Stop, Modulator, Retrigger, Shuffler, Reverser, Crusher, Gater, Stretcher and Delay (or four slots holding any other effect) on a lane; a step envelope, overdrive and master filter, eight patterns, randomise",
             EffectKind::Overdrive => "The green mid-boost overdrive: only the mids and highs are driven, the lows stay tight beside them. Drive, tone, level",
             EffectKind::DistortionPedal => "The op-amp distortion pedal: up to 66 dB of gain that narrows as it rises, clipping diodes and a filter against the fizz",
             EffectKind::Fuzz => "Three fuzzes: lopsided vintage transistors that sputter as notes die, a wall of two stages with a scooped tone, and octave-up fuzz",

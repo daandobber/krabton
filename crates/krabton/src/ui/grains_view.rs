@@ -164,7 +164,7 @@ mod tests {
                     if i == 0 {
                         origin = ui.cursor().min;
                     }
-                    grains_panel(ui, Id::new("g"), 1, &mut p, ACCENT, 200.0, None, &status, &mut width);
+                    grains_panel(ui, Id::new("g"), 1, &mut p, accent_now(), 200.0, None, &status, &mut width);
                 });
             });
         }

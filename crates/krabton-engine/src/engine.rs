@@ -18,6 +18,7 @@ use crate::dsp::stk_winds::WindsState;
 use crate::dsp::organ::OrganState;
 use crate::dsp::monk::MonkState;
 use crate::dsp::bassline::BasslineState;
+use crate::dsp::mono101::Mono101State;
 use crate::dsp::drone::DroneState;
 use crate::dsp::waves::WavesState;
 use crate::dsp::guitar::GuitarState;
@@ -113,6 +114,12 @@ pub struct TrackStatus {
     pub seq: [AtomicU64; 4],
     /// Peak of the track's audio input since the UI last took it.
     pub in_peak: AtomicF32,
+    /// The instrument's sound, the notes it holds and the values of
+    /// `InstState::visual`, for its screen (every track's, so all of them
+    /// move in the Rack).
+    pub inst_scope: crate::scope::ScopeBuffer,
+    pub inst_held: [AtomicU64; 2],
+    pub inst_vals: Vec<AtomicF32>,
 }
 
 impl TrackStatus {
@@ -127,7 +134,20 @@ impl TrackStatus {
             peak_r: AtomicF32::new(0.0),
             seq: [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)],
             in_peak: AtomicF32::new(0.0),
+            inst_scope: crate::scope::ScopeBuffer::new(INST_SCOPE_LEN, false),
+            inst_held: [AtomicU64::new(0), AtomicU64::new(0)],
+            inst_vals: (0..INST_VALS).map(|_| AtomicF32::new(0.0)).collect(),
         }
+    }
+
+    /// UI: the notes the instrument holds, as a 128-bit mask.
+    pub fn inst_notes(&self) -> u128 {
+        self.inst_held[0].load(RELAXED) as u128 | (self.inst_held[1].load(RELAXED) as u128) << 64
+    }
+
+    /// UI: the instrument's display values.
+    pub fn inst_values(&self) -> [f32; INST_VALS] {
+        std::array::from_fn(|i| self.inst_vals[i].load())
     }
 
     /// Peak level since the last call.
@@ -160,13 +180,56 @@ pub struct EngineStatus {
     pub capturing: AtomicBool,
     /// Recorded blocks that did not fit in the channel to the UI.
     pub rec_dropped: AtomicU64,
-    /// The track whose instrument the UI shows (its id, 0: none). That
-    /// instrument reports its sound, the notes it holds and the values of
-    /// `InstState::visual` below.
-    pub inst_watch: AtomicU64,
-    pub inst_scope: crate::scope::ScopeBuffer,
-    pub inst_held: [AtomicU64; 2],
-    pub inst_vals: Vec<AtomicF32>,
+    /// Each sequencer's state for its editor, by device id.
+    pub seqs: SeqBank,
+}
+
+/// The visual state of every sequencer (see `MidiFxState::visual`), by
+/// device id, so each editor moves, not only a track's first.
+pub struct SeqBank {
+    owners: Vec<AtomicU64>,
+    vals: Vec<AtomicU64>,
+}
+
+pub const MAX_SEQ_VIS: usize = 128;
+
+impl SeqBank {
+    fn new() -> Self {
+        Self { owners: (0..MAX_SEQ_VIS).map(|_| AtomicU64::new(0)).collect(), vals: (0..MAX_SEQ_VIS * 4).map(|_| AtomicU64::new(0)).collect() }
+    }
+
+    fn slot(&self, id: u64) -> Option<usize> {
+        self.owners.iter().position(|o| o.load(RELAXED) == id)
+    }
+
+    /// Audio thread: stores device `id`'s state, claiming a slot if needed.
+    pub fn write(&self, id: u64, v: [u64; 4]) {
+        if id == 0 {
+            return;
+        }
+        let s = self.slot(id).or_else(|| self.owners.iter().position(|o| o.compare_exchange(0, id, Ordering::AcqRel, RELAXED).is_ok()));
+        if let Some(s) = s {
+            for (a, x) in self.vals[s * 4..s * 4 + 4].iter().zip(v) {
+                a.store(x, RELAXED);
+            }
+        }
+    }
+
+    /// UI: device `id`'s last state, if it reported one.
+    pub fn read(&self, id: u64) -> Option<[u64; 4]> {
+        let s = self.slot(id)?;
+        Some(std::array::from_fn(|i| self.vals[s * 4 + i].load(RELAXED)))
+    }
+
+    /// UI: frees the slots of devices that no longer exist.
+    pub fn release_unused(&self, alive: impl Fn(u64) -> bool) {
+        for o in &self.owners {
+            let id = o.load(RELAXED);
+            if id != 0 && !alive(id) {
+                let _ = o.compare_exchange(id, 0, Ordering::AcqRel, RELAXED);
+            }
+        }
+    }
 }
 
 impl EngineStatus {
@@ -188,21 +251,8 @@ impl EngineStatus {
             input_channels: AtomicU32::new(0),
             capturing: AtomicBool::new(false),
             rec_dropped: AtomicU64::new(0),
-            inst_watch: AtomicU64::new(0),
-            inst_scope: crate::scope::ScopeBuffer::new(INST_SCOPE_LEN, false),
-            inst_held: [AtomicU64::new(0), AtomicU64::new(0)],
-            inst_vals: (0..INST_VALS).map(|_| AtomicF32::new(0.0)).collect(),
+            seqs: SeqBank::new(),
         }
-    }
-
-    /// UI: the notes the shown instrument holds, as a 128-bit mask.
-    pub fn inst_notes(&self) -> u128 {
-        self.inst_held[0].load(RELAXED) as u128 | (self.inst_held[1].load(RELAXED) as u128) << 64
-    }
-
-    /// UI: the shown instrument's display values.
-    pub fn inst_values(&self) -> [f32; INST_VALS] {
-        std::array::from_fn(|i| self.inst_vals[i].load())
     }
 }
 
@@ -353,6 +403,7 @@ enum InstState {
     Monk(Box<MonkState>),
     Piano(Box<PianoState>),
     Bassline(Box<BasslineState>),
+    Mono101(Box<Mono101State>),
     Drone(Box<DroneState>),
     Waves(Box<WavesState>),
     Guitar(Box<GuitarState>),
@@ -384,6 +435,7 @@ impl InstState {
             Some(Instrument::Monk { .. }) => InstState::Monk(Box::new(MonkState::new(sr))),
             Some(Instrument::Piano { .. }) => InstState::Piano(Box::new(PianoState::new(sr))),
             Some(Instrument::Bassline { .. }) => InstState::Bassline(Box::new(BasslineState::new(sr))),
+            Some(Instrument::Mono101 { .. }) => InstState::Mono101(Box::new(Mono101State::new(sr))),
             Some(Instrument::Drone { .. }) => InstState::Drone(Box::new(DroneState::new(sr))),
             Some(Instrument::Waves { .. }) => InstState::Waves(Box::new(WavesState::new(sr))),
             Some(Instrument::Guitar { .. }) => InstState::Guitar(Box::new(GuitarState::new(sr))),
@@ -429,6 +481,7 @@ impl InstState {
                 | (InstState::Monk(_), Some(Instrument::Monk { .. }))
                 | (InstState::Piano(_), Some(Instrument::Piano { .. }))
                 | (InstState::Bassline(_), Some(Instrument::Bassline { .. }))
+                | (InstState::Mono101(_), Some(Instrument::Mono101 { .. }))
                 | (InstState::Drone(_), Some(Instrument::Drone { .. }))
                 | (InstState::Waves(_), Some(Instrument::Waves { .. }))
                 | (InstState::Guitar(_), Some(Instrument::Guitar { .. }))
@@ -459,6 +512,7 @@ impl InstState {
             (InstState::Monk(s), Instrument::Monk { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Piano(s), Instrument::Piano { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Bassline(s), Instrument::Bassline { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Mono101(s), Instrument::Mono101 { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Drone(s), Instrument::Drone { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Waves(s), Instrument::Waves { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Guitar(s), Instrument::Guitar { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
@@ -488,6 +542,7 @@ impl InstState {
             (InstState::Monk(s), Instrument::Monk { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Piano(s), Instrument::Piano { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Bassline(s), Instrument::Bassline { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Mono101(s), Instrument::Mono101 { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Drone(s), Instrument::Drone { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Waves(s), Instrument::Waves { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Guitar(s), Instrument::Guitar { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
@@ -518,6 +573,7 @@ impl InstState {
             InstState::Monk(s) => s.all_off(),
             InstState::Piano(s) => s.all_off(),
             InstState::Bassline(s) => s.all_off(),
+            InstState::Mono101(s) => s.all_off(),
             InstState::Drone(s) => s.all_off(),
             InstState::Waves(s) => s.all_off(),
             InstState::Guitar(s) => s.all_off(),
@@ -538,6 +594,7 @@ impl InstState {
             InstState::Monk(s) => s.visual(out),
             InstState::Piano(s) => s.visual(out),
             InstState::Bassline(s) => s.visual(out),
+            InstState::Mono101(s) => s.visual(out),
             InstState::Drone(s) => s.visual(out),
             InstState::Waves(s) => s.visual(out),
             InstState::Guitar(s) => s.visual(out),
@@ -568,6 +625,7 @@ impl InstState {
             (InstState::Monk(s), Instrument::Monk { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Piano(s), Instrument::Piano { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Bassline(s), Instrument::Bassline { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Mono101(s), Instrument::Mono101 { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Drone(s), Instrument::Drone { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Waves(s), Instrument::Waves { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Guitar(s), Instrument::Guitar { params, .. }) => s.render(ov.unwrap_or(params), l, r),
@@ -865,6 +923,8 @@ pub struct Engine {
     /// Frames rendered since the engine started (drives MIDI effect timing).
     clock: u64,
     mods: ModRuntime,
+    /// Clip envelope values this block (target, 0..1).
+    envs: Vec<(crate::modulation::ModTarget, f32)>,
     /// Per-track signals handed to the modulators each control block.
     signals: Vec<TrackSignal>,
     /// Track indices in processing order (sources before listeners).
@@ -914,6 +974,7 @@ impl Engine {
             parked: Vec::with_capacity(16),
             clock: 0,
             mods: ModRuntime::new(),
+            envs: Vec::with_capacity(256),
             signals: Vec::with_capacity(MAX_TRACKS),
             order: Vec::with_capacity(MAX_TRACKS),
             input: None,
@@ -1431,7 +1492,27 @@ impl Engine {
             }
             rt.signal.ons = 0;
         }
-        self.mods.tick(&project, &self.signals, ModClock { frames: seg, sr, samples_per_beat: spb, beat: s0 }, playing);
+        // Clip envelopes: the value of each where its clip is now.
+        self.envs.clear();
+        if playing {
+            for (track, rt) in project.tracks.iter().zip(self.tracks.iter()) {
+                let at = match rt.playing {
+                    Some(pc) => track.slots.get(pc.slot).and_then(|s| s.as_ref()).map(|c| (c, (s0 - pc.start).max(0.0).rem_euclid(c.length.max(1e-6)))),
+                    None if !rt.overridden => track.arrangement.iter().find(|a| a.start <= a0 && a0 < a.end()).map(|a| (&a.clip, (a0 - a.start + a.offset).rem_euclid(a.clip.length.max(1e-6)))),
+                    None => None,
+                };
+                if let Some((clip, pos)) = at {
+                    for e in &clip.envelopes {
+                        if let Some(v) = e.value_at(pos) {
+                            if self.envs.len() < self.envs.capacity() {
+                                self.envs.push((e.target, v));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        self.mods.tick(&project, &self.signals, ModClock { frames: seg, sr, samples_per_beat: spb, beat: s0 }, playing, &self.envs);
         let mods = &self.mods;
 
         for b in self.returns.iter_mut() {
@@ -1550,7 +1631,8 @@ impl Engine {
             events.sort_unstable_by_key(|e| (e.offset, e.on));
             // MIDI effects transform the events before the instrument hears them.
             if track.midi_devices.iter().any(|d| d.enabled) {
-                let ctx = MidiCtx { now: clock, len: seg, samples_per_beat: spb, scale: project.scale, scale_on: project.scale_mode, beat: s0, playing, sr };
+                let drum_notes = track.instrument.as_ref().map(|i| i.drum_notes()).unwrap_or(0);
+                let ctx = MidiCtx { now: clock, len: seg, samples_per_beat: spb, scale: project.scale, scale_on: project.scale_mode, beat: s0, playing, sr, drum_notes };
                 let mut shown = false;
                 for (dev, (_, st)) in track.midi_devices.iter().zip(midi_fx.iter_mut()) {
                     if !dev.enabled {
@@ -1561,8 +1643,10 @@ impl Engine {
                     st.process(dev.kind, params, &dev.data, events, fx_buf, &ctx);
                     fx_buf.sort_by_key(|e| (e.offset, e.on));
                     std::mem::swap(events, fx_buf);
-                    if !shown {
-                        if let (Some(v), Some(ts)) = (st.visual(), status.tracks.get(ti)) {
+                    if let Some(v) = st.visual() {
+                        status.seqs.write(dev.id, v);
+                        // The track's first one also for the grid.
+                        if let (false, Some(ts)) = (shown, status.tracks.get(ti)) {
                             for (slot, val) in ts.seq.iter().zip(v) {
                                 slot.store(val, RELAXED);
                             }
@@ -1633,20 +1717,20 @@ impl Engine {
                 if pos < seg {
                     instrument.render(inst, ov, &mut l[pos..seg], &mut r[pos..seg], sr);
                 }
-                if track.id == status.inst_watch.load(RELAXED) {
-                    status.inst_scope.write(&l[..seg], &r[..seg]);
+                if let Some(ts) = status.tracks.get(ti) {
+                    ts.inst_scope.write(&l[..seg], &r[..seg]);
                     let mut held = [0u64; 2];
                     for (p, &n) in sounding.iter().enumerate() {
                         if n > 0 {
                             held[p / 64] |= 1 << (p % 64);
                         }
                     }
-                    for (a, h) in status.inst_held.iter().zip(held) {
+                    for (a, h) in ts.inst_held.iter().zip(held) {
                         a.store(h, RELAXED);
                     }
                     let mut vals = [0.0; INST_VALS];
                     if instrument.visual(&mut vals) {
-                        for (a, v) in status.inst_vals.iter().zip(vals) {
+                        for (a, v) in ts.inst_vals.iter().zip(vals) {
                             a.store(v);
                         }
                     }
@@ -1692,8 +1776,8 @@ impl Engine {
 
             let mm = mods.track_mix(ti);
             let muted = track.mixer.mute || (any_solo && !track.mixer.solo);
-            let vol = if muted { 0.0 } else { fader_gain(track.mixer.volume_db) * mm.gain };
-            let (pl, pr) = pan_gains((track.mixer.pan + mm.pan).clamp(-1.0, 1.0));
+            let vol = if muted { 0.0 } else { fader_gain(mm.volume(track.mixer.volume_db)) * mm.gain };
+            let (pl, pr) = pan_gains((mm.pan_base(track.mixer.pan) + mm.pan).clamp(-1.0, 1.0));
             let (pk_l, pk_r) = apply_gain_ramp(&mut l[..seg], &mut r[..seg], gain_l, gain_r, vol * pl, vol * pr);
             if let Some(ts) = status.tracks.get(ti) {
                 ts.peak_l.store_max(pk_l);
@@ -1709,7 +1793,7 @@ impl Engine {
                 }
             }
             for (j, ret) in self.returns.iter_mut().enumerate().take(MAX_RETURNS) {
-                let send = track.mixer.sends.get(j).copied().unwrap_or(0.0) + mm.sends.get(j).copied().unwrap_or(0.0);
+                let send = mm.send_base(j, track.mixer.sends.get(j).copied().unwrap_or(0.0)) + mm.sends.get(j).copied().unwrap_or(0.0);
                 let target = if muted { 0.0 } else { send_gain(send.clamp(0.0, 1.0)) };
                 let cur = sends[j];
                 if cur == 0.0 && target == 0.0 {
@@ -1734,8 +1818,8 @@ impl Engine {
                 }
             }
             let mm = mods.return_mix(j);
-            let vol = if ret.mixer.mute { 0.0 } else { fader_gain(ret.mixer.volume_db) * mm.gain };
-            let (pl, pr) = pan_gains((ret.mixer.pan + mm.pan).clamp(-1.0, 1.0));
+            let vol = if ret.mixer.mute { 0.0 } else { fader_gain(mm.volume(ret.mixer.volume_db)) * mm.gain };
+            let (pl, pr) = pan_gains((mm.pan_base(ret.mixer.pan) + mm.pan).clamp(-1.0, 1.0));
             let (pk_l, pk_r) = apply_gain_ramp(&mut rt.l[..seg], &mut rt.r[..seg], &mut rt.gain_l, &mut rt.gain_r, vol * pl, vol * pr);
             if let Some(ts) = status.returns.get(j) {
                 ts.peak_l.store_max(pk_l);
@@ -2401,6 +2485,65 @@ mod tests {
         let diff: f32 = outs[0].iter().zip(&outs[1]).map(|(a, b)| (a - b).abs()).sum::<f32>() / outs[0].len() as f32;
         assert!(diff > 1e-3, "modulated cutoff changes the sound: {diff}");
         assert!(peak(&outs[1]) <= 1.0);
+    }
+
+    #[test]
+    fn every_track_and_sequencer_reports_for_its_screen() {
+        // In the Rack every device shows at once, so not only the selected
+        // track's instrument may report what it does.
+        let mut p = crate::demo::demo_project();
+        let (a, b) = (p.make_midi_device(crate::midi_fx::MidiFxKind::Euclid), p.make_midi_device(crate::midi_fx::MidiFxKind::Euclid));
+        let ids = (a.id, b.id);
+        p.tracks[2].midi_devices.push(a);
+        p.tracks[2].midi_devices.push(b);
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        h.send(Command::LaunchScene(1));
+        h.send(Command::Play);
+        run(&mut e, 1.5);
+        let sounding = (0..5)
+            .filter(|&t| {
+                let (mut l, mut r) = (Vec::new(), Vec::new());
+                h.status.tracks[t].inst_scope.read(4096, &mut l, &mut r);
+                l.iter().any(|v| v.abs() > 1e-4)
+            })
+            .count();
+        assert!(sounding >= 3, "{sounding} tracks report their sound");
+        // Both sequencers of a track, not only the first.
+        assert!(h.status.seqs.read(ids.0).is_some() && h.status.seqs.read(ids.1).is_some());
+    }
+
+    #[test]
+    fn clip_envelopes_move_parameters_while_the_clip_plays() {
+        use crate::modulation::{ModOwner, ModTarget};
+        let plain = crate::demo::demo_project();
+        let bass = plain.tracks[1].id;
+        // The bass clip of scene 2 with its volume all the way down...
+        let mut quiet = plain.clone();
+        let c = quiet.tracks[1].slots[1].as_mut().expect("a bass clip");
+        c.envelopes.push(Envelope { target: ModTarget::Volume(bass), points: vec![(0.0, 0.0)] });
+        // ...and one sweeping the synth's cutoff.
+        let mut swept = plain.clone();
+        let cutoff = crate::dsp::synth::SPECS.iter().position(|s| s.name == "Cutoff").unwrap() as u16;
+        let c = swept.tracks[1].slots[1].as_mut().unwrap();
+        c.envelopes.push(Envelope { target: ModTarget::Param { owner: ModOwner::Instrument(bass), param: cutoff }, points: vec![(0.0, 0.0), (2.0, 1.0), (4.0, 0.0)] });
+        let mut levels = Vec::new();
+        let mut outs = Vec::new();
+        for p in [plain, quiet, swept] {
+            let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+            h.send(Command::LaunchScene(1));
+            run(&mut e, 0.3);
+            levels.push(track_level(&mut e, &h, 1, 1.0));
+            outs.push(run(&mut e, 1.0));
+        }
+        assert!(levels[0] > 0.02, "the bass plays: {}", levels[0]);
+        assert!(levels[1] < 0.001, "its volume envelope at the bottom silences it: {}", levels[1]);
+        let diff: f32 = outs[0].iter().zip(&outs[2]).map(|(a, b)| (a - b).abs()).sum::<f32>() / outs[0].len() as f32;
+        assert!(diff > 1e-3, "the cutoff envelope changes the sound: {diff}");
+        // An envelope's line: flat before and after its points, straight between.
+        let e = Envelope { target: ModTarget::Volume(bass), points: vec![(1.0, 0.2), (3.0, 0.6)] };
+        assert_eq!(e.value_at(0.0), Some(0.2));
+        assert!((e.value_at(2.0).unwrap() - 0.4).abs() < 1e-6);
+        assert_eq!(e.value_at(5.0), Some(0.6));
     }
 
     #[test]
