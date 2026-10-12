@@ -1,4 +1,4 @@
-//! Mono 101's face: its sections as the other devices draw their groups
+//! Mono's face: its sections as the other devices draw their groups
 //! (Modulator, VCO, Source Mixer, VCF, VCA, Env, Portamento, Output), with
 //! the panel's vertical sliders as Krabton's faders and its switches as
 //! Krabton's buttons. Modulation and envelopes show on the sliders as on

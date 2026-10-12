@@ -69,6 +69,9 @@ pub struct MixParameters {
     pub feedback: f32,
     pub dry_wet: f32,
     pub reverb_amount: f32,
+    /// A gain on the dry signal (1 on the module; an instrument closes it
+    /// when no key is held).
+    pub dry_level: f32,
 }
 
 /// Half-band filters for the 2x rate change of the Sunny Tape setting
@@ -586,7 +589,7 @@ impl Processor {
         // Dry/wet, the dry fading while switching to or from delay mode.
         let wet_fade = smooth_step((self.delay_mode_transition.abs() / DELAY_MODE_FADE_TIME).min(1.0));
         let dw = mix.dry_wet;
-        let dry = (1.0 - dw) * (1.0 + dw) * 0.75;
+        let dry = (1.0 - dw) * (1.0 + dw) * 0.75 * mix.dry_level;
         let wet = dw * (2.0 - dw) * 1.5 * wet_fade;
         let (mut dry_s, mut wet_s) = (self.dry, self.wet);
         {

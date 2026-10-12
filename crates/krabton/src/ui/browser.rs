@@ -340,7 +340,7 @@ struct Dev {
     kind: Option<&'static str>,
 }
 
-fn devices() -> [Dev; 24] {
+fn devices() -> [Dev; 25] {
     [
         Dev {
             name: "Analog",
@@ -394,7 +394,7 @@ fn devices() -> [Dev; 24] {
         Dev { name: "Grand Piano", hint: "A concert grand: the Salamander Grand Piano (a Yamaha C5 in 16 velocity layers, downloaded once), with sustain pedal, key and string noises, una corda, lid and a hall", presets: krabton_engine::piano::preset_names(), make: BrowserItem::Piano, kind: None },
         Dev { name: "Monk", hint: "A chanting monk made of FOF grains (ported from MonkSynth): vowel, head size, glide, a choir of up to ten, and an echo", presets: krabton_engine::dsp::monk::preset_names(), make: BrowserItem::Monk, kind: None },
         Dev { name: "Bassline", hint: "Acid bass: a port of Open303 by Robin Schmidt. Saw to square, the squelchy filter with its envelope, accent (velocity 100 and up) and slide (play legato). Drag the filter in the screen", presets: krabton_engine::dsp::bassline::preset_names(), make: BrowserItem::Bassline, kind: None },
-        Dev { name: "Mono 101", hint: "The small mono of the early eighties: saw, pulse with PWM, a sub oscillator (an octave or two down) and noise into a self-oscillating four-pole filter, one envelope (or the gate for the amplifier), LFO, portamento. Behaviour and presets after HUSH ONE by Charles Vestal (MIT)", presets: krabton_engine::dsp::mono101::preset_names(), make: BrowserItem::Mono101, kind: None },
+        Dev { name: "Mono", hint: "The small mono of the early eighties: saw, pulse with PWM, a sub oscillator (an octave or two down) and noise into a self-oscillating four-pole filter, one envelope (or the gate for the amplifier), LFO, portamento. Behaviour and presets after HUSH ONE by Charles Vestal (MIT)", presets: krabton_engine::dsp::mono101::preset_names(), make: BrowserItem::Mono101, kind: None },
         Dev { name: "Drone", hint: "A drone that keeps moving: tanpura strings with a buzzing bridge, a PADsynth pad, swelling FM pairs and wind, all drifting slowly. Hold a key for minutes", presets: krabton_engine::dsp::drone::preset_names(), make: BrowserItem::Drone, kind: None },
         Dev { name: "Waves", hint: "Wavetable synth: two oscillators morphing through 16 banks of single-cycle waves (Adventure Kid Waveforms), unison, warps, sub, filter, envelopes and an LFO. Drag a stack to move through it", presets: krabton_engine::dsp::waves::preset_names(), make: BrowserItem::Waves, kind: None },
         Dev { name: "Guitar", hint: "A six-string guitar, steel or nylon acoustic or electric with pickups: notes go on the strings and frets a guitarist would use, chords are strummed. Put pedals after it", presets: krabton_engine::dsp::guitar::preset_names(), make: BrowserItem::Guitar, kind: None },
@@ -402,6 +402,7 @@ fn devices() -> [Dev; 24] {
         Dev { name: "Birds", hint: "Songbirds that sing by themselves: blackbird, robin, song thrush, nightingale, wren, chaffinch, great tit, skylark, sparrow, cuckoo, wood pigeon, tawny owl, loon, gull and a drumming woodpecker. Each sings its species' songs from its own place, near or far; a key makes the bird with the nearest voice sing (Follow Key puts its song on the key)", presets: krabton_engine::dsp::birds::preset_names(), make: BrowserItem::Birds, kind: None },
         Dev { name: "Nature", hint: "The sounds of outside, made from scratch: wind in gusts that whistles and rustles the leaves, rain on leaves, water, a roof or a tent, thunder after the lightning, a brook, the sea, crickets that chirp faster when it is warmer, frogs and a campfire. Play keys and the wind whistles on those notes", presets: krabton_engine::dsp::nature::preset_names(), make: BrowserItem::Nature, kind: None },
         Dev { name: "Pan Flute", hint: "Blown pipes: pan flute (closed pipes, odd harmonics), shakuhachi, ocarina, bamboo flute and wooden flute, with breath that rings in the pipe, a chiff at the start, scoops, vibrato that comes in after a while, legato glide or chords", presets: krabton_engine::dsp::pan_flute::preset_names(), make: BrowserItem::PanFlute, kind: None },
+        Dev { name: "Beads", hint: "The wavetable synth of Mutable Instruments Beads, played with keys: twelve banks of waves (sines, drawbars, voices, metal, FM and more), and grains of them seeded while you hold a key (or always, or with the song's clock), each randomized in wave, size, shape and pitch, with Beads' reverb and its tape and lo-fi qualities", presets: krabton_engine::dsp::beads_synth::preset_names(), make: BrowserItem::BeadsSynth, kind: None },
     ]
 }
 

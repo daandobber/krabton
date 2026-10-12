@@ -108,6 +108,7 @@ impl BeadsFx {
             mono: p[MONO] >= 0.5,
             source: if p[SOURCE] >= 0.5 { Source::Wavetables } else { Source::Input },
             input_gain: crate::dsp::db_to_gain(p[INPUT]),
+            dry_level: 1.0,
         };
         self.beads.process(&params, l, r);
         if let Some(m) = &mut self.taps.meters {

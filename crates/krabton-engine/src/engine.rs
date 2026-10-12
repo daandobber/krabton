@@ -23,6 +23,7 @@ use crate::dsp::drone::DroneState;
 use crate::dsp::waves::WavesState;
 use crate::dsp::guitar::GuitarState;
 use crate::dsp::wind_chimes::WindChimesState;
+use crate::dsp::beads_synth::BeadsSynthState;
 use crate::dsp::birds::BirdsState;
 use crate::dsp::nature::NatureState;
 use crate::dsp::pan_flute::PanFluteState;
@@ -408,6 +409,7 @@ enum InstState {
     Waves(Box<WavesState>),
     Guitar(Box<GuitarState>),
     WindChimes(Box<WindChimesState>),
+    BeadsSynth(Box<BeadsSynthState>),
     Birds(Box<BirdsState>),
     Nature(Box<NatureState>),
     PanFlute(Box<PanFluteState>),
@@ -443,6 +445,7 @@ impl InstState {
             Some(Instrument::Waves { .. }) => InstState::Waves(Box::new(WavesState::new(sr))),
             Some(Instrument::Guitar { .. }) => InstState::Guitar(Box::new(GuitarState::new(sr))),
             Some(Instrument::WindChimes { .. }) => InstState::WindChimes(Box::new(WindChimesState::new(sr))),
+            Some(Instrument::BeadsSynth { .. }) => InstState::BeadsSynth(Box::new(BeadsSynthState::new(sr))),
             Some(Instrument::Birds { .. }) => InstState::Birds(Box::new(BirdsState::new(sr))),
             Some(Instrument::Nature { .. }) => InstState::Nature(Box::new(NatureState::new(sr))),
             Some(Instrument::PanFlute { .. }) => InstState::PanFlute(Box::new(PanFluteState::new(sr))),
@@ -492,6 +495,7 @@ impl InstState {
                 | (InstState::Waves(_), Some(Instrument::Waves { .. }))
                 | (InstState::Guitar(_), Some(Instrument::Guitar { .. }))
                 | (InstState::WindChimes(_), Some(Instrument::WindChimes { .. }))
+                | (InstState::BeadsSynth(_), Some(Instrument::BeadsSynth { .. }))
                 | (InstState::Birds(_), Some(Instrument::Birds { .. }))
                 | (InstState::Nature(_), Some(Instrument::Nature { .. }))
                 | (InstState::PanFlute(_), Some(Instrument::PanFlute { .. }))
@@ -526,6 +530,7 @@ impl InstState {
             (InstState::Waves(s), Instrument::Waves { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Guitar(s), Instrument::Guitar { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::WindChimes(s), Instrument::WindChimes { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::BeadsSynth(s), Instrument::BeadsSynth { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Birds(s), Instrument::Birds { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Nature(s), Instrument::Nature { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::PanFlute(s), Instrument::PanFlute { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
@@ -559,6 +564,7 @@ impl InstState {
             (InstState::Waves(s), Instrument::Waves { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Guitar(s), Instrument::Guitar { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::WindChimes(s), Instrument::WindChimes { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::BeadsSynth(s), Instrument::BeadsSynth { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Birds(s), Instrument::Birds { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Nature(s), Instrument::Nature { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::PanFlute(s), Instrument::PanFlute { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
@@ -593,6 +599,7 @@ impl InstState {
             InstState::Waves(s) => s.all_off(),
             InstState::Guitar(s) => s.all_off(),
             InstState::WindChimes(s) => s.all_off(),
+            InstState::BeadsSynth(s) => s.all_off(),
             InstState::Birds(s) => s.all_off(),
             InstState::Nature(s) => s.all_off(),
             InstState::PanFlute(s) => s.all_off(),
@@ -617,6 +624,7 @@ impl InstState {
             InstState::Waves(s) => s.visual(out),
             InstState::Guitar(s) => s.visual(out),
             InstState::WindChimes(s) => s.visual(out),
+            InstState::BeadsSynth(s) => s.visual(out),
             InstState::Birds(s) => s.visual(out),
             InstState::Nature(s) => s.visual(out),
             InstState::PanFlute(s) => s.visual(out),
@@ -651,6 +659,7 @@ impl InstState {
             (InstState::Waves(s), Instrument::Waves { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Guitar(s), Instrument::Guitar { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::WindChimes(s), Instrument::WindChimes { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::BeadsSynth(s), Instrument::BeadsSynth { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Birds(s), Instrument::Birds { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Nature(s), Instrument::Nature { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::PanFlute(s), Instrument::PanFlute { params, .. }) => s.render(ov.unwrap_or(params), l, r),
@@ -1722,6 +1731,11 @@ impl Engine {
                 match instrument {
                     InstState::Modular(m) => m.set_transport(ctx.bpm, ctx.beat, ctx.playing),
                     InstState::WindChimes(s) => s.playing = ctx.playing,
+                    InstState::BeadsSynth(s) => {
+                        s.playing = ctx.playing;
+                        s.beat = ctx.beat;
+                        s.bpm = ctx.bpm;
+                    }
                     InstState::Birds(s) => s.playing = ctx.playing,
                     InstState::Nature(s) => s.playing = ctx.playing,
                     _ => {}

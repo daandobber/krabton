@@ -147,6 +147,51 @@ fn draw(ui: &Ui, rect: Rect, inner: Rect, p: &[f32], m: &[f32], accent: Color32)
     ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
 }
 
+/// The Beads instrument: the same picture, of the wave playing and its
+/// grains. Drag: left and right for the wave, up and down for the grains'
+/// size.
+pub(crate) fn beads_synth_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &super::inst_screen::InstLive, height: f32) -> bool {
+    use krabton_engine::dsp::beads_synth as bs;
+    let w = 320.0;
+    let (rect, _) = ui.allocate_exact_size(vec2(w, height), Sense::hover());
+    let resp = ui.interact(rect, id, Sense::click_and_drag());
+    let inner = rect.shrink2(vec2(14.0, 24.0));
+    let mut changed = false;
+    if let Some(pos) = resp.interact_pointer_pos().filter(|_| resp.dragged() || resp.clicked()) {
+        let wave = (((pos.x - inner.left()) / inner.width()).clamp(0.0, 1.0) * 100.0).round() / 100.0;
+        let size = (((inner.bottom() - pos.y) / inner.height()).clamp(0.0, 0.98) * 100.0).round() / 100.0;
+        if p[bs::WAVE] != wave || p[bs::SIZE] != size {
+            p[bs::WAVE] = wave;
+            p[bs::SIZE] = size;
+            changed = true;
+        }
+    }
+    // As the effect would show it.
+    let mut fx = krabton_engine::params::defaults(SPECS);
+    fx[TIME] = p[bs::WAVE];
+    fx[FREEZE] = p[bs::FREEZE];
+    fx[QUALITY] = p[bs::QUALITY];
+    fx[SOURCE] = 1.0;
+    let v = &live.vals;
+    let mut m = [0.0f32; krabton_engine::scope::METER_VALUES];
+    m[0] = 1.0;
+    m[2] = v[2];
+    m[3] = p[bs::BANK].round();
+    m[4] = 1.0;
+    m[5] = fx[FREEZE];
+    for i in 0..SHOWN_GRAINS {
+        m[6 + 3 * i] = v[5 + 3 * i];
+        m[7 + 3 * i] = v[6 + 3 * i];
+        m[8 + 3 * i] = v[7 + 3 * i];
+    }
+    let accent = accent_now();
+    draw(ui, rect, inner, &fx, &m, accent);
+    let bank = bs::BANKS[(p[bs::BANK].round().max(0.0) as usize).min(bs::BANKS.len() - 1)];
+    caption(&ui.painter_at(rect), pos2(rect.left() + 10.0, rect.bottom() - 6.0), Align2::LEFT_BOTTOM, bank, DIM);
+    resp.on_hover_text("The wave playing and its grains as beads. Drag: left and right for the wave, up and down for the size of the grains");
+    changed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -172,7 +172,7 @@ impl Synth {
         self.voice.render(&self.waves, bank, CONTINUOUS_SHIFT[q], &freeze[..size], &p, &mut out[..size], rng);
         // Dry (the oscillator) and wet (the grains).
         let dw = mix.dry_wet;
-        let dry = (1.0 - dw) * (1.0 + dw) * 0.5;
+        let dry = (1.0 - dw) * (1.0 + dw) * 0.5 * mix.dry_level;
         let wet = dw * (2.0 - dw);
         let (mut dry_s, mut wet_s) = (self.dry, self.wet);
         {

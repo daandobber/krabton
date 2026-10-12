@@ -109,7 +109,7 @@ pub enum BrowserItem {
     Monk(&'static str),
     /// A Bassline preset.
     Bassline(&'static str),
-    /// A Mono 101 preset.
+    /// A Mono preset.
     Mono101(&'static str),
     /// A Drone preset.
     Drone(&'static str),
@@ -125,6 +125,8 @@ pub enum BrowserItem {
     Nature(&'static str),
     /// A Pan Flute preset.
     PanFlute(&'static str),
+    /// A Beads (instrument) preset.
+    BeadsSynth(&'static str),
     /// A Grand Piano preset.
     Piano(&'static str),
     /// A copy of a clip in this project.
@@ -159,11 +161,12 @@ impl BrowserItem {
             BrowserItem::Rings(p) => format!("Rings: {p}"),
             BrowserItem::Monk(p) => format!("Monk: {p}"),
             BrowserItem::Bassline(p) => format!("Bassline: {p}"),
-            BrowserItem::Mono101(p) => format!("Mono 101: {p}"),
+            BrowserItem::Mono101(p) => format!("Mono: {p}"),
             BrowserItem::Drone(p) => format!("Drone: {p}"),
             BrowserItem::Waves(p) => format!("Waves: {p}"),
             BrowserItem::Guitar(p) => format!("Guitar: {p}"),
             BrowserItem::WindChimes(p) => format!("Wind Chimes: {p}"),
+            BrowserItem::BeadsSynth(p) => format!("Beads: {p}"),
             BrowserItem::Birds(p) => format!("Birds: {p}"),
             BrowserItem::Nature(p) => format!("Nature: {p}"),
             BrowserItem::PanFlute(p) => format!("Pan Flute: {p}"),
@@ -942,7 +945,7 @@ impl App {
                 }
                 self.toast(format!("Loading {} ...", info.name));
             }
-            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) => {
+            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::BeadsSynth(_) => {
                 let inst = match item {
                     BrowserItem::Synth(p) => Instrument::synth(p),
                     BrowserItem::Macro(p) => Instrument::macro_osc(p),
@@ -965,6 +968,7 @@ impl App {
                     BrowserItem::Waves(p) => Instrument::waves(p),
                     BrowserItem::Guitar(p) => Instrument::guitar(p),
                     BrowserItem::WindChimes(p) => Instrument::wind_chimes(p),
+                    BrowserItem::BeadsSynth(p) => Instrument::beads_synth(p),
                     BrowserItem::Birds(p) => Instrument::birds(p),
                     BrowserItem::Nature(p) => Instrument::nature(p),
                     BrowserItem::PanFlute(p) => Instrument::pan_flute(p),
@@ -2030,7 +2034,7 @@ impl App {
                     let kit = arg.to_string();
                     self.start_drum_install(if kit.is_empty() { "Real Kit" } else { &kit });
                 }
-                "mono101" => {
+                "mono101" | "mono" => {
                     let names = krabton_engine::dsp::mono101::preset_names();
                     let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
                     self.apply_item(&BrowserItem::Mono101(p), DropTarget::NewTrack);
@@ -2070,6 +2074,12 @@ impl App {
                     let names = krabton_engine::dsp::nature::preset_names();
                     let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
                     self.apply_item(&BrowserItem::Nature(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "beads" => {
+                    let names = krabton_engine::dsp::beads_synth::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::BeadsSynth(p), DropTarget::NewTrack);
                     self.detail = DetailTab::Devices;
                 }
                 "panflute" => {

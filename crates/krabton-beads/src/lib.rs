@@ -89,6 +89,8 @@ pub struct Params {
     pub source: Source,
     /// Linear gain on the input.
     pub input_gain: f32,
+    /// Gain on the dry signal (the input, or the wavetable oscillator).
+    pub dry_level: f32,
 }
 
 impl Default for Params {
@@ -115,6 +117,7 @@ impl Default for Params {
             mono: false,
             source: Source::Input,
             input_gain: 1.0,
+            dry_level: 1.0,
         }
     }
 }
@@ -388,7 +391,7 @@ impl Beads {
         let rp = |base: f32, amount: f32| RandomizedParameter { base, attenuverter: amount, cv: 0.0, has_cv: false };
         let params = Parameters { time: rp(k.time, k.time_amount), size: rp(k.size, k.size_amount), shape: rp(k.shape, k.shape_amount), pitch: rp(k.pitch, k.pitch_amount), monophonic_mode: false };
         let density = ModulatedParameter { base: k.density, cv: 0.0 };
-        let mix = MixParameters { feedback: k.feedback, dry_wet: k.dry_wet, reverb_amount: k.reverb };
+        let mix = MixParameters { feedback: k.feedback, dry_wet: k.dry_wet, reverb_amount: k.reverb, dry_level: p.dry_level.clamp(0.0, 1.0) };
         let out = &mut self.out_block[..n];
         match self.source {
             Source::Input => {

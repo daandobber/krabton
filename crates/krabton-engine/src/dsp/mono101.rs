@@ -1,4 +1,4 @@
-//! Mono 101: a monophonic synth after the most loved small mono of the
+//! Mono: a monophonic synth after the most loved small mono of the
 //! early eighties. One oscillator (a saw core with a pulse from its
 //! comparator and a sub oscillator from flip-flops: an octave down, two
 //! octaves down, or a narrow pulse two octaves down) and noise into a
