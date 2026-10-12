@@ -21,6 +21,7 @@ krabton-elements = { path = "../krabton-elements" }
 krabton-airwindows = { path = "../krabton-airwindows" }
 krabton-rings = { path = "../krabton-rings" }
 krabton-clouds = { path = "../krabton-clouds" }
+krabton-beads = { path = "../krabton-beads" }
 krabton-stk = { path = "../krabton-stk" }
 # Mutable Instruments Plaits DSP (MIT), pinned to a reviewed commit.
 mi-plaits-dsp = { git = "https://github.com/sourcebox/mi-plaits-dsp-rs", rev = "effe9864bb67d23aaf5724722ac1ce165d4e7c9f" }

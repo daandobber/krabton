@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/krabton-engine", "crates/krabton-clap", "crates/krabton-monome", "crates/krabton-braids", "crates/krabton-elements", "crates/krabton-airwindows", "crates/krabton-clouds", "crates/krabton-stk", "crates/krabton-rings", "crates/krabton"]
+members = ["crates/krabton-engine", "crates/krabton-clap", "crates/krabton-monome", "crates/krabton-braids", "crates/krabton-elements", "crates/krabton-airwindows", "crates/krabton-clouds", "crates/krabton-beads", "crates/krabton-stk", "crates/krabton-rings", "crates/krabton"]
 
 [workspace.package]
 version = "0.1.1"
@@ -37,6 +37,9 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package.krabton-clouds]
+opt-level = 3
+
+[profile.dev.package.krabton-beads]
 opt-level = 3
 
 [profile.dev.package.krabton-stk]

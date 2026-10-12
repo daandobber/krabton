@@ -379,6 +379,7 @@ impl App {
             EffectKind::LensComp => 420.0,
             EffectKind::Grains => 360.0,
             EffectKind::OpenAir => 380.0,
+            EffectKind::Beads => 400.0,
             _ => 400.0,
         };
         let mut width = self.prefs.layout.display(kind.name(), default_w);
@@ -441,6 +442,8 @@ impl App {
                 c
             } else if kind == EffectKind::Grains {
                 crate::ui::grains_view::grains_panel(ui, id, dev_id, &mut params, accent, h, mv.as_mut(), &status, &mut width)
+            } else if kind == EffectKind::Beads {
+                crate::ui::beads_view::beads_panel(ui, id, dev_id, &mut params, accent, h, mv.as_mut(), &status, &mut width)
             } else if kind == EffectKind::OpenAir {
                 crate::ui::open_air_view::open_air_panel(ui, id, dev_id, &mut params, accent, h, mv.as_mut(), &status, &mut width)
             } else if kind == EffectKind::LensEq {

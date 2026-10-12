@@ -1568,6 +1568,7 @@ dependencies = [
  "eframe",
  "egui",
  "hound",
+ "krabton-beads",
  "krabton-braids",
  "krabton-clap",
  "krabton-engine",
@@ -1582,6 +1583,13 @@ dependencies = [
 [[package]]
 name = "krabton-airwindows"
 version = "0.1.1"
+
+[[package]]
+name = "krabton-beads"
+version = "0.1.1"
+dependencies = [
+ "krabton-clouds",
+]
 
 [[package]]
 name = "krabton-braids"
@@ -1613,6 +1621,7 @@ dependencies = [
  "crossbeam-channel",
  "hound",
  "krabton-airwindows",
+ "krabton-beads",
  "krabton-braids",
  "krabton-clouds",
  "krabton-elements",

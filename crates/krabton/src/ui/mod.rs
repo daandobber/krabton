@@ -2,6 +2,7 @@
 
 pub mod ambient_view;
 pub mod arrangement;
+pub mod beads_view;
 pub mod browser;
 pub mod chime_view;
 pub mod chords_view;

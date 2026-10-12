@@ -1,0 +1,11 @@
+[package]
+name = "krabton-beads"
+description = "Rust port of the Mutable Instruments Beads texture synthesizer, for Krabton"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license = "MIT"
+authors = ["Krabton contributors", "Emilie Gillet (original Beads code)"]
+
+[dependencies]
+krabton-clouds = { path = "../krabton-clouds" }

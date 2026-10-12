@@ -9,6 +9,7 @@ authors.workspace = true
 
 [dependencies]
 krabton-engine = { path = "../krabton-engine" }
+krabton-beads = { path = "../krabton-beads" }
 krabton-braids = { path = "../krabton-braids" }
 krabton-clap = { path = "../krabton-clap" }
 krabton-monome = { path = "../krabton-monome" }

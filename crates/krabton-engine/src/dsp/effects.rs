@@ -51,6 +51,7 @@ pub enum EffectKind {
     AwTapeDelay2,
     Rings,
     Clouds,
+    Beads,
     Plate,
     Hall,
     Shimmer,
@@ -181,7 +182,7 @@ static UTILITY: &[ParamSpec] = &[
 ];
 
 impl EffectKind {
-    pub const ALL: [EffectKind; 61] = [
+    pub const ALL: [EffectKind; 62] = [
         EffectKind::Eq3,
         EffectKind::AutoFilter,
         EffectKind::Compressor,
@@ -211,6 +212,7 @@ impl EffectKind {
         EffectKind::Vinyl,
         EffectKind::Rings,
         EffectKind::Clouds,
+        EffectKind::Beads,
         EffectKind::Plate,
         EffectKind::Hall,
         EffectKind::Shimmer,
@@ -264,6 +266,7 @@ impl EffectKind {
             EffectKind::Plugin => "Plug-ins",
             EffectKind::Rings => "Reverb & Resonance",
             EffectKind::Clouds => "Delay & Loop",
+            EffectKind::Beads => "Delay & Loop",
             EffectKind::Plate => "Reverb & Resonance",
             EffectKind::Hall => "Reverb & Resonance",
             EffectKind::Shimmer => "Reverb & Resonance",
@@ -369,6 +372,7 @@ impl EffectKind {
             EffectKind::AwTapeDelay2 => "TapeDelay2",
             EffectKind::Rings => "Rings",
             EffectKind::Clouds => "Clouds",
+            EffectKind::Beads => "Beads",
             EffectKind::Plate => "Plate",
             EffectKind::Hall => "Hall",
             EffectKind::Shimmer => "Shimmer",
@@ -436,6 +440,7 @@ impl EffectKind {
             EffectKind::AwDeRez2 => "Lower sample rate and bit depth: crunchy retro digital lo-fi (Airwindows)",
             EffectKind::AwTapeDelay2 => "Warm tape echo with a resonant filter on the repeats and flutter (Airwindows)",
             EffectKind::Clouds => "Granular texture machine after Mutable Instruments Clouds: grains, time stretch, looping delay and spectral freezes",
+            EffectKind::Beads => "Texture synthesizer after Mutable Instruments Beads: up to 32 grains of the audio (or of its wavetables), each randomized as you like; a delay with Size fully up; Hi-Fi, Clouds, Sunny Tape or Scorched Cassette; seeded freely or by the song",
             EffectKind::Plate => "Dattorro's plate reverb: dense and smooth, long tails, modulation, freeze",
             EffectKind::Hall => "A big hall: decays up to a minute, separate low decay, modulation, freeze",
             EffectKind::Shimmer => "A hall with a pitch shifter in its loop: every pass an octave (or any interval) higher or lower",
@@ -504,6 +509,7 @@ impl EffectKind {
             EffectKind::AwTapeDelay2 => super::fx::airwindows::TAPEDELAY2,
             EffectKind::Rings => super::rings_synth::FX_SPECS,
             EffectKind::Clouds => super::fx::clouds::SPECS,
+            EffectKind::Beads => super::fx::beads::SPECS,
             EffectKind::Plate => super::fx::plate::SPECS,
             EffectKind::Hall => super::fx::hall::SPECS,
             EffectKind::Shimmer => super::fx::hall::SHIMMER_SPECS,
@@ -567,6 +573,7 @@ pub enum EffectState {
     Vinyl(Box<super::fx::vinyl::Vinyl>),
     Rings(Box<super::rings_synth::RingsFx>),
     Clouds(Box<super::fx::clouds::CloudsFx>),
+    Beads(Box<super::fx::beads::BeadsFx>),
     Plate(Box<super::fx::plate::Plate>),
     Hall(Box<super::fx::hall::Hall>),
     Shimmer(Box<super::fx::hall::Hall>),
@@ -664,6 +671,7 @@ impl EffectState {
             EffectKind::AwTapeDelay2 => Self::airwindows(kind, "TapeDelay2", sr),
             EffectKind::Rings => EffectState::Rings(Box::new(super::rings_synth::RingsFx::new(sr))),
             EffectKind::Clouds => EffectState::Clouds(Box::new(super::fx::clouds::CloudsFx::new(sr))),
+            EffectKind::Beads => EffectState::Beads(Box::new(super::fx::beads::BeadsFx::new(sr))),
             EffectKind::Plate => EffectState::Plate(Box::new(super::fx::plate::Plate::new(sr))),
             EffectKind::Hall => EffectState::Hall(Box::new(super::fx::hall::Hall::new(sr))),
             EffectKind::Shimmer => EffectState::Shimmer(Box::new(super::fx::hall::Hall::new(sr))),
@@ -711,6 +719,7 @@ impl EffectState {
             EffectState::Grains(s) => Some(&mut s.taps),
             EffectState::Glitch(s) => Some(&mut s.taps),
             EffectState::OpenAir(s) => Some(&mut s.taps),
+            EffectState::Beads(s) => Some(&mut s.taps),
             _ => None,
         }
     }
@@ -747,6 +756,7 @@ impl EffectState {
             EffectState::Airwindows(kind, _) => *kind,
             EffectState::Rings(_) => EffectKind::Rings,
             EffectState::Clouds(_) => EffectKind::Clouds,
+            EffectState::Beads(_) => EffectKind::Beads,
             EffectState::Plate(_) => EffectKind::Plate,
             EffectState::Hall(_) => EffectKind::Hall,
             EffectState::Shimmer(_) => EffectKind::Shimmer,
@@ -988,6 +998,7 @@ impl EffectState {
             EffectState::Airwindows(_, e) => e.process(p, &mut l[..n], &mut r[..n]),
             EffectState::Rings(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Clouds(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
+            EffectState::Beads(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Plate(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Hall(s) => s.process(p, &mut l[..n], &mut r[..n], ctx, None),
             EffectState::Shimmer(s) => {

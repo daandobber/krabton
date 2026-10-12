@@ -7,6 +7,7 @@ pub mod airwindows;
 pub mod auto_pan;
 pub mod auto_wah;
 pub mod hall;
+pub mod beads;
 pub mod beat_repeat;
 pub mod clouds;
 pub mod echo;
