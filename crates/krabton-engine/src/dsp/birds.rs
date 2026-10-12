@@ -34,7 +34,7 @@ pub const SPACE: usize = 14;
 pub const VOLUME: usize = 15;
 
 pub const SING_MODES: &[&str] = &["While Playing", "Always", "While a Key Is Held"];
-pub const SPECIES: &[&str] = &["Blackbird", "Robin", "Song Thrush", "Nightingale", "Wren", "Chaffinch", "Great Tit", "Skylark", "Sparrow", "Cuckoo", "Wood Pigeon", "Tawny Owl", "Loon", "Gull", "Woodpecker"];
+pub const SPECIES: &[&str] = &["Blackbird", "Robin", "Song Thrush", "Nightingale", "Wren", "Chaffinch", "Great Tit", "Skylark", "Sparrow", "Cuckoo", "Wood Pigeon", "Tawny Owl", "Loon", "Gull", "Woodpecker", "Blackcap", "Chiffchaff", "Willow Warbler", "Yellowhammer", "Collared Dove", "Golden Oriole", "Crow", "Curlew", "Swift", "Hermit Thrush", "Wood Thrush", "Cardinal", "Mourning Dove", "Bellbird", "Kookaburra"];
 
 /// Three kinds of bird, up to four of each.
 pub const SLOTS: usize = 3;
@@ -61,7 +61,7 @@ pub static SPECS: &[ParamSpec] = &[
 ];
 
 pub fn preset_names() -> &'static [&'static str] {
-    &["Garden Morning", "Dawn Chorus", "Woodland", "Nightingale Night", "Meadow", "Lake at Dusk", "Seaside", "Village", "Lone Blackbird", "Owl and Cuckoo"]
+    &["Garden Morning", "Dawn Chorus", "Woodland", "Woodland Edge", "Nightingale Night", "Meadow", "Moorland", "Lake at Dusk", "Seaside", "Village", "Summer Evening", "Lone Blackbird", "Owl and Cuckoo", "Hermit Thrush Forest", "Bellbird Valley", "Outback"]
 }
 
 pub fn preset(name: &str) -> Vec<f32> {
@@ -109,6 +109,30 @@ pub fn preset(name: &str) -> Vec<f32> {
             birds(("Blackbird", 1.0), ("Robin", 0.0), ("Great Tit", 0.0));
             more = &[(BUSY, 0.7), (VARIETY, 0.7), (DISTANCE, 0.25), (SPACE, 0.6)];
         }
+        "Woodland Edge" => {
+            birds(("Blackcap", 1.0), ("Chiffchaff", 1.0), ("Willow Warbler", 1.0));
+            more = &[(BUSY, 0.6), (VARIETY, 0.6), (DISTANCE, 0.35), (SPACE, 0.35)];
+        }
+        "Moorland" => {
+            birds(("Curlew", 2.0), ("Skylark", 1.0), ("Cuckoo", 1.0));
+            more = &[(BUSY, 0.5), (DISTANCE, 0.55), (SPACE, 0.45), (WIDTH, 1.0)];
+        }
+        "Summer Evening" => {
+            birds(("Swift", 3.0), ("Blackbird", 1.0), ("Collared Dove", 1.0));
+            more = &[(BUSY, 0.6), (DISTANCE, 0.4), (SPACE, 0.4), (WIDTH, 1.0)];
+        }
+        "Hermit Thrush Forest" => {
+            birds(("Hermit Thrush", 1.0), ("Wood Thrush", 1.0), ("Mourning Dove", 1.0));
+            more = &[(BUSY, 0.55), (VARIETY, 0.6), (DISTANCE, 0.45), (SPACE, 0.65)];
+        }
+        "Bellbird Valley" => {
+            birds(("Bellbird", 2.0), ("Hermit Thrush", 1.0), ("Golden Oriole", 1.0));
+            more = &[(BUSY, 0.55), (DISTANCE, 0.45), (SPACE, 0.7), (WIDTH, 1.0)];
+        }
+        "Outback" => {
+            birds(("Kookaburra", 2.0), ("Crow", 1.0), ("Cardinal", 0.0));
+            more = &[(BUSY, 0.45), (DISTANCE, 0.55), (SPACE, 0.35), (WIDTH, 1.0)];
+        }
         "Owl and Cuckoo" => {
             birds(("Tawny Owl", 1.0), ("Cuckoo", 1.0), ("Wood Pigeon", 1.0));
             more = &[(BUSY, 0.45), (DISTANCE, 0.6), (SPACE, 0.6)];
@@ -131,7 +155,7 @@ struct Kind {
     far: f32,
 }
 
-const KINDS: [Kind; 15] = [
+const KINDS: [Kind; 30] = [
     Kind { home: 2100.0, rest: (2.5, 6.0), repeat: (1, 1), far: 0.0 },
     Kind { home: 4500.0, rest: (2.5, 6.0), repeat: (1, 2), far: 0.0 },
     Kind { home: 3000.0, rest: (0.6, 2.0), repeat: (1, 1), far: 0.05 },
@@ -147,6 +171,21 @@ const KINDS: [Kind; 15] = [
     Kind { home: 850.0, rest: (9.0, 20.0), repeat: (1, 1), far: 0.45 },
     Kind { home: 1150.0, rest: (4.0, 12.0), repeat: (1, 2), far: 0.25 },
     Kind { home: 1050.0, rest: (6.0, 14.0), repeat: (1, 1), far: 0.3 },
+    Kind { home: 2800.0, rest: (2.0, 6.0), repeat: (1, 2), far: 0.05 },
+    Kind { home: 5200.0, rest: (3.0, 8.0), repeat: (2, 5), far: 0.05 },
+    Kind { home: 4200.0, rest: (3.0, 7.0), repeat: (1, 3), far: 0.05 },
+    Kind { home: 5000.0, rest: (4.0, 9.0), repeat: (3, 6), far: 0.1 },
+    Kind { home: 480.0, rest: (6.0, 14.0), repeat: (1, 1), far: 0.1 },
+    Kind { home: 1700.0, rest: (4.0, 10.0), repeat: (1, 3), far: 0.15 },
+    Kind { home: 750.0, rest: (6.0, 15.0), repeat: (1, 1), far: 0.3 },
+    Kind { home: 2500.0, rest: (8.0, 18.0), repeat: (1, 1), far: 0.4 },
+    Kind { home: 7000.0, rest: (3.0, 8.0), repeat: (1, 1), far: 0.2 },
+    Kind { home: 3800.0, rest: (2.0, 5.0), repeat: (1, 1), far: 0.15 },
+    Kind { home: 2400.0, rest: (2.0, 5.0), repeat: (1, 2), far: 0.1 },
+    Kind { home: 3000.0, rest: (3.0, 8.0), repeat: (2, 4), far: 0.05 },
+    Kind { home: 480.0, rest: (8.0, 15.0), repeat: (1, 1), far: 0.15 },
+    Kind { home: 2600.0, rest: (2.0, 6.0), repeat: (1, 2), far: 0.1 },
+    Kind { home: 1600.0, rest: (10.0, 25.0), repeat: (1, 1), far: 0.3 },
 ];
 
 /// One syllable: a tone gliding from `f0` to `f1` (bent up or down in the
@@ -464,7 +503,7 @@ fn compose(species: usize, r: &mut Rng, out: &mut Vec<Syl>) {
             }
         }
         // Woodpecker: drumming on a dead branch, a burst of knocks.
-        _ => {
+        14 => {
             let f = lr(r, 700.0, 1400.0);
             let mut rate = rr(r, 16.0, 22.0);
             let n = ri(r, 10, 24);
@@ -472,6 +511,165 @@ fn compose(species: usize, r: &mut Rng, out: &mut Vec<Syl>) {
                 let amp = 1.0 - 0.4 * i as f32 / n as f32;
                 push(out, Syl { h: [0.3, 0.0, 0.0, 0.0], noise: 1.0, q: 12.0, att: 0.0005, rel: 0.011, ..whistle(0.012, f, f * 0.98, 0.0, amp, 1.0 / rate - 0.012) });
                 rate *= 0.99;
+            }
+        }
+        // Blackcap: a quiet, scratchy warble that breaks into a loud, clear
+        // fluting at the end.
+        15 => {
+            for _ in 0..ri(r, 8, 15) {
+                let f0 = lr(r, 2500.0, 5000.0);
+                let s = if r.unipolar() < 0.4 { harsh(rr(r, 0.02, 0.05), f0 * 0.8, f0 * 0.7, 0.1, rr(r, 0.25, 0.4), rr(r, 0.01, 0.03)) } else { whistle(rr(r, 0.02, 0.06), f0, f0 * 2f32.powf(rr(r, -0.5, 0.5)), 0.1, rr(r, 0.3, 0.5), rr(r, 0.01, 0.03)) };
+                push(out, s);
+            }
+            for _ in 0..ri(r, 4, 7) {
+                let f0 = lr(r, 1800.0, 3500.0);
+                push(out, Syl { h: [1.0, 0.2, 0.05, 0.0], ..whistle(rr(r, 0.08, 0.15), f0, f0 * 2f32.powf(rr(r, -0.4, 0.4)), rr(r, -0.2, 0.3), rr(r, 0.85, 1.0), rr(r, 0.015, 0.04)) });
+            }
+        }
+        // Chiffchaff: "chiff chaff chiff chiff chaff", two notes in no order.
+        16 => {
+            let hi = lr(r, 5400.0, 6200.0);
+            let lo = hi * rr(r, 0.75, 0.82);
+            for _ in 0..ri(r, 6, 14) {
+                let f = if r.unipolar() < 0.5 { hi } else { lo };
+                push(out, whistle(rr(r, 0.06, 0.08), f, f * 0.85, 0.05, rr(r, 0.75, 1.0), rr(r, 0.25, 0.35)));
+            }
+        }
+        // Willow Warbler: a soft cascade going down the scale.
+        17 => {
+            let n = ri(r, 10, 16);
+            let mut f = lr(r, 5000.0, 6000.0);
+            let step = (3000.0 / f).powf(1.0 / n as f32);
+            for i in 0..n {
+                let amp = 0.45 + 0.55 * (PI * (i as f32 + 0.5) / n as f32).sin();
+                push(out, whistle(rr(r, 0.05, 0.08), f, f * 0.9, 0.08, amp, rr(r, 0.02, 0.04)));
+                f *= step * rr(r, 0.98, 1.02);
+            }
+        }
+        // Yellowhammer: "a little bit of bread and no cheese".
+        18 => {
+            let f = lr(r, 5500.0, 6500.0);
+            for _ in 0..ri(r, 6, 10) {
+                push(out, Syl { h: [1.0, 0.3, 0.1, 0.0], ..whistle(0.04, f, f * 0.92, 0.0, 0.8, 0.06) });
+            }
+            if r.unipolar() < 0.5 {
+                push(out, whistle(0.12, f * 1.05, f, 0.0, 0.9, 0.02));
+            }
+            let g = lr(r, 3700.0, 4300.0);
+            push(out, Syl { h: [1.0, 0.25, 0.08, 0.0], ..whistle(rr(r, 0.4, 0.6), g, g * 0.92, 0.0, 1.0, 0.05) });
+        }
+        // Collared Dove: "coo-COO-cuk", soft and breathy.
+        19 => {
+            let f = lr(r, 450.0, 520.0);
+            let coo = |dur: f32, k: f32, amp: f32, gap: f32| Syl { h: [1.0, 0.15, 0.05, 0.0], noise: 0.18, q: 3.0, att: 0.04, rel: 0.08, ..whistle(dur, f * k, f * k * 0.96, 0.03, amp, gap) };
+            for _ in 0..ri(r, 3, 8) {
+                push(out, coo(0.15, 1.0, 0.7, 0.05));
+                push(out, coo(0.45, 1.05, 1.0, 0.05));
+                push(out, coo(0.2, 0.9, 0.75, rr(r, 0.35, 0.5)));
+            }
+        }
+        // Golden Oriole: a liquid, fluting "weela-weeo".
+        20 => {
+            for _ in 0..ri(r, 3, 5) {
+                let f0 = lr(r, 1200.0, 2200.0);
+                push(out, Syl { h: [1.0, 0.3, 0.1, 0.0], ..whistle(rr(r, 0.1, 0.2), f0, f0 * 2f32.powf(rr(r, -0.5, 0.5)), rr(r, -0.4, 0.4), rr(r, 0.8, 1.0), rr(r, 0.01, 0.03)) });
+            }
+        }
+        // Crow: "kraa, kraa, kraa", harsh and hoarse.
+        21 => {
+            let f = lr(r, 600.0, 900.0);
+            for _ in 0..ri(r, 2, 5) {
+                push(out, Syl { h: [1.0, 0.8, 0.7, 0.6], noise: 0.6, q: 2.0, att: 0.02, rel: 0.06, ..harsh(rr(r, 0.25, 0.4), f, f * 0.85, 0.1, 1.0, rr(r, 0.3, 0.5)) });
+            }
+        }
+        // Curlew: slow rising calls, then the bubbling trill.
+        22 => {
+            let f = lr(r, 1700.0, 1900.0);
+            for _ in 0..ri(r, 2, 3) {
+                push(out, Syl { h: [1.0, 0.15, 0.04, 0.0], att: 0.05, ..whistle(0.3, f, f * 1.45, -0.05, 0.85, rr(r, 0.25, 0.4)) });
+            }
+            let n = ri(r, 10, 20);
+            for i in 0..n {
+                let k = i as f32 / n as f32;
+                let g = f * (1.25 + 0.4 * k);
+                push(out, Syl { fm_rate: 20.0, fm_depth: 0.03, h: [1.0, 0.15, 0.04, 0.0], ..whistle(0.08, g, g * 1.08, 0.0, 0.7 + 0.3 * k, 0.015) });
+            }
+            push(out, whistle(0.35, f * 1.6, f * 1.1, 0.05, 0.8, 0.05));
+        }
+        // Swift: the screaming of a party racing past.
+        23 => {
+            for _ in 0..ri(r, 1, 3) {
+                let f0 = lr(r, 6000.0, 8000.0);
+                push(out, Syl { fm_rate: rr(r, 80.0, 120.0), fm_depth: 0.06, noise: 0.25, q: 4.0, h: [1.0, 0.4, 0.15, 0.0], ..whistle(rr(r, 0.4, 0.8), f0, f0 * rr(r, 0.85, 1.05), 0.05, 0.9, rr(r, 0.1, 0.3)) });
+            }
+        }
+        // Hermit Thrush: a long pure note, then an ethereal spiral of fluting
+        // notes above it; each song type at its own pitch.
+        24 => {
+            let f = lr(r, 2000.0, 3500.0);
+            push(out, Syl { fm_rate: 6.0, fm_depth: 0.004, att: 0.04, ..whistle(rr(r, 0.25, 0.4), f, f * 0.99, 0.0, 0.9, 0.02) });
+            let chord = [1.5f32, 1.68, 2.0, 2.25, 2.52];
+            for _ in 0..ri(r, 5, 10) {
+                let g = f * chord[ri(r, 0, 4) as usize];
+                push(out, Syl { fm_rate: 30.0, fm_depth: 0.01, ..whistle(rr(r, 0.04, 0.06), g, g * rr(r, 0.97, 1.03), 0.0, rr(r, 0.6, 0.85), 0.008) });
+            }
+        }
+        // Wood Thrush: "bup bup, ee-oh-LAY", the last a buzzing trill.
+        25 => {
+            for _ in 0..2 {
+                push(out, Syl { h: [1.0, 0.2, 0.0, 0.0], ..whistle(0.05, 1200.0, 1150.0, 0.0, 0.4, 0.06) });
+            }
+            let f = lr(r, 1700.0, 2000.0);
+            push(out, Syl { h: [1.0, 0.5, 0.1, 0.0], ..whistle(0.15, f, f * 1.05, 0.05, 0.85, 0.02) });
+            push(out, Syl { h: [1.0, 0.5, 0.1, 0.0], ..whistle(0.15, f * 1.22, f * 1.18, 0.05, 0.9, 0.03) });
+            let g = lr(r, 4000.0, 6000.0);
+            push(out, Syl { fm_rate: 50.0, fm_depth: 0.1, h: [1.0, 0.6, 0.2, 0.05], noise: 0.08, ..whistle(0.25, g, g * 0.9, 0.0, 0.8, 0.05) });
+        }
+        // Cardinal: "cheer cheer cheer" down-slurs, or "birdy birdy" up-slurs.
+        26 => {
+            if r.unipolar() < 0.6 {
+                for _ in 0..ri(r, 4, 10) {
+                    push(out, whistle(rr(r, 0.15, 0.25), lr(r, 3600.0, 4200.0), lr(r, 1900.0, 2300.0), 0.05, 1.0, rr(r, 0.05, 0.1)));
+                }
+            } else {
+                for _ in 0..ri(r, 4, 8) {
+                    push(out, whistle(0.08, lr(r, 2300.0, 2700.0), lr(r, 4200.0, 4800.0), 0.0, 0.95, 0.05));
+                }
+            }
+        }
+        // Mourning Dove: "coo-OOO-oo-oo-oo", soft and sad.
+        27 => {
+            let f = lr(r, 430.0, 480.0);
+            let coo = |dur: f32, f0: f32, f1: f32, amp: f32, gap: f32| Syl { h: [1.0, 0.12, 0.03, 0.0], noise: 0.2, q: 3.0, att: 0.06, rel: 0.12, fm_rate: 5.0, fm_depth: 0.005, ..whistle(dur, f0, f1, 0.02, amp, gap) };
+            push(out, coo(0.3, f, f * 1.15, 0.7, 0.04));
+            push(out, coo(0.6, f * 1.15, f * 1.06, 1.0, 0.15));
+            for _ in 0..3 {
+                push(out, coo(0.4, f, f * 0.97, 0.8, 0.12));
+            }
+        }
+        // Bellbird: pure, ringing notes like small bells, on a few pitches of
+        // its own scale.
+        28 => {
+            let f = lr(r, 1500.0, 2500.0);
+            let scale = [1.0f32, 1.125, 1.25, 1.5, 1.68, 2.0];
+            for _ in 0..ri(r, 3, 8) {
+                let g = f * scale[ri(r, 0, 5) as usize];
+                let dur = rr(r, 0.15, 0.4);
+                push(out, Syl { h: [1.0, 0.0, 0.15, 0.0], att: 0.003, rel: dur * 0.8, fm_rate: 4.0, fm_depth: 0.002, ..whistle(dur, g, g, 0.0, rr(r, 0.7, 1.0), rr(r, 0.05, 0.25)) });
+            }
+        }
+        // Kookaburra: low chuckles rising into loud laughter, then fading.
+        _ => {
+            let f = lr(r, 800.0, 1200.0);
+            for _ in 0..ri(r, 5, 8) {
+                push(out, Syl { noise: 0.3, q: 3.0, ..harsh(0.06, f, f * 0.9, 0.1, 0.5, 0.06) });
+            }
+            let rate = rr(r, 8.0, 12.0);
+            let n = (rate * rr(r, 1.5, 3.0)) as u32;
+            for i in 0..n {
+                let k = (PI * i as f32 / n as f32).sin();
+                let g = f * (1.3 + 1.2 * k);
+                push(out, Syl { noise: 0.3, q: 3.0, ..harsh(0.6 / rate, g * 0.8, g * 1.2, 0.3, 0.5 + 0.5 * k, 0.4 / rate) });
             }
         }
     }
@@ -509,6 +707,10 @@ struct Bird {
     /// This song's transposition and loudness.
     ratio: f32,
     amp: f32,
+    /// Its own voice: a little higher or lower, a little quicker or slower
+    /// than others of its kind.
+    voice: f32,
+    pace: f32,
     /// How far it is now (0 near .. 1 far), for the screen.
     dist: f32,
     level: f32,
@@ -520,6 +722,8 @@ impl Bird {
     fn new(seed: u32) -> Self {
         let mut rng = Rng::new(seed.wrapping_mul(2_654_435_761).max(1));
         let songs = [rng.next_u32(), rng.next_u32(), rng.next_u32(), rng.next_u32()];
+        let voice = 2f32.powf(rng.bipolar() * 1.5 / 12.0);
+        let pace = 0.9 + 0.2 * rng.unipolar();
         Self {
             on: false,
             species: usize::MAX,
@@ -543,11 +747,20 @@ impl Bird {
             air: OnePole::default(),
             ratio: 1.0,
             amp: 1.0,
+            voice: 1.0,
+            pace: 1.0,
             dist: 0.5,
             level: 0.0,
             freq: 0.0,
             rng,
         }
+        .with_voice(voice, pace)
+    }
+
+    fn with_voice(mut self, voice: f32, pace: f32) -> Self {
+        self.voice = voice;
+        self.pace = pace;
+        self
     }
 
     fn singing(&self) -> bool {
@@ -577,11 +790,11 @@ impl Bird {
         compose(self.species, &mut r, &mut self.song);
         // Each rendition a little different.
         let j = 0.04 * variety;
-        let k = 1.0 / tempo.clamp(0.25, 4.0);
+        let k = self.pace / tempo.clamp(0.25, 4.0);
         for s in self.song.iter_mut() {
             let d = 1.0 + j * self.rng.bipolar();
-            s.f0 *= d;
-            s.f1 *= 1.0 + j * self.rng.bipolar();
+            s.f0 *= d * self.voice;
+            s.f1 *= (1.0 + j * self.rng.bipolar()) * self.voice;
             s.dur *= k * (1.0 + 2.0 * j * self.rng.bipolar());
             s.gap *= k * (1.0 + 3.0 * j * self.rng.bipolar());
             s.gap = s.gap.max(0.0);
@@ -621,6 +834,8 @@ impl Bird {
 pub struct BirdsState {
     /// The song plays (set by the engine every block).
     pub playing: bool,
+    /// They were singing in the last block (a fresh start staggers them).
+    sang: bool,
     sr: f32,
     birds: Vec<Bird>,
     held: usize,
@@ -639,6 +854,7 @@ impl BirdsState {
     pub fn new(sr: f32) -> Self {
         Self {
             playing: false,
+            sang: false,
             sr: sr.max(1000.0),
             birds: (0..MAX_BIRDS).map(|i| Bird::new(0x5EED_B12D ^ (i as u32 + 1).wrapping_mul(0x9E37_79B9))).collect(),
             held: 0,
@@ -744,10 +960,27 @@ impl BirdsState {
         let pitch = 2f32.powf(p[PITCH].clamp(-24.0, 24.0) / 12.0);
         let (distance, width, space) = (p[DISTANCE].clamp(0.0, 1.0), p[WIDTH].clamp(0.0, 1.0), p[SPACE].clamp(0.0, 1.0));
         let gain = db_to_gain(p[VOLUME]) * 0.32;
+        // Starting to sing: not all at once, each after a while of its own.
+        if sings && !self.sang {
+            let f = 2.5 * (0.35f32 / 2.5).powf(busy);
+            for b in self.birds.iter_mut().filter(|b| b.on && !b.singing()) {
+                let k = &KINDS[b.species.min(KINDS.len() - 1)];
+                b.rest = rr(&mut b.rng, 0.1, 0.8) * 0.5 * (k.rest.0 + k.rest.1) * f;
+            }
+            // One of them begins soon.
+            if let Some(b) = self.birds.iter_mut().find(|b| b.on && !b.singing()) {
+                b.rest = b.rest.min(0.3);
+            }
+        }
+        self.sang = sings;
         let mut done = 0;
         while done < n {
             let len = CHUNK.min(n - done);
             let dt = len as f32 / sr;
+            // Birds take turns: one about to sing waits while others sing,
+            // more patiently the less busy they are.
+            let mut singing_now = self.birds.iter().filter(|b| b.on && b.singing() && b.dist < 0.85).count();
+            let patience = 0.04 + 0.65 * busy * busy;
             self.dl[..len].fill(0.0);
             self.dr[..len].fill(0.0);
             self.wl[..len].fill(0.0);
@@ -767,9 +1000,13 @@ impl BirdsState {
                     if b.rest <= 0.0 {
                         if sings && b.fly >= 1.0 {
                             // Now and then it flies off to sing elsewhere.
-                            if b.song.is_empty() || b.rng.unipolar() > 0.08 * (1.0 + variety) {
+                            if singing_now > 0 && b.rng.unipolar() > patience.powi(singing_now as i32) {
+                                // Someone else is singing: wait for a gap.
+                                b.rest = rr(&mut b.rng, 0.3, 1.5);
+                            } else if b.song.is_empty() || b.rng.unipolar() > 0.08 * (1.0 + variety) {
                                 b.start(variety, tempo, pitch, 1.0);
                                 b.rest_for(busy);
+                                singing_now += 1;
                             } else {
                                 b.from = b.place();
                                 b.u = b.rng.bipolar();
@@ -914,15 +1151,23 @@ mod tests {
         ((re * re + im * im).sqrt() / n) as f32
     }
 
-    /// Energy below and above a frequency, by a pair of simple filters.
+    /// Energy well below and well above a frequency (an octave either
+    /// side, by four-pole filters).
     fn split(x: &[f32], hz: f32) -> (f32, f32) {
-        let mut lp = OnePole::default();
-        lp.set(hz, SR);
+        let mut lp = [OnePole::default(); 4];
+        let mut hp = [OnePole::default(); 4];
+        for f in lp.iter_mut() {
+            f.set(hz * 0.7, SR);
+        }
+        for f in hp.iter_mut() {
+            f.set(hz * 1.4, SR);
+        }
         let (mut lo, mut hi) = (0.0, 0.0);
         for &v in x {
-            let a = lp.lp(v);
+            let a = lp.iter_mut().fold(v, |s, f| f.lp(s));
+            let b = hp.iter_mut().fold(v, |s, f| f.hp(s));
             lo += a * a;
-            hi += (v - a) * (v - a);
+            hi += b * b;
         }
         (lo, hi)
     }
@@ -1000,6 +1245,40 @@ mod tests {
         let (l, _) = run(&mut st, &p, 2.0);
         let f = midi_to_freq(64.0);
         assert!(mag(&l, f) > 3.0 * mag(&l, f * 1.3), "{} {}", mag(&l, f), mag(&l, f * 1.3));
+    }
+
+    #[test]
+    fn they_take_turns_and_do_not_all_start_at_once() {
+        let mut p = preset("Woodland Edge");
+        p[SINGS] = 0.0;
+        p[BUSY] = 0.25;
+        for slot in 0..SLOTS {
+            p[NUMBER_1 + 2 * slot] = 2.0;
+        }
+        let mut st = BirdsState::new(SR);
+        st.playing = true;
+        let (mut l, mut r) = (vec![0.0f32; 256], vec![0.0f32; 256]);
+        let mut first = [f32::NAN; MAX_BIRDS];
+        let (mut some, mut more) = (0, 0);
+        let blocks = (40.0 * SR / 256.0) as usize;
+        for k in 0..blocks {
+            st.render(&p, &mut l, &mut r);
+            let now = k as f32 * 256.0 / SR;
+            let singing: Vec<usize> = (0..MAX_BIRDS).filter(|&i| st.birds[i].on && st.birds[i].singing()).collect();
+            for &i in &singing {
+                if first[i].is_nan() {
+                    first[i] = now;
+                }
+            }
+            some += usize::from(!singing.is_empty());
+            more += usize::from(singing.len() > 1);
+        }
+        let starts: Vec<f32> = first.iter().copied().filter(|v| !v.is_nan()).collect();
+        assert!(starts.len() >= 4, "{starts:?}");
+        let spread = starts.iter().copied().fold(f32::MIN, f32::max) - starts.iter().copied().fold(f32::MAX, f32::min);
+        assert!(spread > 2.0, "they all began within {spread} s");
+        // Mostly one at a time.
+        assert!((more as f32) < 0.3 * some as f32, "{more} of {some}");
     }
 
     #[test]

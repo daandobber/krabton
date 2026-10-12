@@ -16,6 +16,7 @@ pub mod gate;
 pub mod glitch;
 pub mod grains;
 pub mod multiband;
+pub mod open_air;
 pub mod pedals;
 pub mod pitch_delay;
 pub mod plate;

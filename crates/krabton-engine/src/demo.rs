@@ -267,7 +267,13 @@ pub fn ambient_project() -> Project {
     p.tracks[flute].name = "Pan Flute".into();
     p.tracks[flute].color = PALETTE[0];
     p.tracks[flute].mixer.volume_db = -5.0;
-    p.tracks[flute].mixer.sends = vec![0.25, 0.0];
+    p.tracks[flute].mixer.sends = vec![0.1, 0.0];
+    // Played over a lake: the water and the far shore answer.
+    let mut air = p.make_device(EffectKind::OpenAir);
+    air.params[crate::dsp::fx::open_air::PLACE] = 3.0;
+    air.params[crate::dsp::fx::open_air::DISTANCE] = 0.35;
+    air.params[crate::dsp::fx::open_air::MIX] = 0.6;
+    p.tracks[flute].devices.push(air);
     let tune: &[(u8, f64, f64)] = &[
         (76, 0.0, 1.5),
         (74, 1.5, 0.5),
