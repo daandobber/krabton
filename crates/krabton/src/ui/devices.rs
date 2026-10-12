@@ -1360,26 +1360,33 @@ impl App {
                                 }
                             }
                         });
-                        if engine == drums::DrumEngine::RealDrums && !self.real_drums_here {
-                            // The recordings are not here yet: get them (stand-ins play meanwhile).
+                        let pack = krabton_engine::dsp::real_drums::pack_of(kit).filter(|p| !self.packs_here.contains(p.folder));
+                        if let Some(pack) = pack {
+                            // The kit's recordings are not here yet: get them (stand-ins play meanwhile).
+                            let kit_name = kit.clone();
                             ui.horizontal(|ui| {
-                                let state = self.drum_install.as_ref().and_then(|s| s.lock().ok().map(|s| s.clone()));
+                                let state = self.drum_installs.get(pack.folder).and_then(|s| s.lock().ok().map(|s| s.clone()));
                                 match state {
                                     Some(crate::drum_lib::State::Downloading { done, total }) => {
-                                        ui.add(egui::ProgressBar::new(done as f32 / total.max(1) as f32).desired_width(240.0).text(format!("Downloading the recordings: {done} of {total}")));
+                                        ui.add(egui::ProgressBar::new(done as f32 / total.max(1) as f32).desired_width(240.0).text(format!("Downloading {}: {done} of {total}", pack.folder)));
+                                        ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
+                                    }
+                                    Some(crate::drum_lib::State::Preparing) => {
+                                        ui.spinner();
+                                        ui.label(RichText::new(format!("Mixing the microphones of {}...", pack.folder)).small().color(TEXT_DIM));
                                         ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
                                     }
                                     Some(crate::drum_lib::State::Failed(e)) => {
                                         ui.label(RichText::new(e).small().color(REC));
                                         if ui.button("Try again").clicked() {
-                                            self.start_drum_install();
+                                            self.start_drum_install(&kit_name);
                                         }
                                     }
                                     _ => {
-                                        if ui.add(egui::Button::new(RichText::new("Download the recordings (62 MB)").color(TEXT_DARK)).fill(accent_now())).on_hover_text(krabton_engine::dsp::real_drums::CREDIT).clicked() {
-                                            self.start_drum_install();
+                                        if ui.add(egui::Button::new(RichText::new(format!("Download the recordings ({} MB)", pack.mb)).color(TEXT_DARK)).fill(accent_now())).on_hover_text(pack.credit).clicked() {
+                                            self.start_drum_install(&kit_name);
                                         }
-                                        ui.label(RichText::new("Free (CC0). Until then, modelled drums play.").small().color(TEXT_DIM));
+                                        ui.label(RichText::new("Free. Until then, Krabton's own drums play.").small().color(TEXT_DIM));
                                     }
                                 }
                             });

@@ -407,6 +407,10 @@ pub struct DrumPad {
     /// robins. Empty: `sample` or the voice plays.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub layers: Vec<Vec<SampleRef>>,
+    /// Brings the recorded layers to a common level (dB), set when a kit
+    /// is loaded; the pad's own level comes on top.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub trim_db: f32,
 }
 
 fn half() -> f32 {
@@ -445,6 +449,7 @@ impl DrumPad {
             b: 0.5,
             choke: 0,
             layers: Vec::new(),
+            trim_db: 0.0,
         }
     }
 }

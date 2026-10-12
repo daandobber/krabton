@@ -358,9 +358,9 @@ pub struct App {
     rec_notes: HashMap<(u64, u8), RecNote>,
     /// The grand piano's samples being installed.
     pub piano_install: Option<crate::piano_lib::Install>,
-    /// Downloading Real Drums' recordings, and whether they are here.
-    pub(crate) drum_install: Option<crate::drum_lib::Install>,
-    pub(crate) real_drums_here: bool,
+    /// Sampled drum packs being downloaded, and those that are here (by folder).
+    pub(crate) drum_installs: std::collections::HashMap<&'static str, crate::drum_lib::Install>,
+    pub(crate) packs_here: std::collections::HashSet<&'static str>,
 
     pub meters: Vec<(f32, f32)>,
     pub return_meters: Vec<(f32, f32)>,
@@ -500,8 +500,8 @@ impl App {
             rec_quantize: true,
             rec_notes: HashMap::new(),
             piano_install: None,
-            drum_install: None,
-            real_drums_here: krabton_engine::dsp::real_drums::installed(),
+            drum_installs: Default::default(),
+            packs_here: krabton_engine::dsp::real_drums::PACKS.iter().filter(|p| krabton_engine::dsp::real_drums::installed(p)).map(|p| p.folder).collect(),
             meters: Vec::new(),
             return_meters: Vec::new(),
             master_meter: (0.0, 0.0),
@@ -1510,30 +1510,30 @@ impl App {
     }
 
     /// Follows the piano install; when it is done every Grand Piano gets the samples.
-    pub(crate) fn start_drum_install(&mut self) {
-        let busy = self.drum_install.as_ref().and_then(|s| s.lock().ok().map(|s| !matches!(*s, crate::drum_lib::State::Failed(_)))).unwrap_or(false);
-        if !busy && !self.real_drums_here {
-            self.drum_install = Some(crate::drum_lib::start());
+    /// Downloads the pack a kit comes from (unless it is here or on its way).
+    pub(crate) fn start_drum_install(&mut self, kit: &str) {
+        let Some(pack) = krabton_engine::dsp::real_drums::pack_of(kit) else { return };
+        let busy = self.drum_installs.get(pack.folder).and_then(|s| s.lock().ok().map(|s| !matches!(*s, crate::drum_lib::State::Failed(_)))).unwrap_or(false);
+        if !busy && !self.packs_here.contains(pack.folder) {
+            self.drum_installs.insert(pack.folder, crate::drum_lib::start(pack));
         }
     }
 
-    /// Real Drums arrived: the kits that use them load their recordings.
+    /// A pack arrived: the kits that use it load their recordings.
     fn poll_drum_install(&mut self) {
-        let Some(state) = self.drum_install.clone() else { return };
-        let done = state.lock().map(|s| *s == crate::drum_lib::State::Ready).unwrap_or(false);
-        if !done {
-            return;
-        }
-        self.drum_install = None;
-        self.real_drums_here = true;
-        for t in self.project.tracks.iter_mut() {
-            if let Some(Instrument::Drums { kit, pads, .. }) = t.instrument.as_mut() {
-                if kit == "Real Kit" || kit == "Real Percussion" {
-                    *pads = krabton_engine::dsp::drums::kit(kit);
+        let done: Vec<&'static str> = self.drum_installs.iter().filter(|(_, s)| s.lock().map(|s| *s == crate::drum_lib::State::Ready).unwrap_or(false)).map(|(k, _)| *k).collect();
+        for folder in done {
+            self.drum_installs.remove(folder);
+            self.packs_here.insert(folder);
+            for t in self.project.tracks.iter_mut() {
+                if let Some(Instrument::Drums { kit, pads, .. }) = t.instrument.as_mut() {
+                    if krabton_engine::dsp::real_drums::pack_of(kit).is_some_and(|p| p.folder == folder) {
+                        *pads = krabton_engine::dsp::drums::kit(kit);
+                    }
                 }
             }
+            self.toast(format!("{folder} is here: its kits play their recordings now"));
         }
-        self.toast("Real Drums are here: the recorded kits play their recordings now");
     }
 
     fn poll_piano_install(&mut self) {
@@ -2006,7 +2006,10 @@ impl App {
                     self.detail = DetailTab::Devices;
                 }
                 "pianoinstall" => self.start_piano_install(),
-                "druminstall" => self.start_drum_install(),
+                "druminstall" => {
+                    let kit = arg.to_string();
+                    self.start_drum_install(if kit.is_empty() { "Real Kit" } else { &kit });
+                }
                 "mono101" => {
                     let names = krabton_engine::dsp::mono101::preset_names();
                     let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
@@ -2096,6 +2099,12 @@ impl App {
                     if let TrackSel::Track(i) = self.sel_track {
                         self.rack.open = self.project.tracks.get(i).map(|t| t.id);
                     }
+                }
+                "drums" => {
+                    let kits = krabton_engine::dsp::drums::kit_names();
+                    let kit = kits.iter().copied().find(|k| *k == arg).unwrap_or(kits[0]);
+                    self.apply_item(&BrowserItem::Drums(kit), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
                 }
                 "shakers" => {
                     let names = krabton_engine::dsp::shaker_synth::preset_names();

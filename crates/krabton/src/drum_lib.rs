@@ -1,9 +1,9 @@
-//! Real Drums' recordings on this computer: downloading them (CC0 samples
-//! from the Versilian Community Sample Library on GitHub) with the system's
-//! `curl`, a few at a time. Files already there are skipped, so a second
-//! try picks up where the first stopped.
+//! Sampled drum packs on this computer: downloading them (free samples on
+//! GitHub, see `real_drums::PACKS`) with the system's `curl`, a few at a
+//! time. Files already there are skipped, so a second try picks up where
+//! the first stopped.
 
-use krabton_engine::dsp::real_drums;
+use krabton_engine::dsp::real_drums::{self, SamplePack};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -12,18 +12,20 @@ const WORKERS: usize = 6;
 #[derive(Clone, Debug, PartialEq)]
 pub enum State {
     Downloading { done: usize, total: usize },
+    /// Mixing the hits recorded with several microphones.
+    Preparing,
     Ready,
     Failed(String),
 }
 
 pub type Install = Arc<Mutex<State>>;
 
-/// Starts downloading in the background; the state tells how far it is.
-pub fn start() -> Install {
-    let state: Install = Arc::new(Mutex::new(State::Downloading { done: 0, total: real_drums::files().len() }));
+/// Starts downloading a pack in the background; the state tells how far it is.
+pub fn start(pack: &'static SamplePack) -> Install {
+    let state: Install = Arc::new(Mutex::new(State::Downloading { done: 0, total: real_drums::files(pack).len() }));
     let s = state.clone();
     std::thread::spawn(move || {
-        let result = install(&s);
+        let result = install(pack, &s);
         if let Ok(mut st) = s.lock() {
             *st = match result {
                 Ok(()) => State::Ready,
@@ -34,10 +36,10 @@ pub fn start() -> Install {
     state
 }
 
-fn install(state: &Install) -> Result<(), String> {
-    let dir = real_drums::dir();
+fn install(pack: &'static SamplePack, state: &Install) -> Result<(), String> {
+    let dir = real_drums::dir(pack);
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let files = real_drums::files();
+    let files = real_drums::files(pack);
     let total = files.len();
     let queue = Arc::new(Mutex::new(files));
     let done = Arc::new(AtomicUsize::new(0));
@@ -48,7 +50,7 @@ fn install(state: &Install) -> Result<(), String> {
             std::thread::spawn(move || loop {
                 let next = queue.lock().ok().and_then(|mut q| q.pop());
                 let Some((url, name)) = next else { break };
-                let to = dir.join(name);
+                let to = dir.join(&name);
                 if !to.is_file() {
                     if let Err(e) = crate::piano_lib::fetch(&url, &to) {
                         if let Ok(mut f) = failed.lock() {
@@ -73,8 +75,12 @@ fn install(state: &Install) -> Result<(), String> {
     if let Some(e) = failed.lock().ok().and_then(|f| f.clone()) {
         return Err(e);
     }
-    let _ = std::fs::write(dir.join("README.txt"), format!("{}\n", real_drums::CREDIT));
-    if real_drums::installed() {
+    if let Ok(mut st) = state.lock() {
+        *st = State::Preparing;
+    }
+    real_drums::build_mixes(pack)?;
+    let _ = std::fs::write(dir.join("README.txt"), format!("{}\n", pack.credit));
+    if real_drums::installed(pack) {
         Ok(())
     } else {
         Err("some recordings did not arrive; try again".into())

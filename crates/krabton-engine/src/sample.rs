@@ -56,7 +56,12 @@ impl SampleData {
     }
 
     pub fn from_wav(path: &Path) -> Result<Self, String> {
-        let mut reader = hound::WavReader::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let mut reader = match hound::WavReader::open(path) {
+            Ok(r) => r,
+            // Some recorders write chunks hound does not take (a "fmt " of 20
+            // bytes, say); read the plain PCM and float formats ourselves.
+            Err(e) => return Self::from_wav_lenient(path).map_err(|e2| format!("{}: {e} ({e2})", path.display())),
+        };
         let spec = reader.spec();
         let channels = spec.channels.max(1) as usize;
         let interleaved: Vec<f32> = match spec.sample_format {
@@ -67,6 +72,47 @@ impl SampleData {
             }
         };
         Self::from_interleaved(path, spec.sample_rate, channels, interleaved)
+    }
+
+    /// A WAV file read chunk by chunk: PCM of 8 to 32 bits, or 32-bit float,
+    /// whatever the size of its "fmt " chunk.
+    fn from_wav_lenient(path: &Path) -> Result<Self, String> {
+        let d = std::fs::read(path).map_err(|e| e.to_string())?;
+        if d.len() < 12 || &d[0..4] != b"RIFF" || &d[8..12] != b"WAVE" {
+            return Err("not a WAV file".into());
+        }
+        let u16_at = |i: usize| u16::from_le_bytes([d[i], d[i + 1]]);
+        let u32_at = |i: usize| u32::from_le_bytes([d[i], d[i + 1], d[i + 2], d[i + 3]]);
+        let (mut fmt, mut data) = (None, None);
+        let mut i = 12;
+        while i + 8 <= d.len() {
+            let id = &d[i..i + 4];
+            let n = u32_at(i + 4) as usize;
+            let body = i + 8..(i + 8 + n).min(d.len());
+            if id == b"fmt " && body.len() >= 16 {
+                let b = body.start;
+                let mut format = u16_at(b);
+                if format == 0xFFFE && body.len() >= 26 {
+                    // WAVE_FORMAT_EXTENSIBLE: the real format is in the sub-format.
+                    format = u16_at(b + 24);
+                }
+                fmt = Some((format, u16_at(b + 2).max(1) as usize, u32_at(b + 4), u16_at(b + 14)));
+            } else if id == b"data" {
+                data = Some(body);
+            }
+            i += 8 + n + (n & 1);
+        }
+        let (format, channels, rate, bits) = fmt.ok_or("no fmt chunk")?;
+        let data = &d[data.ok_or("no data chunk")?];
+        let interleaved: Vec<f32> = match (format, bits) {
+            (1, 8) => data.iter().map(|b| (*b as f32 - 128.0) / 128.0).collect(),
+            (1, 16) => data.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0).collect(),
+            (1, 24) => data.chunks_exact(3).map(|c| (i32::from_le_bytes([0, c[0], c[1], c[2]]) >> 8) as f32 / 8_388_608.0).collect(),
+            (1, 32) => data.chunks_exact(4).map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]]) as f32 / 2_147_483_648.0).collect(),
+            (3, 32) => data.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect(),
+            _ => return Err(format!("unsupported WAV format {format} with {bits} bits")),
+        };
+        Self::from_interleaved(path, rate, channels, interleaved)
     }
 
     fn from_interleaved(path: &Path, sample_rate: u32, channels: usize, interleaved: Vec<f32>) -> Result<Self, String> {
@@ -218,5 +264,41 @@ impl<'de> Deserialize<'de> for SampleRef {
             }
         });
         Ok(s)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_wav_with_an_unusual_fmt_chunk_still_loads() {
+        // 16-bit stereo PCM whose "fmt " chunk is 20 bytes (as some recorders write).
+        let samples: [i16; 4] = [16384, -16384, 8192, -8192];
+        let mut d = Vec::new();
+        d.extend_from_slice(b"RIFF");
+        d.extend_from_slice(&(4 + 28 + 8 + 8u32).to_le_bytes());
+        d.extend_from_slice(b"WAVEfmt ");
+        d.extend_from_slice(&20u32.to_le_bytes());
+        for v in [1u16, 2] {
+            d.extend_from_slice(&v.to_le_bytes());
+        }
+        d.extend_from_slice(&44100u32.to_le_bytes());
+        d.extend_from_slice(&176400u32.to_le_bytes());
+        for v in [4u16, 16, 0, 0] {
+            d.extend_from_slice(&v.to_le_bytes());
+        }
+        d.extend_from_slice(b"data");
+        d.extend_from_slice(&8u32.to_le_bytes());
+        for s in samples {
+            d.extend_from_slice(&s.to_le_bytes());
+        }
+        let path = std::env::temp_dir().join("krabton_fmt20_test.wav");
+        std::fs::write(&path, &d).unwrap();
+        let s = SampleData::load(&path).expect("loads");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(s.frames(), 2);
+        assert!((s.left[0] - 0.5).abs() < 1e-4 && (s.right[0] + 0.5).abs() < 1e-4);
+        assert!((s.left[1] - 0.25).abs() < 1e-4);
     }
 }

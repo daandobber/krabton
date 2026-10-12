@@ -541,6 +541,8 @@ pub enum DrumEngine {
     Acoustic,
     /// Recorded kits (see `real_drums`).
     RealDrums,
+    /// Recorded drum machines and electronic kits (see `real_drums`).
+    SampledMachines,
     /// More machines (see `retro`).
     Retro,
     M808,
@@ -560,14 +562,15 @@ static GCR78: [(&str, &[DrumVoice]); 1] = [("CR-78", &DrumVoice::CR78)];
 static GMUTABLE: [(&str, &[DrumVoice]); 1] = [("Mutable", &DrumVoice::MUTABLE)];
 static GSHAKERS: [(&str, &[DrumVoice]); 1] = [("Shakers", &DrumVoice::SHAKERS)];
 static GACOUSTIC: [(&str, &[DrumVoice]); 2] = [("Acoustic", &DrumVoice::ACOUSTIC), ("Percussion", &DrumVoice::KIT_PERC)];
-static REAL_PERC: [DrumVoice; 7] = [DrumVoice::Tambourine, DrumVoice::Cowbell, DrumVoice::Clap, DrumVoice::Maraca, DrumVoice::Cr78Bongo, DrumVoice::M808Conga, DrumVoice::M808Claves];
+static REAL_PERC: [DrumVoice; 8] = [DrumVoice::Tambourine, DrumVoice::Cowbell, DrumVoice::Clap, DrumVoice::Maraca, DrumVoice::Cr78Bongo, DrumVoice::M808Conga, DrumVoice::M808Claves, DrumVoice::M808Tom];
+static GMACHINES: [(&str, &[DrumVoice]); 3] = [("808", &DrumVoice::M808), ("Acoustic", &DrumVoice::ACOUSTIC), ("Percussion", &REAL_PERC)];
 static GRETRO: [(&str, &[DrumVoice]); 1] = [("Retro", &DrumVoice::RETRO)];
 static GREAL: [(&str, &[DrumVoice]); 2] = [("Acoustic", &DrumVoice::ACOUSTIC), ("Percussion", &REAL_PERC)];
 
 impl DrumEngine {
     /// The engines to choose from. `Shakers` is only kept for old projects:
     /// its kits are the Drum Rack's now, and Shakers is an instrument.
-    pub const ALL: [DrumEngine; 10] = [DrumEngine::RealDrums, DrumEngine::Acoustic, DrumEngine::Retro, DrumEngine::M808, DrumEngine::M909, DrumEngine::M606, DrumEngine::Cr78, DrumEngine::Mutable, DrumEngine::FmDrums, DrumEngine::Rack];
+    pub const ALL: [DrumEngine; 11] = [DrumEngine::RealDrums, DrumEngine::SampledMachines, DrumEngine::Acoustic, DrumEngine::Retro, DrumEngine::M808, DrumEngine::M909, DrumEngine::M606, DrumEngine::Cr78, DrumEngine::Mutable, DrumEngine::FmDrums, DrumEngine::Rack];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -582,6 +585,7 @@ impl DrumEngine {
             DrumEngine::Acoustic => "Acoustic Drums",
             DrumEngine::RealDrums => "Real Drums",
             DrumEngine::Retro => "Retro Machines",
+            DrumEngine::SampledMachines => "Sampled Machines",
         }
     }
 
@@ -595,8 +599,9 @@ impl DrumEngine {
             DrumEngine::Shakers => "Perry Cook's PhISEM shakers: maraca, cabasa, tambourine, sleigh bells, bamboo, cans, rocks and more",
             DrumEngine::M606 => "The 606, rebuilt from its circuits: tight kick, snare, two toms, six-square hats and cymbal; the acid house drummer",
             DrumEngine::FmDrums => "Two-operator FM drums: kick, snare, tom, hat, bell, zap, perc and noise, with an FM knob on every pad",
+            DrumEngine::SampledMachines => "Drum machines and electronic kits, recorded: the 707 and the 808 (free sample sets from the nineties), an electro kit, a club kit and a glitch kit (Sonic Pi's samples); downloaded on first use",
             DrumEngine::Retro => "More drum machines: a seventies rhythm box (bongos, claves, guiro), the hexagonal electronic kit with its sweeping toms, the crunchy 8-bit digital eighties, a pocket rhythm machine",
-            DrumEngine::RealDrums => "Recorded drums: a kit and hand percussion with velocity layers and round robins (CC0 samples from the VCSL, downloaded on first use; until then modelled stand-ins play)",
+            DrumEngine::RealDrums => "Recorded drums: acoustic kits from rusty rock, classic rock, metal and a big room to garage, seventies, a jazz club, brushes and dry; hand and body percussion and tabla. With velocity layers and round robins (free samples, each kit downloaded on first use; until then Krabton's own drums stand in)",
             DrumEngine::Acoustic => "A real drum kit, modelled: kick, snare with its wires, side stick, three toms, hi-hat (closed, pedal, open), ride and its bell, crashes; every hit a little different, harder hits brighter",
         }
     }
@@ -615,6 +620,7 @@ impl DrumEngine {
             DrumEngine::Acoustic => &GACOUSTIC,
             DrumEngine::RealDrums => &GREAL,
             DrumEngine::Retro => &GRETRO,
+            DrumEngine::SampledMachines => &GMACHINES,
         }
     }
 
@@ -628,7 +634,8 @@ impl DrumEngine {
             DrumEngine::M606 => &["606 Classic", "606 Acid House"],
             DrumEngine::FmDrums => &["FM Kit", "FM Industrial", "FM Glitch"],
             DrumEngine::Acoustic => &["Studio Kit", "Rock Kit", "Jazz Kit", "Funk Kit", "Vintage Kit", "Brush Kit"],
-            DrumEngine::RealDrums => &["Real Kit", "Real Percussion"],
+            DrumEngine::RealDrums => &["Real Kit", "Rusty Kit", "Classic Rock Kit", "Naked Kit", "Metal Kit", "Room Kit", "Garage Kit", "70s Kit", "Jazz Club Kit", "Lounge Kit", "Dry Kit", "Real Percussion", "Body Percussion", "Tabla"],
+            DrumEngine::SampledMachines => &["707 Samples", "808 Samples", "Electro Kit", "Club Kit", "Glitch Kit"],
             DrumEngine::Retro => &["Rhythm Box", "Hexagon", "Digital 80s", "Pocket Rhythm"],
             DrumEngine::Rack => &["Classic 808", "Classic 909", "Classic Lo-Fi", "Hybrid", "Electro", "606 Electro", "Shaker Kit", "Hand Percussion", "Found Sounds"],
         }
@@ -812,7 +819,7 @@ pub fn kit(name: &str) -> Vec<DrumPad> {
     match current_name(name) {
         // ---------------------------------------------------------- Acoustic
         n @ ("Studio Kit" | "Rock Kit" | "Jazz Kit" | "Funk Kit" | "Vintage Kit" | "Brush Kit") => acoustic_kit(n),
-        n @ ("Real Kit" | "Real Percussion") => super::real_drums::kit(n),
+        n if super::real_drums::pack_of(n).is_some() => super::real_drums::kit(n),
         // ---------------------------------------------------------- Retro
         "Rhythm Box" => vec![
             pad("Bass Drum", RbKick, 36, |p| p.level_db = 0.0),
@@ -1476,6 +1483,9 @@ struct PadVoice {
     /// The recorded layer and round robin playing (pads with layers).
     layer: usize,
     rr: usize,
+    /// The hit before, dying away under a new one: its layer, round
+    /// robin, position and gain.
+    tail: Option<(usize, usize, f64, f32)>,
     model: Model,
     model_sr: f32,
     /// Tell the model it was hit, on its next block.
@@ -1509,6 +1519,7 @@ impl PadVoice {
             sample_pos: 0.0,
             layer: 0,
             rr: 0,
+            tail: None,
             model: Model::None,
             model_sr: 0.0,
             model_hit: false,
@@ -1521,6 +1532,13 @@ impl PadVoice {
     }
 
     fn trigger(&mut self, pad: &DrumPad, vel: f32, sr: f32) {
+        // A recording hit again: the last hit dies away under the new one
+        // instead of stopping dead (a cymbal keeps ringing).
+        self.tail = None;
+        if self.active && !self.choking && (!pad.layers.is_empty() || pad.sample.is_some()) {
+            let vel_gain = if pad.layers.is_empty() { self.vel.powf(1.3) } else { self.vel.powf(0.5) }.max(0.02);
+            self.tail = Some((self.layer, self.rr, self.sample_pos, vel_gain * self.amp * self.choke));
+        }
         self.active = true;
         self.t = 0;
         self.vel = vel;
@@ -1842,9 +1860,34 @@ impl DrumState {
             }
             // Recorded layers carry most of the dynamics themselves.
             let vel_gain = if pad.layers.is_empty() { v.vel.powf(1.3) } else { v.vel.powf(0.5) }.max(0.02);
-            let gain = db_to_gain(pad.level_db) * vel_gain * 0.32;
+            let level = pad.level_db + if pad.layers.is_empty() { 0.0 } else { pad.trim_db };
+            let gain = db_to_gain(level) * vel_gain * 0.32;
             let (pl, pr) = pan_gains(pad.pan);
             let tr = 2f32.powf(pad.tune / 12.0);
+            if let Some((tl, trr, mut tpos, mut tg)) = v.tail {
+                if let Some(ts) = played_sample(pad, tl, trr) {
+                    let trate = tr as f64 * ts.sample_rate as f64 / sr as f64;
+                    let fade = decay_coef(if ts.duration() > 1.5 { 0.35 } else { 0.08 }, sr);
+                    let base = db_to_gain(level) * 0.32;
+                    for i in 0..n {
+                        if tpos >= ts.frames() as f64 || tg < 1e-4 {
+                            tg = 0.0;
+                            break;
+                        }
+                        let (a, b) = ts.read(tpos);
+                        l[i] += a * tg * base * pl;
+                        r[i] += b * tg * base * pr;
+                        tpos += trate;
+                        tg *= fade;
+                        if v.choking {
+                            tg *= choke_coef;
+                        }
+                    }
+                } else {
+                    tg = 0.0;
+                }
+                v.tail = (tg > 1e-4).then_some((tl, trr, tpos, tg));
+            }
             if let Some(s) = played_sample(pad, v.layer, v.rr) {
                 let rate = tr as f64 * s.sample_rate as f64 / sr as f64;
                 let frames = s.frames() as f64;
@@ -1960,6 +2003,27 @@ mod tests {
             let peak = l.iter().fold(0.0f32, |m, v| m.max(v.abs()));
             assert!(peak > 0.05 && peak < 4.0, "{name}: {peak}");
         }
+    }
+
+    #[test]
+    fn a_recording_hit_again_rings_on_under_the_new_hit() {
+        use crate::sample::{SampleData, SampleRef};
+        // A long, steady "cymbal".
+        let take = SampleRef::new(SampleData::from_buffers("c", None, 48000, vec![0.5; 96000], vec![0.5; 96000]));
+        let mut pad = DrumPad::new(DrumVoice::AcCrash);
+        pad.level_db = 0.0;
+        pad.layers = vec![vec![take]];
+        let pads = vec![pad];
+        let mut d = DrumState::new();
+        d.note_on(&pads, pads[0].note, 1.0, 48000.0);
+        let (mut l, mut r) = (vec![0.0; 4800], vec![0.0; 4800]);
+        d.render(&pads, &mut l, &mut r, 48000.0);
+        let alone = l[100];
+        d.note_on(&pads, pads[0].note, 1.0, 48000.0);
+        let (mut l, mut r) = (vec![0.0; 64], vec![0.0; 64]);
+        d.render(&pads, &mut l, &mut r, 48000.0);
+        // Right after the second hit both sound: more than one hit alone.
+        assert!(l[1] > alone * 1.5, "{} vs {alone}", l[1]);
     }
 
     #[test]
