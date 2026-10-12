@@ -212,3 +212,89 @@ pub fn demo_project() -> Project {
     p.loop_end = 16.0;
     p
 }
+
+/// A new age ambient set, "Forest Morning": a brook and birds, wind chimes
+/// and the wind, a drone, a pan flute and a glass bowl. Brook, birds and
+/// chimes play by themselves while the song plays; the scenes bring in the
+/// drone, the bowl and the flute.
+pub fn ambient_project() -> Project {
+    let mut p = Project::blank();
+    p.name = "Forest Morning".into();
+    p.bpm = 72.0;
+    p.scale = crate::scale::Scale::new(9, crate::scale::ScaleKind::Minor);
+    for (i, name) in ["Dawn", "Morning", "Flute", "Dusk"].iter().enumerate() {
+        p.scenes[i].name = name.to_string();
+    }
+
+    // --- Outside: they need no clips --------------------------------------
+    let brook = p.add_midi_track(Some(Instrument::nature("Brook")));
+    p.tracks[brook].name = "Brook".into();
+    p.tracks[brook].color = PALETTE[9];
+    p.tracks[brook].mixer.volume_db = -4.0;
+    let birds = p.add_midi_track(Some(Instrument::birds("Garden Morning")));
+    p.tracks[birds].name = "Birds".into();
+    p.tracks[birds].color = PALETTE[6];
+    p.tracks[birds].mixer.volume_db = -6.0;
+    let chimes = p.add_midi_track(Some(Instrument::wind_chimes("Bamboo Grove")));
+    p.tracks[chimes].name = "Chimes".into();
+    p.tracks[chimes].color = PALETTE[3];
+    p.tracks[chimes].mixer.volume_db = -10.0;
+
+    // --- The drone: A, and F at dusk ----------------------------------------
+    let drone = p.add_midi_track(Some(Instrument::drone("Shimmer Fields")));
+    p.tracks[drone].name = "Drone".into();
+    p.tracks[drone].color = PALETTE[11];
+    p.tracks[drone].mixer.volume_db = -9.0;
+    p.tracks[drone].mixer.sends = vec![0.3, 0.0];
+    let held = |keys: &[u8]| keys.iter().map(|&k| n(k, 0.0, 15.9, 0.7)).collect::<Vec<_>>();
+    set_clip(&mut p, drone, 0, "A", 16.0, held(&[45, 57]));
+    set_clip(&mut p, drone, 1, "A", 16.0, held(&[45, 57, 64]));
+    set_clip(&mut p, drone, 2, "A", 16.0, held(&[45, 57, 64]));
+    set_clip(&mut p, drone, 3, "F", 16.0, held(&[41, 53, 60]));
+
+    // --- A glass bowl now and then ------------------------------------------
+    let bowl = p.add_midi_track(Some(Instrument::rings("Glass Bowl")));
+    p.tracks[bowl].name = "Bowl".into();
+    p.tracks[bowl].color = PALETTE[1];
+    p.tracks[bowl].mixer.volume_db = -8.0;
+    p.tracks[bowl].mixer.sends = vec![0.45, 0.0];
+    set_clip(&mut p, bowl, 1, "Bowl", 16.0, vec![n(69, 0.0, 2.0, 0.6), n(76, 8.0, 2.0, 0.5)]);
+    set_clip(&mut p, bowl, 2, "Bowl", 16.0, vec![n(69, 0.0, 2.0, 0.6)]);
+    set_clip(&mut p, bowl, 3, "Bowl", 16.0, vec![n(65, 0.0, 2.0, 0.55), n(72, 8.0, 2.0, 0.45)]);
+
+    // --- The pan flute: eight bars in A minor pentatonic ---------------------
+    let flute = p.add_midi_track(Some(Instrument::pan_flute("Romanian Pan Flute")));
+    p.tracks[flute].name = "Pan Flute".into();
+    p.tracks[flute].color = PALETTE[0];
+    p.tracks[flute].mixer.volume_db = -5.0;
+    p.tracks[flute].mixer.sends = vec![0.25, 0.0];
+    let tune: &[(u8, f64, f64)] = &[
+        (76, 0.0, 1.5),
+        (74, 1.5, 0.5),
+        (72, 2.0, 2.0),
+        (69, 4.0, 3.0),
+        (72, 8.0, 1.0),
+        (74, 9.0, 1.0),
+        (76, 10.0, 2.0),
+        (79, 12.0, 1.5),
+        (76, 13.5, 0.5),
+        (74, 14.0, 2.0),
+        (76, 16.0, 3.0),
+        (74, 19.0, 0.5),
+        (72, 19.5, 0.5),
+        (69, 20.0, 2.0),
+        (67, 22.0, 2.0),
+        (69, 24.0, 1.0),
+        (72, 25.0, 1.0),
+        (74, 26.0, 1.0),
+        (76, 27.0, 1.0),
+        (69, 28.0, 3.5),
+    ];
+    let melody: Vec<Note> = tune.iter().map(|&(k, t, l)| n(k, t, l * 0.95, if l >= 2.0 { 0.8 } else { 0.7 })).collect();
+    set_clip(&mut p, flute, 2, "Melody", 32.0, melody.clone());
+    let low: Vec<Note> = melody.iter().map(|m| Note { pitch: m.pitch - 12, velocity: m.velocity * 0.85, ..m.clone() }).collect();
+    set_clip(&mut p, flute, 3, "Melody Low", 32.0, low);
+
+    p.loop_end = 32.0;
+    p
+}

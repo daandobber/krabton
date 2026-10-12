@@ -23,6 +23,9 @@ use crate::dsp::drone::DroneState;
 use crate::dsp::waves::WavesState;
 use crate::dsp::guitar::GuitarState;
 use crate::dsp::wind_chimes::WindChimesState;
+use crate::dsp::birds::BirdsState;
+use crate::dsp::nature::NatureState;
+use crate::dsp::pan_flute::PanFluteState;
 use crate::piano::{library::PianoLibrary, PianoState};
 use crate::dsp::rings_synth::RingsState;
 use crate::dsp::braids_synth::BraidsSynthState;
@@ -48,11 +51,8 @@ pub const MAX_BLOCK: usize = 256;
 pub const MAX_TRACKS: usize = 128;
 pub const MAX_RETURNS: usize = 8;
 /// Values an instrument reports for its display (see `InstState::visual`).
-pub const INST_VALS: usize = 32;
+pub const INST_VALS: usize = 64;
 
-/// Whether the transport plays, for instruments that follow it (Wind
-/// Chimes' wind). Set by the audio thread every block.
-pub static TRANSPORT_PLAYING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Samples of the shown instrument's sound kept for its display.
 pub const INST_SCOPE_LEN: usize = 8192;
 
@@ -408,6 +408,9 @@ enum InstState {
     Waves(Box<WavesState>),
     Guitar(Box<GuitarState>),
     WindChimes(Box<WindChimesState>),
+    Birds(Box<BirdsState>),
+    Nature(Box<NatureState>),
+    PanFlute(Box<PanFluteState>),
     Plugin { instance: u64, proc: Option<Box<dyn AudioProcessor>>, pending: Vec<PluginEvent> },
 }
 
@@ -440,6 +443,9 @@ impl InstState {
             Some(Instrument::Waves { .. }) => InstState::Waves(Box::new(WavesState::new(sr))),
             Some(Instrument::Guitar { .. }) => InstState::Guitar(Box::new(GuitarState::new(sr))),
             Some(Instrument::WindChimes { .. }) => InstState::WindChimes(Box::new(WindChimesState::new(sr))),
+            Some(Instrument::Birds { .. }) => InstState::Birds(Box::new(BirdsState::new(sr))),
+            Some(Instrument::Nature { .. }) => InstState::Nature(Box::new(NatureState::new(sr))),
+            Some(Instrument::PanFlute { .. }) => InstState::PanFlute(Box::new(PanFluteState::new(sr))),
         }
     }
 
@@ -486,6 +492,9 @@ impl InstState {
                 | (InstState::Waves(_), Some(Instrument::Waves { .. }))
                 | (InstState::Guitar(_), Some(Instrument::Guitar { .. }))
                 | (InstState::WindChimes(_), Some(Instrument::WindChimes { .. }))
+                | (InstState::Birds(_), Some(Instrument::Birds { .. }))
+                | (InstState::Nature(_), Some(Instrument::Nature { .. }))
+                | (InstState::PanFlute(_), Some(Instrument::PanFlute { .. }))
         ) || matches!((self, i), (InstState::Plugin { instance, .. }, Some(Instrument::Plugin(p))) if *instance == p.instance)
     }
 
@@ -517,6 +526,9 @@ impl InstState {
             (InstState::Waves(s), Instrument::Waves { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Guitar(s), Instrument::Guitar { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::WindChimes(s), Instrument::WindChimes { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Birds(s), Instrument::Birds { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Nature(s), Instrument::Nature { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::PanFlute(s), Instrument::PanFlute { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             _ => {}
         }
     }
@@ -547,6 +559,9 @@ impl InstState {
             (InstState::Waves(s), Instrument::Waves { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Guitar(s), Instrument::Guitar { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::WindChimes(s), Instrument::WindChimes { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Birds(s), Instrument::Birds { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Nature(s), Instrument::Nature { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::PanFlute(s), Instrument::PanFlute { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             _ => {}
         }
     }
@@ -578,6 +593,9 @@ impl InstState {
             InstState::Waves(s) => s.all_off(),
             InstState::Guitar(s) => s.all_off(),
             InstState::WindChimes(s) => s.all_off(),
+            InstState::Birds(s) => s.all_off(),
+            InstState::Nature(s) => s.all_off(),
+            InstState::PanFlute(s) => s.all_off(),
             InstState::None => {}
         }
     }
@@ -599,6 +617,9 @@ impl InstState {
             InstState::Waves(s) => s.visual(out),
             InstState::Guitar(s) => s.visual(out),
             InstState::WindChimes(s) => s.visual(out),
+            InstState::Birds(s) => s.visual(out),
+            InstState::Nature(s) => s.visual(out),
+            InstState::PanFlute(s) => s.visual(out),
             _ => return false,
         }
         true
@@ -630,6 +651,9 @@ impl InstState {
             (InstState::Waves(s), Instrument::Waves { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Guitar(s), Instrument::Guitar { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::WindChimes(s), Instrument::WindChimes { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Birds(s), Instrument::Birds { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Nature(s), Instrument::Nature { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::PanFlute(s), Instrument::PanFlute { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Plugin { proc, pending, .. }, Instrument::Plugin(_)) => {
                 if let Some(p) = proc {
                     p.process(pending, l, r);
@@ -1474,7 +1498,6 @@ impl Engine {
         let sr = self.sr;
         let spb = sr as f64 * 60.0 / project.bpm.max(1.0);
         let playing = self.playing;
-        TRANSPORT_PLAYING.store(playing, std::sync::atomic::Ordering::Relaxed);
         let adv = if playing { seg as f64 / spb } else { 0.0 };
         let (s0, s1) = (self.session_pos, self.session_pos + adv);
         let (a0, a1) = (self.song_pos, self.song_pos + adv);
@@ -1694,9 +1717,14 @@ impl Engine {
 
             if let Some(inst) = &track.instrument {
                 let ov = mods.params(ModOwner::Instrument(track.id));
-                // Clocks in a modular patch keep time with the song.
-                if let InstState::Modular(m) = instrument {
-                    m.set_transport(ctx.bpm, ctx.beat, ctx.playing);
+                // Clocks in a modular patch keep time with the song; wind,
+                // birds and nature play while it plays.
+                match instrument {
+                    InstState::Modular(m) => m.set_transport(ctx.bpm, ctx.beat, ctx.playing),
+                    InstState::WindChimes(s) => s.playing = ctx.playing,
+                    InstState::Birds(s) => s.playing = ctx.playing,
+                    InstState::Nature(s) => s.playing = ctx.playing,
+                    _ => {}
                 }
                 let mut pos = 0;
                 for ev in events.iter() {
@@ -2190,6 +2218,22 @@ mod tests {
         assert!(!e.is_playing());
         // The clip stays launched for the next Play, like in Live.
         assert_eq!(h.status.tracks[0].playing_slot.load(RELAXED), 1);
+    }
+
+    #[test]
+    fn the_ambient_set_plays_outside_and_in() {
+        let (mut e, h) = Engine::new(48000.0, Arc::new(crate::demo::ambient_project()));
+        // Silent until the song plays, the brook and birds included.
+        assert_eq!(peak(&run(&mut e, 0.5)), 0.0);
+        h.send(Command::LaunchScene(2));
+        let out = run(&mut e, 6.0);
+        let p = peak(&out);
+        assert!(p > 0.05 && p < 1.5, "{p}");
+        // Every track sounds at some point: the flute, the drone and the brook at once.
+        for name in ["Brook", "Drone", "Pan Flute"] {
+            let i = e.project.tracks.iter().position(|t| t.name == name).unwrap();
+            assert!(h.status.tracks[i].peak_l.load() > 0.0 || h.status.tracks[i].peak_r.load() > 0.0, "{name}");
+        }
     }
 
     #[test]

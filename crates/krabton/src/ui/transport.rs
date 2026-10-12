@@ -188,6 +188,10 @@ impl App {
                 self.load_demo();
                 ui.close();
             }
+            if ui.button("Load Ambient Set").on_hover_text("Forest Morning: a brook, birds, wind chimes, a drone, a glass bowl and a pan flute").clicked() {
+                self.load_ambient();
+                ui.close();
+            }
             ui.separator();
             if ui.button("About Krabton").clicked() {
                 self.show_about = true;

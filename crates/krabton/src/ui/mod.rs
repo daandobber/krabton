@@ -21,6 +21,7 @@ pub mod lens;
 pub mod grid_panel;
 pub mod modulation;
 pub mod mono101_view;
+pub mod nature_view;
 pub mod pedal_view;
 pub mod piano_roll;
 pub mod rack;

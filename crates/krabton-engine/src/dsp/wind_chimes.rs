@@ -160,6 +160,8 @@ struct Tube {
 }
 
 pub struct WindChimesState {
+    /// The song plays (set by the engine every block).
+    pub playing: bool,
     sr: f32,
     sim: ChimeSim,
     tubes: [Tube; MAX_TUBES],
@@ -182,6 +184,7 @@ const CHUNK: usize = 64;
 impl WindChimesState {
     pub fn new(sr: f32) -> Self {
         Self {
+            playing: false,
             sr: sr.max(1000.0),
             sim: ChimeSim::new(0x7ABE_11ED),
             tubes: [Tube::default(); MAX_TUBES],
@@ -301,7 +304,7 @@ impl WindChimesState {
         self.tune(p);
         let s = shape(p);
         let blowing = match (p[BLOWS].round().max(0.0) as usize).min(BLOW_MODES.len() - 1) {
-            0 => crate::engine::TRANSPORT_PLAYING.load(std::sync::atomic::Ordering::Relaxed),
+            0 => self.playing,
             1 => true,
             _ => self.held > 0,
         };

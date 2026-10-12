@@ -936,6 +936,63 @@ impl App {
                             param_grid_mod(ui, Id::new(("wind_chimes", track_id)), krabton_engine::dsp::wind_chimes::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
                         });
                     }
+                    Instrument::Birds { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("birds_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in krabton_engine::dsp::birds::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = krabton_engine::dsp::birds::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("they sing while the song plays (Sings): drag in the screen for how busy, play a key and the nearest voice sings").small().color(TEXT_DIM));
+                        });
+                        ui.horizontal_top(|ui| {
+                            super::nature_view::birds_screen(ui, Id::new(("birds_screen", track_id)), params, &live, h - 48.0);
+                            ui.add_space(6.0);
+                            param_grid_mod(ui, Id::new(("birds", track_id)), krabton_engine::dsp::birds::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
+                        });
+                    }
+                    Instrument::Nature { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("nature_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in krabton_engine::dsp::nature::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = krabton_engine::dsp::nature::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("plays while the song plays (Plays): drag in the screen for the wind, play keys and the wind whistles on them").small().color(TEXT_DIM));
+                        });
+                        ui.horizontal_top(|ui| {
+                            super::nature_view::nature_screen(ui, Id::new(("nature_screen", track_id)), params, &live, h - 48.0);
+                            ui.add_space(6.0);
+                            param_grid_mod(ui, Id::new(("nature", track_id)), krabton_engine::dsp::nature::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
+                        });
+                    }
+                    Instrument::PanFlute { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("pan_flute_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in krabton_engine::dsp::pan_flute::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = krabton_engine::dsp::pan_flute::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("drag up or down in the screen for the breath; one voice plays legato, more play chords").small().color(TEXT_DIM));
+                        });
+                        ui.horizontal_top(|ui| {
+                            super::nature_view::pan_flute_screen(ui, Id::new(("pan_flute_screen", track_id)), params, &live, h - 48.0);
+                            ui.add_space(6.0);
+                            param_grid_mod(ui, Id::new(("pan_flute", track_id)), krabton_engine::dsp::pan_flute::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
+                        });
+                    }
                     Instrument::Guitar { preset, params } => {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Preset").small().color(TEXT_DIM));

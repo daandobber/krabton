@@ -217,13 +217,16 @@ pub fn instrument_specs(i: &Instrument) -> Option<&'static [ParamSpec]> {
         Instrument::Waves { .. } => Some(crate::dsp::waves::SPECS),
         Instrument::Guitar { .. } => Some(crate::dsp::guitar::SPECS),
         Instrument::WindChimes { .. } => Some(crate::dsp::wind_chimes::SPECS),
+        Instrument::Birds { .. } => Some(crate::dsp::birds::SPECS),
+        Instrument::Nature { .. } => Some(crate::dsp::nature::SPECS),
+        Instrument::PanFlute { .. } => Some(crate::dsp::pan_flute::SPECS),
         _ => None,
     }
 }
 
 pub fn instrument_params(i: &Instrument) -> Option<&[f32]> {
     match i {
-        Instrument::Synth { params, .. } | Instrument::Sampler { params, .. } | Instrument::Fm { params, .. } | Instrument::Macro { params, .. } | Instrument::Braids { params, .. } | Instrument::Elements { params, .. } | Instrument::Analog { params, .. } | Instrument::Shakers { params, .. } | Instrument::Modular { params, .. } | Instrument::Voice { params, .. } | Instrument::Mallets { params, .. } | Instrument::Strings { params, .. } | Instrument::Winds { params, .. } | Instrument::Organ { params, .. } | Instrument::Rings { params, .. } | Instrument::Monk { params, .. } | Instrument::Piano { params, .. } | Instrument::Bassline { params, .. } | Instrument::Mono101 { params, .. } | Instrument::Drone { params, .. } | Instrument::Waves { params, .. } | Instrument::Guitar { params, .. } | Instrument::WindChimes { params, .. } => Some(params),
+        Instrument::Synth { params, .. } | Instrument::Sampler { params, .. } | Instrument::Fm { params, .. } | Instrument::Macro { params, .. } | Instrument::Braids { params, .. } | Instrument::Elements { params, .. } | Instrument::Analog { params, .. } | Instrument::Shakers { params, .. } | Instrument::Modular { params, .. } | Instrument::Voice { params, .. } | Instrument::Mallets { params, .. } | Instrument::Strings { params, .. } | Instrument::Winds { params, .. } | Instrument::Organ { params, .. } | Instrument::Rings { params, .. } | Instrument::Monk { params, .. } | Instrument::Piano { params, .. } | Instrument::Bassline { params, .. } | Instrument::Mono101 { params, .. } | Instrument::Drone { params, .. } | Instrument::Waves { params, .. } | Instrument::Guitar { params, .. } | Instrument::WindChimes { params, .. } | Instrument::Birds { params, .. } | Instrument::Nature { params, .. } | Instrument::PanFlute { params, .. } => Some(params),
         _ => None,
     }
 }

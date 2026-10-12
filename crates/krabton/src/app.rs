@@ -119,6 +119,12 @@ pub enum BrowserItem {
     Guitar(&'static str),
     /// A Wind Chimes preset.
     WindChimes(&'static str),
+    /// A Birds preset.
+    Birds(&'static str),
+    /// A Nature preset.
+    Nature(&'static str),
+    /// A Pan Flute preset.
+    PanFlute(&'static str),
     /// A Grand Piano preset.
     Piano(&'static str),
     /// A copy of a clip in this project.
@@ -158,6 +164,9 @@ impl BrowserItem {
             BrowserItem::Waves(p) => format!("Waves: {p}"),
             BrowserItem::Guitar(p) => format!("Guitar: {p}"),
             BrowserItem::WindChimes(p) => format!("Wind Chimes: {p}"),
+            BrowserItem::Birds(p) => format!("Birds: {p}"),
+            BrowserItem::Nature(p) => format!("Nature: {p}"),
+            BrowserItem::PanFlute(p) => format!("Pan Flute: {p}"),
             BrowserItem::Piano(p) => format!("Grand Piano: {p}"),
             BrowserItem::Drums(k) => k.to_string(),
             BrowserItem::Sampler => "Sampler".into(),
@@ -933,7 +942,7 @@ impl App {
                 }
                 self.toast(format!("Loading {} ...", info.name));
             }
-            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) => {
+            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) => {
                 let inst = match item {
                     BrowserItem::Synth(p) => Instrument::synth(p),
                     BrowserItem::Macro(p) => Instrument::macro_osc(p),
@@ -956,6 +965,9 @@ impl App {
                     BrowserItem::Waves(p) => Instrument::waves(p),
                     BrowserItem::Guitar(p) => Instrument::guitar(p),
                     BrowserItem::WindChimes(p) => Instrument::wind_chimes(p),
+                    BrowserItem::Birds(p) => Instrument::birds(p),
+                    BrowserItem::Nature(p) => Instrument::nature(p),
+                    BrowserItem::PanFlute(p) => Instrument::pan_flute(p),
                     BrowserItem::Drums(k) => Instrument::drums(k),
                     _ => Instrument::sampler(None),
                 };
@@ -1729,6 +1741,13 @@ impl App {
         self.toast("Demo set loaded");
     }
 
+    /// The new age ambient set: brook, birds, chimes, drone, bowl and pan flute.
+    pub fn load_ambient(&mut self) {
+        self.replace_project(krabton_engine::demo::ambient_project());
+        self.file_path = None;
+        self.toast("Forest Morning: press Space or launch a scene");
+    }
+
     pub fn open(&mut self) {
         let Some(path) = rfd::FileDialog::new().add_filter("Krabton set", &[FILE_EXTENSION]).pick_file() else { return };
         self.open_path(path);
@@ -1939,6 +1958,7 @@ impl App {
             match name {
                 "scene" => self.cmd(Command::LaunchScene(nums.first().copied().unwrap_or(0))),
                 "play" => self.cmd(Command::Play),
+                "ambient" => self.load_ambient(),
                 "stop" => self.cmd(Command::Stop),
                 "arrangement" => self.view = View::Arrangement,
                 "session" => self.view = View::Session,
@@ -2038,6 +2058,24 @@ impl App {
                     let names = krabton_engine::dsp::wind_chimes::preset_names();
                     let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
                     self.apply_item(&BrowserItem::WindChimes(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "birds" => {
+                    let names = krabton_engine::dsp::birds::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Birds(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "nature" => {
+                    let names = krabton_engine::dsp::nature::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Nature(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "panflute" => {
+                    let names = krabton_engine::dsp::pan_flute::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::PanFlute(p), DropTarget::NewTrack);
                     self.detail = DetailTab::Devices;
                 }
                 "guitar" => {

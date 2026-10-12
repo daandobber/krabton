@@ -340,7 +340,7 @@ struct Dev {
     kind: Option<&'static str>,
 }
 
-fn devices() -> [Dev; 21] {
+fn devices() -> [Dev; 24] {
     [
         Dev {
             name: "Analog",
@@ -399,6 +399,9 @@ fn devices() -> [Dev; 21] {
         Dev { name: "Waves", hint: "Wavetable synth: two oscillators morphing through 16 banks of single-cycle waves (Adventure Kid Waveforms), unison, warps, sub, filter, envelopes and an LFO. Drag a stack to move through it", presets: krabton_engine::dsp::waves::preset_names(), make: BrowserItem::Waves, kind: None },
         Dev { name: "Guitar", hint: "A six-string guitar, steel or nylon acoustic or electric with pickups: notes go on the strings and frets a guitarist would use, chords are strummed. Put pedals after it", presets: krabton_engine::dsp::guitar::preset_names(), make: BrowserItem::Guitar, kind: None },
         Dev { name: "Wind Chimes", hint: "A wind chime that plays by itself: the wind pushes the sail, the clapper strikes the tubes (aluminium, brass, steel, bamboo, glass or wood) and you see every strike you hear. Change the tubes, the tuning, the spacing, the clapper and the sail", presets: krabton_engine::dsp::wind_chimes::preset_names(), make: BrowserItem::WindChimes, kind: None },
+        Dev { name: "Birds", hint: "Songbirds that sing by themselves: blackbird, robin, song thrush, nightingale, wren, chaffinch, great tit, skylark, sparrow, cuckoo, wood pigeon, tawny owl, loon, gull and a drumming woodpecker. Each sings its species' songs from its own place, near or far; a key makes the bird with the nearest voice sing (Follow Key puts its song on the key)", presets: krabton_engine::dsp::birds::preset_names(), make: BrowserItem::Birds, kind: None },
+        Dev { name: "Nature", hint: "The sounds of outside, made from scratch: wind in gusts that whistles and rustles the leaves, rain on leaves, water, a roof or a tent, thunder after the lightning, a brook, the sea, crickets that chirp faster when it is warmer, frogs and a campfire. Play keys and the wind whistles on those notes", presets: krabton_engine::dsp::nature::preset_names(), make: BrowserItem::Nature, kind: None },
+        Dev { name: "Pan Flute", hint: "Blown pipes: pan flute (closed pipes, odd harmonics), shakuhachi, ocarina, bamboo flute and wooden flute, with breath that rings in the pipe, a chiff at the start, scoops, vibrato that comes in after a while, legato glide or chords", presets: krabton_engine::dsp::pan_flute::preset_names(), make: BrowserItem::PanFlute, kind: None },
     ]
 }
 

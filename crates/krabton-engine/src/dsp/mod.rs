@@ -38,6 +38,9 @@ pub mod stk_winds;
 pub mod synth;
 pub mod waves;
 pub mod wind_chimes;
+pub mod birds;
+pub mod nature;
+pub mod pan_flute;
 
 use std::f32::consts::PI;
 

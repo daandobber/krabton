@@ -564,6 +564,12 @@ pub enum Instrument {
     Guitar { preset: String, params: Vec<f32> },
     /// Wind Chimes: a simulated wind chime that plays by itself, in aluminium, brass, steel, bamboo, glass or wood.
     WindChimes { preset: String, params: Vec<f32> },
+    /// Birds: songbirds of fifteen species singing by themselves, near and far.
+    Birds { preset: String, params: Vec<f32> },
+    /// Nature: wind, rain, thunder, a brook, the sea, crickets, frogs and a fire, made from scratch.
+    Nature { preset: String, params: Vec<f32> },
+    /// Pan Flute: blown pipes: pan flute, shakuhachi, ocarina, bamboo and wooden flutes.
+    PanFlute { preset: String, params: Vec<f32> },
 }
 
 impl Instrument {
@@ -664,6 +670,18 @@ impl Instrument {
         Instrument::WindChimes { preset: preset.to_string(), params: crate::dsp::wind_chimes::preset(preset) }
     }
 
+    pub fn birds(preset: &str) -> Self {
+        Instrument::Birds { preset: preset.to_string(), params: crate::dsp::birds::preset(preset) }
+    }
+
+    pub fn nature(preset: &str) -> Self {
+        Instrument::Nature { preset: preset.to_string(), params: crate::dsp::nature::preset(preset) }
+    }
+
+    pub fn pan_flute(preset: &str) -> Self {
+        Instrument::PanFlute { preset: preset.to_string(), params: crate::dsp::pan_flute::preset(preset) }
+    }
+
     pub fn kind_name(&self) -> &'static str {
         match self {
             Instrument::Synth { .. } => "Synth",
@@ -691,6 +709,9 @@ impl Instrument {
             Instrument::Waves { .. } => "Waves",
             Instrument::Guitar { .. } => "Guitar",
             Instrument::WindChimes { .. } => "Wind Chimes",
+            Instrument::Birds { .. } => "Birds",
+            Instrument::Nature { .. } => "Nature",
+            Instrument::PanFlute { .. } => "Pan Flute",
         }
     }
 
@@ -703,7 +724,7 @@ impl Instrument {
             Instrument::Sampler { sample, .. } => sample.as_ref().map(|s| s.name.clone()).unwrap_or_else(|| "Empty".into()),
             Instrument::Plugin(p) => p.name.clone(),
             Instrument::Fm { voice, .. } => Dx7Voice::from_slice(voice).map(|v| v.name()).unwrap_or_else(|| "FM".into()),
-            Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Modular { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } | Instrument::Monk { preset, .. } | Instrument::Piano { preset, .. } | Instrument::Bassline { preset, .. } | Instrument::Mono101 { preset, .. } | Instrument::Drone { preset, .. } | Instrument::Waves { preset, .. } | Instrument::Guitar { preset, .. } | Instrument::WindChimes { preset, .. } => preset.clone(),
+            Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Modular { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } | Instrument::Monk { preset, .. } | Instrument::Piano { preset, .. } | Instrument::Bassline { preset, .. } | Instrument::Mono101 { preset, .. } | Instrument::Drone { preset, .. } | Instrument::Waves { preset, .. } | Instrument::Guitar { preset, .. } | Instrument::WindChimes { preset, .. } | Instrument::Birds { preset, .. } | Instrument::Nature { preset, .. } | Instrument::PanFlute { preset, .. } => preset.clone(),
         }
     }
 
@@ -1407,6 +1428,9 @@ impl Project {
                 Some(Instrument::Waves { params, .. }) => params::fix_len(params, crate::dsp::waves::SPECS),
                 Some(Instrument::Guitar { params, .. }) => params::fix_len(params, crate::dsp::guitar::SPECS),
                 Some(Instrument::WindChimes { params, .. }) => params::fix_len(params, crate::dsp::wind_chimes::SPECS),
+                Some(Instrument::Birds { params, .. }) => params::fix_len(params, crate::dsp::birds::SPECS),
+                Some(Instrument::Nature { params, .. }) => params::fix_len(params, crate::dsp::nature::SPECS),
+                Some(Instrument::PanFlute { params, .. }) => params::fix_len(params, crate::dsp::pan_flute::SPECS),
                 // Shakers became an instrument; their kits are the Drum Rack's.
                 Some(Instrument::Drums { engine, .. }) if *engine == drums::DrumEngine::Shakers => *engine = drums::DrumEngine::Rack,
                 Some(Instrument::Plugin(p)) => max_id = max_id.max(p.instance + 1),
