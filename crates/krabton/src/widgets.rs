@@ -261,21 +261,7 @@ pub fn param_cell(ui: &mut Ui, rect: Rect, id: Id, spec: &ParamSpec, value: &mut
     let mut changed = false;
     match spec.kind {
         ParamKind::Choice(opts) => {
-            let b = Rect::from_center_size(ctrl.center(), vec2(rect.width() - 4.0, 18.0));
-            let resp = ui.interact(b, id, Sense::click());
-            let idx = value.round() as usize;
-            rect_fill(&p, b, 2.0, if resp.hovered() { PANEL3 } else { KNOB });
-            rect_line(&p, b, 2.0, 1.0, shade(accent, 0.6));
-            p.with_clip_rect(b).text(b.center(), Align2::CENTER_CENTER, opts.get(idx).copied().unwrap_or("?"), small(), TEXT);
-            if resp.clicked() {
-                *value = ((idx + 1) % opts.len()) as f32;
-                changed = true;
-            }
-            if resp.secondary_clicked() {
-                *value = ((idx + opts.len() - 1) % opts.len()) as f32;
-                changed = true;
-            }
-            resp.on_hover_text(format!("{}: click for next, right-click for previous", spec.name));
+            changed |= choice_slider(ui, ctrl, id, spec, opts, value, accent);
         }
         ParamKind::Toggle => {
             let b = Rect::from_center_size(ctrl.center(), vec2(rect.width() - 10.0, 18.0));
@@ -306,6 +292,70 @@ pub fn param_cell(ui: &mut Ui, rect: Rect, id: Id, spec: &ParamSpec, value: &mut
         }
     }
     p.with_clip_rect(value_rect).text(value_rect.center(), Align2::CENTER_CENTER, spec.format(*value), small(), TEXT);
+    changed
+}
+
+/// A choice as a horizontal slider: drag left and right through the options
+/// (each a notch on the track), click for the list, double-click for the
+/// default.
+fn choice_slider(ui: &mut Ui, ctrl: Rect, id: Id, spec: &ParamSpec, opts: &[&str], value: &mut f32, accent: Color32) -> bool {
+    let p = ui.painter().clone();
+    let n = opts.len().max(1);
+    let b = Rect::from_center_size(ctrl.center(), vec2(ctrl.width() - 4.0, 22.0));
+    let resp = ui.interact(b, id, Sense::click_and_drag());
+    let idx = (value.round().max(0.0) as usize).min(n - 1);
+    let mut changed = false;
+    // Dragging: a notch every few pixels, at least across the box for short lists.
+    let step_px = (b.width() / n as f32).clamp(7.0, 16.0);
+    let acc_id = id.with("choice_drag");
+    if resp.drag_started() {
+        ui.ctx().memory_mut(|m| m.data.insert_temp(acc_id, 0.0f32));
+    }
+    if resp.dragged() {
+        let acc = ui.ctx().memory(|m| m.data.get_temp::<f32>(acc_id).unwrap_or(0.0)) + resp.drag_delta().x;
+        let k = (acc / step_px).trunc();
+        ui.ctx().memory_mut(|m| m.data.insert_temp(acc_id, acc - k * step_px));
+        if k != 0.0 {
+            let next = (idx as f32 + k).clamp(0.0, (n - 1) as f32);
+            if next != *value {
+                *value = next;
+                changed = true;
+            }
+        }
+    }
+    if resp.double_clicked() {
+        *value = spec.default;
+        changed = true;
+    }
+    let hot = resp.hovered() || resp.dragged();
+    rect_fill(&p, b, 2.0, if hot { PANEL3 } else { KNOB });
+    // The track: a notch per option, filled up to this one.
+    let track = Rect::from_min_max(pos2(b.left() + 4.0, b.bottom() - 5.0), pos2(b.right() - 4.0, b.bottom() - 3.0));
+    let shown = (value.round().max(0.0) as usize).min(n - 1);
+    let at = |i: usize| if n > 1 { track.left() + track.width() * i as f32 / (n - 1) as f32 } else { track.center().x };
+    rect_fill(&p, track, 1.0, BG);
+    rect_fill(&p, Rect::from_min_max(track.min, pos2(at(shown).max(track.left() + 2.0), track.max.y)), 1.0, shade(accent, 0.8));
+    if n <= 24 {
+        for i in 0..n {
+            p.line_segment([pos2(at(i), track.top() - 1.5), pos2(at(i), track.top())], Stroke::new(1.0_f32, LINE));
+        }
+    }
+    p.circle_filled(pos2(at(shown), track.center().y), 3.0, if hot { Color32::WHITE } else { TEXT });
+    let text_rect = Rect::from_min_max(b.min, pos2(b.right(), track.top() - 1.0));
+    p.with_clip_rect(b).text(text_rect.center(), Align2::CENTER_CENTER, opts.get(shown).copied().unwrap_or("?"), small(), TEXT);
+    // A click opens the list.
+    egui::Popup::menu(&resp).show(|ui| {
+        egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+            for (i, o) in opts.iter().enumerate() {
+                if ui.selectable_label(i == shown, *o).clicked() {
+                    *value = i as f32;
+                    changed = true;
+                    ui.close();
+                }
+            }
+        });
+    });
+    resp.on_hover_text(format!("{}: {}\nDrag left or right, click for the list, double-click to reset", spec.name, opts.get(shown).copied().unwrap_or("?")));
     changed
 }
 
@@ -404,5 +454,52 @@ pub fn drop_payload<T: std::any::Any + Send + Sync>(resp: &Response) -> Option<s
         resp.dnd_release_payload::<T>()
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use krabton_engine::params::ParamSpec;
+
+    static RATES: &[&str] = &["1/32", "1/16 T", "1/16", "1/8 T", "1/8", "1/4", "1/2"];
+    static SPEC: ParamSpec = ParamSpec::choice("Rate", "Clock", RATES, 2);
+
+    /// Runs frames of a choice cell with these pointer events, one list per frame.
+    fn frames(value: &mut f32, events: Vec<Vec<egui::Event>>) -> Rect {
+        let ctx = egui::Context::default();
+        let cell = Rect::from_min_size(pos2(20.0, 20.0), vec2(CELL_W - 2.0, CELL_H - 2.0));
+        for ev in std::iter::once(Vec::new()).chain(events) {
+            let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(400.0, 300.0))), events: ev, ..Default::default() };
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    param_cell(ui, cell, Id::new("rate"), &SPEC, value, Color32::WHITE);
+                });
+            });
+        }
+        cell
+    }
+
+    #[test]
+    fn a_choice_slides_left_and_right() {
+        let mut v = 2.0;
+        let c = pos2(20.0 + (CELL_W - 2.0) / 2.0, 20.0 + (CELL_H - 2.0) / 2.0);
+        let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+        let mut ev = vec![vec![egui::Event::PointerMoved(c)], vec![button(c, true)]];
+        for k in 1..=10 {
+            ev.push(vec![egui::Event::PointerMoved(c + vec2(3.0 * k as f32, 0.0))]);
+        }
+        ev.push(vec![button(c + vec2(30.0, 0.0), false)]);
+        frames(&mut v, ev);
+        // 30 px at a notch every 7 px (less the few a drag needs to start).
+        assert!((4.0..=6.0).contains(&v), "{v}");
+        let mut v = 2.0;
+        let mut ev = vec![vec![egui::Event::PointerMoved(c)], vec![button(c, true)]];
+        for k in 1..=5 {
+            ev.push(vec![egui::Event::PointerMoved(c - vec2(3.0 * k as f32, 0.0))]);
+        }
+        ev.push(vec![button(c - vec2(15.0, 0.0), false)]);
+        frames(&mut v, ev);
+        assert!(v < 2.0, "{v}");
     }
 }

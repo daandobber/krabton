@@ -248,6 +248,12 @@ impl Project {
             if t.kind == TrackKind::Midi {
                 t.input = AudioInput::None;
             }
+            // MIDI From a track that is gone (or itself): back to all inputs.
+            if let MidiInput::Track(id) = t.midi_in {
+                if id == own || !ids.iter().any(|(i, k)| *i == id && *k == TrackKind::Midi) {
+                    t.midi_in = MidiInput::AllIns;
+                }
+            }
         }
     }
 }

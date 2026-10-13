@@ -102,7 +102,13 @@ impl App {
                         krabton_engine::midi_fx::MidiFxKind::Acid => "Rows 1-6: notes (octave, b7, 5, 4, b3, root). Row 7: accent. Row 8: slide.",
                         krabton_engine::midi_fx::MidiFxKind::DrumGrid => "Rows are drum lanes: tap to cycle off, hit, accent.",
                         krabton_engine::midi_fx::MidiFxKind::Progression => "Columns are chords; rows pick the degree (top = VII). Bottom row: chord type.",
-                        _ => "The walk wanders left and right. Bottom row: how often it rests.",
+                        krabton_engine::midi_fx::MidiFxKind::DrumMap => "Rows 1-3: kick, snare and hats of the bar that plays (dim: steps the fill leaves out). Lower left: the map of grooves, tap to move. Right: the three fills and chaos.",
+                        krabton_engine::midi_fx::MidiFxKind::Marbles => "Rows 1-3: T1, T2 and T3, the last sixteen ticks. Row 4: the X values. Rows 5-7: déjà vu, loop length, bias. Bottom row: the model (left), jitter (right).",
+                        krabton_engine::midi_fx::MidiFxKind::Drunk => "The walk wanders left and right. Bottom row: how often it rests.",
+                        krabton_engine::midi_fx::MidiFxKind::Chance => "Rows are the lanes: tap to cycle off, hit, accent. Dim steps have a chance or a condition.",
+                        krabton_engine::midi_fx::MidiFxKind::Bits => "The formula's bits (bit 7 on top), bright where a drum plays. Four columns per drum: tap a row to give it that bit.",
+                        krabton_engine::midi_fx::MidiFxKind::Percussion => "A row per player and the lead at the bottom. Tap a row to bring the ensemble up to it; the lead's row turns it on or off.",
+                        _ => "",
                     };
                     ui.label(RichText::new(how).small().color(TEXT_DIM));
                 }

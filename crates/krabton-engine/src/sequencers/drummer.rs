@@ -26,6 +26,8 @@ pub const SWING: usize = 6;
 pub const SWING_ON: usize = 7;
 pub const HUMANIZE: usize = 8;
 pub const VELOCITY: usize = 9;
+/// The step: sixteenths, or thirty-seconds for double time, eighths for half time...
+pub const RATE: usize = 12;
 
 pub const BAR_CHOICES: &[&str] = &["A", "A B", "A A A B"];
 pub const FILL_CHOICES: &[&str] = &["Off", "2 Bars", "4 Bars", "8 Bars"];
@@ -45,6 +47,7 @@ pub static SPECS: &[ParamSpec] = &[
     ParamSpec::lin("Velocity", "Feel", 0.05, 1.0, 0.85, Unit::Percent),
     ParamSpec::toggle("Transpose", "Keys", false),
     ParamSpec::toggle("Hold", "Keys", false),
+    ParamSpec::choice("Rate", "Groove", super::RATES, 2),
 ];
 
 // ---------------------------------------------------------------- lanes
@@ -683,6 +686,20 @@ mod tests {
             assert_eq!(style_of(&d), Some(i));
             assert!((0..STEPS).any(|j| cell(&d, 0, j, KICK) != OFF || cell(&d, 0, j, RIDE) != OFF), "{}", s.name);
         }
+    }
+
+    #[test]
+    fn the_rate_plays_double_and_half_time() {
+        let mut p = plain();
+        let hats = |p: &[f32]| run(p, &style_data(0), 0, 2).iter().filter(|n| n.1 == 42).count();
+        let normal = hats(&p);
+        // Twice the groove in the same time, or half of it (an open hat here and there).
+        p[RATE] = 0.0; // 1/32
+        assert!(hats(&p).abs_diff(normal * 2) <= 2, "{} {normal}", hats(&p));
+        p[RATE] = 4.0; // 1/8
+        assert!(hats(&p).abs_diff(normal / 2) <= 1, "{} {normal}", hats(&p));
+        // Older sets without the rate play sixteenths, and Transpose stays where it was.
+        assert_eq!(crate::sequencers::keys_params(crate::midi_fx::MidiFxKind::Drummer), (10, 11));
     }
 
     #[test]

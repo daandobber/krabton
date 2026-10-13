@@ -12,12 +12,18 @@
 //! - Drunk: a random walk through the scale.
 //!
 //! More in `more`: Orbits, Chaos, Automaton, Ant, Pong, Markov, Rain, Words
-//! and Lorenz.
+//! and Lorenz. Drum Map (a topographic drum sequencer) and Marbles (a random
+//! sampler for triggers and notes) have their own modules.
 
 pub mod ambient;
 pub mod strum;
 pub mod drummer;
 pub mod more;
+pub mod drum_map;
+pub mod marbles;
+pub mod chance;
+pub mod bits;
+pub mod percussion;
 
 use crate::dsp::Rng;
 use crate::midi_fx::{MidiCtx, MidiEvent};
@@ -232,14 +238,13 @@ pub fn euclid_hit(i: usize, steps: usize, pulses: usize, rotate: usize) -> bool 
 
 pub const MAX_BALLS: usize = 8;
 
-/// Where a sequencer keeps its Transpose and Hold switches: the last two
-/// parameters (Acid had Transpose before the others and keeps it at 7).
+/// Where a sequencer keeps its Transpose and Hold switches (by name: some
+/// sequencers have parameters after them that came later).
 pub fn keys_params(kind: crate::midi_fx::MidiFxKind) -> (usize, usize) {
-    if kind == crate::midi_fx::MidiFxKind::Acid {
-        return (7, 8);
-    }
-    let n = kind.specs().len();
-    (n.saturating_sub(2), n.saturating_sub(1))
+    let specs = kind.specs();
+    let n = specs.len();
+    let find = |name: &str, or: usize| specs.iter().position(|s| s.name == name).unwrap_or(or);
+    (find("Transpose", n.saturating_sub(2)), find("Hold", n.saturating_sub(1)))
 }
 
 pub struct SeqState {
@@ -271,6 +276,10 @@ pub struct SeqState {
     pub(crate) extra: Box<more::Extra>,
     pub(crate) ambient: Box<ambient::Ambient>,
     pub(crate) drum: drummer::DrummerState,
+    pub(crate) map: drum_map::DrumMapState,
+    pub(crate) marbles: Box<marbles::MarblesState>,
+    pub(crate) chance: chance::ChanceState,
+    pub(crate) perc: percussion::PercussionState,
     pos: i32,
     /// Packed state for the UI / grid (layout depends on the sequencer).
     pub visual: [u64; 4],
@@ -305,6 +314,10 @@ impl SeqState {
             extra: Box::default(),
             ambient: Box::default(),
             drum: drummer::DrummerState::default(),
+            map: drum_map::DrumMapState::default(),
+            marbles: Box::default(),
+            chance: chance::ChanceState::default(),
+            perc: percussion::PercussionState::default(),
             pos: 0,
             visual: [0; 4],
         }
@@ -319,6 +332,8 @@ impl SeqState {
         self.ball_last = [f64::NEG_INFINITY; MAX_BALLS];
         self.extra.reset();
         self.ambient.restart();
+        self.marbles.restart();
+        self.chance.restart();
     }
 
     fn unit(&mut self) -> f32 {
@@ -397,7 +412,7 @@ impl SeqState {
             self.shift = None;
         }
         // Acid and Guitar Chords move their own notes (a semitone line, chord shapes).
-        self.shift_in_note = !matches!(kind, K::Acid | K::GuitarChords | K::Drummer);
+        self.shift_in_note = !matches!(kind, K::Acid | K::GuitarChords | K::Drummer | K::DrumMap | K::Chance | K::Bits | K::Percussion);
         if ctx.playing {
             self.flush_pending(ctx, out);
         }
@@ -407,7 +422,10 @@ impl SeqState {
             self.bloom_stopped(p, data, out, ctx, fresh);
             self.flush_pending(ctx, out);
         }
-        if ctx.playing {
+        if ctx.playing && kind == K::Marbles {
+            // It keeps its own (jittery) clock against the song's.
+            self.marbles(p, out, ctx);
+        } else if ctx.playing {
             if matches!(kind, K::Bounce | K::Orbits | K::Pong | K::Rain | K::Loops | K::Bloom | K::Chimes | K::DriftChords | K::Pedal) {
                 // Time-based: they keep their own time against the song's beat.
                 if (ctx.beat - self.next_beat).abs() > 1e-3 {
@@ -431,7 +449,9 @@ impl SeqState {
                 }
             } else {
                 let rate = match kind {
-                    K::Polymeter | K::Euclid | K::Turing | K::Life | K::Drunk | K::Step | K::Acid | K::DrumGrid => rate_beats(p[0]),
+                    K::Polymeter | K::Euclid | K::Turing | K::Life | K::Drunk | K::Step | K::Acid | K::DrumGrid | K::DrumMap | K::Chance | K::Bits => rate_beats(p[0]),
+                    K::Percussion => percussion::step_beats(p),
+                    K::Drummer => rate_beats(p.get(drummer::RATE).copied().unwrap_or(2.0)),
                     K::Chaos | K::Automaton | K::Ant | K::Markov | K::Words | K::Lorenz | K::Tintinnabuli => rate_beats(p[0]),
                     _ => 0.25,
                 };
@@ -454,6 +474,10 @@ impl SeqState {
                             K::Progression => self.progression(k, p, data, at, step_frames, out, ctx),
                             K::GuitarChords => self.strum(k, p, data, at, step_frames, out, ctx),
                             K::Drummer => self.drummer(k, p, data, at, step_frames, out, ctx),
+                            K::DrumMap => self.drum_map(k, p, at, step_frames, out, ctx),
+                            K::Chance => self.chance_seq(k, p, data, at, step_frames, out, ctx),
+                            K::Bits => self.bits(k, p, at, step_frames, out, ctx),
+                            K::Percussion => self.percussion(k, p, at, step_frames, out, ctx),
                             K::Chaos => self.chaos(p, at, step_frames, out, ctx),
                             K::Automaton => self.automaton(p, at, step_frames, out, ctx),
                             K::Ant => self.ant(p, at, step_frames, out, ctx),

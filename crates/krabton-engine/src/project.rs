@@ -151,6 +151,69 @@ fn all_bits() -> u8 {
     0xFF
 }
 
+/// The shortest note `tidy_notes` leaves when it shortens one.
+pub const MIN_TIDY_LENGTH: f64 = 1.0 / 32.0;
+
+/// Notes of the same pitch never overlap, as in Live: a note that lies
+/// wholly under another of its pitch goes (also one that starts with a
+/// longer one), and one that runs on into the next of its pitch ends where
+/// that one starts (or goes, when that would leave less than a 1/32).
+/// Returns, when anything changed, where each old note went (None: gone).
+pub fn tidy_notes(notes: &mut Vec<Note>) -> Option<Vec<Option<usize>>> {
+    if notes.len() < 2 {
+        return None;
+    }
+    const EPS: f64 = 1e-6;
+    let mut order: Vec<usize> = (0..notes.len()).collect();
+    order.sort_by(|&a, &b| notes[a].pitch.cmp(&notes[b].pitch).then(notes[a].start.total_cmp(&notes[b].start)).then(notes[b].length.total_cmp(&notes[a].length)));
+    let mut gone = vec![false; notes.len()];
+    let mut changed = false;
+    let mut prev: Option<usize> = None;
+    for &k in &order {
+        let Some(p) = prev.filter(|&p| notes[p].pitch == notes[k].pitch) else {
+            prev = Some(k);
+            continue;
+        };
+        let p_end = notes[p].start + notes[p].length;
+        let k_end = notes[k].start + notes[k].length;
+        if notes[k].start < p_end - EPS {
+            changed = true;
+            if k_end <= p_end + EPS {
+                // Wholly under the one before: it goes.
+                gone[k] = true;
+                continue;
+            }
+            let shortened = notes[k].start - notes[p].start;
+            if shortened < MIN_TIDY_LENGTH {
+                gone[p] = true;
+            } else {
+                notes[p].length = shortened;
+            }
+        }
+        prev = Some(k);
+    }
+    if !changed {
+        return None;
+    }
+    let mut map = Vec::with_capacity(notes.len());
+    let mut next = 0;
+    for g in &gone {
+        if *g {
+            map.push(None);
+        } else {
+            map.push(Some(next));
+            next += 1;
+        }
+    }
+    let mut i = 0;
+    notes.retain(|_| {
+        let keep = !gone[i];
+        i += 1;
+        keep
+    });
+    Some(map)
+}
+
 impl Note {
     pub fn new(pitch: u8, start: f64, length: f64, velocity: f32) -> Self {
         Self { pitch, start, length, velocity, chance: 1.0, vel_spread: 0.0, repeats: 1, recur_len: 0, recur_mask: 0xFF }
@@ -1452,10 +1515,17 @@ impl Project {
             for c in t.slots.iter_mut().flatten() {
                 c.length = c.length.max(0.0625);
                 max_id = max_id.max(c.id + 1);
+                // Notes hidden under others of their pitch (older recordings) go.
+                if let Some(n) = c.notes_mut() {
+                    tidy_notes(n);
+                }
             }
             for a in &mut t.arrangement {
                 a.length = a.length.max(0.0625);
                 a.clip.length = a.clip.length.max(0.0625);
+                if let Some(n) = a.clip.notes_mut() {
+                    tidy_notes(n);
+                }
                 max_id = max_id.max(a.id + 1).max(a.clip.id + 1);
             }
         }
@@ -1495,6 +1565,39 @@ impl Project {
         let missing = guard.missing();
         p.sanitize();
         Ok((p, missing))
+    }
+}
+
+#[cfg(test)]
+mod tidy_tests {
+    use super::*;
+
+    #[test]
+    fn a_note_under_another_goes_and_one_running_on_is_shortened() {
+        let mut notes = vec![
+            Note::new(60, 12.0, 4.0, 0.8),
+            // A tiny one under it (an overdub), and one at the same start.
+            Note::new(60, 12.1, 0.03, 0.8),
+            Note::new(60, 12.0, 0.5, 0.8),
+            // Another pitch is left alone.
+            Note::new(64, 12.1, 0.03, 0.8),
+            // Running on into the next: shortened.
+            Note::new(67, 0.0, 3.0, 0.8),
+            Note::new(67, 2.0, 2.0, 0.8),
+            // Starting a hair before the next: it goes.
+            Note::new(72, 3.99, 0.5, 0.8),
+            Note::new(72, 4.0, 2.0, 0.8),
+        ];
+        let map = tidy_notes(&mut notes).expect("changed");
+        assert_eq!(map, vec![Some(0), None, None, Some(1), Some(2), Some(3), None, Some(4)]);
+        assert_eq!(notes.len(), 5);
+        assert_eq!((notes[0].pitch, notes[0].length), (60, 4.0));
+        assert_eq!((notes[2].pitch, notes[2].length), (67, 2.0));
+        assert_eq!((notes[4].pitch, notes[4].start), (72, 4.0));
+        // Tidy notes stay as they are.
+        assert!(tidy_notes(&mut notes).is_none());
+        let mut chord = vec![Note::new(60, 0.0, 4.0, 0.8), Note::new(64, 0.0, 4.0, 0.8), Note::new(60, 4.0, 4.0, 0.8)];
+        assert!(tidy_notes(&mut chord).is_none());
     }
 }
 

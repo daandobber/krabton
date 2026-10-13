@@ -96,6 +96,11 @@ pub enum MidiFxKind {
     Pedal,
     GuitarChords,
     Drummer,
+    DrumMap,
+    Marbles,
+    Chance,
+    Bits,
+    Percussion,
 }
 
 const ARP_STYLES: &[&str] = &["Up", "Down", "Up Down", "Down Up", "Converge", "Diverge", "Random", "Played", "Chord"];
@@ -198,21 +203,22 @@ impl MidiFxKind {
     ];
 
     /// The sequencers' groups, in menu order.
-    pub const SEQUENCER_GROUPS: [&'static str; 4] = ["Classic", "Generative", "Physics & Chaos", "Ambient"];
+    pub const SEQUENCER_GROUPS: [&'static str; 5] = ["Classic", "Rhythm", "Generative", "Physics & Chaos", "Ambient"];
 
     /// Which group a sequencer belongs to (see `SEQUENCER_GROUPS`).
     pub fn group(self) -> &'static str {
         use MidiFxKind as K;
         match self {
             K::Step | K::Acid | K::DrumGrid | K::Progression | K::GuitarChords | K::Drummer => "Classic",
-            K::Polymeter | K::Euclid | K::Turing | K::Life | K::Drunk | K::Markov | K::Words => "Generative",
+            K::Euclid | K::DrumMap | K::Marbles | K::Chance | K::Bits | K::Percussion => "Rhythm",
+            K::Polymeter | K::Turing | K::Life | K::Drunk | K::Markov | K::Words => "Generative",
             K::Bounce | K::Orbits | K::Pong | K::Rain | K::Chaos | K::Automaton | K::Ant | K::Lorenz => "Physics & Chaos",
             K::Loops | K::Bloom | K::Chimes | K::DriftChords | K::Tintinnabuli | K::Pedal => "Ambient",
             _ => "MIDI Effects",
         }
     }
 
-    pub const SEQUENCERS: [MidiFxKind; 27] = [
+    pub const SEQUENCERS: [MidiFxKind; 32] = [
         MidiFxKind::Step,
         MidiFxKind::Acid,
         MidiFxKind::DrumGrid,
@@ -240,6 +246,11 @@ impl MidiFxKind {
         MidiFxKind::Pedal,
         MidiFxKind::GuitarChords,
         MidiFxKind::Drummer,
+        MidiFxKind::DrumMap,
+        MidiFxKind::Marbles,
+        MidiFxKind::Chance,
+        MidiFxKind::Bits,
+        MidiFxKind::Percussion,
     ];
 
     pub fn is_sequencer(self) -> bool {
@@ -258,6 +269,7 @@ impl MidiFxKind {
             MidiFxKind::Words => sequencers::more::words_default(),
             MidiFxKind::GuitarChords => sequencers::strum::strum_default(),
             MidiFxKind::Drummer => sequencers::drummer::drummer_default(),
+            MidiFxKind::Chance => sequencers::chance::chance_default(),
             _ => Vec::new(),
         }
     }
@@ -291,6 +303,11 @@ impl MidiFxKind {
             MidiFxKind::Pedal => "Pedal",
             MidiFxKind::GuitarChords => "Guitar Chords",
             MidiFxKind::Drummer => "Drummer",
+            MidiFxKind::DrumMap => "Drum Map",
+            MidiFxKind::Marbles => "Marbles",
+            MidiFxKind::Chance => "Chance",
+            MidiFxKind::Bits => "Bits",
+            MidiFxKind::Percussion => "Percussion",
 
             MidiFxKind::Arpeggiator => "Arpeggiator",
             MidiFxKind::Chord => "Chord",
@@ -338,6 +355,11 @@ impl MidiFxKind {
             MidiFxKind::Pedal => "A held drone note that now and then moves to the fifth, fourth or octave",
             MidiFxKind::GuitarChords => "Guitar chords the way a guitarist plays them: real chord shapes in the key, strummed down and up in patterns, or picked",
             MidiFxKind::Drummer => "A drummer who plays styles (rock, funk, house, boom bap, bossa nova, jazz...): ghost notes, accents, fills with a crash after, humanized; edit the groove in its grid",
+            MidiFxKind::DrumMap => "A topographic drum sequencer: a map of 25 grooves (straight to broken, laid back to driving) that blend as you move; a fill per drum from backbone to every ghost note, and chaos that shakes it every two bars",
+            MidiFxKind::Marbles => "A random sampler after Mutable Instruments Marbles: a clock (T2) and two triggers that toss coins, cluster, divide or follow a Markov chain, three random notes in key, and a déjà vu loop to make chance repeat",
+            MidiFxKind::Chance => "A drum grid of chances and conditions: every step a chance to play, a condition (1:2, 3:4, only in a fill, only the first time, if the last one played...) and a ratchet; lanes of their own lengths, fills every few bars",
+            MidiFxKind::Bits => "Rhythms from bytebeat formulas: a counter, a formula like t*(t>>5|t>>8), and four drums each listening to one bit of it",
+            MidiFxKind::Percussion => "A percussion ensemble: clave or bell, shakers, congas, bongos, low drum and güiro in son, guaguancó, bossa nova, samba, baião, cumbia or bembé, a lead drum that improvises, players brought in by Density",
 
             MidiFxKind::Arpeggiator => "Plays held notes one after another, tempo-synced",
             MidiFxKind::Chord => "Turns single notes into chords, also in the project key",
@@ -385,6 +407,11 @@ impl MidiFxKind {
             MidiFxKind::Pedal => sequencers::ambient::PEDAL,
             MidiFxKind::GuitarChords => sequencers::strum::SPECS,
             MidiFxKind::Drummer => sequencers::drummer::SPECS,
+            MidiFxKind::DrumMap => sequencers::drum_map::SPECS,
+            MidiFxKind::Marbles => sequencers::marbles::SPECS,
+            MidiFxKind::Chance => sequencers::chance::SPECS,
+            MidiFxKind::Bits => sequencers::bits::SPECS,
+            MidiFxKind::Percussion => sequencers::percussion::SPECS,
 
             MidiFxKind::Arpeggiator => ARP,
             MidiFxKind::Chord => CHORD,

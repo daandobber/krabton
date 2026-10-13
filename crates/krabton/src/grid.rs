@@ -394,6 +394,54 @@ impl App {
                     dev.data[o] = (dev.data[o] + 1) % 3;
                 }
             }
+            MidiFxKind::Chance => {
+                use krabton_engine::sequencers::chance as ch;
+                if (x as usize) < ch::STEPS && (y as usize) < ch::LANES {
+                    let s = ch::step(&dev.data, y as usize, x as usize);
+                    ch::set_step(&mut dev.data, y as usize, x as usize, ch::Step { level: (s.level + 1) % 3, ..s });
+                }
+            }
+            MidiFxKind::Bits => {
+                use krabton_engine::sequencers::bits as bt;
+                // Four columns per drum: a row gives it that bit (bit 7 on top).
+                let lane = (x / 4) as usize;
+                if lane < bt::LANES && y < 8 {
+                    dev.params[bt::BIT + lane] = (7 - y) as f32;
+                }
+            }
+            MidiFxKind::Percussion => {
+                use krabton_engine::sequencers::percussion as pc;
+                let st = pc::style(&dev.params);
+                let row = y as usize;
+                if row == st.parts.len() {
+                    dev.params[pc::LEAD] = if dev.params[pc::LEAD] >= 0.5 { 0.0 } else { 1.0 };
+                } else if row < st.parts.len() && st.parts.len() > 1 {
+                    dev.params[pc::DENSITY] = row as f32 / (st.parts.len() - 1) as f32;
+                }
+            }
+            MidiFxKind::DrumMap => {
+                use krabton_engine::sequencers::drum_map as dm;
+                // A 5x5 map on the lower left; fills and chaos as faders on the right.
+                if x < 5 && (3..8).contains(&y) {
+                    dev.params[dm::MAP_X] = x as f32 / 4.0;
+                    dev.params[dm::MAP_Y] = (7 - y) as f32 / 4.0;
+                } else if (6..16).contains(&x) && (4..8).contains(&y) {
+                    let i = if y == 7 { dm::CHAOS } else { dm::FILL + (y - 4) as usize };
+                    dev.params[i] = (x - 6) as f32 / 9.0;
+                }
+            }
+            MidiFxKind::Marbles => {
+                use krabton_engine::sequencers::marbles as mb;
+                let unit = x.min(15) as f32 / 15.0;
+                match y {
+                    4 => dev.params[mb::DEJA_VU] = unit,
+                    5 => dev.params[mb::LENGTH] = (x + 1).min(16) as f32,
+                    6 => dev.params[mb::BIAS] = unit,
+                    7 if (x as usize) < mb::MODELS.len() => dev.params[mb::MODEL] = x as f32,
+                    7 if (9..16).contains(&x) => dev.params[mb::JITTER] = (x - 9) as f32 / 6.0,
+                    _ => {}
+                }
+            }
             MidiFxKind::Progression => {
                 use krabton_engine::classic_seq::{PROG_BYTES, PROG_SLOTS, QUALITIES};
                 if dev.data.len() < PROG_SLOTS * PROG_BYTES {
@@ -894,6 +942,166 @@ impl App {
                                     _ => 0,
                                 };
                                 self.grid.set(x, lane, if x < steps { level } else { level / 3 });
+                            }
+                        }
+                    }
+                    MidiFxKind::Chance => {
+                        use krabton_engine::sequencers::chance as ch;
+                        let live = playing && first_seq;
+                        for lane in 0..ch::LANES.min(h as usize) {
+                            let len = ch::length(&dev.data, lane);
+                            let pos = ((vis[0] >> (4 * lane)) & 0xf) as usize;
+                            for x in 0..(ch::STEPS as u32).min(w) {
+                                let s = ch::step(&dev.data, lane, x as usize);
+                                let mut level = match s.level {
+                                    2 => 15,
+                                    1 if s.chance < 100 || s.condition != 0 => 6,
+                                    1 => 10,
+                                    _ if live && x as usize == pos => 3,
+                                    _ if x % 4 == 0 => 1,
+                                    _ => 0,
+                                };
+                                if x as usize >= len {
+                                    level /= 3;
+                                }
+                                self.grid.set(x, lane as u32, level);
+                            }
+                        }
+                    }
+                    MidiFxKind::Bits => {
+                        use krabton_engine::sequencers::bits as bt;
+                        let p = &dev.params;
+                        let f = (p[bt::FORMULA].round().max(0.0) as usize).min(bt::FORMULAS.len() - 1);
+                        let (a, b) = (p[bt::A].round() as u32, p[bt::B].round() as u32);
+                        let t_now = if playing && first_seq { vis[0] as u32 } else { 0 };
+                        let start = t_now - t_now % 16;
+                        for x in 0..16.min(w) {
+                            let t = start.wrapping_add(x);
+                            let byte = bt::byte(f, t, a, b);
+                            for bit in 0..8u32.min(h) {
+                                let lane = (0..bt::LANES).find(|&l| p[bt::BIT + l].round() as u32 == bit);
+                                let on = byte >> bit & 1 == 1;
+                                let level = match (on, lane) {
+                                    (true, Some(l)) if bt::hit(p, t, l).is_some() => 15,
+                                    (true, Some(_)) => 7,
+                                    (true, None) => 3,
+                                    (false, Some(_)) => 1,
+                                    _ if t == t_now && playing => 2,
+                                    _ => 0,
+                                };
+                                self.grid.set(x, 7 - bit, level);
+                            }
+                        }
+                    }
+                    MidiFxKind::Percussion => {
+                        use krabton_engine::sequencers::percussion as pc;
+                        let st = pc::style(&dev.params);
+                        let live = playing && first_seq;
+                        let step = (vis[0] & 0xff) as usize;
+                        let bar = if live { ((vis[0] >> 16) & 0xff) as usize } else { 0 };
+                        let playing_parts = pc::parts_playing(st, dev.params[pc::DENSITY]);
+                        let improvising = live && (vis[1] >> 8) & 1 == 1;
+                        for row in 0..(st.parts.len() + 1).min(h as usize) {
+                            let is_lead = row == st.parts.len();
+                            let pat = if is_lead { st.lead.1 } else { st.parts[row].1 };
+                            let on = if is_lead { dev.params[pc::LEAD] >= 0.5 } else { row < playing_parts };
+                            for x in 0..(st.steps as u32).min(w) {
+                                let i = x as usize;
+                                let hit = if is_lead && improvising {
+                                    vis[2] >> i & 1 == 1
+                                } else if is_lead {
+                                    pc::symbol(pat, i) != '.'
+                                } else {
+                                    pc::symbol(pat, (bar % 2) * st.steps + i) != '.'
+                                };
+                                let level = match (hit, on) {
+                                    (true, true) if live && i == step => 15,
+                                    (true, true) => 9,
+                                    (true, false) => 2,
+                                    _ if live && i == step => 3,
+                                    _ => 0,
+                                };
+                                self.grid.set(x, row as u32, level);
+                            }
+                        }
+                    }
+                    MidiFxKind::DrumMap => {
+                        use krabton_engine::sequencers::drum_map as dm;
+                        let (mx, my) = (dev.params[dm::MAP_X], dev.params[dm::MAP_Y]);
+                        let w8 = dm::weights(mx, my);
+                        let live = playing && first_seq;
+                        let step = (vis[0] & 0xff) as usize;
+                        let bar = if live { step / 16 } else { 0 };
+                        let hits: [u32; dm::PARTS] = if live {
+                            [vis[1] as u32, (vis[1] >> 32) as u32, vis[2] as u32]
+                        } else {
+                            dm::pattern(&w8, &dev.params, &[[0.0; dm::STEPS]; dm::PARTS])
+                        };
+                        for part in 0..dm::PARTS.min(h as usize) {
+                            for x in 0..16.min(w) {
+                                let s = bar * 16 + x as usize;
+                                let level = if hits[part] >> s & 1 == 1 {
+                                    if live && s == step { 15 } else { 10 }
+                                } else if live && s == step {
+                                    4
+                                } else if w8[part][s] > 0 {
+                                    2
+                                } else {
+                                    0
+                                };
+                                self.grid.set(x, part as u32, level);
+                            }
+                        }
+                        if h >= 8 {
+                            let (nx, ny) = ((mx * 4.0).round() as u32, (my * 4.0).round() as u32);
+                            for gy in 0..5u32 {
+                                for gx in 0..5u32.min(w) {
+                                    self.grid.set(gx, 7 - gy, if (gx, gy) == (nx, ny) { 15 } else { 3 });
+                                }
+                            }
+                            for (row, i) in [(4u32, dm::FILL), (5, dm::FILL + 1), (6, dm::FILL + 2), (7, dm::CHAOS)] {
+                                let v = (dev.params[i].clamp(0.0, 1.0) * 9.0).round() as u32;
+                                for x in 6..16.min(w) {
+                                    let k = x - 6;
+                                    self.grid.set(x, row, if k == v { 12 } else if k < v { 5 } else { 1 });
+                                }
+                            }
+                        }
+                    }
+                    MidiFxKind::Marbles => {
+                        use krabton_engine::sequencers::marbles as mb;
+                        let live = playing && first_seq;
+                        for c in 0..3u32.min(h) {
+                            let hist = if live { (vis[0] >> (16 * c)) as u16 } else { 0 };
+                            for x in 0..16.min(w) {
+                                let hit = hist >> (15 - x) & 1 == 1;
+                                self.grid.set(x, c, if hit { if x == 15 { 15 } else { 10 } } else { 1 });
+                            }
+                        }
+                        if h >= 8 {
+                            if live {
+                                for c in 0..3 {
+                                    let xv = ((vis[1] >> (16 * c)) & 0xffff) as f32 / 65535.0;
+                                    let x = (xv * 15.0).round() as u32;
+                                    self.grid.set(x.min(w - 1), 3, [15, 9, 6][c]);
+                                }
+                            }
+                            let fader = |v: f32| (v.clamp(0.0, 1.0) * 15.0).round() as u32;
+                            let dv = fader(dev.params[mb::DEJA_VU]);
+                            let len = dev.params[mb::LENGTH].round().clamp(1.0, 16.0) as u32;
+                            let bias = fader(dev.params[mb::BIAS]);
+                            for x in 0..16.min(w) {
+                                self.grid.set(x, 4, if x == dv { 12 } else if x < dv { 4 } else { 1 });
+                                self.grid.set(x, 5, if x + 1 == len { 12 } else if x < len { 4 } else { 1 });
+                                self.grid.set(x, 6, if x == bias { 12 } else { 2 });
+                            }
+                            let model = dev.params[mb::MODEL].round() as u32;
+                            for x in 0..(mb::MODELS.len() as u32).min(w) {
+                                self.grid.set(x, 7, if x == model { 15 } else { 3 });
+                            }
+                            let jitter = (dev.params[mb::JITTER].clamp(0.0, 1.0) * 6.0).round() as u32;
+                            for x in 9..16.min(w) {
+                                self.grid.set(x, 7, if x - 9 == jitter { 12 } else if x - 9 < jitter { 4 } else { 1 });
                             }
                         }
                     }

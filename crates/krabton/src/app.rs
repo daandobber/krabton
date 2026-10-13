@@ -595,6 +595,8 @@ impl App {
         }
         let pointer_down = ctx.input(|i| i.pointer.any_down());
         if !pointer_down && self.project != self.committed {
+            // Notes of a pitch never overlap (as in Live), once an edit is done.
+            self.tidy_clip_notes();
             let prev = std::mem::replace(&mut self.committed, self.project.clone());
             self.undo_labels.push(crate::history::describe(&prev, &self.project));
             self.undo.push(prev);
@@ -869,7 +871,8 @@ impl App {
                         use krabton_engine::midi_fx::MidiFxKind as K;
                         // A fitting instrument for each sequencer.
                         let inst = match kind {
-                            K::Euclid | K::DrumGrid => Instrument::drums("909 Classic"),
+                            K::Euclid | K::DrumGrid | K::DrumMap | K::Marbles | K::Chance | K::Bits => Instrument::drums("909 Classic"),
+                            K::Percussion => Instrument::drums("808 Latin"),
                             K::Drummer => Instrument::drums("Studio Kit"),
                             K::Acid => Instrument::synth("Acid"),
                             K::Progression => Instrument::synth("Soft Pad"),
@@ -1413,7 +1416,9 @@ impl App {
             let Some(Some(clip)) = self.project.tracks[ti].slots.get_mut(rn.scene) else { return };
             let len = clip.length.max(0.0625);
             let mut length = now - rn.start;
-            if length <= 0.0 {
+            // Before its start: it was held across the loop's end. A tap
+            // that ended before the position moved stays short.
+            if length < -1e-6 {
                 length += len;
             }
             let length = length.clamp(1.0 / 32.0, len);
@@ -1423,6 +1428,27 @@ impl App {
             }
             if let Some(notes) = clip.notes_mut() {
                 notes.push(Note::new(pitch, start, length, rn.vel));
+            }
+        }
+    }
+
+    /// Removes notes hidden under others of their pitch and shortens the
+    /// ones that run on into the next (see `tidy_notes`), keeping the piano
+    /// roll's selection on the same notes.
+    fn tidy_clip_notes(&mut self) {
+        let sel = self.sel_clip;
+        for (ti, t) in self.project.tracks.iter_mut().enumerate() {
+            for (si, slot) in t.slots.iter_mut().enumerate() {
+                let Some(map) = slot.as_mut().and_then(|c| c.notes_mut()).and_then(krabton_engine::project::tidy_notes) else { continue };
+                if sel == Some(ClipSel::Slot { track: ti, scene: si }) {
+                    self.piano.selected = self.piano.selected.iter().filter_map(|&i| map.get(i).copied().flatten()).collect();
+                }
+            }
+            for a in t.arrangement.iter_mut() {
+                let Some(map) = a.clip.notes_mut().and_then(krabton_engine::project::tidy_notes) else { continue };
+                if sel == Some(ClipSel::Arr { track: ti, id: a.id }) {
+                    self.piano.selected = self.piano.selected.iter().filter_map(|&i| map.get(i).copied().flatten()).collect();
+                }
             }
         }
     }
@@ -2224,7 +2250,8 @@ impl App {
                 }
                 "modtab" => self.detail = DetailTab::Mod,
                 "mod" => {
-                    let k = krabton_engine::modulation::ModKind::ALL[nums.first().copied().unwrap_or(0).min(7)];
+                    let all = krabton_engine::modulation::ModKind::ALL;
+                    let k = all[nums.first().copied().unwrap_or(0).min(all.len() - 1)];
                     self.add_modulator(k);
                 }
                 "map" => self.mod_learn = self.project.modulators.last().map(|m| m.id),
@@ -2295,6 +2322,15 @@ impl App {
                     let f: Vec<f32> = arg.split(',').filter_map(|v| v.trim().parse().ok()).collect();
                     if f.len() == 3 {
                         if let Some(v) = self.chain_mut(self.sel_track).and_then(|c| c.get_mut(f[0] as usize)).and_then(|d| d.params.get_mut(f[1] as usize)) {
+                            *v = f[2];
+                        }
+                    }
+                }
+                "midiparam" => {
+                    // midiparam=device,param,value sets a parameter of a MIDI device of the selected track.
+                    let f: Vec<f32> = arg.split(',').filter_map(|v| v.trim().parse().ok()).collect();
+                    if let (3, TrackSel::Track(t)) = (f.len(), self.sel_track) {
+                        if let Some(v) = self.project.tracks.get_mut(t).and_then(|t| t.midi_devices.get_mut(f[0] as usize)).and_then(|d| d.params.get_mut(f[1] as usize)) {
                             *v = f[2];
                         }
                     }

@@ -27,6 +27,7 @@ pub enum ModKind {
     Notes,
     Math,
     Shaper,
+    Tides,
 }
 
 pub const LFO_SHAPES: &[&str] = &["Sine", "Triangle", "Saw Up", "Saw Down", "Square", "S&H", "Smooth Random"];
@@ -86,9 +87,23 @@ pub static SHAPER: &[ParamSpec] = &[
     ParamSpec::choice("Mode", "Shape", SHAPER_MODES, 0),
 ];
 
+pub static TIDES: &[ParamSpec] = &[
+    ParamSpec::choice("Mode", "Tides", crate::dsp::tides::RAMP_MODES, 1),
+    ParamSpec::choice("Outputs", "Tides", crate::dsp::tides::OUTPUT_MODES, 2),
+    ParamSpec::toggle("Sync", "Rate", true),
+    ParamSpec::choice("Beat Rate", "Rate", BEAT_RATES, 7),
+    ParamSpec::log("Rate", "Rate", 0.02, 20.0, 0.5, Unit::Hz),
+    ParamSpec::lin("Shape", "Slope", 0.0, 1.0, 0.5, Unit::Percent),
+    ParamSpec::lin("Slope", "Slope", 0.0, 1.0, 0.5, Unit::Percent),
+    ParamSpec::lin("Smoothness", "Slope", 0.0, 1.0, 0.5, Unit::Percent),
+    ParamSpec::lin("Shift", "Outputs", 0.0, 1.0, 0.5, Unit::Percent),
+    ParamSpec::int("Out", "Outputs", 1.0, 4.0, 1.0, Unit::None),
+    ParamSpec::lin("Depth", "Outputs", 0.0, 1.0, 1.0, Unit::Percent),
+];
+
 impl ModKind {
-    pub const ALL: [ModKind; 8] =
-        [ModKind::Lfo, ModKind::Envelope, ModKind::Follower, ModKind::Steps, ModKind::Macro, ModKind::Notes, ModKind::Math, ModKind::Shaper];
+    pub const ALL: [ModKind; 9] =
+        [ModKind::Lfo, ModKind::Envelope, ModKind::Follower, ModKind::Steps, ModKind::Macro, ModKind::Notes, ModKind::Math, ModKind::Shaper, ModKind::Tides];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -100,6 +115,7 @@ impl ModKind {
             ModKind::Notes => "Notes",
             ModKind::Math => "Math",
             ModKind::Shaper => "Shaper",
+            ModKind::Tides => "Tides",
         }
     }
 
@@ -113,6 +129,7 @@ impl ModKind {
             ModKind::Notes => "Velocity, pitch, gate or a random value per note of a track",
             ModKind::Math => "Combines two inputs: route modulators into A and B",
             ModKind::Shaper => "Reshapes its input: gain, offset, curve, quantize, slew, rectify",
+            ModKind::Tides => "A tidal modulator after Mutable Instruments Tides: a slope looping with the tempo, or rising and falling on the notes of a track (AD, AR), its curve, peak and smoothness set by Shape, Slope and Smoothness; four outputs in phase, amplitude or frequency relations (Shift)",
         }
     }
 
@@ -126,17 +143,18 @@ impl ModKind {
             ModKind::Notes => NOTES,
             ModKind::Math => MATH,
             ModKind::Shaper => SHAPER,
+            ModKind::Tides => TIDES,
         }
     }
 
     /// Modulators that listen to a track (notes or audio).
     pub fn uses_track(self) -> bool {
-        matches!(self, ModKind::Envelope | ModKind::Follower | ModKind::Notes)
+        matches!(self, ModKind::Envelope | ModKind::Follower | ModKind::Notes | ModKind::Tides)
     }
 
     /// True when the output goes from -1 to 1 (otherwise 0 to 1).
     pub fn bipolar(self) -> bool {
-        matches!(self, ModKind::Lfo | ModKind::Math | ModKind::Shaper)
+        matches!(self, ModKind::Lfo | ModKind::Math | ModKind::Shaper | ModKind::Tides)
     }
 
     pub fn default_data(self) -> Vec<u8> {
@@ -383,6 +401,7 @@ struct ModState {
     stage: u8,
     was_held: bool,
     rng: u32,
+    tides: crate::dsp::tides::Tides,
 }
 
 #[derive(Clone, Copy)]
@@ -946,6 +965,28 @@ fn step(m: &Modulator, p: &[f32], st: &mut ModState, sig: TrackSignal, clock: Mo
             }
             st.value = slew(st.value, x, get(5), dt);
             st.value
+        }
+        ModKind::Tides => {
+            use crate::dsp::tides as td;
+            let s = td::Settings {
+                ramp_mode: get(0).round().max(0.0) as usize,
+                output_mode: get(1).round().max(0.0) as usize,
+                shape: get(5),
+                slope: get(6),
+                smoothness: get(7),
+                shift: get(8),
+            };
+            let (f0, ramp) = if get(2) >= 0.5 {
+                // Synced: a cycle (or an envelope) lasts the beat rate; a loop keeps the song's phase.
+                let period = BEAT_RATE_BEATS[(get(3).round().max(0.0) as usize).min(BEAT_RATE_BEATS.len() - 1)];
+                let f0 = (1.0 / (period * clock.samples_per_beat)) as f32;
+                (f0, (s.ramp_mode == td::LOOP).then(|| (beat / period).rem_euclid(1.0) as f32))
+            } else {
+                (get(4) / clock.sr, None)
+            };
+            let out = st.tides.process(&s, f0, clock.frames, ramp, sig.ons > 0, sig.held > 0);
+            let ch = (get(9).round().clamp(1.0, 4.0) as usize) - 1;
+            out[ch] * get(10)
         }
     }
 }

@@ -42,6 +42,7 @@ pub mod beads_synth;
 pub mod birds;
 pub mod nature;
 pub mod pan_flute;
+pub mod tides;
 
 use std::f32::consts::PI;
 

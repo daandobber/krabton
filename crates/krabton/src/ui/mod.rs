@@ -28,6 +28,8 @@ pub mod pedal_view;
 pub mod piano_roll;
 pub mod rack;
 pub mod rack_view;
+pub mod rhythm_more_view;
+pub mod rhythm_view;
 pub mod scope;
 pub mod seq_more_view;
 pub mod seq_view;

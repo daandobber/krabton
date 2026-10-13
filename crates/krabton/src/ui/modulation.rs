@@ -597,6 +597,9 @@ impl App {
                     }
                     resp.on_hover_text("Draw the steps");
                 }
+                if m.kind == ModKind::Tides {
+                    tides_preview(ui, &params, color);
+                }
             });
             ui.add_space(8.0);
             if crate::ui::devices::param_grid_mod(ui, Id::new(("mod_params", id)), m.kind.specs(), &mut params, color, ui.available_height() - 4.0, mv.as_mut()) {
@@ -804,4 +807,48 @@ mod tests {
         drive(&mut mv, &[vec![Event::PointerMoved(c), press(c, true)], vec![press(c, false)]], |_, _| {});
         assert!(mv.edits.is_empty());
     }
+}
+
+/// One cycle of Tides' four outputs at its settings, the one it sends bright.
+fn tides_preview(ui: &mut Ui, params: &[f32], color: Color32) {
+    use krabton_engine::dsp::tides as td;
+    let get = |i: usize| params.get(i).copied().unwrap_or(0.0);
+    let s = td::Settings {
+        ramp_mode: (get(0).round().max(0.0) as usize).min(2),
+        output_mode: (get(1).round().max(0.0) as usize).min(3),
+        shape: get(5),
+        slope: get(6),
+        smoothness: get(7),
+        shift: get(8),
+    };
+    let (r, resp) = ui.allocate_exact_size(vec2(184.0, 72.0), Sense::hover());
+    let p = ui.painter();
+    rect_fill(p, r, 3.0, KNOB);
+    let n = 96;
+    let cycle = td::preview(&s, n);
+    let bipolar = s.ramp_mode == td::LOOP;
+    let plot = r.shrink2(vec2(4.0, 6.0));
+    let mid = if bipolar { plot.center().y } else { plot.bottom() };
+    let scale = if bipolar { plot.height() * 0.5 } else { plot.height() };
+    p.line_segment([pos2(plot.left(), mid), pos2(plot.right(), mid)], Stroke::new(1.0_f32, LINE_SOFT));
+    let out = (get(9).round().clamp(1.0, 4.0) as usize) - 1;
+    let line = |j: usize| -> Vec<egui::Pos2> { cycle.iter().enumerate().map(|(k, o)| pos2(plot.left() + k as f32 / (n - 1) as f32 * plot.width(), mid - o[j].clamp(-1.0, 1.0) * scale)).collect() };
+    for j in (0..td::CHANNELS).filter(|&j| j != out) {
+        p.add(Shape::line(line(j), Stroke::new(1.0_f32, shade(color, 0.32))));
+    }
+    p.add(Shape::line(line(out), Stroke::new(1.8_f32, color)));
+    let what = if s.output_mode == td::FREQUENCY {
+        let r = td::ratios(s.shift);
+        format!("x{} x{} x{} x{}", trim(r[0]), trim(r[1]), trim(r[2]), trim(r[3]))
+    } else {
+        format!("{} · {}", td::RAMP_MODES[s.ramp_mode], td::OUTPUT_MODES[s.output_mode])
+    };
+    text(p, r.left_top() + vec2(5.0, 3.0), Align2::LEFT_TOP, what, small(), TEXT_DIM);
+    text(p, r.right_top() + vec2(-5.0, 3.0), Align2::RIGHT_TOP, format!("out {}", out + 1), small(), color);
+    resp.on_hover_text("One cycle of the four outputs (an AD after a note, an AR held for half of it); the bright one is the output this modulator sends");
+}
+
+fn trim(v: f32) -> String {
+    let s = format!("{v:.2}");
+    s.trim_end_matches('0').trim_end_matches('.').to_string()
 }
