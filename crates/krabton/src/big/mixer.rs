@@ -19,7 +19,7 @@ pub struct MixState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Ctl {
+pub(super) enum Ctl {
     Volume,
     Pan,
     Send(usize),
@@ -30,7 +30,7 @@ enum Ctl {
 
 impl App {
     /// The controls of strip `i` (the master is the last).
-    fn strip_controls(&self, i: usize) -> Vec<Ctl> {
+    pub(super) fn strip_controls(&self, i: usize) -> Vec<Ctl> {
         if i >= self.project.tracks.len() {
             return vec![Ctl::Volume];
         }
@@ -40,14 +40,14 @@ impl App {
         v
     }
 
-    fn volume_db(&mut self, i: usize) -> &mut f32 {
+    pub(super) fn volume_db(&mut self, i: usize) -> &mut f32 {
         match self.project.tracks.get_mut(i) {
             Some(t) => &mut t.mixer.volume_db,
             None => &mut self.project.master.volume_db,
         }
     }
 
-    fn turn_control(&mut self, i: usize, c: Ctl, by: f32) {
+    pub(super) fn turn_control(&mut self, i: usize, c: Ctl, by: f32) {
         match c {
             Ctl::Volume => {
                 let v = self.volume_db(i);
@@ -70,7 +70,7 @@ impl App {
         }
     }
 
-    fn press_control(&mut self, i: usize, c: Ctl) {
+    pub(super) fn press_control(&mut self, i: usize, c: Ctl) {
         match c {
             Ctl::Volume => *self.volume_db(i) = 0.0,
             Ctl::Pan => {
