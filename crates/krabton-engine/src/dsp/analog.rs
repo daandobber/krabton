@@ -487,6 +487,8 @@ impl Voice {
 /// Per-render settings, from the parameters.
 struct Ctrl {
     fs2: f32,
+    /// Pitch bend in semitones.
+    bend: f32,
     wave1: Wave,
     wave2: Wave,
     oct1: f32,
@@ -612,6 +614,8 @@ fn halfband() -> [f32; FIR_TAPS] {
 }
 
 pub struct AnalogState {
+    /// Pitch bend in semitones (a wheel, a controller's triggers), set by the engine.
+    pub pitch_bend: f32,
     voices: Vec<Voice>,
     held: Vec<u8>,
     counter: u64,
@@ -633,6 +637,7 @@ const PANS: [f32; 8] = [-0.6, 0.6, -0.3, 0.3, -0.9, 0.9, -0.15, 0.15];
 impl AnalogState {
     pub fn new(sr: f32) -> Self {
         Self {
+            pitch_bend: 0.0,
             voices: (0..MAX_VOICES).map(Voice::new).collect(),
             held: Vec::with_capacity(32),
             counter: 0,
@@ -807,6 +812,7 @@ impl AnalogState {
         let aenv = [p[ATTACK], p[DECAY], p[SUSTAIN], p[RELEASE]];
         let block = CTRL as f32 / fs2;
         Ctrl {
+            bend: self.pitch_bend,
             fs2,
             wave1: Wave::from_param(p[WAVE1]),
             wave2: Wave::from_param(p[WAVE2]),
@@ -954,7 +960,7 @@ fn render_voice(v: &mut Voice, c: &Ctrl, lfo: &[f32], out_l: &mut [f32], out_r: 
         v.since_on += len as f32 / fs2;
         let mod_lfo = lfo.get(step).copied().unwrap_or(0.0) * fade;
         step += 1;
-        let base = v.pitch + v.uni * c.uni_detune + mod_lfo * c.lfo_pitch;
+        let base = v.pitch + v.uni * c.uni_detune + mod_lfo * c.lfo_pitch + c.bend;
         let note1 = base + c.oct1 + v.drift[0] * drift_cents;
         let note2 = base + c.oct2 + v.drift[1] * drift_cents + v.tol_detune * c.vintage * 0.03 + c.env_pitch2 * v.fenv.level;
         let dt1 = (midi_to_freq(note1) / fs2).min(0.45);

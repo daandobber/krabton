@@ -274,6 +274,8 @@ impl Voice {
 }
 
 pub struct VoiceState {
+    /// Pitch bend in semitones (a wheel, a controller's triggers), set by the engine.
+    pub pitch_bend: f32,
     voices: Vec<Voice>,
     /// Held keys, newest last (for legato with one voice).
     held: Vec<u8>,
@@ -289,7 +291,8 @@ pub struct VoiceState {
 
 impl VoiceState {
     pub fn new(sr: f32) -> Self {
-        Self { voices: (0..MAX_VOICES).map(Voice::new).collect(), held: Vec::with_capacity(32), counter: 0, sr, last_pitch: -1.0, lfo: 0.0, morph_now: 0.0, harmonic_now: 8.0 }
+        Self {
+            pitch_bend: 0.0, voices: (0..MAX_VOICES).map(Voice::new).collect(), held: Vec::with_capacity(32), counter: 0, sr, last_pitch: -1.0, lfo: 0.0, morph_now: 0.0, harmonic_now: 8.0 }
     }
 
     fn poly(p: &[f32]) -> usize {
@@ -404,6 +407,7 @@ impl VoiceState {
     }
 
     fn render_chunk(&mut self, p: &[f32], l: &mut [f32], r: &mut [f32]) {
+        let pitch_bend = self.pitch_bend;
         let len = l.len();
         let sr = self.sr;
         let dt = len as f32 / sr;
@@ -445,7 +449,7 @@ impl VoiceState {
         for v in self.voices.iter_mut().filter(|v| v.active) {
             v.pitch += (v.target - v.pitch) * glide;
             v.since_on += dt;
-            let base = v.pitch + octave;
+            let base = v.pitch + octave + pitch_bend;
             let f0 = midi_to_freq(base);
             for k in 0..4 {
                 v.coefs[k] = reson(forms[k].0, forms[k].1, sr);

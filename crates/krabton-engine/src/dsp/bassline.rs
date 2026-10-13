@@ -630,6 +630,8 @@ impl QuarterBand {
 // The voice
 
 pub struct BasslineState {
+    /// Pitch bend in semitones (a wheel, a controller's triggers), set by the engine.
+    pub pitch_bend: f32,
     sr: f64,
     tables: &'static WaveTables,
     /// Read position in the wavetables, 0..TABLE_LEN.
@@ -678,6 +680,7 @@ impl BasslineState {
         let sr = (sr as f64).max(1000.0);
         let os = sr * OVERSAMPLING as f64;
         let mut s = Self {
+            pitch_bend: 0.0,
             sr,
             tables: tables(),
             phase: 0.0,
@@ -910,7 +913,7 @@ impl BasslineState {
         if inst > 0.0 && inst < 20000.0 {
             self.freq = inst;
         }
-        let inc = TABLE_LEN as f64 * self.freq / (self.sr * OVERSAMPLING as f64);
+        let inc = TABLE_LEN as f64 * self.freq * (self.pitch_bend as f64 / 12.0).exp2() / (self.sr * OVERSAMPLING as f64);
         // Two levels above the increment's octave: harmonics stay below a
         // quarter of the oversampled rate.
         let level = (exponent(inc) + 2).clamp(0, NUM_TABLES as i32 - 1) as usize;

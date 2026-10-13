@@ -28,6 +28,8 @@ pub enum ModKind {
     Math,
     Shaper,
     Tides,
+    ModWheel,
+    Joystick,
 }
 
 pub const LFO_SHAPES: &[&str] = &["Sine", "Triangle", "Saw Up", "Saw Down", "Square", "S&H", "Smooth Random"];
@@ -101,9 +103,20 @@ pub static TIDES: &[ParamSpec] = &[
     ParamSpec::lin("Depth", "Outputs", 0.0, 1.0, 1.0, Unit::Percent),
 ];
 
+pub static MOD_WHEEL: &[ParamSpec] = &[
+    ParamSpec::log("Smooth", "Wheel", 0.001, 1.0, 0.02, Unit::Sec),
+    ParamSpec::lin("Depth", "Wheel", 0.0, 1.0, 1.0, Unit::Percent),
+];
+
+pub static JOYSTICK: &[ParamSpec] = &[
+    ParamSpec::choice("Axis", "Stick", &["X", "Y"], 0),
+    ParamSpec::log("Smooth", "Stick", 0.001, 1.0, 0.02, Unit::Sec),
+    ParamSpec::lin("Depth", "Stick", 0.0, 1.0, 1.0, Unit::Percent),
+];
+
 impl ModKind {
-    pub const ALL: [ModKind; 9] =
-        [ModKind::Lfo, ModKind::Envelope, ModKind::Follower, ModKind::Steps, ModKind::Macro, ModKind::Notes, ModKind::Math, ModKind::Shaper, ModKind::Tides];
+    pub const ALL: [ModKind; 11] =
+        [ModKind::Lfo, ModKind::Envelope, ModKind::Follower, ModKind::Steps, ModKind::Macro, ModKind::Notes, ModKind::Math, ModKind::Shaper, ModKind::Tides, ModKind::ModWheel, ModKind::Joystick];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -116,6 +129,8 @@ impl ModKind {
             ModKind::Math => "Math",
             ModKind::Shaper => "Shaper",
             ModKind::Tides => "Tides",
+            ModKind::ModWheel => "Mod Wheel",
+            ModKind::Joystick => "Joystick",
         }
     }
 
@@ -130,6 +145,8 @@ impl ModKind {
             ModKind::Math => "Combines two inputs: route modulators into A and B",
             ModKind::Shaper => "Reshapes its input: gain, offset, curve, quantize, slew, rectify",
             ModKind::Tides => "A tidal modulator after Mutable Instruments Tides: a slope looping with the tempo, or rising and falling on the notes of a track (AD, AR), its curve, peak and smoothness set by Shape, Slope and Smoothness; four outputs in phase, amplitude or frequency relations (Shift)",
+            ModKind::ModWheel => "The mod wheel of a track: a MIDI keyboard's (CC 1), or a controller's triggers in Big Picture",
+            ModKind::Joystick => "One way (X or Y) of a track's joystick: the right stick in Big Picture's XY play mode, -1 to 1 around the knob",
         }
     }
 
@@ -144,17 +161,19 @@ impl ModKind {
             ModKind::Math => MATH,
             ModKind::Shaper => SHAPER,
             ModKind::Tides => TIDES,
+            ModKind::ModWheel => MOD_WHEEL,
+            ModKind::Joystick => JOYSTICK,
         }
     }
 
     /// Modulators that listen to a track (notes or audio).
     pub fn uses_track(self) -> bool {
-        matches!(self, ModKind::Envelope | ModKind::Follower | ModKind::Notes | ModKind::Tides)
+        matches!(self, ModKind::Envelope | ModKind::Follower | ModKind::Notes | ModKind::Tides | ModKind::ModWheel | ModKind::Joystick)
     }
 
     /// True when the output goes from -1 to 1 (otherwise 0 to 1).
     pub fn bipolar(self) -> bool {
-        matches!(self, ModKind::Lfo | ModKind::Math | ModKind::Shaper | ModKind::Tides)
+        matches!(self, ModKind::Lfo | ModKind::Math | ModKind::Shaper | ModKind::Tides | ModKind::Joystick)
     }
 
     pub fn default_data(self) -> Vec<u8> {
@@ -387,6 +406,10 @@ pub struct TrackSignal {
     pub held: u16,
     /// Peak level of the track before its fader.
     pub level: f32,
+    /// The mod wheel (0..1): a MIDI keyboard's, or a controller's triggers.
+    pub modwheel: f32,
+    /// A joystick (x, y; -1..1): a controller's stick in Big Picture.
+    pub joy: [f32; 2],
 }
 
 /// Musical time for a control tick.
@@ -996,6 +1019,15 @@ fn step(m: &Modulator, p: &[f32], st: &mut ModState, sig: TrackSignal, clock: Mo
             let ch = (get(9).round().clamp(1.0, 4.0) as usize) - 1;
             out[ch] * get(10)
         }
+        ModKind::ModWheel => {
+            st.value = slew(st.value, sig.modwheel, get(0), dt);
+            st.value * get(1)
+        }
+        ModKind::Joystick => {
+            let axis = (get(0).round() as usize).min(1);
+            st.value = slew(st.value, sig.joy[axis], get(1), dt);
+            st.value * get(2)
+        }
     }
 }
 
@@ -1061,7 +1093,7 @@ mod tests {
         p.add_route(env_id, ModTarget::Param { owner: ModOwner::Modulator(sh_id), param: 0 }, 1.0);
         let mut rt = ModRuntime::new();
         rt.rebuild(&p);
-        let mut sig = [TrackSignal { ons: 1, pitch: 60, velocity: 1.0, held: 1, level: 0.0 }];
+        let mut sig = [TrackSignal { ons: 1, pitch: 60, velocity: 1.0, held: 1, ..Default::default() }];
         rt.tick(&p, &sig, clock(0.0), true, &[]);
         sig[0].ons = 0;
         for _ in 0..200 {
@@ -1094,6 +1126,46 @@ mod tests {
         }
         assert!(rt.track_mix(1).gain < 0.05, "ducked gain {}", rt.track_mix(1).gain);
         assert!((rt.track_mix(0).gain - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_mod_wheel_follows_the_wheel() {
+        let mut p = Project::new_default();
+        let mut m = p.make_modulator(ModKind::ModWheel);
+        m.track = Some(p.tracks[0].id);
+        p.modulators.push(m);
+        let mut rt = ModRuntime::new();
+        rt.rebuild(&p);
+        let up = [TrackSignal { modwheel: 0.8, ..Default::default() }];
+        for _ in 0..200 {
+            rt.tick(&p, &up, clock(0.0), true, &[]);
+        }
+        assert!((rt.outputs[0] - 0.8).abs() < 0.01, "up {}", rt.outputs[0]);
+        let down = [TrackSignal::default()];
+        for _ in 0..200 {
+            rt.tick(&p, &down, clock(0.0), true, &[]);
+        }
+        assert!(rt.outputs[0] < 0.01, "down {}", rt.outputs[0]);
+    }
+
+    #[test]
+    fn a_joystick_follows_its_axis() {
+        let mut p = Project::new_default();
+        let mut x = p.make_modulator(ModKind::Joystick);
+        x.track = Some(p.tracks[0].id);
+        p.modulators.push(x);
+        let mut y = p.make_modulator(ModKind::Joystick);
+        y.track = Some(p.tracks[0].id);
+        y.params[0] = 1.0;
+        p.modulators.push(y);
+        let mut rt = ModRuntime::new();
+        rt.rebuild(&p);
+        let sig = [TrackSignal { joy: [-0.6, 0.9], ..Default::default() }];
+        for _ in 0..200 {
+            rt.tick(&p, &sig, clock(0.0), true, &[]);
+        }
+        assert!((rt.outputs[0] + 0.6).abs() < 0.01, "x {}", rt.outputs[0]);
+        assert!((rt.outputs[1] - 0.9).abs() < 0.01, "y {}", rt.outputs[1]);
     }
 
     #[test]

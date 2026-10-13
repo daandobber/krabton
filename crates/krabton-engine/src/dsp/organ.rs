@@ -150,6 +150,8 @@ struct Voice {
 }
 
 pub struct OrganState {
+    /// Pitch bend in semitones (a wheel, a controller's triggers), set by the engine.
+    pub pitch_bend: f32,
     voices: [Voice; MAX_VOICES],
     sine: Vec<f32>,
     sr: f32,
@@ -170,6 +172,7 @@ impl OrganState {
     pub fn new(sr: f32) -> Self {
         let sine = (0..=TABLE).map(|i| (i as f32 / TABLE as f32 * TAU).sin()).collect();
         Self {
+            pitch_bend: 0.0,
             voices: [Voice::default(); MAX_VOICES],
             sine,
             sr,
@@ -284,7 +287,7 @@ impl OrganState {
                 continue;
             }
             active_any = true;
-            let base = midi_to_freq(self.voices[vi].note as f32);
+            let base = midi_to_freq(self.voices[vi].note as f32 + self.pitch_bend);
             let mut inc = [0.0f32; 9];
             for (k, f) in inc.iter_mut().enumerate() {
                 let mut hz = base * HARMONICS[k];

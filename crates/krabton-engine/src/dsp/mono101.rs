@@ -174,6 +174,8 @@ impl Blep {
 }
 
 pub struct Mono101State {
+    /// Pitch bend in semitones (a wheel, a controller's triggers), set by the engine.
+    pub pitch_bend: f32,
     sr: f32,
     /// Keys held, oldest first.
     held: Vec<u8>,
@@ -207,6 +209,7 @@ pub struct Mono101State {
 impl Mono101State {
     pub fn new(sr: f32) -> Self {
         Self {
+            pitch_bend: 0.0,
             sr: sr.max(1000.0),
             held: Vec::with_capacity(16),
             gate: false,
@@ -423,7 +426,7 @@ impl Mono101State {
                 self.drift_target = self.rng.bipolar() * 0.12 * vintage;
             }
             self.drift += (self.drift_target - self.drift) * 0.0004;
-            let semis = self.pitch + octave + fine + self.drift + lfo * vco_lfo;
+            let semis = self.pitch + octave + fine + self.drift + lfo * vco_lfo + self.pitch_bend;
             let f = 440.0 * 2f32.powf((semis - 69.0) / 12.0);
             let dt = (f / sr).min(0.45);
 
@@ -584,6 +587,26 @@ mod tests {
         assert!((base(0.0) - 220.0).abs() < 8.0, "{}", base(0.0));
         assert!((base(1.0) - 110.0).abs() < 6.0, "{}", base(1.0));
         assert!((base(2.0) - 110.0).abs() < 6.0, "{}", base(2.0));
+    }
+
+    #[test]
+    fn a_bend_moves_the_pitch() {
+        let p = patch(&[(SAW, 0.0), (SUB, 1.0), (SUB_MODE, 0.0), (CUTOFF, 1.0), (ENV_AMT, 0.0), (SUSTAIN, 1.0), (VINTAGE, 0.0)]);
+        let bent = |semis: f32| {
+            let mut s = Mono101State::new(SR);
+            s.pitch_bend = semis;
+            s.note_on(&p, 69, 0.9);
+            let mut out = Vec::new();
+            for _ in 0..(0.5 * SR) as usize / 256 {
+                let (mut l, mut r) = (vec![0.0; 256], vec![0.0; 256]);
+                s.render(&p, &mut l, &mut r);
+                out.extend_from_slice(&l);
+            }
+            crossings(&out[4800..])
+        };
+        // The sub of A4 sits at 220 Hz; an octave up 440, down 110.
+        assert!((bent(12.0) - 440.0).abs() < 12.0, "{}", bent(12.0));
+        assert!((bent(-12.0) - 110.0).abs() < 6.0, "{}", bent(-12.0));
     }
 
     #[test]

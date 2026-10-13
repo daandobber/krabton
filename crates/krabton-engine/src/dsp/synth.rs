@@ -260,6 +260,8 @@ impl Voice {
 }
 
 pub struct SynthState {
+    /// Pitch bend in semitones (a wheel, a controller's triggers), set by the engine.
+    pub pitch_bend: f32,
     voices: [Voice; MAX_VOICES],
     lfo_phase: f32,
     counter: u64,
@@ -280,7 +282,8 @@ impl SynthState {
         for (i, v) in voices.iter_mut().enumerate() {
             v.rng = Rng::new(0x1234_5678 ^ (i as u32 * 7919 + 1));
         }
-        Self { voices, lfo_phase: 0.0, counter: 0, last_freq: 220.0, held: [0; 16], held_len: 0 }
+        Self {
+            pitch_bend: 0.0, voices, lfo_phase: 0.0, counter: 0, last_freq: 220.0, held: [0; 16], held_len: 0 }
     }
 
     /// For the display, laid out as `AnalogState::visual`.
@@ -463,6 +466,7 @@ impl SynthState {
         let lfo_pitch = p[LFO_PITCH] * 2.0;
         let vol = db_to_gain(p[VOLUME]) * 0.6;
         let glide_coef = if p[GLIDE] > 0.0015 { decay_coef(p[GLIDE], sr / CHUNK as f32) } else { 0.0 };
+        let bend_ratio = (self.pitch_bend / 12.0).exp2();
 
         let mut start = 0;
         while start < n {
@@ -475,7 +479,7 @@ impl SynthState {
             for v in self.voices.iter_mut().filter(|v| v.active) {
                 let fe = v.fenv.next(&fenv_c);
                 v.freq = v.target + (v.freq - v.target) * glide_coef;
-                let f = v.freq * pitch_mod;
+                let f = v.freq * pitch_mod * bend_ratio;
                 let oct = fe * env_amt + lfo * lfo_cut + keytrack * (v.note as f32 - 60.0) / 12.0;
                 let fc = cutoff * 2f32.powf(oct);
                 v.fc = fc;

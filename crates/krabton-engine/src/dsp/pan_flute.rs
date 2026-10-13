@@ -145,6 +145,8 @@ impl Voice {
 }
 
 pub struct PanFluteState {
+    /// Pitch bend in semitones (a wheel, a controller's triggers), set by the engine.
+    pub pitch_bend: f32,
     sr: f32,
     voices: Vec<Voice>,
     /// Keys held, in order (one voice plays the last).
@@ -163,6 +165,7 @@ const CHUNK: usize = 64;
 impl PanFluteState {
     pub fn new(sr: f32) -> Self {
         Self {
+            pitch_bend: 0.0,
             sr: sr.max(1000.0),
             voices: (0..MAX_VOICES).map(|_| Voice::new()).collect(),
             stack: Vec::with_capacity(32),
@@ -275,6 +278,7 @@ impl PanFluteState {
     }
 
     pub fn render(&mut self, p: &[f32], l: &mut [f32], r: &mut [f32]) {
+        let pitch_bend = self.pitch_bend;
         if p.len() < SPECS.len() {
             return;
         }
@@ -321,7 +325,7 @@ impl PanFluteState {
                     let depth = vibrato * vin * vin * (3.0 - 2.0 * vin);
                     v.vib_ph = (v.vib_ph + vib_rate / sr).fract();
                     let vib = (TAU * v.vib_ph).sin() * depth;
-                    let semis = scoop + vib * (1.0 - m.vib_amp) * 0.4 + v.drift * 0.04;
+                    let semis = scoop + vib * (1.0 - m.vib_amp) * 0.4 + v.drift * 0.04 + pitch_bend;
                     let f = v.f * (semis * (std::f32::consts::LN_2 / 12.0)).exp();
                     let press = v.env * (0.55 + 0.45 * v.vel) * (1.0 + vib * m.vib_amp * 0.35);
                     v.phase = (v.phase + f / sr).fract();

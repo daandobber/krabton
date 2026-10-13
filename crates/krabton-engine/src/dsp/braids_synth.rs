@@ -335,6 +335,8 @@ impl BraidsVoice {
 }
 
 pub struct BraidsSynthState {
+    /// Pitch bend in semitones (a wheel, a controller's triggers), set by the engine.
+    pub pitch_bend: f32,
     voices: Vec<BraidsVoice>,
     held: Vec<u8>,
     counter: u64,
@@ -347,7 +349,8 @@ pub struct BraidsSynthState {
 impl BraidsSynthState {
     pub fn new(sr: f32) -> Self {
         let rate_offset = (12.0 * (krabton_braids::SAMPLE_RATE / (2.0 * sr)).log2() * 128.0).round() as i32;
-        Self { voices: (0..MAX_VOICES).map(BraidsVoice::new).collect(), held: Vec::with_capacity(32), counter: 0, sr, fir: halfband(), rate_offset }
+        Self {
+            pitch_bend: 0.0, voices: (0..MAX_VOICES).map(BraidsVoice::new).collect(), held: Vec::with_capacity(32), counter: 0, sr, fir: halfband(), rate_offset }
     }
 
     fn voices_used(p: &[f32]) -> usize {
@@ -502,7 +505,7 @@ impl BraidsSynthState {
                     }
                     let timbre = ((p[TIMBRE] + p[TIMBRE_ENV] * v.ad).clamp(0.0, 1.0) * 32767.0) as i16;
                     let color = ((p[COLOR] + p[COLOR_ENV] * v.ad).clamp(0.0, 1.0) * 32767.0) as i16;
-                    let semis = v.note + p[PITCH_ENV] * v.ad;
+                    let semis = v.note + p[PITCH_ENV] * v.ad + self.pitch_bend;
                     let mut pitch = (semis * 128.0) as i32 + rate_offset;
                     if drift > 0 {
                         pitch += v.jitter.render(drift) as i32 * 4;

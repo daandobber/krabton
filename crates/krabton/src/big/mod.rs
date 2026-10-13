@@ -72,6 +72,7 @@ pub struct BigPicture {
     pub clip_menu: Option<usize>,
     /// A right stick and triggers a script holds (tests without a controller).
     pub script_stick: Option<(f32, f32)>,
+    pub script_lstick: Option<(f32, f32)>,
     pub script_trig: Option<f32>,
     pub fullscreen: bool,
 }
@@ -94,6 +95,7 @@ impl BigPicture {
             script: Default::default(),
             clip_menu: None,
             script_stick: None,
+            script_lstick: None,
             script_trig: None,
             fullscreen: false,
         }
@@ -158,6 +160,7 @@ pub enum Glyph {
     Dpad,
     Triggers,
     RightStick,
+    Sticks,
 }
 
 pub fn glyph(p: &Painter, c: Pos2, r: f32, g: Glyph) {
@@ -183,6 +186,7 @@ pub fn glyph(p: &Painter, c: Pos2, r: f32, g: Glyph) {
         Glyph::Btn(Nav::Record) => pill("R3", 2.3),
         Glyph::Btn(Nav::LeftStick) => pill("L3", 2.3),
         Glyph::RightStick => pill("R-Stick", 4.2),
+        Glyph::Sticks => pill("Sticks", 4.2),
         Glyph::Triggers => pill("LT RT", 3.6),
         Glyph::Dpad | Glyph::Btn(_) => {
             let w = r * 0.62;
@@ -197,7 +201,7 @@ pub fn glyph(p: &Painter, c: Pos2, r: f32, g: Glyph) {
 fn glyph_w(g: Glyph, r: f32) -> f32 {
     match g {
         Glyph::Btn(Nav::Start | Nav::Select) | Glyph::Triggers => r * 3.6,
-        Glyph::RightStick => r * 4.2,
+        Glyph::RightStick | Glyph::Sticks => r * 4.2,
         Glyph::Btn(Nav::PrevPage | Nav::NextPage | Nav::Record | Nav::LeftStick) => r * 2.3,
         _ => r * 2.0,
     }
@@ -244,6 +248,7 @@ pub fn value_bar(p: &Painter, r: Rect, v: f32, bipolar: bool, label: &str, s: &S
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MenuItem {
     Resume,
+    PlayTrack,
     Play,
     Record,
     Tempo,
@@ -291,6 +296,16 @@ const MENU: [MenuItem; 21] = [
 ];
 
 impl App {
+    /// The menu's rows: on the Play page the track played first.
+    fn menu_items(&self) -> Vec<MenuItem> {
+        let mut items = vec![MenuItem::Resume];
+        if self.big.page == Page::Play {
+            items.push(MenuItem::PlayTrack);
+        }
+        items.extend_from_slice(&MENU[1..]);
+        items
+    }
+
     /// Switches to Big Picture.
     pub fn enter_big_picture(&mut self) {
         self.big.on = true;
@@ -337,8 +352,21 @@ impl App {
             if inp.take(Nav::Record) {
                 self.toggle_record();
             }
+            if self.big.page != Page::Play {
+                self.big.play.bar_focus = None;
+                self.big.play.picker = None;
+            }
             if inp.take(Nav::Select) {
-                self.big.menu = if self.big.menu.is_some() { None } else { Some(0) };
+                // On Play, Menu first goes to the row of modes, then to the menu.
+                if self.big.menu.is_some() {
+                    self.big.menu = None;
+                } else if self.big.page == Page::Play && self.big.play.bar_focus.is_none() && self.big.play.picker.is_none() {
+                    self.big.play.bar_focus = Some(0);
+                } else {
+                    self.big.play.bar_focus = None;
+                    self.big.play.picker = None;
+                    self.big.menu = Some(0);
+                }
             }
             self.big_top_bar(ui, top, &s);
             let popup = self.big.menu.is_some() || self.big.clip_menu.is_some();
@@ -364,7 +392,8 @@ impl App {
             } else {
                 let mut all = hint_list;
                 all.push((Glyph::Btn(Nav::Start), if self.is_playing() { "Stop" } else { "Play" }));
-                all.push((Glyph::Btn(Nav::Select), "Menu"));
+                let modes = self.big.page == Page::Play && self.big.play.bar_focus.is_none() && self.big.play.picker.is_none();
+                all.push((Glyph::Btn(Nav::Select), if modes { "Modes" } else { "Menu" }));
                 big_hints(ui, hints, &s, &all);
             }
             // Messages (a set loaded, something went wrong) above the hints.
@@ -473,7 +502,8 @@ impl App {
     fn big_menu(&mut self, ui: &mut Ui, full: Rect, s: &Sz, inp: &mut Frame) {
         let p = ui.painter().clone();
         p.rect_filled(full, 0.0, Color32::from_black_alpha(170));
-        let n = MENU.len();
+        let items = self.menu_items();
+        let n = items.len();
         let mut cur = self.big.menu.unwrap_or(0).min(n - 1);
         let row_h = s.u * 1.05;
         let w = (s.u * 13.0).min(full.width() - s.u);
@@ -503,7 +533,7 @@ impl App {
         let first = cur.saturating_sub(shown / 2).min(n - shown);
         let list_top = panel.top() + s.u * 1.2;
         for (k, i) in (first..first + shown).enumerate() {
-            let item = MENU[i];
+            let item = items[i];
             let rr = Rect::from_min_size(pos2(panel.left() + s.u * 0.3, list_top + k as f32 * row_h), vec2(panel.width() - s.u * 0.6, row_h - s.u * 0.12));
             let resp = ui.interact(rr, Id::new(("big_menu", i)), Sense::click());
             if resp.clicked() {
@@ -514,13 +544,13 @@ impl App {
             let (label, value) = self.menu_label(item);
             text(&p, pos2(rr.left() + s.u * 0.4, rr.center().y), Align2::LEFT_CENTER, label, s.f(), TEXT);
             if let Some(v) = value {
-                let col = if matches!(item, MenuItem::Tempo | MenuItem::Key | MenuItem::Scale | MenuItem::Quantize) { accent_now() } else { TEXT_DIM };
+                let col = if matches!(item, MenuItem::Tempo | MenuItem::Key | MenuItem::Scale | MenuItem::Quantize | MenuItem::PlayTrack) { accent_now() } else { TEXT_DIM };
                 let vr = Rect::from_min_max(pos2(rr.center().x, rr.top()), rr.max);
                 fit_text(&p, pos2(rr.right() - s.u * 0.4, rr.center().y), Align2::RIGHT_CENTER, &v, s.font, vr.width() - s.u * 0.5, col);
             }
         }
         self.big.menu = Some(cur);
-        let item = MENU[cur];
+        let item = items[cur];
         // The tempo turns with the triggers too.
         if item == MenuItem::Tempo && inp.turn.abs() > 0.01 {
             self.project.bpm = (self.project.bpm + inp.turn as f64 * inp.dt as f64 * 40.0).clamp(20.0, 999.0);
@@ -537,6 +567,13 @@ impl App {
         let on_off = |b: bool| Some(if b { "On".to_string() } else { "Off".to_string() });
         match item {
             MenuItem::Resume => ("Back", None),
+            MenuItem::PlayTrack => {
+                let name = match self.sel_track {
+                    TrackSel::Track(t) => self.project.tracks.get(t).map(|t| t.name.clone()),
+                    _ => None,
+                };
+                ("Play track", Some(format!("< {} >", name.unwrap_or_default())))
+            }
             MenuItem::Play => (if self.is_playing() { "Stop" } else { "Play" }, None),
             MenuItem::Record => ("Record", on_off(self.recording)),
             MenuItem::Tempo => ("Tempo", Some(format!("< {:.1} BPM >", self.project.bpm))),
@@ -563,6 +600,7 @@ impl App {
     fn menu_step(&mut self, item: MenuItem, step: i32) {
         use krabton_engine::{Quantize, Scale, ScaleKind};
         match item {
+            MenuItem::PlayTrack => self.play_next_track(step),
             MenuItem::Tempo => self.project.bpm = (self.project.bpm.round() + step as f64).clamp(20.0, 999.0),
             MenuItem::Key => self.project.scale = Scale::new(((self.project.scale.root as i32 + step).rem_euclid(12)) as u8, self.project.scale.kind),
             MenuItem::Scale => {
@@ -583,6 +621,7 @@ impl App {
     fn menu_activate(&mut self, item: MenuItem) {
         match item {
             MenuItem::Resume => self.big.menu = None,
+            MenuItem::PlayTrack => {}
             MenuItem::Play => self.toggle_play(),
             MenuItem::Record => self.toggle_record(),
             MenuItem::Tempo | MenuItem::Key | MenuItem::Scale | MenuItem::Quantize => {}
@@ -903,6 +942,9 @@ impl App {
         for (_, (pitch, ids)) in held {
             self.note_off(pitch, &ids);
         }
+        self.big.play.on_pad.clear();
+        self.big.play.levels.clear();
+        self.big_unbend();
     }
 }
 

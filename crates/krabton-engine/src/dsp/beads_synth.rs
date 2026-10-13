@@ -84,6 +84,8 @@ pub fn preset(name: &str) -> Vec<f32> {
 }
 
 pub struct BeadsSynthState {
+    /// Pitch bend in semitones (a wheel, a controller's triggers), set by the engine.
+    pub pitch_bend: f32,
     /// The song plays and where it is (set by the engine every block).
     pub playing: bool,
     pub beat: f64,
@@ -102,7 +104,8 @@ pub struct BeadsSynthState {
 impl BeadsSynthState {
     pub fn new(sr: f32) -> Self {
         let sr = sr.max(1000.0);
-        Self { playing: false, beat: 0.0, bpm: 120.0, sr, beads: Box::new(Beads::new(sr)), stack: Vec::with_capacity(32), note: 48, velocity: 0.8, gain: 0.0, env: 0.0, views: [GrainView::default(); 8] }
+        Self {
+            pitch_bend: 0.0, playing: false, beat: 0.0, bpm: 120.0, sr, beads: Box::new(Beads::new(sr)), stack: Vec::with_capacity(32), note: 48, velocity: 0.8, gain: 0.0, env: 0.0, views: [GrainView::default(); 8] }
     }
 
     pub fn note_on(&mut self, _p: &[f32], note: u8, vel: f32) {
@@ -168,7 +171,7 @@ impl BeadsSynthState {
             size_amount: p[SIZE_RANDOM],
             shape: p[SHAPE],
             shape_amount: p[SHAPE_RANDOM],
-            pitch: self.note as f32 - 48.0 + p[TRANSPOSE].round(),
+            pitch: self.note as f32 - 48.0 + p[TRANSPOSE].round() + self.pitch_bend,
             pitch_amount: p[PITCH_RANDOM],
             density: p[DENSITY],
             // FEEDBACK picks the bank in the synth: the middle of its step.

@@ -251,6 +251,8 @@ enum Stage {
 struct Singer {
     active: bool,
     current_pitch: f32,
+    /// Pitch bend in semitones.
+    bend: f32,
     target_pitch: f32,
     glide: f32,
     vib_phase: f32,
@@ -284,6 +286,7 @@ impl Singer {
         Self {
             active: false,
             current_pitch: 57.0,
+            bend: 0.0,
             target_pitch: 57.0,
             glide: 0.5,
             // Staggered so the singers of a choir do not move in lockstep.
@@ -469,7 +472,7 @@ impl Singer {
             if self.is_active() {
                 self.portamento(t.sr);
                 let vib = self.vibrato(t);
-                let period = t.period(self.current_pitch + vib) as usize;
+                let period = t.period(self.current_pitch + vib + self.bend) as usize;
                 if self.offset >= period || self.dirty {
                     self.compute_grain(t);
                     self.overlap_add(t);
@@ -593,6 +596,8 @@ impl Echo {
 const CHUNK: usize = 256;
 
 pub struct MonkState {
+    /// Pitch bend in semitones (a wheel, a controller's triggers), set by the engine.
+    pub pitch_bend: f32,
     tables: Tables,
     choirs: Vec<Choir>,
     /// Held keys, newest last (one voice: the newest sounds).
@@ -610,6 +615,7 @@ impl MonkState {
     pub fn new(sr: f32) -> Self {
         let sr = if (1000.0..=768000.0).contains(&sr) { sr } else { 44100.0 };
         Self {
+            pitch_bend: 0.0,
             tables: Tables::new(sr),
             choirs: (0..MAX_CHOIRS).map(|_| Choir::new(sr)).collect(),
             held: Vec::with_capacity(32),
@@ -779,6 +785,7 @@ impl MonkState {
     }
 
     fn render_chunk(&mut self, p: &[f32], l: &mut [f32], r: &mut [f32]) {
+        let bend = self.pitch_bend;
         let len = l.len();
         self.wobble = (self.wobble + p[WOBBLE_RATE].max(0.0) * len as f32 / self.sr).fract();
         self.apply(p);
@@ -796,6 +803,7 @@ impl MonkState {
                 let scratch = &mut self.scratch[..len];
                 scratch.fill(0.0);
                 for s in c.singers.iter_mut().filter(|s| s.busy()) {
+                    s.bend = bend;
                     s.process(&self.tables, scratch);
                 }
                 for (m, x) in mono.iter_mut().zip(scratch.iter()) {

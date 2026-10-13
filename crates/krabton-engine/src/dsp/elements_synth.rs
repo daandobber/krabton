@@ -217,6 +217,8 @@ struct Slot {
 }
 
 pub struct ElementsSynthState {
+    /// Pitch bend in semitones (a wheel, a controller's triggers), set by the engine.
+    pub pitch_bend: f32,
     part: Part,
     slots: [Slot; MAX_VOICES],
     held: Vec<u8>,
@@ -241,6 +243,7 @@ impl ElementsSynthState {
     pub fn new(sr: f32) -> Self {
         let cutoff = 0.9 * (sr as f64 / SAMPLE_RATE as f64).min(1.0);
         Self {
+            pitch_bend: 0.0,
             part: Part::new(MAX_VOICES),
             slots: [Slot::default(); MAX_VOICES],
             held: Vec::with_capacity(32),
@@ -402,7 +405,7 @@ impl ElementsSynthState {
                 s.gate
             };
             s.sent = gate;
-            *st = PerformanceState { gate, note: s.note, modulation: 0.0, strength: s.strength };
+            *st = PerformanceState { gate, note: s.note + self.pitch_bend, modulation: 0.0, strength: s.strength };
         }
         // Elements calls the right output "out" and the left one "aux".
         self.part.process(&states, &mut self.block_r, &mut self.block_l);

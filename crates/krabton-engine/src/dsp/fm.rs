@@ -269,6 +269,8 @@ impl Voice {
 }
 
 pub struct FmState {
+    /// Pitch bend in semitones (a wheel, a controller's triggers), set by the engine.
+    pub pitch_bend: f32,
     voices: [Voice; MAX_VOICES],
     counter: u64,
     lfo_phase: f32,
@@ -289,6 +291,7 @@ impl FmState {
     pub fn new() -> Self {
         sine_table();
         Self {
+            pitch_bend: 0.0,
             voices: [Voice::default(); MAX_VOICES],
             counter: 0,
             lfo_phase: 0.0,
@@ -478,7 +481,7 @@ impl FmState {
             for v in self.voices.iter_mut().filter(|v| v.active) {
                 v.pitch_eg(dt);
                 v.cur_note = v.target_note + (v.cur_note - v.target_note) * glide_coef;
-                let note = v.cur_note + pitch_eg_semis(v.pitch_level) + pitch_lfo;
+                let note = v.cur_note + pitch_eg_semis(v.pitch_level) + pitch_lfo + self.pitch_bend;
                 let base_hz = midi_to_freq(note);
                 let mut inc = [0.0f32; 6];
                 let mut g0 = [0.0f32; 6];

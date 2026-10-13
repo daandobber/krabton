@@ -282,6 +282,8 @@ impl MacroVoice {
 }
 
 pub struct MacroState {
+    /// Pitch bend in semitones (a wheel, a controller's triggers), set by the engine.
+    pub pitch_bend: f32,
     voices: Vec<MacroVoice>,
     /// Held notes, newest last (mono mode).
     held: Vec<u8>,
@@ -291,7 +293,8 @@ pub struct MacroState {
 
 impl MacroState {
     pub fn new(sr: f32) -> Self {
-        Self { voices: (0..MAX_VOICES).map(|i| MacroVoice::new(sr, i)).collect(), held: Vec::with_capacity(32), counter: 0, sr }
+        Self {
+            pitch_bend: 0.0, voices: (0..MAX_VOICES).map(|i| MacroVoice::new(sr, i)).collect(), held: Vec::with_capacity(32), counter: 0, sr }
     }
 
     fn voices_used(p: &[f32]) -> usize {
@@ -443,7 +446,7 @@ impl MacroState {
                         0.0
                     };
                     let m = Modulations {
-                        note: v.note - 48.0,
+                        note: v.note - 48.0 + self.pitch_bend,
                         trigger,
                         trigger_patched: true,
                         level: v.env,

@@ -1543,6 +1543,19 @@ impl App {
                         self.cmd(Command::Sustain { track, down });
                     }
                 }
+                MidiMsg::PitchBend { value, channel } => {
+                    // Two semitones each way, as most keyboards expect.
+                    for ti in self.note_targets_from(Some(channel)) {
+                        let track = self.project.tracks[ti].id;
+                        self.cmd(Command::PitchBend { track, semis: value * 2.0 });
+                    }
+                }
+                MidiMsg::ModWheel { value, channel } => {
+                    for ti in self.note_targets_from(Some(channel)) {
+                        let track = self.project.tracks[ti].id;
+                        self.cmd(Command::ModWheel { track, value });
+                    }
+                }
             }
         }
     }
@@ -2384,6 +2397,10 @@ impl App {
                     let f: Vec<f32> = arg.split(',').filter_map(|v| v.trim().parse().ok()).collect();
                     self.big.script_stick = (f.len() == 2 && (f[0] != 0.0 || f[1] != 0.0)).then(|| (f[0], f[1]));
                 }
+                "biglstick" => {
+                    let f: Vec<f32> = arg.split(',').filter_map(|v| v.trim().parse().ok()).collect();
+                    self.big.script_lstick = (f.len() == 2 && (f[0] != 0.0 || f[1] != 0.0)).then(|| (f[0], f[1]));
+                }
                 "bigtrig" => {
                     let v: f32 = arg.trim().parse().unwrap_or(0.0);
                     self.big.script_trig = (v != 0.0).then_some(v);
@@ -2534,6 +2551,8 @@ impl eframe::App for App {
         self.poll_recording();
         self.poll_export();
         // Controllers (and in Big Picture the keyboard) speak through the same actions.
+        // While a ring plays the left stick, it does not move the cursor.
+        self.big.pads.lstick_nav = !(self.big.on && self.big.page == crate::big::Page::Play && self.big.play.sticks != crate::big::play::StickMode::Pads && self.big.menu.is_none());
         let mut pad_input = self.big.pads.poll(ctx, self.big.on);
         if let Some(n) = self.big.script.pop_front() {
             pad_input.pressed.push(n);
@@ -2542,8 +2561,13 @@ impl eframe::App for App {
             pad_input.stick = s;
             pad_input.stick_turn = s.1;
         }
+        if let Some(s) = self.big.script_lstick {
+            pad_input.lstick = s;
+        }
         if let Some(t) = self.big.script_trig {
             pad_input.trig = t;
+            pad_input.rt = t.max(0.0);
+            pad_input.lt = (-t).max(0.0);
         }
         if !self.big.on {
             self.handle_keys(ctx);

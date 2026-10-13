@@ -344,6 +344,8 @@ impl Dc {
 /// Settings shared by all voices for one render call.
 struct Glob<'a> {
     sr: f32,
+    /// Pitch bend as a ratio.
+    bend: f32,
     sine: &'a [f32],
     pad_tab: &'a [f32],
     ln: &'a [f32; MAX_H + 1],
@@ -973,7 +975,7 @@ impl Voice {
             let d = self.drift[D_LEVEL + k].step(rng, secs, 8.0, 25.0);
             *t = g.level[k] * (1.0 + 0.6 * ev * d).max(0.0) * self.amp * (0.5 + 0.5 * self.vel);
         }
-        let f = self.freq * cents(pitch);
+        let f = self.freq * cents(pitch) * g.bend;
         let last = self.gains;
         self.gains = targets;
         let gains = |k: usize| (last[k], targets[k]);
@@ -1007,6 +1009,8 @@ impl Voice {
 }
 
 pub struct DroneState {
+    /// Pitch bend in semitones (a wheel, a controller's triggers), set by the engine.
+    pub pitch_bend: f32,
     sr: f32,
     voices: Vec<Voice>,
     counter: u64,
@@ -1031,6 +1035,7 @@ impl DroneState {
         hall_p[hall::MODULATION] = 0.12;
         hall_p[hall::WIDTH] = 1.0;
         Self {
+            pitch_bend: 0.0,
             sr,
             voices: (0..MAX_VOICES).map(|i| Voice::new(sr, 0x0D50_0E17 ^ (i as u32 + 1).wrapping_mul(0x9E37_79B9))).collect(),
             counter: 0,
@@ -1166,6 +1171,7 @@ impl DroneState {
             }
         }
         let g = Glob {
+            bend: (self.pitch_bend / 12.0).exp2(),
             sr,
             sine: self.sine,
             pad_tab: self.pad_tab,

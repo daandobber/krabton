@@ -51,6 +51,11 @@ pub struct Frame {
     pub stick: (f32, f32),
     /// The right stick's up and down alone, for turning (-1..1).
     pub stick_turn: f32,
+    /// The left stick (x right, y up), dead zone taken out.
+    pub lstick: (f32, f32),
+    /// Each trigger alone (0..1).
+    pub lt: f32,
+    pub rt: f32,
     /// Seconds since the last frame.
     pub dt: f32,
 }
@@ -95,6 +100,8 @@ pub struct Pads {
     clock: f32,
     /// The connected pad's name, for the screen.
     pub name: Option<String>,
+    /// The left stick moves like the D-pad (off while it plays notes).
+    pub lstick_nav: bool,
 }
 
 impl Default for Pads {
@@ -107,7 +114,7 @@ impl Pads {
     pub fn new() -> Self {
         // Test windows never take the real controllers.
         let gilrs = if std::env::var_os("KRABTON_TEST_WINDOW").is_some() { None } else { gilrs::Gilrs::new().ok() };
-        let mut p = Self { gilrs, held: Vec::new(), stick: None, lt: 0.0, rt: 0.0, rx: 0.0, ry: 0.0, last: Instant::now(), clock: 0.0, name: None };
+        let mut p = Self { gilrs, held: Vec::new(), stick: None, lt: 0.0, rt: 0.0, rx: 0.0, ry: 0.0, last: Instant::now(), clock: 0.0, name: None, lstick_nav: true };
         p.refresh_name();
         p
     }
@@ -185,6 +192,12 @@ impl Pads {
                 E::AxisChanged(gilrs::Axis::RightZ, v, _) => self.rt = (v + 1.0) * 0.5,
                 E::AxisChanged(axis @ (gilrs::Axis::LeftStickX | gilrs::Axis::LeftStickY), _, _) => {
                     let _ = axis;
+                    if !self.lstick_nav {
+                        if let Some(old) = self.stick.take() {
+                            self.release(old, &mut out);
+                        }
+                        continue;
+                    }
                     // The left stick as a direction (with some hysteresis).
                     let (x, y) = self.left_stick();
                     let dir = if x.abs() > y.abs() {
@@ -268,16 +281,22 @@ impl Pads {
         out.stick_turn = stick;
         let mag = (self.rx * self.rx + self.ry * self.ry).sqrt();
         out.stick = if mag > 0.15 { (self.rx, self.ry) } else { (0.0, 0.0) };
+        let (lx, ly) = self.left_stick();
+        out.lstick = if (lx * lx + ly * ly).sqrt() > 0.15 { (lx, ly) } else { (0.0, 0.0) };
+        out.lt = trig(self.lt);
+        out.rt = trig(self.rt);
         if keys {
             // On a keyboard: [ and ] (or - and =) turn.
             ctx.input(|i| {
                 if i.key_down(egui::Key::CloseBracket) || i.key_down(egui::Key::Equals) {
                     out.turn = 0.6;
                     out.trig = 1.0;
+                    out.rt = 1.0;
                 }
                 if i.key_down(egui::Key::OpenBracket) || i.key_down(egui::Key::Minus) {
                     out.turn = -0.6;
                     out.trig = -1.0;
+                    out.lt = 1.0;
                 }
             });
         }

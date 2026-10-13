@@ -500,6 +500,8 @@ impl OscCfg {
 /// Per-render settings, from the parameters.
 struct Ctrl {
     sr: f32,
+    /// Pitch bend in semitones.
+    bend: f32,
     /// Highest harmonic frequency the tables hold at full weight.
     band: f32,
     osc: [OscCfg; 2],
@@ -532,6 +534,7 @@ impl Ctrl {
         let block = CTRL as f32 / sr;
         Self {
             sr,
+            bend: 0.0,
             // Harmonics are kept up to here at full weight and fade out by
             // twice this, so what folds back lands above 18 kHz.
             band: (0.5 * (sr - 18000.0)).min(20000.0).max(0.25 * sr),
@@ -690,6 +693,8 @@ impl Voice {
 }
 
 pub struct WavesState {
+    /// Pitch bend in semitones (a wheel, a controller's triggers), set by the engine.
+    pub pitch_bend: f32,
     voices: Vec<Voice>,
     held: Vec<u8>,
     last_note: Option<f32>,
@@ -705,6 +710,7 @@ impl WavesState {
         // Build the tables now rather than on the first note.
         let _ = mip_tables();
         Self {
+            pitch_bend: 0.0,
             voices: (0..MAX_VOICES).map(Voice::new).collect(),
             held: Vec::with_capacity(32),
             last_note: None,
@@ -836,7 +842,8 @@ impl WavesState {
             return;
         }
         let n = l.len().min(r.len());
-        let c = Ctrl::new(p, self.sr);
+        let mut c = Ctrl::new(p, self.sr);
+        c.bend = self.pitch_bend;
         let tables = mip_tables();
         let mut done = 0;
         while done < n {
@@ -961,7 +968,7 @@ fn render_voice(v: &mut Voice, c: &Ctrl, t: &[f32], lfo: &[f32], out_l: &mut [f3
         };
         step += 1;
         let fenv = v.fenv.level;
-        let note = v.pitch + m * c.lfo_pitch;
+        let note = v.pitch + m * c.lfo_pitch + c.bend;
         let pos_mod = m * c.lfo_pos + fenv * c.env_pos;
 
         // --- Oscillators, sub and noise.

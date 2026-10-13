@@ -10,6 +10,10 @@ pub enum MidiMsg {
     NoteOff { pitch: u8 },
     /// The sustain pedal (CC 64).
     Sustain { down: bool, channel: u8 },
+    /// The pitch wheel, -1..1.
+    PitchBend { value: f32, channel: u8 },
+    /// The mod wheel (CC 1), 0..1.
+    ModWheel { value: f32, channel: u8 },
 }
 
 pub struct Midi {
@@ -64,6 +68,8 @@ impl Midi {
                         0x90 if d2 > 0 => MidiMsg::NoteOn { pitch: d1, velocity: d2 as f32 / 127.0, channel },
                         0x90 | 0x80 => MidiMsg::NoteOff { pitch: d1 },
                         0xB0 if d1 == 64 => MidiMsg::Sustain { down: d2 >= 64, channel },
+                        0xB0 if d1 == 1 => MidiMsg::ModWheel { value: d2 as f32 / 127.0, channel },
+                        0xE0 => MidiMsg::PitchBend { value: ((((d2 as i32) << 7) | d1 as i32) - 8192) as f32 / 8192.0, channel },
                         _ => return,
                     };
                     let _ = tx.send(m);

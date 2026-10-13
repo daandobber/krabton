@@ -151,6 +151,8 @@ fn play<'a>(p: &[f32], sample: Option<&'a SampleRef>, zones: &'a [SampleZone], z
 }
 
 pub struct SamplerState {
+    /// Pitch bend in semitones (a wheel, a controller's triggers), set by the engine.
+    pub pitch_bend: f32,
     voices: [Voice; MAX_VOICES],
     counter: u64,
 }
@@ -175,7 +177,8 @@ impl SamplerState {
             amp: Adsr::new(),
             filt: [Svf::new(); 2],
         };
-        Self { voices: [v; MAX_VOICES], counter: 0 }
+        Self {
+            pitch_bend: 0.0, voices: [v; MAX_VOICES], counter: 0 }
     }
 
     pub fn note_on(&mut self, p: &[f32], sample: Option<&SampleRef>, zones: &[SampleZone], note: u8, vel: f32) {
@@ -256,7 +259,7 @@ impl SamplerState {
                 continue;
             };
             let s = pl.sample;
-            let semis = v.note as f32 - pl.root + p[TRANSPOSE] + (p[FINE] + pl.cents) / 100.0;
+            let semis = v.note as f32 - pl.root + p[TRANSPOSE] + (p[FINE] + pl.cents) / 100.0 + self.pitch_bend;
             let rate = 2f64.powf(semis as f64 / 12.0) * s.sample_rate as f64 / sr as f64;
             if filter_on {
                 v.filt[0].set(p[CUTOFF], p[RESO], sr);

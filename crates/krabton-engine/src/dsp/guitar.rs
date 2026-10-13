@@ -593,6 +593,8 @@ impl GString {
 /// Parameters for one block.
 struct Ctl {
     sr: f32,
+    /// Pitch bend in cents.
+    bend_cents: f32,
     /// Index into STRING_MODES, and One String's string (0 = low E).
     mode: usize,
     one: usize,
@@ -628,6 +630,7 @@ impl Ctl {
         let choice = |i: usize, n: usize| (p[i].round().max(0.0) as usize).min(n - 1);
         Self {
             sr,
+            bend_cents: 0.0,
             mode: if p.len() > STRING_MODE { choice(STRING_MODE, STRING_MODES.len()) } else { 0 },
             one: 6 - p.get(ONE_STRING).map(|v| v.round().clamp(1.0, 6.0) as usize).unwrap_or(3),
             model: choice(MODEL, MODELS.len()),
@@ -748,7 +751,7 @@ fn update_slot(s: &mut Slot, c: &Ctl) {
         s.vib_phase = (s.vib_phase + 5.2 * CTRL as f32 / c.sr).fract();
         vib = 9.0 * depth * (TAU * s.vib_phase).sin();
     }
-    let f = s.freq * cents(s.glide + vib);
+    let f = s.freq * cents(s.glide + vib + c.bend_cents);
     for (k, lp) in s.loops.iter_mut().enumerate() {
         let fk = if k == 1 { f * c.beat_ratio } else { f };
         let (lo, hi) = decay_times(c, fk, k, s.released);
@@ -901,6 +904,8 @@ impl Output {
 }
 
 pub struct GuitarState {
+    /// Pitch bend in semitones (a wheel, a controller's triggers), set by the engine.
+    pub pitch_bend: f32,
     sr: f32,
     strings: [GString; STRINGS],
     incoming: [Incoming; QUEUE],
@@ -926,6 +931,7 @@ pub struct GuitarState {
 impl GuitarState {
     pub fn new(sr: f32) -> Self {
         Self {
+            pitch_bend: 0.0,
             sr,
             strings: std::array::from_fn(|i| GString::new(i, sr)),
             incoming: [Incoming::default(); QUEUE],
@@ -976,7 +982,8 @@ impl GuitarState {
                 pd.release = true;
             }
         }
-        let c = Ctl::new(p, self.sr);
+        let mut c = Ctl::new(p, self.sr);
+        c.bend_cents = self.pitch_bend * 100.0;
         for s in 0..STRINGS {
             let st = &self.strings[s];
             if st.held && st.key == note && st.note.is_some() {
@@ -1048,7 +1055,8 @@ impl GuitarState {
         if n == 0 {
             return;
         }
-        let c = Ctl::new(p, self.sr);
+        let mut c = Ctl::new(p, self.sr);
+        c.bend_cents = self.pitch_bend * 100.0;
         if self.n_incoming > 0 {
             self.place(&c);
         }
