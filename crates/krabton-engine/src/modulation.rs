@@ -250,6 +250,14 @@ pub fn instrument_params(i: &Instrument) -> Option<&[f32]> {
     }
 }
 
+/// [`instrument_params`], to change them.
+pub fn instrument_params_mut(i: &mut Instrument) -> Option<&mut Vec<f32>> {
+    match i {
+        Instrument::Synth { params, .. } | Instrument::Sampler { params, .. } | Instrument::Fm { params, .. } | Instrument::Macro { params, .. } | Instrument::Braids { params, .. } | Instrument::Elements { params, .. } | Instrument::Analog { params, .. } | Instrument::Shakers { params, .. } | Instrument::Modular { params, .. } | Instrument::Voice { params, .. } | Instrument::Mallets { params, .. } | Instrument::Strings { params, .. } | Instrument::Winds { params, .. } | Instrument::Organ { params, .. } | Instrument::Rings { params, .. } | Instrument::Monk { params, .. } | Instrument::Piano { params, .. } | Instrument::Bassline { params, .. } | Instrument::Mono101 { params, .. } | Instrument::Drone { params, .. } | Instrument::Waves { params, .. } | Instrument::Guitar { params, .. } | Instrument::WindChimes { params, .. } | Instrument::Birds { params, .. } | Instrument::Nature { params, .. } | Instrument::PanFlute { params, .. } | Instrument::BeadsSynth { params, .. } => Some(params),
+        _ => None,
+    }
+}
+
 /// Applies a normalized offset to a value: bipolar parameters (like pan) are
 /// swept from their center, so 100% covers the whole range either way.
 pub fn modulate(spec: &ParamSpec, base: f32, offset: f32) -> f32 {

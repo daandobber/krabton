@@ -120,6 +120,10 @@ impl App {
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.add(egui::Button::new(RichText::new("Big Picture").color(TEXT)).fill(PANEL3)).on_hover_text("For controllers and touch screens (Start on a controller opens it too)").clicked() {
+                    self.enter_big_picture();
+                }
+                ui.separator();
                 let cpu = status.cpu_load.load();
                 ui.label(RichText::new(format!("CPU {:>3.0}%", cpu * 100.0)).color(if cpu > 0.8 { REC } else { TEXT_DIM }).small());
                 ui.separator();
@@ -243,6 +247,10 @@ impl App {
             }
         });
         ui.menu_button("Options", |ui| {
+            if ui.checkbox(&mut self.prefs.big_picture, "Start in Big Picture").on_hover_text("For a Steam Deck, a ClockworkPi or a touch screen. --big-picture or KRABTON_BIG_PICTURE=1 does it once").changed() {
+                self.prefs.save();
+            }
+            ui.separator();
             ui.label(RichText::new("MIDI input").color(TEXT_DIM).small());
             let ports = self.midi.ports.clone();
             if ports.is_empty() {

@@ -75,6 +75,8 @@ pub struct Prefs {
     pub layout: Layout,
     /// The audio output device by name (None: the system default).
     pub audio_output: Option<String>,
+    /// Start in Big Picture (for controllers and touch screens).
+    pub big_picture: bool,
 }
 
 impl Prefs {

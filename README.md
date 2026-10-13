@@ -18,10 +18,23 @@ No programming needed: download the file for your system from the [Releases page
   cd krabton/packaging/arch && makepkg -si
   ```
 - **macOS**: `Krabton-....dmg`. Open it and drag Krabton to Applications. It is not signed by Apple, so the first time right-click Krabton and choose *Open*.
+- **Steam Deck**: in Desktop Mode, the Linux AppImage. To start it from Game Mode, add it to Steam (*Add a Non-Steam Game*) and give it the launch option `--big-picture`, so it opens in [Big Picture](#big-picture) with the Deck's controls.
+- **Raspberry Pi, ClockworkPi uConsole and DevTerm** (64-bit ARM Linux): the `linux-aarch64.tar.gz`; unpack it and run `./install.sh`.
 
 For sound on Linux see [Building](#building) below: Krabton talks to PulseAudio/PipeWire directly, or to ALSA.
 
 ## Features
+
+**Big Picture** (for controllers, joysticks and touch screens: a Steam Deck, a ClockworkPi, a tablet)
+- A second face for the same Krabton: a few big pages instead of panels, made for a gamepad (Xbox, PlayStation, the Steam Deck's own controls and other pads), the keyboard's arrows or a finger. *Big Picture* at the top right of the desktop view opens it, and so does Start on a controller; *Desktop* goes back. *Start in Big Picture* (in Options, or in its menu) makes it the way Krabton opens, and `--big-picture` or `KRABTON_BIG_PICTURE=1` does it once
+- The same buttons everywhere: the D-pad (or the left stick, or the arrow keys) moves the focus, A chooses (Enter), B goes back (Escape), the shoulder buttons turn the pages (Q and E, Tab), the triggers or the right stick turn the value with the focus (or [ and ]), Start plays and stops (Space), View/Select opens the menu (M) and the right stick pressed records (R). The bottom row always shows what the buttons do
+- *Clips*: the session grid with big clips; A launches, X stops the track, the column on the right launches scenes, Y opens what can be done with a slot (record into it, a new clip, duplicate, delete, stop everything). A finger taps clips and drags the grid
+- *Play*: pads for the selected track, eight by four in the key (a fourth up each row, the roots lit) or a pad per drum for a drum track. Play them with as many fingers as the screen takes, or move over them and hold A; X and Y change the octave, the triggers the track, *Rec* records what you play into a new clip. The pads light up with every note the track plays
+- *Devices*: the track's instrument, sequencers, MIDI and audio effects as a list, and every parameter of the chosen one as a big row: left and right step it, the triggers turn it smoothly, a finger drags it; the first row changes the instrument's preset (a drum track's kit). X turns a device on or off, Y adds one
+- *Mixer*: a strip per track and the master: volume with its meter, pan, the sends, mute, solo and arm
+- *Browse*: instruments with their presets, drum kits, sequencers, MIDI and audio effects; A loads one onto the selected track, X onto a new one
+- The menu: tempo, metronome, key and scale, launch quantization, undo and redo, new, open, save, the demo and ambient sets, full screen, and the way back to the desktop
+- Sizes follow the screen, from 1280 x 800 (a Steam Deck) down to 1280 x 480 (a DevTerm)
 
 **Session view**
 - Clip launcher grid with scenes, per-track stop buttons and *Stop All Clips*
@@ -405,7 +418,7 @@ cargo run -p krabton-clap --example fx_probe -- /usr/lib/clap/lsp-plugins.clap
 - Test windows (`KRABTON_TEST_WINDOW`, or a custom serialosc port) never open grids on serial ports, so they cannot take over a real grid; `KRABTON_SERIAL_GRID=1` allows it. `cargo run -p krabton-monome --example serial_probe` lists the serial ports that look like grids and asks them for their id and size, without lighting anything.
 - Test windows keep their settings in memory; `KRABTON_PREFS=path/to/prefs.json` uses another settings file.
 - Script actions `routetrack=i` (a new audio track listening to track `i`) and `recslot=t,s` (start or stop recording track `t` into slot `s`) drive audio recording.
-- Script action `shot=path.png` saves the window's own picture (rendered by Krabton, nothing else on the screen in it); `rackview` opens the Rack view, `rackcolumns` swaps its axes and `detail` folds the detail panel away or brings it back. `envelopes` shows the selected clip's envelopes, `autoarm` switches Automation Arm. `glitchwin` opens the first Glitch Sequencer in its window, `zoom=70` sets the size of everything (in percent). `drums=Metal Kit` adds a drum track with that kit, `druminstall=Metal Kit` downloads the recordings of a kit; `mono=N` adds a Mono with preset N. `birds=N`, `nature=N`, `panflute=N` and `beads=N` add those instruments with preset N; `ambient` loads the ambient set. `midiparam=device,param,value` sets a parameter of a MIDI effect or sequencer on the selected track (`seqnew=27` adds a Drum Map, `seqnew=28` Marbles, `seqnew=29` Chance, `seqnew=30` Bits, `seqnew=31` Percussion; `mod=8` adds a Tides modulator).
+- Script action `shot=path.png` saves the window's own picture (rendered by Krabton, nothing else on the screen in it); `rackview` opens the Rack view, `rackcolumns` swaps its axes and `detail` folds the detail panel away or brings it back. `envelopes` shows the selected clip's envelopes, `autoarm` switches Automation Arm. `glitchwin` opens the first Glitch Sequencer in its window, `zoom=70` sets the size of everything (in percent). `drums=Metal Kit` adds a drum track with that kit, `druminstall=Metal Kit` downloads the recordings of a kit; `mono=N` adds a Mono with preset N. `birds=N`, `nature=N`, `panflute=N` and `beads=N` add those instruments with preset N; `ambient` loads the ambient set. `big` switches Big Picture on or off, `bigpage=N` opens a page and `bignav=down,right,a` presses controller buttons one frame after another (up, down, left, right, a, b, x, y, lb, rb, start, menu, rec); `KRABTON_TEST_SIZE=1280x480` gives a test window another size. `midiparam=device,param,value` sets a parameter of a MIDI effect or sequencer on the selected track (`seqnew=27` adds a Drum Map, `seqnew=28` Marbles, `seqnew=29` Chance, `seqnew=30` Bits, `seqnew=31` Percussion; `mod=8` adds a Tides modulator).
 - Script action `fx=n` adds effect number `n` (in the order of the effect list) to the selected chain, for example `fx=9` for an Oscilloscope.
 - Script actions `click=x,y`, `dclick=x,y`, `rclick=x,y`, `drag=x1,y1,x2,y2` (in UI points), `press=ctrl+f` and `type=text` feed input to the Krabton window only, so UI flows can be replayed without touching the desktop. `quit` closes the window cleanly (a connected grid goes dark).
 
@@ -426,6 +439,7 @@ Ideas that would make Krabton even more Live-like (contributions welcome):
 - Plaits runs the DSP code of Mutable Instruments Plaits by Emilie Gillet, in the Rust port `mi-plaits-dsp` by Oliver Rockstedt. Both are MIT licensed; their copyright and license notices travel with the crate. Krabton is not affiliated with Mutable Instruments.
 - The Mutable voices of Drums use the drum models of Plaits from the same `mi-plaits-dsp` crate.
 - The Machine voices of Drums are original implementations after the published workings of the drum machines' circuits; no samples are used. 808, 909 and CR-78 refer to the instruments they imitate; Krabton is not affiliated with their makers.
+- Game controllers are read with [gilrs](https://gitlab.com/gilrs-project/gilrs) (MIT/Apache-2.0), with the SDL community's controller mappings it carries.
 - FLAC files are decoded with [claxon](https://github.com/ruuda/claxon) (Apache-2.0). SFZ is an open format for sampled instruments (<https://sfzformat.com>).
 - Particles (and the shakers of the Drum Rack) are an implementation of Perry Cook's PhISEM (Physically Informed Stochastic Event Modeling, Computer Music Journal 21:3, 1997), with instrument settings after the Shakers of his Synthesis ToolKit (STK).
 - Analog, Synth and FM are original implementations; FM is DX7-style synthesis and reads standard DX7 sysex files.

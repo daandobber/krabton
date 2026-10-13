@@ -4,6 +4,7 @@
 
 mod app;
 mod audio;
+mod big;
 mod editing;
 mod grid;
 mod history;
@@ -27,11 +28,14 @@ fn main() -> eframe::Result<()> {
         .with_title("Krabton")
         .with_icon(std::sync::Arc::new(icon))
         .with_inner_size([1440.0, 900.0])
-        .with_min_inner_size([960.0, 620.0])
+        // Small enough for handhelds (a DevTerm is 1280 x 480).
+        .with_min_inner_size([640.0, 400.0])
         .with_maximized(true);
     if std::env::var_os("KRABTON_TEST_WINDOW").is_some() {
         // For automated checks: a small window that does not take focus.
-        viewport = viewport.with_maximized(false).with_inner_size([1000.0, 640.0]).with_position([20.0, 20.0]).with_active(false);
+        // KRABTON_TEST_SIZE=1280x480 tries another screen (a handheld's).
+        let size = std::env::var("KRABTON_TEST_SIZE").ok().and_then(|s| s.split_once('x').and_then(|(w, h)| Some([w.trim().parse::<f32>().ok()?, h.trim().parse::<f32>().ok()?]))).unwrap_or([1000.0, 640.0]);
+        viewport = viewport.with_maximized(false).with_inner_size(size).with_min_inner_size([320.0, 240.0]).with_position([20.0, 20.0]).with_active(false);
     }
     let options = eframe::NativeOptions { viewport, ..Default::default() };
     eframe::run_native("Krabton", options, Box::new(|cc| Ok(Box::new(app::App::new(cc)))))

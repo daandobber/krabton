@@ -340,6 +340,12 @@ struct Dev {
     kind: Option<&'static str>,
 }
 
+/// The instruments with their presets, for Big Picture: (name, hint,
+/// presets, what loads a preset).
+pub(crate) fn instrument_catalog() -> Vec<(&'static str, &'static str, &'static [&'static str], fn(&'static str) -> BrowserItem)> {
+    devices().into_iter().map(|d| (d.name, d.hint, d.presets, d.make)).collect()
+}
+
 fn devices() -> [Dev; 25] {
     [
         Dev {

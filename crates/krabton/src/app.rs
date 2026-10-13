@@ -404,7 +404,9 @@ pub struct App {
     script_input: std::collections::VecDeque<Vec<egui::Event>>,
     pub(crate) frame: u64,
     /// Close the window at the end of this frame (script action `quit`).
-    quit_requested: bool,
+    pub(crate) quit_requested: bool,
+    /// Big Picture: the controller and touch view.
+    pub big: crate::big::BigPicture,
     /// `shot=path`: where the next picture of the window goes, and whether
     /// it was asked for yet.
     shot: Option<(String, bool)>,
@@ -440,6 +442,7 @@ impl App {
         let snapshot = Arc::new(project.clone());
 
         let prefs = crate::prefs::Prefs::load();
+        let start_big = prefs.big_picture;
         // KRABTON_AUDIO_DEVICE (a device name) wins over the one picked in Options.
         let preferred = std::env::var("KRABTON_AUDIO_DEVICE").ok().or_else(|| prefs.audio_output.clone());
         let opened = if std::env::var_os("KRABTON_NO_AUDIO").is_some() {
@@ -537,6 +540,7 @@ impl App {
             script_input: std::collections::VecDeque::new(),
             frame: 0,
             quit_requested: false,
+            big: crate::big::BigPicture::new(crate::big::start_in_big_picture(start_big)),
             shot: None,
             env_view: false,
             env_target: None,
@@ -2369,6 +2373,37 @@ impl App {
                     self.project.convert_scale(to);
                 }
                 "fold" => self.piano.fold = !self.piano.fold,
+                "big" => {
+                    if self.big.on {
+                        self.leave_big_picture();
+                    } else {
+                        self.enter_big_picture();
+                    }
+                }
+                "bigpage" => self.big.page = crate::big::Page::ALL[nums.first().copied().unwrap_or(0).min(crate::big::Page::ALL.len() - 1)],
+                "bignav" => {
+                    // bignav=down,down,a: one press a frame.
+                    use crate::big::input::Nav;
+                    for w in arg.split(',') {
+                        let n = match w.trim() {
+                            "up" => Nav::Up,
+                            "down" => Nav::Down,
+                            "left" => Nav::Left,
+                            "right" => Nav::Right,
+                            "a" => Nav::A,
+                            "b" => Nav::B,
+                            "x" => Nav::X,
+                            "y" => Nav::Y,
+                            "lb" => Nav::PrevPage,
+                            "rb" => Nav::NextPage,
+                            "start" => Nav::Start,
+                            "select" | "menu" => Nav::Select,
+                            "rec" => Nav::Record,
+                            _ => continue,
+                        };
+                        self.big.script.push_back(n);
+                    }
+                }
                 "plugin" => {
                     let n = nums.first().copied().unwrap_or(0);
                     let info = self.plugins.instruments().nth(n).cloned();
@@ -2489,11 +2524,34 @@ impl eframe::App for App {
         self.poll_drum_install();
         self.poll_recording();
         self.poll_export();
-        self.handle_keys(ctx);
+        // Controllers (and in Big Picture the keyboard) speak through the same actions.
+        let mut pad_input = self.big.pads.poll(ctx, self.big.on);
+        if let Some(n) = self.big.script.pop_front() {
+            pad_input.pressed.push(n);
+        }
+        if !self.big.on {
+            self.handle_keys(ctx);
+            // Start on a controller opens Big Picture.
+            if pad_input.has(crate::big::input::Nav::Start) {
+                self.enter_big_picture();
+            }
+        }
         self.validate_selection();
         self.update_meters();
         self.grid_frame();
         self.mod_frame();
+        if self.big.on {
+            self.ui_big(ctx, pad_input);
+            self.ui_dialogs(ctx);
+            self.apply_deferred();
+            self.sync(ctx);
+            self.update_title(ctx);
+            if self.quit_requested {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            ctx.request_repaint();
+            return;
+        }
 
         egui::TopBottomPanel::top("transport")
             .exact_height(38.0)
