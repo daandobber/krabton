@@ -2,8 +2,12 @@
 //! gets eight by four pads in the key (each row a fourth up, the roots lit),
 //! a drum track a pad per drum with its name. Touch them (with as many
 //! fingers as you like), or move over them with the D-pad and hold A; X and
-//! Y move an octave, the triggers change the track. The pads light up with
-//! every note the track plays, also from its clips and sequencers.
+//! Y move an octave, the triggers change the track. The right stick plays
+//! the row the cursor is on, a pad in each of its eight directions (clockwise
+//! from up): in Trigger every new direction plays at once and letting go
+//! ends the note, in Hold the note rings on until another direction (or B);
+//! L3 switches. The pads light up with every note the track plays, also from
+//! its clips and sequencers.
 
 use super::input::{Frame, Nav};
 use super::{fit_text, tile, Glyph, Sz, TILE};
@@ -16,6 +20,7 @@ use std::collections::HashMap;
 /// Who holds a note: the pad cursor, the mouse, or a finger (by touch id).
 pub const HOLD_CURSOR: u64 = u64::MAX;
 pub const HOLD_MOUSE: u64 = u64::MAX - 1;
+pub const HOLD_STICK: u64 = u64::MAX - 2;
 
 #[derive(Default)]
 pub struct PlayState {
@@ -29,6 +34,8 @@ pub struct PlayState {
     pub last_turn: f32,
     /// A touch screen was used: its fingers, not the mouse it imitates.
     pub touch: bool,
+    /// The right stick holds its note after letting go.
+    pub stick_hold: bool,
 }
 
 /// The pads of a track: (columns, rows, pitch of each pad, name of each).
@@ -102,7 +109,7 @@ impl App {
         }
         let mut t = self.play_track();
         // The triggers change the track.
-        let turn = inp.turn;
+        let turn = inp.trig;
         let last = self.big.play.last_turn;
         self.big.play.last_turn = turn;
         let n_tracks = self.project.tracks.len();
@@ -154,6 +161,20 @@ impl App {
             }
             text(&p, pos2(x + s.u * 0.2, head.top() + head_h * 0.45), Align2::LEFT_CENTER, format!("C{}", 4 + self.big.play.octave - 1), s.f(), TEXT_DIM);
         }
+        // Trigger or Hold for the right stick.
+        let stick_r = Rect::from_min_size(pos2(head.right() - s.u * 7.6, head.top()), vec2(s.u * 4.2, head_h - s.u * 0.2));
+        if stick_r.left() > x + s.u * 2.5 {
+            let sresp = ui.interact(stick_r, Id::new("big_stick_mode"), Sense::click());
+            let hold = self.big.play.stick_hold;
+            rect_fill(&p, stick_r, 8.0, if hold { shade(accent, 0.8) } else { TILE });
+            fit_text(&p, stick_r.center(), Align2::CENTER_CENTER, if hold { "Stick: Hold" } else { "Stick: Trigger" }, s.font, stick_r.width() - 8.0, TEXT);
+            if sresp.on_hover_text("The right stick: a new note at once with every direction (Trigger), or the note rings on after letting go (Hold). L3 switches").clicked() {
+                self.big.play.stick_hold = !hold;
+                if hold {
+                    self.pad_off(HOLD_STICK);
+                }
+            }
+        }
         let rec_r = Rect::from_min_size(pos2(head.right() - s.u * 3.2, head.top()), vec2(s.u * 3.2, head_h - s.u * 0.2));
         let rresp = ui.interact(rec_r, Id::new("big_play_rec"), Sense::click());
         rect_fill(&p, rec_r, 8.0, if self.recording { REC } else { TILE });
@@ -190,6 +211,8 @@ impl App {
                 Nav::Down => cy = (cy + 1).min(rows - 1),
                 Nav::A => a_down = Some(true),
                 Nav::X if !drums => self.big.play.octave = (self.big.play.octave - 1).max(-3),
+                Nav::LeftStick => self.big.play.stick_hold = !self.big.play.stick_hold,
+                Nav::B => self.pad_off(HOLD_STICK),
                 Nav::Y if !drums => self.big.play.octave = (self.big.play.octave + 1).min(4),
                 _ => {}
             }
@@ -209,6 +232,18 @@ impl App {
             }
         }
         self.big.play.cursor = (cx, cy);
+        // The right stick plays the cursor's row, a pad per direction.
+        let (sx, sy) = inp.stick;
+        let mag = (sx * sx + sy * sy).sqrt();
+        if mag > 0.55 {
+            let sector = ((sx.atan2(sy) / (std::f32::consts::TAU / 8.0)).round() as i32).rem_euclid(8);
+            let pad = if drums { (sector % cols, (cy + sector / cols).min(rows - 1)) } else { (sector.min(cols - 1), cy) };
+            if self.big.play.on_pad.get(&HOLD_STICK) != Some(&pad) {
+                self.pad_on(HOLD_STICK, pad, pitch_of(pad.0, pad.1));
+            }
+        } else if mag < 0.35 && !self.big.play.stick_hold {
+            self.pad_off(HOLD_STICK);
+        }
         // Fingers.
         let touches: Vec<(u64, egui::TouchPhase, egui::Pos2)> = ui.input(|i| {
             i.events
@@ -246,6 +281,10 @@ impl App {
         let sounding = st.tracks.get(t).map(|ts| [ts.inst_held[0].load(std::sync::atomic::Ordering::Relaxed), ts.inst_held[1].load(std::sync::atomic::Ordering::Relaxed)]).unwrap_or([0, 0]);
         let sounds = |pitch: u8| (sounding[(pitch / 64) as usize] >> (pitch % 64)) & 1 == 1;
         let held: Vec<(i32, i32)> = self.big.play.on_pad.values().copied().collect();
+        // The row (two rows of drums) the right stick plays.
+        let stick_rows = if drums { (cy, (cy + 1).min(rows - 1)) } else { (cy, cy) };
+        let band = pad_rect(0, stick_rows.0).union(pad_rect(cols - 1, stick_rows.1));
+        rect_line(&p, band.expand(s.u * 0.09), 10.0, 1.5, shade(accent, 0.7));
         let scale = self.project.scale;
         for rr in 0..rows {
             for c in 0..cols {
@@ -271,10 +310,11 @@ impl App {
                 fit_text(&p, pr.center(), Align2::CENTER_CENTER, name, s.font, pr.width() - 8.0, if lit { TEXT_DARK } else { TEXT });
             }
         }
+        let mode = if self.big.play.stick_hold { "Trigger" } else { "Hold" };
         if drums {
-            vec![(Glyph::Dpad, "Move"), (Glyph::Btn(Nav::A), "Play"), (Glyph::Triggers, "Track")]
+            vec![(Glyph::Dpad, "Move"), (Glyph::Btn(Nav::A), "Play"), (Glyph::RightStick, "Play row"), (Glyph::Btn(Nav::LeftStick), mode), (Glyph::Triggers, "Track")]
         } else {
-            vec![(Glyph::Dpad, "Move"), (Glyph::Btn(Nav::A), "Play"), (Glyph::Btn(Nav::X), "Oct -"), (Glyph::Btn(Nav::Y), "Oct +"), (Glyph::Triggers, "Track")]
+            vec![(Glyph::Dpad, "Move"), (Glyph::Btn(Nav::A), "Play"), (Glyph::RightStick, "Play row"), (Glyph::Btn(Nav::LeftStick), mode), (Glyph::Btn(Nav::X), "Oct -"), (Glyph::Btn(Nav::Y), "Oct +"), (Glyph::Triggers, "Track")]
         }
     }
 }

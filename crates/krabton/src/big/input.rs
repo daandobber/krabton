@@ -27,6 +27,8 @@ pub enum Nav {
     Select,
     /// The right stick pressed: record.
     Record,
+    /// The left stick pressed.
+    LeftStick,
 }
 
 impl Nav {
@@ -43,6 +45,12 @@ pub struct Frame {
     pub released: Vec<Nav>,
     /// How hard to turn the focused value (-1..1): the triggers and the right stick.
     pub turn: f32,
+    /// The triggers alone (right minus left, -1..1).
+    pub trig: f32,
+    /// The right stick (x right, y up), dead zone taken out.
+    pub stick: (f32, f32),
+    /// The right stick's up and down alone, for turning (-1..1).
+    pub stick_turn: f32,
     /// Seconds since the last frame.
     pub dt: f32,
 }
@@ -81,6 +89,7 @@ pub struct Pads {
     stick: Option<Nav>,
     lt: f32,
     rt: f32,
+    rx: f32,
     ry: f32,
     last: Instant,
     clock: f32,
@@ -98,7 +107,7 @@ impl Pads {
     pub fn new() -> Self {
         // Test windows never take the real controllers.
         let gilrs = if std::env::var_os("KRABTON_TEST_WINDOW").is_some() { None } else { gilrs::Gilrs::new().ok() };
-        let mut p = Self { gilrs, held: Vec::new(), stick: None, lt: 0.0, rt: 0.0, ry: 0.0, last: Instant::now(), clock: 0.0, name: None };
+        let mut p = Self { gilrs, held: Vec::new(), stick: None, lt: 0.0, rt: 0.0, rx: 0.0, ry: 0.0, last: Instant::now(), clock: 0.0, name: None };
         p.refresh_name();
         p
     }
@@ -119,6 +128,7 @@ impl Pads {
             B::Start => Nav::Start,
             B::Select | B::Mode => Nav::Select,
             B::RightThumb => Nav::Record,
+            B::LeftThumb => Nav::LeftStick,
             B::DPadUp => Nav::Up,
             B::DPadDown => Nav::Down,
             B::DPadLeft => Nav::Left,
@@ -170,6 +180,7 @@ impl Pads {
                 E::ButtonChanged(gilrs::Button::LeftTrigger2, v, _) => self.lt = v,
                 E::ButtonChanged(gilrs::Button::RightTrigger2, v, _) => self.rt = v,
                 E::AxisChanged(gilrs::Axis::RightStickY, v, _) => self.ry = v,
+                E::AxisChanged(gilrs::Axis::RightStickX, v, _) => self.rx = v,
                 E::AxisChanged(gilrs::Axis::LeftZ, v, _) => self.lt = (v + 1.0) * 0.5,
                 E::AxisChanged(gilrs::Axis::RightZ, v, _) => self.rt = (v + 1.0) * 0.5,
                 E::AxisChanged(axis @ (gilrs::Axis::LeftStickX | gilrs::Axis::LeftStickY), _, _) => {
@@ -236,6 +247,7 @@ impl Pads {
                             egui::Key::Space => Some(Nav::Start),
                             egui::Key::M => Some(Nav::Select),
                             egui::Key::R => Some(Nav::Record),
+                            egui::Key::H => Some(Nav::LeftStick),
                             _ => None,
                         };
                         let Some(nav) = nav else { continue };
@@ -252,14 +264,20 @@ impl Pads {
         let stick = if self.ry.abs() > 0.2 { (self.ry - 0.2 * self.ry.signum()) / 0.8 } else { 0.0 };
         let trig = |v: f32| if v > 0.08 { v } else { 0.0 };
         out.turn = (trig(self.rt) - trig(self.lt) + stick).clamp(-1.0, 1.0);
+        out.trig = trig(self.rt) - trig(self.lt);
+        out.stick_turn = stick;
+        let mag = (self.rx * self.rx + self.ry * self.ry).sqrt();
+        out.stick = if mag > 0.15 { (self.rx, self.ry) } else { (0.0, 0.0) };
         if keys {
             // On a keyboard: [ and ] (or - and =) turn.
             ctx.input(|i| {
                 if i.key_down(egui::Key::CloseBracket) || i.key_down(egui::Key::Equals) {
                     out.turn = 0.6;
+                    out.trig = 1.0;
                 }
                 if i.key_down(egui::Key::OpenBracket) || i.key_down(egui::Key::Minus) {
                     out.turn = -0.6;
+                    out.trig = -1.0;
                 }
             });
         }

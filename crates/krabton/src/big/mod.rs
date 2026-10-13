@@ -15,6 +15,7 @@ pub mod mixer;
 pub mod notes;
 pub mod play;
 pub mod rack;
+pub mod screens;
 
 use crate::app::{App, TrackSel};
 use crate::theme::*;
@@ -69,6 +70,9 @@ pub struct BigPicture {
     pub script: std::collections::VecDeque<Nav>,
     /// The clip actions, open at this row.
     pub clip_menu: Option<usize>,
+    /// A right stick and triggers a script holds (tests without a controller).
+    pub script_stick: Option<(f32, f32)>,
+    pub script_trig: Option<f32>,
     pub fullscreen: bool,
 }
 
@@ -89,6 +93,8 @@ impl BigPicture {
             rack: rack::RackState::default(),
             script: Default::default(),
             clip_menu: None,
+            script_stick: None,
+            script_trig: None,
             fullscreen: false,
         }
     }
@@ -151,6 +157,7 @@ pub enum Glyph {
     Btn(Nav),
     Dpad,
     Triggers,
+    RightStick,
 }
 
 pub fn glyph(p: &Painter, c: Pos2, r: f32, g: Glyph) {
@@ -174,6 +181,8 @@ pub fn glyph(p: &Painter, c: Pos2, r: f32, g: Glyph) {
         Glyph::Btn(Nav::Start) => pill("Start", 3.6),
         Glyph::Btn(Nav::Select) => pill("Menu", 3.6),
         Glyph::Btn(Nav::Record) => pill("R3", 2.3),
+        Glyph::Btn(Nav::LeftStick) => pill("L3", 2.3),
+        Glyph::RightStick => pill("R-Stick", 4.2),
         Glyph::Triggers => pill("LT RT", 3.6),
         Glyph::Dpad | Glyph::Btn(_) => {
             let w = r * 0.62;
@@ -188,7 +197,8 @@ pub fn glyph(p: &Painter, c: Pos2, r: f32, g: Glyph) {
 fn glyph_w(g: Glyph, r: f32) -> f32 {
     match g {
         Glyph::Btn(Nav::Start | Nav::Select) | Glyph::Triggers => r * 3.6,
-        Glyph::Btn(Nav::PrevPage | Nav::NextPage | Nav::Record) => r * 2.3,
+        Glyph::RightStick => r * 4.2,
+        Glyph::Btn(Nav::PrevPage | Nav::NextPage | Nav::Record | Nav::LeftStick) => r * 2.3,
         _ => r * 2.0,
     }
 }

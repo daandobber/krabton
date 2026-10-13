@@ -1,9 +1,10 @@
 //! Big Picture's Devices page: the selected track's chain on the left (its
 //! instrument, its sequencers and MIDI effects, its audio effects), and
 //! every parameter of the chosen one on the right, a big row each. Move with
-//! the D-pad; on a parameter left and right step it and the triggers (or the
-//! right stick) turn it smoothly; the first row of an instrument changes its
-//! preset (a drum track's kit). X turns a device on or off, Y adds one.
+//! the D-pad; on a parameter left and right step it and the right stick turns
+//! it smoothly; the triggers go to the device before or after; the first row
+//! of an instrument changes its preset (a drum track's kit). X turns a device
+//! on or off, Y adds one.
 
 use super::input::{Frame, Nav};
 use super::{fit_text, tile, value_bar, Glyph, Page, Sz, TILE, TILE_HI};
@@ -21,8 +22,10 @@ pub struct DevState {
     pub link: usize,
     pub row: usize,
     pub first_row: usize,
-    /// Turning a stepped value: how far the triggers have gone.
+    /// Turning a stepped value: how far the stick has gone.
     pub turn_acc: f32,
+    /// The triggers' last value (pulling one goes to the next device).
+    pub last_trig: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -200,13 +203,25 @@ impl App {
                 _ => {}
             }
         }
-        // The triggers turn the value.
-        if col == 1 && inp.turn.abs() > 0.01 {
+        // The triggers go to the device before or after.
+        let trig = inp.trig;
+        let last_trig = self.big.dev.last_trig;
+        self.big.dev.last_trig = trig;
+        if !chain.is_empty() {
+            if trig > 0.6 && last_trig <= 0.6 {
+                link_i = (link_i + 1).min(chain.len() - 1);
+            } else if trig < -0.6 && last_trig >= -0.6 {
+                link_i = link_i.saturating_sub(1);
+            }
+        }
+        // The right stick turns the value.
+        let turn = inp.stick_turn;
+        if col == 1 && turn.abs() > 0.01 && link_i == self.big.dev.link {
             if let (Some(Row::Param(i)), Some(l)) = (rows.get(row_i), link) {
                 let spec = &specs[*i];
                 if let Some(v) = self.link_value(t, l, *i) {
                     if spec.is_discrete() {
-                        self.big.dev.turn_acc += inp.turn * inp.dt * 6.0;
+                        self.big.dev.turn_acc += turn * inp.dt * 6.0;
                         let k = self.big.dev.turn_acc.trunc();
                         if k != 0.0 {
                             self.big.dev.turn_acc -= k;
@@ -215,7 +230,7 @@ impl App {
                             }
                         }
                     } else {
-                        let n = spec.to_norm(v) + inp.turn * inp.dt * 0.6;
+                        let n = spec.to_norm(v) + turn * inp.dt * 0.6;
                         self.set_link_value(t, l, *i, spec.from_norm(n));
                     }
                 }
@@ -357,9 +372,9 @@ impl App {
             self.big.page = Page::Browse;
         }
         if col == 0 {
-            vec![(Glyph::Dpad, "Move"), (Glyph::Btn(Nav::A), "Open"), (Glyph::Btn(Nav::X), "On/Off"), (Glyph::Btn(Nav::Y), "Add")]
+            vec![(Glyph::Dpad, "Move"), (Glyph::Btn(Nav::A), "Open"), (Glyph::Triggers, "Device"), (Glyph::Btn(Nav::X), "On/Off"), (Glyph::Btn(Nav::Y), "Add")]
         } else {
-            vec![(Glyph::Dpad, "Choose, change"), (Glyph::Triggers, "Turn"), (Glyph::Btn(Nav::B), "Back"), (Glyph::Btn(Nav::Y), "Add")]
+            vec![(Glyph::Dpad, "Choose, change"), (Glyph::RightStick, "Turn"), (Glyph::Triggers, "Device"), (Glyph::Btn(Nav::B), "Back"), (Glyph::Btn(Nav::Y), "Add")]
         }
     }
 }

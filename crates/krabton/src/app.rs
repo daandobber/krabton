@@ -2380,6 +2380,14 @@ impl App {
                         self.enter_big_picture();
                     }
                 }
+                "bigstick" if nums.len() == 2 || arg.contains(',') => {
+                    let f: Vec<f32> = arg.split(',').filter_map(|v| v.trim().parse().ok()).collect();
+                    self.big.script_stick = (f.len() == 2 && (f[0] != 0.0 || f[1] != 0.0)).then(|| (f[0], f[1]));
+                }
+                "bigtrig" => {
+                    let v: f32 = arg.trim().parse().unwrap_or(0.0);
+                    self.big.script_trig = (v != 0.0).then_some(v);
+                }
                 "bigpage" => self.big.page = crate::big::Page::ALL[nums.first().copied().unwrap_or(0).min(crate::big::Page::ALL.len() - 1)],
                 "bignav" => {
                     // bignav=down,down,a: one press a frame.
@@ -2399,6 +2407,7 @@ impl App {
                             "start" => Nav::Start,
                             "select" | "menu" => Nav::Select,
                             "rec" => Nav::Record,
+                            "l3" => Nav::LeftStick,
                             _ => continue,
                         };
                         self.big.script.push_back(n);
@@ -2528,6 +2537,13 @@ impl eframe::App for App {
         let mut pad_input = self.big.pads.poll(ctx, self.big.on);
         if let Some(n) = self.big.script.pop_front() {
             pad_input.pressed.push(n);
+        }
+        if let Some(s) = self.big.script_stick {
+            pad_input.stick = s;
+            pad_input.stick_turn = s.1;
+        }
+        if let Some(t) = self.big.script_trig {
+            pad_input.trig = t;
         }
         if !self.big.on {
             self.handle_keys(ctx);

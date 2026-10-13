@@ -1,5 +1,6 @@
 //! Big Picture's Rack: every track's devices at once, a row per track and a
-//! card per device with its first four knobs. Move between the cards with
+//! card per device with its live screen (the one it has on the desktop, or
+//! its sound and notes) and its first four knobs. Move between the cards with
 //! the D-pad; A goes into a card (up and down choose a knob, left and right
 //! or the triggers turn it, B comes out), X turns a device on or off, Y
 //! opens all its knobs on the Devices page. A finger drags the knobs.
@@ -102,10 +103,12 @@ impl App {
         // Layout.
         let p = ui.painter().clone();
         let head_w = (s.u * 4.2).min(r.width() * 0.25);
-        let vis_rows = ((r.height() / (s.u * 3.7)).floor() as usize).clamp(1, n_tracks);
+        let vis_rows = ((r.height() / (s.u * 4.6)).floor() as usize).clamp(1, n_tracks);
         // The rows fill the height.
-        let row_h = (r.height() / vis_rows as f32).min(s.u * 4.6);
-        let card_w = s.u * 6.0;
+        let row_h = (r.height() / vis_rows as f32).min(s.u * 6.6);
+        let card_w = s.u * 6.6;
+        // Screens draw over the page: not while a menu is open.
+        let screens = self.big.menu.is_none() && self.big.clip_menu.is_none();
         let gap = s.u * 0.2;
         let vis_cards = (((r.width() - head_w) / card_w).floor() as usize).max(1);
         if st.track < st.first_track {
@@ -152,9 +155,19 @@ impl App {
                 fit_text(&p, pos2(cr.left() + s.u * 0.6, cr.top() + s.u * 0.32), Align2::LEFT_CENTER, title, s.font * 0.9, cr.width() - s.u * 0.8, if *on { TEXT } else { TEXT_DIM });
                 fit_text(&p, pos2(cr.left() + s.u * 0.6, cr.top() + s.u * 0.72), Align2::LEFT_CENTER, sub, s.small * 0.9, cr.width() - s.u * 0.8, TEXT_DIM);
                 let specs = self.link_specs(t, *l);
-                let knob_h = (cr.height() - s.u * 1.05) / KNOBS as f32;
+                let knob_h = (s.u * 0.52).min((cr.height() - s.u * 1.6) / KNOBS as f32);
+                let knobs_top = cr.bottom() - s.u * 0.12 - knob_h * KNOBS as f32;
+                // The live screen between the title and the knobs.
+                let screen = Rect::from_min_max(pos2(cr.left() + s.u * 0.2, cr.top() + s.u * 1.0), pos2(cr.right() - s.u * 0.2, knobs_top - s.u * 0.1));
+                if screen.height() > s.u * 0.6 {
+                    if screens {
+                        self.rack_screen(ui.ctx(), &p, (t, c), t, *l, screen, color);
+                    } else {
+                        p.rect_filled(screen, 6.0, egui::Color32::from_rgb(0x0a, 0x0b, 0x0e));
+                    }
+                }
                 for (q, spec) in specs.iter().take(KNOBS).enumerate() {
-                    let kr = Rect::from_min_size(pos2(cr.left() + s.u * 0.2, cr.top() + s.u * 1.0 + q as f32 * knob_h), vec2(cr.width() - s.u * 0.4, knob_h - s.u * 0.08));
+                    let kr = Rect::from_min_size(pos2(cr.left() + s.u * 0.2, knobs_top + q as f32 * knob_h), vec2(cr.width() - s.u * 0.4, knob_h - s.u * 0.06));
                     let v = self.link_value(t, *l, q).unwrap_or(spec.default);
                     let knob_focus = focus && st.inside && q == st.knob;
                     let name_w = kr.width() * 0.38;
@@ -193,7 +206,7 @@ impl App {
                 }
                 if specs.is_empty() {
                     let what = if matches!(l, Link::Instrument) && matches!(self.project.tracks[t].instrument, Some(krabton_engine::Instrument::Drums { .. })) { "Pads: on the desktop view" } else { "Its own window: on the desktop view" };
-                    fit_text(&p, cr.center() + vec2(0.0, s.u * 0.4), Align2::CENTER_CENTER, what, s.small, cr.width() - s.u * 0.4, TEXT_DIM);
+                    fit_text(&p, pos2(cr.center().x, knobs_top + knob_h), Align2::CENTER_CENTER, what, s.small, cr.width() - s.u * 0.4, TEXT_DIM);
                 }
             }
             if chains[t].len() > st.first_card + vis_cards {
