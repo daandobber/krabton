@@ -1,6 +1,8 @@
 //! Big Picture's Browse page: what you can add, in three columns: the kind
 //! (instruments, drum kits, sequencers, MIDI effects, audio effects), the
-//! thing, and for instruments their presets. A loads it onto the selected
+//! thing, and for instruments their presets (FM: the voices of its banks, a
+//! drum machine: its kits). The same instruments as the desktop's browser,
+//! CLAP plug-ins too, in alphabetical order. A loads it onto the selected
 //! track (an instrument replaces the one there), X onto a new track.
 
 use super::input::{Frame, Nav};
@@ -25,23 +27,65 @@ struct Entry {
     name: String,
     sub: String,
     item: Option<BrowserItem>,
-    presets: Option<(&'static [&'static str], fn(&'static str) -> BrowserItem)>,
+    presets: Presets,
 }
 
-fn entries(kind: usize) -> Vec<Entry> {
-    match kind {
-        0 => {
-            let mut v: Vec<Entry> = crate::ui::browser::instrument_catalog()
-                .into_iter()
-                .map(|(name, hint, presets, make)| Entry { name: name.to_string(), sub: hint.to_string(), item: presets.first().map(|p| make(p)), presets: Some((presets, make)) })
-                .collect();
-            v.push(Entry { name: "Sampler".into(), sub: "Plays a sample across the keys (load one in the desktop view)".into(), item: Some(BrowserItem::Sampler), presets: None });
-            v
+/// Where an entry's presets come from (made only for the one shown).
+#[derive(Clone, Copy)]
+enum Presets {
+    None,
+    Named(&'static [&'static str], fn(&'static str) -> BrowserItem),
+    /// The voices of the FM banks.
+    Fm,
+}
+
+impl App {
+    /// The things of a kind, in alphabetical order.
+    fn browse_entries(&self, kind: usize) -> Vec<Entry> {
+        let entry = |name: &str, sub: String, item: Option<BrowserItem>, presets: Presets| Entry { name: name.to_string(), sub, item, presets };
+        let mut v: Vec<Entry> = match kind {
+            0 => {
+                let mut v: Vec<Entry> = crate::ui::browser::instrument_catalog().into_iter().map(|(name, hint, presets, make)| entry(name, hint.to_string(), presets.first().map(|p| make(p)), Presets::Named(presets, make))).collect();
+                let first_fm = self.fm_banks.first().and_then(|b| b.voices.first().map(|v| BrowserItem::FmVoice { bank: b.name.clone(), voice: v.0.to_vec() }));
+                v.push(entry("FM", "Six-operator FM synth that plays DX7 voices (Dexed / MiniDexed banks)".into(), first_fm, Presets::Fm));
+                for e in krabton_engine::dsp::drums::DrumEngine::ALL {
+                    let kits = e.kits();
+                    v.push(entry(e.name(), e.description().to_string(), kits.first().map(|k| BrowserItem::Drums(k)), Presets::Named(kits, BrowserItem::Drums)));
+                }
+                v.push(entry("Sampler", "Plays a sample across the keys (load one in the desktop view)".into(), Some(BrowserItem::Sampler), Presets::None));
+                for info in self.plugins.instruments() {
+                    v.push(entry(&info.name, format!("CLAP plug-in · {}", info.vendor), Some(BrowserItem::Plugin(info.clone())), Presets::None));
+                }
+                v
+            }
+            1 => krabton_engine::dsp::drums::kit_names().into_iter().map(|k| entry(k, "Drum kit".into(), Some(BrowserItem::Drums(k)), Presets::None)).collect(),
+            2 => MidiFxKind::SEQUENCERS.iter().map(|k| entry(k.name(), format!("{} · {}", k.group(), k.description()), Some(BrowserItem::MidiFx(*k)), Presets::None)).collect(),
+            3 => MidiFxKind::ALL.iter().map(|k| entry(k.name(), k.description().to_string(), Some(BrowserItem::MidiFx(*k)), Presets::None)).collect(),
+            _ => {
+                let mut v: Vec<Entry> = krabton_engine::dsp::effects::EffectKind::ALL.iter().map(|k| entry(k.name(), k.category().to_string(), Some(BrowserItem::Effect(*k)), Presets::None)).collect();
+                for info in self.plugins.effects() {
+                    v.push(entry(&info.name, format!("CLAP plug-in · {}", info.vendor), Some(BrowserItem::PluginEffect(info.clone())), Presets::None));
+                }
+                v
+            }
+        };
+        v.sort_by_key(|e| e.name.to_lowercase());
+        v
+    }
+
+    /// An entry's presets: (name, where it is from, what loads).
+    fn browse_presets(&self, presets: Presets) -> Vec<(String, String, BrowserItem)> {
+        match presets {
+            Presets::None => Vec::new(),
+            Presets::Named(names, make) => names.iter().map(|n| (n.to_string(), String::new(), make(n))).collect(),
+            Presets::Fm => {
+                let banks = self.fm_banks.len();
+                self.fm_banks
+                    .iter()
+                    .flat_map(|b| b.voices.iter().map(move |v| (v.name(), if banks > 1 { b.name.clone() } else { String::new() }, BrowserItem::FmVoice { bank: b.name.clone(), voice: v.0.to_vec() })))
+                    .collect()
+            }
         }
-        1 => krabton_engine::dsp::drums::kit_names().into_iter().map(|k| Entry { name: k.to_string(), sub: "Drum kit".into(), item: Some(BrowserItem::Drums(k)), presets: None }).collect(),
-        2 => MidiFxKind::SEQUENCERS.iter().map(|k| Entry { name: k.name().to_string(), sub: format!("{} · {}", k.group(), k.description()), item: Some(BrowserItem::MidiFx(*k)), presets: None }).collect(),
-        3 => MidiFxKind::ALL.iter().map(|k| Entry { name: k.name().to_string(), sub: k.description().to_string(), item: Some(BrowserItem::MidiFx(*k)), presets: None }).collect(),
-        _ => krabton_engine::dsp::effects::EffectKind::ALL.iter().map(|k| Entry { name: k.name().to_string(), sub: k.category().to_string(), item: Some(BrowserItem::Effect(*k)), presets: None }).collect(),
     }
 }
 
@@ -119,10 +163,10 @@ impl App {
     pub(crate) fn big_browse(&mut self, ui: &mut Ui, r: Rect, s: &Sz, mut inp: Frame) -> Vec<(Glyph, &'static str)> {
         let mut st = std::mem::take(&mut self.big.browse);
         st.kind = st.kind.min(KINDS.len() - 1);
-        let list_items = entries(st.kind);
+        let list_items = self.browse_entries(st.kind);
         st.item = st.item.min(list_items.len().saturating_sub(1));
-        let presets = list_items.get(st.item).and_then(|e| e.presets);
-        let n_presets = presets.map(|p| p.0.len()).unwrap_or(0);
+        let presets = self.browse_presets(list_items.get(st.item).map(|e| e.presets).unwrap_or(Presets::None));
+        let n_presets = presets.len();
         st.preset = st.preset.min(n_presets.saturating_sub(1));
         let mut load: Option<(BrowserItem, bool)> = None;
         for nav in inp.pressed.drain(..) {
@@ -144,8 +188,8 @@ impl App {
                 (2, Nav::Down) => st.preset = (st.preset + 1).min(n_presets.saturating_sub(1)),
                 (2, Nav::Left | Nav::B) => st.col = 1,
                 (2, Nav::A | Nav::X) => {
-                    if let Some((names, make)) = presets {
-                        load = Some((make(names[st.preset]), nav == Nav::X));
+                    if let Some((_, _, item)) = presets.get(st.preset) {
+                        load = Some((item.clone(), nav == Nav::X));
                     }
                 }
                 _ => {}
@@ -166,7 +210,7 @@ impl App {
             rect_fill(&p, br, 8.0, if resp.hovered() { TILE_HI } else { TILE });
             fit_text(&p, br.center(), Align2::CENTER_CENTER, label, s.font, br.width() - 8.0, TEXT);
             if resp.clicked() {
-                let item = if st.col == 2 { presets.map(|(names, make)| make(names[st.preset])) } else { list_items.get(st.item).and_then(|e| e.item.clone()) };
+                let item = if st.col == 2 { presets.get(st.preset).map(|p| p.2.clone()) } else { list_items.get(st.item).and_then(|e| e.item.clone()) };
                 if let Some(item) = item {
                     load = Some((item, new_track));
                 }
@@ -203,8 +247,8 @@ impl App {
             st.col = 1;
             st.preset = 0;
         }
-        if let Some((names, _)) = presets {
-            let prow: Vec<(String, String)> = names.iter().map(|n| (n.to_string(), String::new())).collect();
+        if n_presets > 0 {
+            let prow: Vec<(String, String)> = presets.iter().map(|(name, from, _)| (name.clone(), from.clone())).collect();
             let (tap, preset) = list(ui, "big_preset", c2, s, &prow, st.preset, st.col == 2, false);
             st.preset = preset;
             if let Some(i) = tap {

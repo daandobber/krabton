@@ -292,8 +292,6 @@ pub enum Command {
     ModWheel { track: u64, value: f32 },
     /// A joystick on a track (-1..1 each way), for its Joystick modulators.
     Joystick { track: u64, x: f32, y: f32 },
-    /// How loud a track's instrument plays (a gain, 1: as it is), changed smoothly.
-    Expression { track: u64, gain: f32 },
     /// The grand piano's samples (installed, or none).
     SetPianoLibrary(Option<Arc<PianoLibrary>>),
 }
@@ -729,10 +727,6 @@ struct TrackRt {
     signal: TrackSignal,
     /// The pitch bend in semitones.
     bend: f32,
-    /// The gain the instrument's sound is multiplied by, and where its
-    /// smooth change is now.
-    expression: f32,
-    expression_now: f32,
     l: Vec<f32>,
     r: Vec<f32>,
     gain_l: f32,
@@ -781,8 +775,6 @@ impl TrackRt {
             fx_sig: FX_SIG_EMPTY,
             sounding: [0; 128],
             bend: 0.0,
-            expression: 1.0,
-            expression_now: 1.0,
             signal: TrackSignal::default(),
             l: vec![0.0; MAX_BLOCK],
             r: vec![0.0; MAX_BLOCK],
@@ -1317,11 +1309,6 @@ impl Engine {
                     rt.signal.joy = [x.clamp(-1.0, 1.0), y.clamp(-1.0, 1.0)];
                 }
             }
-            Command::Expression { track, gain } => {
-                if let Some(rt) = self.project.track_index(track).and_then(|ti| self.tracks.get_mut(ti)) {
-                    rt.expression = if gain.is_finite() { gain.clamp(0.0, 1.0) } else { 1.0 };
-                }
-            }
             Command::Sustain { track, down } => {
                 if let Some(InstState::Piano(s)) = self.project.track_index(track).and_then(|ti| self.tracks.get_mut(ti)).map(|rt| &mut rt.instrument) {
                     s.sustain(down);
@@ -1640,7 +1627,7 @@ impl Engine {
                 self.midi_scratch.extend_from_slice(&src.midi_out);
             }
             let Some(rt) = self.tracks.get_mut(ti) else { continue };
-            let TrackRt { instrument, devices, playing: pc, overridden, offs, events, fx_buf, live, midi_fx, fx_sig, sounding, signal, bend, expression, expression_now, l, r, gain_l, gain_r, sends, pre_l, pre_r, post_l, post_r, out_l, out_r, to_master, midi_out, .. } = &mut **rt;
+            let TrackRt { instrument, devices, playing: pc, overridden, offs, events, fx_buf, live, midi_fx, fx_sig, sounding, signal, bend, l, r, gain_l, gain_r, sends, pre_l, pre_r, post_l, post_r, out_l, out_r, to_master, midi_out, .. } = &mut **rt;
             l[..seg].fill(0.0);
             r[..seg].fill(0.0);
             events.clear();
@@ -1820,18 +1807,6 @@ impl Engine {
                 }
                 if pos < seg {
                     instrument.render(inst, ov, &mut l[pos..seg], &mut r[pos..seg], sr);
-                }
-                // The expression (a stick in Big Picture), gliding over 10 ms.
-                if *expression != 1.0 || *expression_now != 1.0 {
-                    let k = 1.0 - (-1.0 / (0.01 * sr)).exp();
-                    for (a, b) in l[..seg].iter_mut().zip(r[..seg].iter_mut()) {
-                        *expression_now += (*expression - *expression_now) * k;
-                        *a *= *expression_now;
-                        *b *= *expression_now;
-                    }
-                    if (*expression_now - *expression).abs() < 1e-4 {
-                        *expression_now = *expression;
-                    }
                 }
                 if let Some(ts) = status.tracks.get(ti) {
                     ts.inst_scope.write(&l[..seg], &r[..seg]);
@@ -2513,26 +2488,6 @@ mod tests {
         h.send(Command::Stop);
         run(&mut e, 0.05);
         assert_eq!(sounding(&e), 0, "stop left notes on");
-    }
-
-    #[test]
-    fn the_expression_turns_an_instrument_down() {
-        let p = Project::new_default();
-        let ti = p.tracks.iter().position(|t| matches!(t.instrument, Some(Instrument::Synth { .. }))).expect("a synth track");
-        let id = p.tracks[ti].id;
-        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
-        h.send(Command::NoteOn { track: id, pitch: 48, velocity: 0.9 });
-        run(&mut e, 0.3);
-        let loud = peak(&run(&mut e, 0.2));
-        h.send(Command::Expression { track: id, gain: 0.1 });
-        run(&mut e, 0.1);
-        let soft = peak(&run(&mut e, 0.2));
-        assert!(loud > 0.01, "{loud}");
-        assert!(soft < loud * 0.2 && soft > loud * 0.02, "{loud} -> {soft}");
-        h.send(Command::Expression { track: id, gain: 1.0 });
-        run(&mut e, 0.1);
-        let back = peak(&run(&mut e, 0.2));
-        assert!(back > loud * 0.7, "{loud} -> {back}");
     }
 
     #[test]

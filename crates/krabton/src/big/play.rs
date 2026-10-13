@@ -13,8 +13,10 @@
 //! from the bottom (low) over the left, the top and the right (high), one to
 //! four octaves, the left stick an octave below the right. Every note a
 //! stick passes plays, the new one before the old one ends (so a mono synth
-//! glides), and with Swell how far the stick is pushed sets how loud. The
-//! rings can be touched too (further out is louder).
+//! glides), and with Velocity how far the stick is pushed sets how hard each
+//! note is struck: a new note waits until the stick stops going out (or
+//! reaches the rim), so a quick flick plays hard and a gentle push soft. The
+//! rings can be touched too (further out is harder).
 //!
 //! *XY*: the left stick plays the ring, the right stick is a joystick on two
 //! knobs (Joystick modulators, around where the knobs are set): the most
@@ -116,26 +118,20 @@ pub const BEND_RANGES: [f32; 8] = [1.0, 2.0, 3.0, 4.0, 5.0, 7.0, 12.0, 24.0];
 enum Wheel {
     Bend,
     Mod,
-    Swell,
     Joy,
 }
 
 impl Wheel {
-    const ALL: [Wheel; 4] = [Wheel::Bend, Wheel::Mod, Wheel::Swell, Wheel::Joy];
+    const ALL: [Wheel; 3] = [Wheel::Bend, Wheel::Mod, Wheel::Joy];
 
     fn rest(self) -> (f32, f32) {
-        if self == Wheel::Swell {
-            (1.0, 0.0)
-        } else {
-            (0.0, 0.0)
-        }
+        (0.0, 0.0)
     }
 
     fn command(self, track: u64, v: (f32, f32)) -> Command {
         match self {
             Wheel::Bend => Command::PitchBend { track, semis: v.0 },
             Wheel::Mod => Command::ModWheel { track, value: v.0 },
-            Wheel::Swell => Command::Expression { track, gain: v.0 },
             Wheel::Joy => Command::Joystick { track, x: v.0, y: v.1 },
         }
     }
@@ -148,8 +144,11 @@ pub struct PlayState {
     pub held: HashMap<u64, (u8, Vec<u64>)>,
     /// Which pad each holder is on (on a ring: the ring and the note on it).
     pub on_pad: HashMap<u64, (i32, i32)>,
-    /// How far out each holder's stick or finger is (0..1), for Swell.
-    pub levels: HashMap<u64, f32>,
+    /// Sticks on their way out to strike a note (Velocity): how far out they
+    /// got, where they were last frame, and for how long.
+    arming: HashMap<u64, Arm>,
+    /// Sticks that struck their note and stay out: they glide.
+    gliding: Vec<u64>,
     /// The triggers' last value (they change the track when pulled).
     pub last_turn: f32,
     /// A touch screen was used: its fingers, not the mouse it imitates.
@@ -162,12 +161,10 @@ pub struct PlayState {
     pub trig_mode: TrigMode,
     /// How far the triggers bend: an index into BEND_RANGES.
     pub bend_range: usize,
-    /// How far a stick (or finger) is out sets how loud it plays.
-    pub swell: bool,
-    /// Seconds no stick or finger held a note (the swell lets go after a while).
-    swell_idle: f32,
+    /// How far a stick (or finger) is out sets how hard it strikes.
+    pub velocity: bool,
     /// What each wheel sends now: the tracks, and the value.
-    wheels: [(Vec<u64>, (f32, f32)); 4],
+    wheels: [(Vec<u64>, (f32, f32)); 3],
     /// The finger (or mouse) on the XY pad, and where it holds it.
     xy_finger: Option<(u64, (f32, f32))>,
     /// The row of modes has the focus (Menu on the Play page), on this item.
@@ -183,7 +180,8 @@ impl Default for PlayState {
             octave: 0,
             held: HashMap::new(),
             on_pad: HashMap::new(),
-            levels: HashMap::new(),
+            arming: HashMap::new(),
+            gliding: Vec::new(),
             last_turn: 0.0,
             touch: false,
             stick_hold: false,
@@ -191,8 +189,7 @@ impl Default for PlayState {
             range: 2,
             trig_mode: TrigMode::Track,
             bend_range: 1,
-            swell: true,
-            swell_idle: 0.0,
+            velocity: true,
             wheels: Wheel::ALL.map(|w| (Vec::new(), w.rest())),
             xy_finger: None,
             bar_focus: None,
@@ -201,7 +198,22 @@ impl Default for PlayState {
     }
 }
 
+/// A stick on its way out to strike a note.
+#[derive(Clone, Copy, Debug)]
+struct Arm {
+    peak: f32,
+    last: f32,
+    secs: f32,
+}
+
 impl PlayState {
+    /// Lets go of what the sticks were doing (after their notes were released).
+    pub fn forget_sticks(&mut self) {
+        self.on_pad.clear();
+        self.arming.clear();
+        self.gliding.clear();
+    }
+
     /// The bend the triggers send now, in semitones.
     pub fn bend(&self) -> f32 {
         self.wheels[Wheel::Bend as usize].1 .0
@@ -302,9 +314,10 @@ pub fn row_slot(u: f32, n: usize, cur: Option<usize>) -> usize {
     (x.max(0.0) as usize).min(n.saturating_sub(1))
 }
 
-/// How loud a stick that far out (0..1) plays: -24 dB to full.
-fn level_gain(level: f32) -> f32 {
-    10f32.powf(-1.2 * (1.0 - level.clamp(0.0, 1.0)))
+/// How hard a stick that far out (its magnitude) strikes: softly just past
+/// where it starts playing, fully at the rim.
+pub fn stick_velocity(mag: f32) -> f32 {
+    0.25 + 0.75 * ((mag - 0.5) / 0.43).clamp(0.0, 1.0)
 }
 
 fn smooth(spec: &ParamSpec) -> bool {
@@ -355,7 +368,7 @@ enum ModeAct {
     BendRange,
     Range,
     Hold,
-    Swell,
+    Velocity,
     Axis(usize),
 }
 
@@ -576,8 +589,8 @@ impl App {
         }
     }
 
-    /// Puts what the triggers and sticks moved (bend, mod wheel, swell,
-    /// joystick) back to rest.
+    /// Puts what the triggers and sticks moved (bend, mod wheel, joystick)
+    /// back to rest.
     pub fn big_unbend(&mut self) {
         for w in Wheel::ALL {
             let (list, last) = &mut self.big.play.wheels[w as usize];
@@ -651,7 +664,6 @@ impl App {
             self.note_off(p, &ids);
         }
         self.big.play.on_pad.remove(&who);
-        self.big.play.levels.remove(&who);
     }
 
     pub(crate) fn big_play(&mut self, ui: &mut Ui, r: Rect, s: &Sz, mut inp: Frame) -> Vec<(Glyph, &'static str)> {
@@ -812,7 +824,7 @@ impl App {
         hints
     }
 
-    /// Bend, mod wheel, swell and joystick, from the triggers and sticks.
+    /// Bend, mod wheel and joystick, from the triggers and sticks.
     fn play_wheels(&mut self, t: usize, inp: &Frame) {
         let targets = self.play_targets(t);
         let pl = &self.big.play;
@@ -820,25 +832,9 @@ impl App {
         let range = BEND_RANGES[pl.bend_range.min(BEND_RANGES.len() - 1)];
         let xy = pl.sticks == StickMode::Xy;
         let joy = pl.xy_finger.map(|f| f.1).unwrap_or(inp.stick);
-        // How loud: the stick or finger furthest out, while one holds a note;
-        // a while after the last one let go, back to full.
-        let swell_on = pl.swell && pl.sticks != StickMode::Pads;
-        let loudest = pl.held.keys().filter_map(|k| pl.levels.get(k)).copied().reduce(f32::max);
-        let swell = match (swell_on, loudest) {
-            (false, _) => None,
-            (true, Some(l)) => {
-                self.big.play.swell_idle = 0.0;
-                Some(level_gain(l))
-            }
-            (true, None) => {
-                self.big.play.swell_idle += inp.dt;
-                (self.big.play.swell_idle < 1.5).then(|| self.big.play.wheels[Wheel::Swell as usize].1 .0)
-            }
-        };
         let on = |b: bool| if b { targets.clone() } else { Vec::new() };
         self.wheel(Wheel::Bend, on(bend), ((inp.rt - inp.lt) * range, 0.0));
         self.wheel(Wheel::Mod, on(modwheel), (inp.rt.max(inp.lt), 0.0));
-        self.wheel(Wheel::Swell, on(swell.is_some()), (swell.unwrap_or(1.0), 0.0));
         let id = self.project.tracks[t].id;
         self.wheel(Wheel::Joy, if xy { vec![id] } else { Vec::new() }, joy);
     }
@@ -861,7 +857,7 @@ impl App {
         }
         v.push(item("Hold".into(), pl.stick_hold, ModeAct::Hold, "The sticks' notes ring on after letting go (L3); B ends them", 2, false));
         if pl.sticks != StickMode::Pads {
-            v.push(item("Swell".into(), pl.swell, ModeAct::Swell, "How far a stick is pushed (or a finger is out on a ring) sets how loud it plays", 2, false));
+            v.push(item("Velocity".into(), pl.velocity, ModeAct::Velocity, "How far a stick is pushed when it strikes a note (or how far out a finger is on a ring) sets how hard it plays", 2, false));
         }
         if pl.sticks == StickMode::Xy {
             for axis in 0..2 {
@@ -893,7 +889,7 @@ impl App {
                     self.pad_off(HOLD_LSTICK);
                 }
             }
-            ModeAct::Swell if step == 0 => self.big.play.swell = !self.big.play.swell,
+            ModeAct::Velocity if step == 0 => self.big.play.velocity = !self.big.play.velocity,
             ModeAct::Axis(axis) if step == 0 => {
                 let cur = self.axis_target(t, axis);
                 let row = self.axis_choices(t).iter().position(|c| c.0 == cur).unwrap_or(0);
@@ -1105,21 +1101,44 @@ impl App {
         if rings.iter().any(|ring| ring.3.is_empty()) {
             return None;
         }
-        let swell = self.big.play.swell;
-        let vel = |level: f32| if swell { 0.45 + 0.5 * level } else { 0.85 };
-        // The sticks: the further out, the louder.
+        let dynamic = self.big.play.velocity;
+        let vel = |v: f32| if dynamic { v } else { 0.85 };
+        // The sticks: the further out, the harder.
         for (side, (_, who, (x, y), notes, _, _)) in rings.iter().enumerate() {
             let mag = (x * x + y * y).sqrt();
             let cur = self.big.play.on_pad.get(who).filter(|pad| pad.0 == side as i32).map(|pad| pad.1 as usize);
-            if mag > 0.5 || (cur.is_some() && mag > 0.3) {
-                let level = ((mag - 0.4) / 0.55).clamp(0.0, 1.0);
+            let gliding = cur.is_some() && self.big.play.gliding.contains(who);
+            if gliding && mag > 0.3 {
+                // Out on the ring: every note passed plays as hard as the stick is out now.
                 let slot = ring_slot(ring_at(*x, *y), notes.len(), cur);
-                self.big.play.levels.insert(*who, level);
                 if cur != Some(slot) {
-                    self.pad_slide(*who, (side as i32, slot as i32), notes[slot], vel(level));
+                    self.pad_slide(*who, (side as i32, slot as i32), notes[slot], vel(stick_velocity(mag)));
                 }
-            } else if mag < 0.3 && !self.big.play.stick_hold {
-                self.pad_off(*who);
+            } else if mag > 0.5 {
+                // On its way out: strike once it stops going out, reaches the
+                // rim, or after 50 ms, as hard as it got.
+                let a = self.big.play.arming.entry(*who).or_insert(Arm { peak: 0.0, last: 0.0, secs: 0.0 });
+                let rising = a.last == 0.0 || mag > a.last + 0.01;
+                a.peak = a.peak.max(mag);
+                a.last = mag;
+                a.secs += inp.dt;
+                if !dynamic || mag >= 0.93 || !rising || a.secs >= 0.05 {
+                    let peak = a.peak;
+                    self.big.play.arming.remove(who);
+                    let slot = ring_slot(ring_at(*x, *y), notes.len(), None);
+                    // A note still held (Hold) is struck again, not just kept.
+                    if self.big.play.held.get(who).is_some_and(|h| h.0 == notes[slot]) {
+                        self.pad_off(*who);
+                    }
+                    self.pad_slide(*who, (side as i32, slot as i32), notes[slot], vel(stick_velocity(peak)));
+                    self.big.play.gliding.push(*who);
+                }
+            } else if mag < 0.3 {
+                self.big.play.arming.remove(who);
+                self.big.play.gliding.retain(|g| g != who);
+                if !self.big.play.stick_hold {
+                    self.pad_off(*who);
+                }
             }
         }
         // The XY pad, and the two buttons under it.
@@ -1127,7 +1146,7 @@ impl App {
         let xy_side = (half_w - s.u * 0.6).min(area.height() - tiles_h - s.u * 0.4).max(s.u * 2.0);
         let xy_top = area.top() + (area.height() - xy_side - tiles_h - s.u * 0.3).max(0.0) * 0.5;
         let xy_rect = Rect::from_min_size(pos2(right_c.x - xy_side * 0.5, xy_top), vec2(xy_side, xy_side));
-        // Fingers and the mouse: on a ring (further out is louder), or on the pad.
+        // Fingers and the mouse: on a ring (further out is harder), or on the pad.
         if self.big.play.picker.is_none() {
             for (id, pos) in self.pointers(ui) {
                 let on_ring = pos.and_then(|pt| {
@@ -1143,9 +1162,8 @@ impl App {
                         let notes = &rings[side].3;
                         let cur = self.big.play.on_pad.get(&id).filter(|pad| pad.0 == side as i32).map(|pad| pad.1 as usize);
                         let slot = ring_slot(u, notes.len(), cur);
-                        self.big.play.levels.insert(id, level);
                         if cur != Some(slot) {
-                            self.pad_slide(id, (side as i32, slot as i32), notes[slot], vel(level));
+                            self.pad_slide(id, (side as i32, slot as i32), notes[slot], vel(0.25 + 0.75 * level));
                         }
                     }
                     None => self.pad_off(id),
@@ -1405,10 +1423,11 @@ mod tests {
     }
 
     #[test]
-    fn further_out_is_louder() {
-        assert!((level_gain(1.0) - 1.0).abs() < 1e-6);
-        assert!(level_gain(0.0) < 0.07);
-        assert!(level_gain(0.5) > level_gain(0.2));
+    fn further_out_strikes_harder() {
+        assert!((stick_velocity(1.0) - 1.0).abs() < 1e-6);
+        assert!((stick_velocity(0.95) - 1.0).abs() < 1e-6);
+        assert!((stick_velocity(0.5) - 0.25).abs() < 1e-6);
+        assert!(stick_velocity(0.8) > stick_velocity(0.6));
     }
 
     #[test]

@@ -207,12 +207,25 @@ fn glyph_w(g: Glyph, r: f32) -> f32 {
     }
 }
 
-/// Text that shrinks to fit `w`.
+/// Text that shrinks to fit `w`, and is cut short (…) when even that is
+/// not enough.
 pub fn fit_text(p: &Painter, pos: Pos2, anchor: Align2, s: &str, size: f32, w: f32, c: Color32) {
     let mut font = FontId::proportional(size);
     let width = p.layout_no_wrap(s.to_string(), font.clone(), c).size().x;
     if width > w && w > 0.0 {
-        font.size = (size * w / width).max(size * 0.6);
+        // A little to spare: text does not shrink quite in proportion.
+        font.size = (size * w / width * 0.97).max(size * 0.6);
+        let shrunk = width * font.size / size;
+        if shrunk > w {
+            let chars: Vec<char> = s.chars().collect();
+            let mut n = ((chars.len() as f32 * w / shrunk) as usize).min(chars.len());
+            let cut = |n: usize| format!("{}…", chars[..n].iter().collect::<String>().trim_end());
+            while n > 0 && p.layout_no_wrap(cut(n), font.clone(), c).size().x > w {
+                n -= 1;
+            }
+            p.text(pos, anchor, cut(n), font, c);
+            return;
+        }
     }
     p.text(pos, anchor, s, font, c);
 }
@@ -942,8 +955,7 @@ impl App {
         for (_, (pitch, ids)) in held {
             self.note_off(pitch, &ids);
         }
-        self.big.play.on_pad.clear();
-        self.big.play.levels.clear();
+        self.big.play.forget_sticks();
         self.big_unbend();
     }
 }
