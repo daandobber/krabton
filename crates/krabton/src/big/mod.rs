@@ -5,13 +5,16 @@
 //! sounds), a menu for the rest. Everything moves with the D-pad (or the
 //! left stick, the arrows), A chooses, B goes back, the shoulder buttons
 //! turn the pages and the triggers (or the right stick) turn a value;
-//! everything can be touched too.
+//! everything can be touched too. Notes puts notes in a clip, Rack shows
+//! every track's devices at once.
 
 pub mod browse;
 pub mod devices;
 pub mod input;
 pub mod mixer;
+pub mod notes;
 pub mod play;
+pub mod rack;
 
 use crate::app::{App, TrackSel};
 use crate::theme::*;
@@ -23,20 +26,24 @@ use krabton_engine::engine::Command;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
     Clips,
+    Notes,
     Play,
     Devices,
+    Rack,
     Mixer,
     Browse,
 }
 
 impl Page {
-    pub const ALL: [Page; 5] = [Page::Clips, Page::Play, Page::Devices, Page::Mixer, Page::Browse];
+    pub const ALL: [Page; 7] = [Page::Clips, Page::Notes, Page::Play, Page::Devices, Page::Rack, Page::Mixer, Page::Browse];
 
     pub fn name(self) -> &'static str {
         match self {
             Page::Clips => "Clips",
+            Page::Notes => "Notes",
             Page::Play => "Play",
             Page::Devices => "Devices",
+            Page::Rack => "Rack",
             Page::Mixer => "Mixer",
             Page::Browse => "Browse",
         }
@@ -56,6 +63,8 @@ pub struct BigPicture {
     pub dev: devices::DevState,
     pub mix: mixer::MixState,
     pub browse: browse::BrowseState,
+    pub notes: notes::NoteState,
+    pub rack: rack::RackState,
     /// Presses a script feeds in, one per frame.
     pub script: std::collections::VecDeque<Nav>,
     /// The clip actions, open at this row.
@@ -76,6 +85,8 @@ impl BigPicture {
             dev: devices::DevState::default(),
             mix: mixer::MixState::default(),
             browse: browse::BrowseState::default(),
+            notes: notes::NoteState::default(),
+            rack: rack::RackState::default(),
             script: Default::default(),
             clip_menu: None,
             fullscreen: false,
@@ -322,10 +333,13 @@ impl App {
             self.big_top_bar(ui, top, &s);
             let popup = self.big.menu.is_some() || self.big.clip_menu.is_some();
             let page_inp = if popup { Frame { dt: inp.dt, ..Default::default() } } else { inp.clone() };
+            self.end_audition(ui.input(|i| i.time));
             let hint_list = match self.big.page {
                 Page::Clips => self.big_clips(ui, body, &s, page_inp),
+                Page::Notes => self.big_notes(ui, body, &s, page_inp),
                 Page::Play => self.big_play(ui, body, &s, page_inp),
                 Page::Devices => self.big_devices(ui, body, &s, page_inp),
+                Page::Rack => self.big_rack(ui, body, &s, page_inp),
                 Page::Mixer => self.big_mixer(ui, body, &s, page_inp),
                 Page::Browse => self.big_browse(ui, body, &s, page_inp),
             };
@@ -375,7 +389,7 @@ impl App {
         glyph(&p, pos2(x + s.u * 0.45, y), s.u * 0.32, Glyph::Btn(Nav::PrevPage));
         x += s.u * 1.0;
         let accent = accent_now();
-        let tab_w = (s.u * 3.0).min((r.width() * 0.46) / Page::ALL.len() as f32);
+        let tab_w = (s.u * 2.7).min((r.width() * 0.55) / Page::ALL.len() as f32);
         for page in Page::ALL {
             let tr = Rect::from_min_size(pos2(x, y - h * 0.5), vec2(tab_w - s.u * 0.15, h));
             let on = self.big.page == page;
@@ -423,14 +437,14 @@ impl App {
         let bpb = self.project.beats_per_bar_f();
         let bar = (pos / bpb).floor() as i64 + 1;
         let beat = (pos % bpb).floor() as i64 + 1;
-        let right_w = s.u * 5.6;
+        let right_w = s.u * 5.0;
         let info_w = (r.right() - right_w - x).max(0.0);
         if info_w > s.u * 2.0 {
             let info = format!("{bar}.{beat}   {:.0} BPM   {}", self.project.bpm, self.project.scale.name());
             fit_text(&p, pos2(x, y), Align2::LEFT_CENTER, &info, s.font, info_w - s.u * 0.2, TEXT_DIM);
         }
         // The menu and the way back to the desktop.
-        let mr = Rect::from_min_size(pos2(r.right() - right_w, y - h * 0.5), vec2(s.u * 2.3, h));
+        let mr = Rect::from_min_size(pos2(r.right() - right_w, y - h * 0.5), vec2(s.u * 2.1, h));
         let mresp = ui.interact(mr, Id::new("big_menu_btn"), Sense::click());
         rect_fill(&p, mr, 8.0, if self.big.menu.is_some() { accent } else { TILE });
         fit_text(&p, mr.center(), Align2::CENTER_CENTER, "Menu", s.font, mr.width() - 6.0, if self.big.menu.is_some() { TEXT_DARK } else { TEXT });
@@ -745,11 +759,16 @@ impl App {
                 col = fc + k;
             }
         }
+        let mut open_notes = false;
         if launch && col < n_tracks {
             if let Some(t) = self.project.tracks.get(col) {
                 let id = t.id;
                 if t.slots.get(row).is_some_and(|c| c.is_some()) {
                     self.cmd(Command::LaunchClip { track: id, slot: row });
+                } else if t.kind == krabton_engine::TrackKind::Midi {
+                    // An empty slot: a new clip, open to put notes in.
+                    self.create_midi_clip(col, row);
+                    open_notes = true;
                 } else {
                     self.cmd(Command::StopTrack { track: id });
                 }
@@ -763,8 +782,14 @@ impl App {
             self.sel_scene = row;
             self.sel_clip = Some(crate::app::ClipSel::Slot { track: tc, scene: row });
         }
+        if open_notes {
+            self.big.page = Page::Notes;
+        }
+        let empty = self.project.tracks.get(tc).is_some_and(|t| t.slots.get(row).is_none_or(|c| c.is_none()));
         if on_scenes {
             vec![(Glyph::Dpad, "Move"), (Glyph::Btn(Nav::A), "Launch scene"), (Glyph::Btn(Nav::PrevPage), "Pages")]
+        } else if empty {
+            vec![(Glyph::Dpad, "Move"), (Glyph::Btn(Nav::A), "New clip"), (Glyph::Btn(Nav::X), "Stop track"), (Glyph::Btn(Nav::Y), "Slot"), (Glyph::Btn(Nav::PrevPage), "Pages")]
         } else {
             vec![(Glyph::Dpad, "Move"), (Glyph::Btn(Nav::A), "Launch"), (Glyph::Btn(Nav::X), "Stop track"), (Glyph::Btn(Nav::Y), "Clip"), (Glyph::Btn(Nav::PrevPage), "Pages")]
         }
@@ -780,6 +805,9 @@ impl App {
         let has_clip = track.slots.get(scene).is_some_and(|c| c.is_some());
         let midi = track.kind == krabton_engine::TrackKind::Midi;
         let mut items: Vec<(&str, u8)> = Vec::new();
+        if midi && has_clip {
+            items.push(("Edit notes", 6));
+        }
         if midi {
             items.push(("Record here", 0));
         }
@@ -843,7 +871,11 @@ impl App {
                         self.toggle_play();
                     }
                 }
-                1 => self.create_midi_clip(t, scene),
+                1 => {
+                    self.create_midi_clip(t, scene);
+                    self.big.page = Page::Notes;
+                }
+                6 => self.big.page = Page::Notes,
                 2 => self.duplicate_clip(sel),
                 3 => self.delete_clip(sel),
                 4 => self.cmd(Command::StopAllClips),
@@ -854,6 +886,9 @@ impl App {
 
     /// Lets go of every note the pages hold.
     pub fn big_release_notes(&mut self) {
+        if let Some((p, ids, _)) = self.big.notes.preview.take() {
+            self.note_off(p, &ids);
+        }
         let held = std::mem::take(&mut self.big.play.held);
         for (_, (pitch, ids)) in held {
             self.note_off(pitch, &ids);

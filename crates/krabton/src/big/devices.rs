@@ -26,7 +26,7 @@ pub struct DevState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Link {
+pub(super) enum Link {
     Instrument,
     Midi(usize),
     Fx(usize),
@@ -48,7 +48,7 @@ fn presets_of(inst: &Instrument) -> Option<(Vec<&'static str>, fn(&'static str) 
 }
 
 /// One step of a value: an option, a whole number, or a fortieth of the range.
-fn step_value(spec: &ParamSpec, v: f32, step: i32) -> f32 {
+pub(super) fn step_value(spec: &ParamSpec, v: f32, step: i32) -> f32 {
     match spec.kind {
         ParamKind::Toggle => {
             if v >= 0.5 {
@@ -63,7 +63,7 @@ fn step_value(spec: &ParamSpec, v: f32, step: i32) -> f32 {
 }
 
 impl App {
-    fn chain(&self, t: usize) -> Vec<(Link, String, String, bool)> {
+    pub(super) fn chain(&self, t: usize) -> Vec<(Link, String, String, bool)> {
         let track = &self.project.tracks[t];
         let mut v = Vec::new();
         if let Some(i) = &track.instrument {
@@ -79,7 +79,7 @@ impl App {
         v
     }
 
-    fn link_specs(&self, t: usize, link: Link) -> &'static [ParamSpec] {
+    pub(super) fn link_specs(&self, t: usize, link: Link) -> &'static [ParamSpec] {
         let track = &self.project.tracks[t];
         match link {
             Link::Instrument => track.instrument.as_ref().and_then(krabton_engine::modulation::instrument_specs).unwrap_or(&[]),
@@ -88,7 +88,7 @@ impl App {
         }
     }
 
-    fn link_value(&self, t: usize, link: Link, i: usize) -> Option<f32> {
+    pub(super) fn link_value(&self, t: usize, link: Link, i: usize) -> Option<f32> {
         let track = &self.project.tracks[t];
         match link {
             Link::Instrument => track.instrument.as_ref().and_then(krabton_engine::modulation::instrument_params).and_then(|p| p.get(i).copied()),
@@ -97,7 +97,7 @@ impl App {
         }
     }
 
-    fn set_link_value(&mut self, t: usize, link: Link, i: usize, v: f32) {
+    pub(super) fn set_link_value(&mut self, t: usize, link: Link, i: usize, v: f32) {
         let track = &mut self.project.tracks[t];
         let slot = match link {
             Link::Instrument => track.instrument.as_mut().and_then(krabton_engine::modulation::instrument_params_mut).and_then(|p| p.get_mut(i)),
@@ -109,7 +109,7 @@ impl App {
         }
     }
 
-    fn toggle_link(&mut self, t: usize, link: Link) {
+    pub(super) fn toggle_link(&mut self, t: usize, link: Link) {
         let track = &mut self.project.tracks[t];
         match link {
             Link::Midi(k) => {
