@@ -85,37 +85,36 @@ jobs:
 
   linux-arm64:
     name: Linux ARM64
-    # Cross-compiled for 64-bit ARM Linux: Raspberry Pi, ClockworkPi uConsole and DevTerm.
-    runs-on: ubuntu-22.04
+    # 64-bit ARM Linux (Raspberry Pi, ClockworkPi uConsole and DevTerm), built on GitHub's ARM runners.
+    runs-on: ubuntu-22.04-arm
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-unknown-linux-gnu
       - uses: Swatinem/rust-cache@v2
-      - name: Cross compiler and ARM64 libraries
-        run: |
-          sudo dpkg --add-architecture arm64
-          # ARM64 packages come from ports.ubuntu.com; the usual mirrors keep amd64.
-          sudo sed -i 's/^deb http/deb [arch=amd64] http/' /etc/apt/sources.list
-          for suite in jammy jammy-updates jammy-security; do
-            echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $suite main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
-          done
-          sudo apt-get update || true
-          sudo apt-get install -y gcc-aarch64-linux-gnu libasound2-dev:arm64 libudev-dev:arm64 libxkbcommon-dev:arm64 libgl1-mesa-dev:arm64
+      - name: Dependencies
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libxkbcommon-dev libgl1-mesa-dev file
       - name: Version
         run: echo "VERSION=$(if [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "${GITHUB_REF_NAME#v}"; else grep -m1 '^version' Cargo.toml | cut -d'"' -f2; fi)" >> "$GITHUB_ENV"
-      - name: Build
-        env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
-          PKG_CONFIG_ALLOW_CROSS: "1"
-          PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig
-        run: cargo build --release --locked -p krabton --target aarch64-unknown-linux-gnu
+      - run: cargo build --release --locked -p krabton
+      - name: AppImage
+        run: |
+          mkdir -p dist AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps
+          cp target/release/krabton AppDir/usr/bin/
+          cp packaging/linux/krabton.desktop AppDir/usr/share/applications/
+          cp packaging/linux/krabton.desktop AppDir/
+          cp crates/krabton/assets/icon-256.png AppDir/usr/share/icons/hicolor/256x256/apps/krabton.png
+          cp crates/krabton/assets/icon-256.png AppDir/krabton.png
+          cp packaging/linux/AppRun AppDir/AppRun
+          chmod +x AppDir/AppRun
+          mkdir -p AppDir/usr/lib/fallback
+          cp -L /usr/lib/aarch64-linux-gnu/libasound.so.2 AppDir/usr/lib/fallback/
+          curl -fsSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-aarch64.AppImage
+          chmod +x appimagetool
+          ARCH=aarch64 APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool AppDir "dist/Krabton-$VERSION-aarch64.AppImage"
       - name: Tarball
         run: |
-          mkdir -p dist "krabton-$VERSION"
-          cp target/aarch64-unknown-linux-gnu/release/krabton packaging/linux/krabton.desktop packaging/linux/install.sh LICENSE "krabton-$VERSION/"
+          mkdir -p "krabton-$VERSION"
+          cp target/release/krabton packaging/linux/krabton.desktop packaging/linux/install.sh LICENSE "krabton-$VERSION/"
           cp crates/krabton/assets/icon-256.png "krabton-$VERSION/krabton.png"
           chmod +x "krabton-$VERSION/install.sh"
           tar czf "dist/krabton-$VERSION-linux-aarch64.tar.gz" "krabton-$VERSION"
@@ -174,7 +173,7 @@ jobs:
 
           - **Windows**: Krabton-Setup-….exe (installer), or the portable zip
           - **Linux**: Krabton-….AppImage (make it executable and double-click it), or the tar.gz with install.sh (also on a Steam Deck, in Desktop Mode)
-          - **Linux on ARM64** (Raspberry Pi, ClockworkPi uConsole and DevTerm): the linux-aarch64 tar.gz with install.sh
+          - **Linux on ARM64** (Raspberry Pi, ClockworkPi uConsole and DevTerm): Krabton-….aarch64.AppImage, or the linux-aarch64 tar.gz with install.sh
           - **macOS**: Krabton-….dmg (drag Krabton to Applications; the first time, right-click it and choose Open)
 
           On Arch Linux you can also build it with packaging/arch/PKGBUILD (makepkg -si)."

@@ -19,7 +19,7 @@ No programming needed: download the file for your system from the [Releases page
   ```
 - **macOS**: `Krabton-....dmg`. Open it and drag Krabton to Applications. It is not signed by Apple, so the first time right-click Krabton and choose *Open*.
 - **Steam Deck**: in Desktop Mode, the Linux AppImage. To start it from Game Mode, add it to Steam (*Add a Non-Steam Game*) and give it the launch option `--big-picture`, so it opens in [Big Picture](#big-picture) with the Deck's controls.
-- **Raspberry Pi, ClockworkPi uConsole and DevTerm** (64-bit ARM Linux): the `linux-aarch64.tar.gz`; unpack it and run `./install.sh`.
+- **Raspberry Pi, ClockworkPi uConsole and DevTerm** (64-bit ARM Linux): `Krabton-....-aarch64.AppImage`, or the `linux-aarch64.tar.gz` (unpack it and run `./install.sh`).
 
 For sound on Linux see [Building](#building) below: Krabton talks to PulseAudio/PipeWire directly, or to ALSA.
 
