@@ -541,14 +541,18 @@ mod tests {
         out
     }
 
-    /// Keeps reading until a message at `addr` came in (messages can arrive
-    /// in separate packets), or two seconds passed.
-    fn recv_until(sock: &UdpSocket, addr: &str) -> Vec<(OscMessage, SocketAddr)> {
+    /// Keeps reading until `count` messages at `addr` came in (they can
+    /// arrive in separate packets, one later than the other), or two seconds
+    /// passed; then a moment more, so one too many is seen too.
+    fn recv_until(sock: &UdpSocket, addr: &str, count: usize) -> Vec<(OscMessage, SocketAddr)> {
         let mut out = Vec::new();
         let deadline = Instant::now() + Duration::from_secs(2);
-        while Instant::now() < deadline && !out.iter().any(|(m, _): &(OscMessage, SocketAddr)| m.addr == addr) {
+        let seen = |out: &Vec<(OscMessage, SocketAddr)>| out.iter().filter(|(m, _)| m.addr == addr).count();
+        while Instant::now() < deadline && seen(&out) < count {
             out.extend(recv(sock));
         }
+        std::thread::sleep(Duration::from_millis(30));
+        out.extend(recv(sock));
         out
     }
 
@@ -594,14 +598,14 @@ mod tests {
         let mut levels = vec![0u8; 128];
         levels[5] = 15;
         m.grid_leds(&levels, 16, 8);
-        let maps = recv_until(&grid, "/krabton/grid/led/level/map");
+        let maps = recv_until(&grid, "/krabton/grid/led/level/map", 2);
         let maps: Vec<&OscMessage> = maps.iter().map(|(msg, _)| msg).filter(|msg| msg.addr == "/krabton/grid/led/level/map").collect();
         assert_eq!(maps.len(), 2);
         assert_eq!(maps[0].args.len(), 66);
         assert_eq!(maps[0].int(2 + 5), Some(15));
         levels[12] = 9;
         m.grid_leds(&levels, 16, 8);
-        let maps = recv_until(&grid, "/krabton/grid/led/level/map");
+        let maps = recv_until(&grid, "/krabton/grid/led/level/map", 1);
         let maps: Vec<&OscMessage> = maps.iter().map(|(msg, _)| msg).filter(|msg| msg.addr == "/krabton/grid/led/level/map").collect();
         assert_eq!(maps.len(), 1);
         assert_eq!(maps[0].int(0), Some(8), "only the right quad changed");
@@ -654,7 +658,7 @@ mod tests {
         let mut levels = vec![0u8; 128];
         levels[0] = 15;
         m.grid_leds(&levels, 16, 8);
-        let maps = recv_until(&grid, "/krabton/grid/led/level/map");
+        let maps = recv_until(&grid, "/krabton/grid/led/level/map", 2);
         let right = maps.iter().map(|(msg, _)| msg).find(|msg| msg.addr == "/krabton/grid/led/level/map" && msg.int(0) == Some(8)).expect("right quad");
         assert_eq!(right.int(2 + 63), Some(15));
         // Turned a quarter, the grid is 8 wide and 16 high.
@@ -680,7 +684,7 @@ mod tests {
         let mut ring = [0u8; 64];
         ring[..10].fill(12);
         m.ring_leds(1, &ring);
-        let got = recv_until(&arc, "/krabton_arc/ring/map");
+        let got = recv_until(&arc, "/krabton_arc/ring/map", 1);
         let map = got.iter().find(|(msg, _)| msg.addr == "/krabton_arc/ring/map").expect("ring map");
         assert_eq!(map.0.int(0), Some(1));
         assert_eq!(map.0.args.len(), 65);
