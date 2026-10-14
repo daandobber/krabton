@@ -26,6 +26,8 @@ pub enum View {
     Arrangement,
     /// Every track's devices at once.
     Rack,
+    /// The four-track tape.
+    Tape,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -125,6 +127,8 @@ pub enum BrowserItem {
     Nature(&'static str),
     /// A Pan Flute preset.
     PanFlute(&'static str),
+    /// A Facet preset.
+    Facet(&'static str),
     /// A Beads (instrument) preset.
     BeadsSynth(&'static str),
     /// A Grand Piano preset.
@@ -170,6 +174,7 @@ impl BrowserItem {
             BrowserItem::Birds(p) => format!("Birds: {p}"),
             BrowserItem::Nature(p) => format!("Nature: {p}"),
             BrowserItem::PanFlute(p) => format!("Pan Flute: {p}"),
+            BrowserItem::Facet(p) => format!("Facet: {p}"),
             BrowserItem::Piano(p) => format!("Grand Piano: {p}"),
             BrowserItem::Drums(k) => k.to_string(),
             BrowserItem::Sampler => "Sampler".into(),
@@ -407,6 +412,10 @@ pub struct App {
     pub(crate) quit_requested: bool,
     /// Big Picture: the controller and touch view.
     pub big: crate::big::BigPicture,
+    /// What was lifted off the tape, to drop elsewhere.
+    pub(crate) tape_clip: Option<Vec<u32>>,
+    /// The played track the engine was last told of (for the tape).
+    pub(crate) tape_follow_sent: Option<Option<u64>>,
     /// `shot=path`: where the next picture of the window goes, and whether
     /// it was asked for yet.
     shot: Option<(String, bool)>,
@@ -541,6 +550,8 @@ impl App {
             frame: 0,
             quit_requested: false,
             big: crate::big::BigPicture::new(crate::big::start_in_big_picture(start_big)),
+            tape_clip: None,
+            tape_follow_sent: None,
             shot: None,
             env_view: false,
             env_target: None,
@@ -952,7 +963,7 @@ impl App {
                 }
                 self.toast(format!("Loading {} ...", info.name));
             }
-            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::BeadsSynth(_) => {
+            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) => {
                 let inst = match item {
                     BrowserItem::Synth(p) => Instrument::synth(p),
                     BrowserItem::Macro(p) => Instrument::macro_osc(p),
@@ -979,6 +990,7 @@ impl App {
                     BrowserItem::Birds(p) => Instrument::birds(p),
                     BrowserItem::Nature(p) => Instrument::nature(p),
                     BrowserItem::PanFlute(p) => Instrument::pan_flute(p),
+                    BrowserItem::Facet(p) => Instrument::facet(p),
                     BrowserItem::Drums(k) => Instrument::drums(k),
                     _ => Instrument::sampler(None),
                 };
@@ -1174,6 +1186,7 @@ impl App {
         if self.is_playing() {
             self.cmd(Command::Stop);
         } else {
+            self.tape_before_play();
             self.cmd(Command::Play);
         }
     }
@@ -1212,6 +1225,15 @@ impl App {
         let status = self.status();
         let playing = self.is_playing();
         let mut ids = Vec::new();
+        // An Endless that records takes the note as its next step.
+        for &ti in &targets {
+            for dev in self.project.tracks[ti].midi_devices.iter_mut() {
+                let rec = krabton_engine::sequencers::played::endless::RECORD;
+                if dev.enabled && dev.kind == krabton_engine::midi_fx::MidiFxKind::Endless && dev.params.get(rec).is_some_and(|v| *v >= 0.5) {
+                    krabton_engine::sequencers::played::endless_add(&mut dev.data, pitch);
+                }
+            }
+        }
         for ti in targets {
             let id = self.project.tracks[ti].id;
             ids.push(id);
@@ -1774,6 +1796,7 @@ impl App {
         self.sel_track = if self.project.tracks.is_empty() { TrackSel::Master } else { TrackSel::Track(0) };
         self.sel_scene = 0;
         self.recording = false;
+        self.tape_load();
     }
 
     pub fn new_project(&mut self) {
@@ -1832,6 +1855,10 @@ impl App {
             self.project.name = stem.to_string_lossy().to_string();
         }
         self.plugins.store_states(&mut self.project);
+        if let Some(dir) = path.parent() {
+            let name = self.project.name.clone();
+            self.tape_save(dir, &name);
+        }
         match self.project.save(&path) {
             Ok(()) => {
                 self.dirty = false;
@@ -2010,6 +2037,7 @@ impl App {
                 "arrangement" => self.view = View::Arrangement,
                 "session" => self.view = View::Session,
                 "rackview" => self.view = View::Rack,
+                "tapeview" => self.view = View::Tape,
                 "detail" => self.toggle_detail(),
                 "envelopes" => {
                     self.env_view = true;
@@ -2129,6 +2157,12 @@ impl App {
                     let names = krabton_engine::dsp::pan_flute::preset_names();
                     let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
                     self.apply_item(&BrowserItem::PanFlute(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "facet" => {
+                    let names = krabton_engine::dsp::facet::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Facet(p), DropTarget::NewTrack);
                     self.detail = DetailTab::Devices;
                 }
                 "guitar" => {
@@ -2451,7 +2485,14 @@ impl App {
                         None => eprintln!("no effect plugin #{n}"),
                     }
                 }
-                "savepath" => match self.project.save(std::path::Path::new(arg)) {
+                "savepath" => match {
+                    // The tape goes next to the set, as with Save.
+                    let path = std::path::Path::new(arg);
+                    if let (Some(dir), Some(stem)) = (path.parent(), path.file_stem()) {
+                        self.tape_save(dir, &stem.to_string_lossy());
+                    }
+                    self.project.save(path)
+                } {
                     // Recordings then go next to this set.
                     Ok(()) => self.file_path = Some(std::path::PathBuf::from(arg)),
                     Err(e) => eprintln!("save failed: {e}"),
@@ -2549,10 +2590,13 @@ impl eframe::App for App {
         self.poll_piano_install();
         self.poll_drum_install();
         self.poll_recording();
+        self.tape_frame();
         self.poll_export();
         // Controllers (and in Big Picture the keyboard) speak through the same actions.
         // While a ring plays the left stick, it does not move the cursor.
-        self.big.pads.lstick_nav = !(self.big.on && self.big.page == crate::big::Page::Play && self.big.play.sticks != crate::big::play::StickMode::Pads && self.big.menu.is_none());
+        let page = self.big.page;
+        let lstick_plays = (page == crate::big::Page::Play && self.big.play.sticks != crate::big::play::StickMode::Pads) || page == crate::big::Page::Tape;
+        self.big.pads.lstick_nav = !(self.big.on && lstick_plays && self.big.menu.is_none());
         let mut pad_input = self.big.pads.poll(ctx, self.big.on);
         if let Some(n) = self.big.script.pop_front() {
             pad_input.pressed.push(n);
@@ -2671,6 +2715,7 @@ impl eframe::App for App {
             View::Session => self.ui_session(ui),
             View::Arrangement => self.ui_arrangement(ui),
             View::Rack => self.ui_device_rack(ui),
+            View::Tape => self.ui_tape(ui),
         });
         self.ui_dialogs(ctx);
         self.draw_drag_ghost(ctx);

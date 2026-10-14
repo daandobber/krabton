@@ -51,12 +51,29 @@ impl Path {
     }
 }
 
+/// A Hilbert pair: a signal and its quadrature (90 degrees behind at every
+/// frequency), to shift frequencies with.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Hilbert {
+    i: Path,
+    q: Path,
+    /// Path I is one sample late.
+    i_delay: f32,
+}
+
+impl Hilbert {
+    /// (in phase, quadrature) of `x`.
+    #[inline]
+    pub(crate) fn tick(&mut self, x: f32) -> (f32, f32) {
+        let i_out = self.i_delay;
+        self.i_delay = self.i.tick(&A_I, x);
+        (i_out, self.q.tick(&A_Q, x))
+    }
+}
+
 #[derive(Default)]
 pub struct FreqShifter {
-    i_path: [Path; 2],
-    q_path: [Path; 2],
-    /// Path I is one sample late.
-    i_delay: [f32; 2],
+    hilbert: [Hilbert; 2],
     phase: f32,
     last: [f32; 2],
 }
@@ -82,9 +99,7 @@ impl FreqShifter {
                 let wet = if ring {
                     v * c
                 } else {
-                    let i_out = self.i_delay[ch];
-                    self.i_delay[ch] = self.i_path[ch].tick(&A_I, v);
-                    let q_out = self.q_path[ch].tick(&A_Q, v);
+                    let (i_out, q_out) = self.hilbert[ch].tick(v);
                     // The right side goes the other way when wide.
                     let sign = if wide && ch == 1 { -1.0 } else { 1.0 };
                     i_out * c + sign * q_out * s

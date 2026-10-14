@@ -26,6 +26,7 @@ use crate::dsp::wind_chimes::WindChimesState;
 use crate::dsp::beads_synth::BeadsSynthState;
 use crate::dsp::birds::BirdsState;
 use crate::dsp::nature::NatureState;
+use crate::dsp::facet::FacetState;
 use crate::dsp::pan_flute::PanFluteState;
 use crate::piano::{library::PianoLibrary, PianoState};
 use crate::dsp::rings_synth::RingsState;
@@ -183,6 +184,8 @@ pub struct EngineStatus {
     pub rec_dropped: AtomicU64,
     /// Each sequencer's state for its editor, by device id.
     pub seqs: SeqBank,
+    /// The tape's audio and where it is.
+    pub reel: crate::tape::Reel,
 }
 
 /// The visual state of every sequencer (see `MidiFxState::visual`), by
@@ -253,6 +256,7 @@ impl EngineStatus {
             capturing: AtomicBool::new(false),
             rec_dropped: AtomicU64::new(0),
             seqs: SeqBank::new(),
+            reel: crate::tape::Reel::new(),
         }
     }
 }
@@ -290,6 +294,18 @@ pub enum Command {
     PitchBend { track: u64, semis: f32 },
     /// The mod wheel of a track (0..1), for its Mod Wheel modulators.
     ModWheel { track: u64, value: f32 },
+    /// Puts the tape at a place (seconds).
+    TapeLocate(f64),
+    /// The track being played, which the tape records from by default.
+    TapeFollow(Option<u64>),
+    /// Brakes the tape to a stop while true.
+    TapeBrake(bool),
+    /// Repeats the last `beats` the tape played until None.
+    TapeStutter(Option<f64>),
+    /// Moves the tape by hand at this speed (also when stopped) until None.
+    TapeScrub(Option<f32>),
+    /// Bends the tape's speed by a ratio for a moment (1: as set).
+    TapeBend(f32),
     /// A joystick on a track (-1..1 each way), for its Joystick modulators.
     Joystick { track: u64, x: f32, y: f32 },
     /// The grand piano's samples (installed, or none).
@@ -419,6 +435,7 @@ enum InstState {
     Birds(Box<BirdsState>),
     Nature(Box<NatureState>),
     PanFlute(Box<PanFluteState>),
+    Facet(Box<FacetState>),
     Plugin { instance: u64, proc: Option<Box<dyn AudioProcessor>>, pending: Vec<PluginEvent> },
 }
 
@@ -441,6 +458,7 @@ impl InstState {
             InstState::Guitar(s) => s.pitch_bend = semis,
             InstState::BeadsSynth(s) => s.pitch_bend = semis,
             InstState::PanFlute(s) => s.pitch_bend = semis,
+            InstState::Facet(s) => s.pitch_bend = semis,
             InstState::Voice(s) => s.pitch_bend = semis,
             InstState::Monk(s) => s.pitch_bend = semis,
             _ => {}
@@ -479,6 +497,7 @@ impl InstState {
             Some(Instrument::Birds { .. }) => InstState::Birds(Box::new(BirdsState::new(sr))),
             Some(Instrument::Nature { .. }) => InstState::Nature(Box::new(NatureState::new(sr))),
             Some(Instrument::PanFlute { .. }) => InstState::PanFlute(Box::new(PanFluteState::new(sr))),
+            Some(Instrument::Facet { .. }) => InstState::Facet(Box::new(FacetState::new(sr))),
         }
     }
 
@@ -529,6 +548,7 @@ impl InstState {
                 | (InstState::Birds(_), Some(Instrument::Birds { .. }))
                 | (InstState::Nature(_), Some(Instrument::Nature { .. }))
                 | (InstState::PanFlute(_), Some(Instrument::PanFlute { .. }))
+                | (InstState::Facet(_), Some(Instrument::Facet { .. }))
         ) || matches!((self, i), (InstState::Plugin { instance, .. }, Some(Instrument::Plugin(p))) if *instance == p.instance)
     }
 
@@ -564,6 +584,7 @@ impl InstState {
             (InstState::Birds(s), Instrument::Birds { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Nature(s), Instrument::Nature { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::PanFlute(s), Instrument::PanFlute { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Facet(s), Instrument::Facet { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             _ => {}
         }
     }
@@ -598,6 +619,7 @@ impl InstState {
             (InstState::Birds(s), Instrument::Birds { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Nature(s), Instrument::Nature { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::PanFlute(s), Instrument::PanFlute { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Facet(s), Instrument::Facet { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             _ => {}
         }
     }
@@ -633,6 +655,7 @@ impl InstState {
             InstState::Birds(s) => s.all_off(),
             InstState::Nature(s) => s.all_off(),
             InstState::PanFlute(s) => s.all_off(),
+            InstState::Facet(s) => s.all_off(),
             InstState::None => {}
         }
     }
@@ -658,6 +681,7 @@ impl InstState {
             InstState::Birds(s) => s.visual(out),
             InstState::Nature(s) => s.visual(out),
             InstState::PanFlute(s) => s.visual(out),
+            InstState::Facet(s) => s.visual(out),
             _ => return false,
         }
         true
@@ -693,6 +717,7 @@ impl InstState {
             (InstState::Birds(s), Instrument::Birds { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Nature(s), Instrument::Nature { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::PanFlute(s), Instrument::PanFlute { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Facet(s), Instrument::Facet { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Plugin { proc, pending, .. }, Instrument::Plugin(_)) => {
                 if let Some(p) = proc {
                     p.process(pending, l, r);
@@ -1009,6 +1034,7 @@ pub struct Engine {
     piano_lib: Option<Arc<PianoLibrary>>,
     /// The notes the current track takes from another track.
     midi_scratch: Vec<Ev>,
+    tape: crate::tape::TapeRt,
 }
 
 impl Engine {
@@ -1020,6 +1046,7 @@ impl Engine {
         let (midi_rec_tx, midi_rec_rx) = bounded(4096);
         let status = Arc::new(EngineStatus::new());
         status.sample_rate.store(sample_rate);
+        status.reel.set_rate(sample_rate);
         let mut e = Engine {
             sr: sample_rate,
             project,
@@ -1053,6 +1080,7 @@ impl Engine {
             midi_rec_tx,
             midi_scratch: Vec::with_capacity(512),
             piano_lib: crate::piano::library::shared(),
+            tape: crate::tape::TapeRt::new(),
         };
         e.reconcile();
         (e, EngineHandle { commands: cmd_tx, garbage: garbage_rx, status, recorded: rec_rx, midi_recorded: midi_rec_rx })
@@ -1163,6 +1191,9 @@ impl Engine {
                 } else {
                     self.start_marker = 0.0;
                     self.song_pos = 0.0;
+                    // Stopped twice: the tape winds back too.
+                    let t = &self.project.tape;
+                    self.tape.locate(if t.loop_on { t.loop_in * self.sr as f64 } else { 0.0 });
                 }
             }
             Command::SetPosition(p) => {
@@ -1294,6 +1325,15 @@ impl Engine {
                 self.capture = on;
                 self.status.capturing.store(on, RELAXED);
             }
+            Command::TapeLocate(secs) => self.tape.locate(secs * self.sr as f64),
+            Command::TapeFollow(track) => self.tape.follow = track,
+            Command::TapeBrake(on) => self.tape.brake = on,
+            Command::TapeStutter(beats) => {
+                let spb = self.samples_per_beat();
+                self.tape.stutter(beats.map(|b| b * spb));
+            }
+            Command::TapeScrub(v) => self.tape.scrub = v,
+            Command::TapeBend(ratio) => self.tape.bend = if ratio.is_finite() { ratio } else { 1.0 },
             Command::PitchBend { track, semis } => {
                 if let Some(rt) = self.project.track_index(track).and_then(|ti| self.tracks.get_mut(ti)) {
                     rt.bend = semis;
@@ -1901,6 +1941,23 @@ impl Engine {
             }
         }
 
+        // The tape plays into the master and records the armed track's source.
+        {
+            use crate::tape::TapeSource;
+            let set = &project.tape;
+            let source = set.armed.and_then(|k| set.tracks.get(k)).map(|t| t.source);
+            let rec: Option<(&[f32], &[f32])> = match source {
+                Some(TapeSource::Played) => self.tape.follow.and_then(|id| project.track_index(id)).and_then(|ti| self.tracks.get(ti)).map(|rt| (&rt.out_l[..seg], &rt.out_r[..seg])),
+                Some(TapeSource::Track(id)) => project.track_index(id).and_then(|ti| self.tracks.get(ti)).map(|rt| (&rt.out_l[..seg], &rt.out_r[..seg])),
+                Some(TapeSource::Input) => {
+                    let right = if self.input.as_ref().is_some_and(|i| i.channels() > 1) { MAX_BLOCK } else { 0 };
+                    Some((&self.in_buf[..seg], &self.in_buf[right..right + seg]))
+                }
+                None => None,
+            };
+            self.tape.process(&status.reel, set, sr, playing, rec, &mut self.master.l[..seg], &mut self.master.r[..seg]);
+        }
+
         for (j, (ret, rt)) in project.returns.iter().zip(self.returns.iter_mut()).enumerate() {
             for (dev, (_, st)) in ret.devices.iter().zip(rt.devices.iter_mut()) {
                 if dev.enabled {
@@ -2488,6 +2545,26 @@ mod tests {
         h.send(Command::Stop);
         run(&mut e, 0.05);
         assert_eq!(sounding(&e), 0, "stop left notes on");
+    }
+
+    #[test]
+    fn the_tape_records_what_the_played_track_plays() {
+        let mut p = Project::new_default();
+        let ti = p.tracks.iter().position(|t| matches!(t.instrument, Some(Instrument::Synth { .. }))).expect("a synth track");
+        let id = p.tracks[ti].id;
+        p.tape.armed = Some(2);
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        h.status.reel.spool_or_make(2);
+        h.send(Command::TapeFollow(Some(id)));
+        h.send(Command::Play);
+        h.send(Command::NoteOn { track: id, pitch: 48, velocity: 0.9 });
+        run(&mut e, 0.5);
+        let s = h.status.reel.spool(2).unwrap();
+        assert!(h.status.reel.recording.load(RELAXED));
+        assert!((20000..24001).contains(&s.end()), "half a second on tape: {}", s.end());
+        let loudest = (0..s.overview_len()).map(|k| s.peak(k)).fold(0.0f32, f32::max);
+        assert!(loudest > 0.05, "{loudest}");
+        assert!(h.status.reel.spool(0).is_none(), "other tracks take no memory");
     }
 
     #[test]

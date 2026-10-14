@@ -327,6 +327,9 @@ fn smooth(spec: &ParamSpec) -> bool {
 /// The two knobs of an instrument a stick moves best (X, Y): its filter and
 /// resonance, timbre and colour, ... by name, and otherwise what the names say.
 pub fn telling_params(inst: &Instrument) -> [Option<usize>; 2] {
+    if let Instrument::Facet { .. } = inst {
+        return [Some(krabton_engine::dsp::facet::BLUE), Some(krabton_engine::dsp::facet::GREEN)];
+    }
     let Some(specs) = instrument_specs(inst) else { return [None, None] };
     let pair = match inst {
         Instrument::Synth { .. } | Instrument::Sampler { .. } | Instrument::Analog { .. } | Instrument::Bassline { .. } => Some(("Cutoff", "Resonance")),

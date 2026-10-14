@@ -16,6 +16,7 @@ pub mod notes;
 pub mod play;
 pub mod rack;
 pub mod screens;
+pub mod tape;
 
 use crate::app::{App, TrackSel};
 use crate::theme::*;
@@ -29,6 +30,7 @@ pub enum Page {
     Clips,
     Notes,
     Play,
+    Tape,
     Devices,
     Rack,
     Mixer,
@@ -36,13 +38,14 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 7] = [Page::Clips, Page::Notes, Page::Play, Page::Devices, Page::Rack, Page::Mixer, Page::Browse];
+    pub const ALL: [Page; 8] = [Page::Clips, Page::Notes, Page::Play, Page::Tape, Page::Devices, Page::Rack, Page::Mixer, Page::Browse];
 
     pub fn name(self) -> &'static str {
         match self {
             Page::Clips => "Clips",
             Page::Notes => "Notes",
             Page::Play => "Play",
+            Page::Tape => "Tape",
             Page::Devices => "Devices",
             Page::Rack => "Rack",
             Page::Mixer => "Mixer",
@@ -61,6 +64,7 @@ pub struct BigPicture {
     pub clip_cursor: (usize, usize),
     pub clip_first: (usize, usize),
     pub play: play::PlayState,
+    pub tape: tape::TapeState,
     pub dev: devices::DevState,
     pub mix: mixer::MixState,
     pub browse: browse::BrowseState,
@@ -87,6 +91,7 @@ impl BigPicture {
             clip_cursor: (0, 0),
             clip_first: (0, 0),
             play: play::PlayState::default(),
+            tape: tape::TapeState::default(),
             dev: devices::DevState::default(),
             mix: mixer::MixState::default(),
             browse: browse::BrowseState::default(),
@@ -369,15 +374,21 @@ impl App {
                 self.big.play.bar_focus = None;
                 self.big.play.picker = None;
             }
+            if self.big.page != Page::Tape {
+                self.big.tape.bar_focus = None;
+            }
             if inp.take(Nav::Select) {
-                // On Play, Menu first goes to the row of modes, then to the menu.
+                // On Play and Tape, Menu first goes to the row of modes, then to the menu.
                 if self.big.menu.is_some() {
                     self.big.menu = None;
                 } else if self.big.page == Page::Play && self.big.play.bar_focus.is_none() && self.big.play.picker.is_none() {
                     self.big.play.bar_focus = Some(0);
+                } else if self.big.page == Page::Tape && self.big.tape.bar_focus.is_none() {
+                    self.big.tape.bar_focus = Some(0);
                 } else {
                     self.big.play.bar_focus = None;
                     self.big.play.picker = None;
+                    self.big.tape.bar_focus = None;
                     self.big.menu = Some(0);
                 }
             }
@@ -389,6 +400,7 @@ impl App {
                 Page::Clips => self.big_clips(ui, body, &s, page_inp),
                 Page::Notes => self.big_notes(ui, body, &s, page_inp),
                 Page::Play => self.big_play(ui, body, &s, page_inp),
+                Page::Tape => self.big_tape(ui, body, &s, page_inp),
                 Page::Devices => self.big_devices(ui, body, &s, page_inp),
                 Page::Rack => self.big_rack(ui, body, &s, page_inp),
                 Page::Mixer => self.big_mixer(ui, body, &s, page_inp),
@@ -405,7 +417,7 @@ impl App {
             } else {
                 let mut all = hint_list;
                 all.push((Glyph::Btn(Nav::Start), if self.is_playing() { "Stop" } else { "Play" }));
-                let modes = self.big.page == Page::Play && self.big.play.bar_focus.is_none() && self.big.play.picker.is_none();
+                let modes = (self.big.page == Page::Play && self.big.play.bar_focus.is_none() && self.big.play.picker.is_none()) || (self.big.page == Page::Tape && self.big.tape.bar_focus.is_none());
                 all.push((Glyph::Btn(Nav::Select), if modes { "Modes" } else { "Menu" }));
                 big_hints(ui, hints, &s, &all);
             }
@@ -957,6 +969,7 @@ impl App {
         }
         self.big.play.forget_sticks();
         self.big_unbend();
+        self.tape_tricks_off();
     }
 }
 

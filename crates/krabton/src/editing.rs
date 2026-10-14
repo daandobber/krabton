@@ -193,8 +193,8 @@ impl App {
                 // The next paste goes right after this one.
                 self.cmd(krabton_engine::Command::SetPosition(start + length));
             }
-            // Pasting in the Rack goes into the session, like in Session.
-            View::Session | View::Rack => {
+            // Pasting in the Rack (or the Tape) goes into the session, like in Session.
+            View::Session | View::Rack | View::Tape => {
                 let scene = match self.sel_clip {
                     Some(ClipSel::Slot { track: t, scene }) if t == track => scene,
                     _ => self.sel_scene,
@@ -227,6 +227,14 @@ impl App {
         }
         match self.view {
             View::Session => self.arrow_session(dx, -dy),
+            // Up and down pick a tape track, left and right move a bar.
+            View::Tape => {
+                if dy != 0 {
+                    self.big.tape.lane = (self.big.tape.lane as i32 - dy).clamp(0, krabton_engine::tape::TAPE_TRACKS as i32 - 1) as usize;
+                } else {
+                    self.tape_step_bar(dx as f64);
+                }
+            }
             // Up and down pick the track in the Rack.
             View::Rack => {
                 if dy != 0 {

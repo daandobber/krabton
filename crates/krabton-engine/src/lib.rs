@@ -23,6 +23,7 @@ pub mod sequencers;
 pub mod routing;
 pub mod scale;
 pub mod scope;
+pub mod tape;
 
 pub use engine::{Command, Engine, EngineHandle, EngineStatus, MidiRec, RecChunk};
 pub use project::*;

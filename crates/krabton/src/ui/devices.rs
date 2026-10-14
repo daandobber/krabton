@@ -999,6 +999,26 @@ impl App {
                             param_grid_mod(ui, Id::new(("nature", track_id)), krabton_engine::dsp::nature::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
                         });
                     }
+                    Instrument::Facet { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("facet_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in krabton_engine::dsp::facet::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = krabton_engine::dsp::facet::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("click the engine's name for the next engine; drag a knob up or down").small().color(TEXT_DIM));
+                        });
+                        ui.horizontal_top(|ui| {
+                            super::inst_screen::facet_screen(ui, Id::new(("facet_screen", track_id)), params, &live, h - 48.0);
+                            ui.add_space(6.0);
+                            let specs = krabton_engine::dsp::facet::specs_for(krabton_engine::dsp::facet::engine_of(params));
+                            param_grid_mod(ui, Id::new(("facet", track_id)), specs, params, accent_now(), h - 48.0, mv.as_mut());
+                        });
+                    }
                     Instrument::PanFlute { preset, params } => {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Preset").small().color(TEXT_DIM));

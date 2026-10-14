@@ -633,6 +633,8 @@ pub enum Instrument {
     Nature { preset: String, params: Vec<f32> },
     /// Pan Flute: blown pipes: pan flute, shakuhachi, ocarina, bamboo and wooden flutes.
     PanFlute { preset: String, params: Vec<f32> },
+    /// One synth, six engines, four knobs (see `dsp::facet`).
+    Facet { preset: String, params: Vec<f32> },
     /// Beads: the wavetable synth of Mutable Instruments Beads, played with keys, with its grains.
     BeadsSynth { preset: String, params: Vec<f32> },
 }
@@ -747,6 +749,10 @@ impl Instrument {
         Instrument::PanFlute { preset: preset.to_string(), params: crate::dsp::pan_flute::preset(preset) }
     }
 
+    pub fn facet(preset: &str) -> Self {
+        Instrument::Facet { preset: preset.to_string(), params: crate::dsp::facet::preset(preset) }
+    }
+
     pub fn beads_synth(preset: &str) -> Self {
         Instrument::BeadsSynth { preset: preset.to_string(), params: crate::dsp::beads_synth::preset(preset) }
     }
@@ -782,6 +788,7 @@ impl Instrument {
             Instrument::Birds { .. } => "Birds",
             Instrument::Nature { .. } => "Nature",
             Instrument::PanFlute { .. } => "Pan Flute",
+            Instrument::Facet { .. } => "Facet",
         }
     }
 
@@ -794,7 +801,7 @@ impl Instrument {
             Instrument::Sampler { sample, .. } => sample.as_ref().map(|s| s.name.clone()).unwrap_or_else(|| "Empty".into()),
             Instrument::Plugin(p) => p.name.clone(),
             Instrument::Fm { voice, .. } => Dx7Voice::from_slice(voice).map(|v| v.name()).unwrap_or_else(|| "FM".into()),
-            Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Modular { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } | Instrument::Monk { preset, .. } | Instrument::Piano { preset, .. } | Instrument::Bassline { preset, .. } | Instrument::Mono101 { preset, .. } | Instrument::Drone { preset, .. } | Instrument::Waves { preset, .. } | Instrument::Guitar { preset, .. } | Instrument::WindChimes { preset, .. } | Instrument::Birds { preset, .. } | Instrument::Nature { preset, .. } | Instrument::PanFlute { preset, .. } | Instrument::BeadsSynth { preset, .. } => preset.clone(),
+            Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Modular { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } | Instrument::Monk { preset, .. } | Instrument::Piano { preset, .. } | Instrument::Bassline { preset, .. } | Instrument::Mono101 { preset, .. } | Instrument::Drone { preset, .. } | Instrument::Waves { preset, .. } | Instrument::Guitar { preset, .. } | Instrument::WindChimes { preset, .. } | Instrument::Birds { preset, .. } | Instrument::Nature { preset, .. } | Instrument::PanFlute { preset, .. } | Instrument::Facet { preset, .. } | Instrument::BeadsSynth { preset, .. } => preset.clone(),
         }
     }
 
@@ -980,6 +987,9 @@ pub struct Project {
     #[serde(default)]
     pub sections: Vec<SongSection>,
     pub next_id: u64,
+    /// The four-track tape.
+    #[serde(default)]
+    pub tape: crate::tape::TapeSettings,
     /// Heights the user gave devices in the Rack view, by device id (an
     /// instrument by its track's id). The engine ignores them.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
@@ -1031,6 +1041,7 @@ impl Project {
             mod_routes: Vec::new(),
             sections: Vec::new(),
             next_id: 1,
+            tape: Default::default(),
             rack_heights: Default::default(),
         };
         let mut reverb = p.make_device(EffectKind::Reverb);
@@ -1502,6 +1513,7 @@ impl Project {
                 Some(Instrument::Birds { params, .. }) => params::fix_len(params, crate::dsp::birds::SPECS),
                 Some(Instrument::Nature { params, .. }) => params::fix_len(params, crate::dsp::nature::SPECS),
                 Some(Instrument::PanFlute { params, .. }) => params::fix_len(params, crate::dsp::pan_flute::SPECS),
+                Some(Instrument::Facet { params, .. }) => params::fix_len(params, crate::dsp::facet::SPECS),
                 // Shakers became an instrument; their kits are the Drum Rack's.
                 Some(Instrument::Drums { engine, .. }) if *engine == drums::DrumEngine::Shakers => *engine = drums::DrumEngine::Rack,
                 Some(Instrument::Plugin(p)) => max_id = max_id.max(p.instance + 1),

@@ -24,6 +24,7 @@ pub mod marbles;
 pub mod chance;
 pub mod bits;
 pub mod percussion;
+pub mod played;
 
 use crate::dsp::Rng;
 use crate::midi_fx::{MidiCtx, MidiEvent};
@@ -280,6 +281,7 @@ pub struct SeqState {
     pub(crate) marbles: Box<marbles::MarblesState>,
     pub(crate) chance: chance::ChanceState,
     pub(crate) perc: percussion::PercussionState,
+    pub(crate) played: Box<played::PlayedState>,
     pos: i32,
     /// Packed state for the UI / grid (layout depends on the sequencer).
     pub visual: [u64; 4],
@@ -318,6 +320,7 @@ impl SeqState {
             marbles: Box::default(),
             chance: chance::ChanceState::default(),
             perc: percussion::PercussionState::default(),
+            played: Box::default(),
             pos: 0,
             visual: [0; 4],
         }
@@ -334,6 +337,7 @@ impl SeqState {
         self.ambient.restart();
         self.marbles.restart();
         self.chance.restart();
+        self.played.restart();
     }
 
     fn unit(&mut self) -> f32 {
@@ -389,7 +393,11 @@ impl SeqState {
         // Transpose: notes coming in move the pattern instead of sounding;
         // with Hold the last one stays, otherwise only while it is held.
         let (ti, hi) = keys_params(kind);
-        if p.get(ti).is_some_and(|v| *v >= 0.5) {
+        // Endless takes what you play while it records (it sounds as you play).
+        let recording = kind == K::Endless && p.get(played::endless::RECORD).is_some_and(|v| *v >= 0.5);
+        if matches!(kind, K::Spinner | K::Hands) {
+            self.played_keys(kind, p, out);
+        } else if p.get(ti).is_some_and(|v| *v >= 0.5) && !recording {
             for e in out.iter() {
                 self.keys.retain(|k| *k != e.pitch);
                 if e.on {
@@ -426,7 +434,7 @@ impl SeqState {
             // It keeps its own (jittery) clock against the song's.
             self.marbles(p, out, ctx);
         } else if ctx.playing {
-            if matches!(kind, K::Bounce | K::Orbits | K::Pong | K::Rain | K::Loops | K::Bloom | K::Chimes | K::DriftChords | K::Pedal) {
+            if matches!(kind, K::Bounce | K::Orbits | K::Pong | K::Rain | K::Loops | K::Bloom | K::Chimes | K::DriftChords | K::Pedal | K::Spinner) {
                 // Time-based: they keep their own time against the song's beat.
                 if (ctx.beat - self.next_beat).abs() > 1e-3 {
                     // The song jumped (a loop, a locate, a start): start over from here.
@@ -445,11 +453,13 @@ impl SeqState {
                     K::Chimes => self.chimes(p, out, ctx),
                     K::DriftChords => self.drift_chords(p, out, ctx),
                     K::Pedal => self.pedal(p, out, ctx),
+                    K::Spinner => self.spinner(p, out, ctx),
                     _ => self.rain(p, out, ctx),
                 }
             } else {
                 let rate = match kind {
                     K::Polymeter | K::Euclid | K::Turing | K::Life | K::Drunk | K::Step | K::Acid | K::DrumGrid | K::DrumMap | K::Chance | K::Bits => rate_beats(p[0]),
+                    K::Endless | K::Hands | K::Draw => rate_beats(p[0]),
                     K::Percussion => percussion::step_beats(p),
                     K::Drummer => rate_beats(p.get(drummer::RATE).copied().unwrap_or(2.0)),
                     K::Chaos | K::Automaton | K::Ant | K::Markov | K::Words | K::Lorenz | K::Tintinnabuli => rate_beats(p[0]),
@@ -478,6 +488,9 @@ impl SeqState {
                             K::Chance => self.chance_seq(k, p, data, at, step_frames, out, ctx),
                             K::Bits => self.bits(k, p, at, step_frames, out, ctx),
                             K::Percussion => self.percussion(k, p, at, step_frames, out, ctx),
+                            K::Endless => self.endless(k, p, data, at, step_frames, out, ctx),
+                            K::Hands => self.hands(k, p, at, step_frames, out, ctx),
+                            K::Draw => self.draw_seq(k, p, data, at, step_frames, out, ctx),
                             K::Chaos => self.chaos(p, at, step_frames, out, ctx),
                             K::Automaton => self.automaton(p, at, step_frames, out, ctx),
                             K::Ant => self.ant(p, at, step_frames, out, ctx),
@@ -864,7 +877,8 @@ mod tests {
 
     #[test]
     fn every_sequencer_has_transpose_and_hold() {
-        for kind in MidiFxKind::SEQUENCERS {
+        // Spinner and Hands play the keys themselves: nothing to transpose.
+        for kind in MidiFxKind::SEQUENCERS.into_iter().filter(|k| !matches!(k, MidiFxKind::Spinner | MidiFxKind::Hands)) {
             let (ti, hi) = keys_params(kind);
             assert_eq!(kind.specs()[ti].name, "Transpose", "{kind:?}");
             assert_eq!(kind.specs()[hi].name, "Hold", "{kind:?}");

@@ -69,6 +69,7 @@ impl App {
             rect_fill(ui.painter(), r, 2.0, if playing { shade(PLAY, 0.35) } else { PANEL3 });
             play_icon(ui.painter(), r.center(), 12.0, if playing { PLAY } else { TEXT });
             if resp.on_hover_text("Play (Space)").clicked() {
+                self.tape_before_play();
                 self.cmd(Command::Play);
             }
             let (r, resp) = ui.allocate_exact_size(vec2(28.0, 24.0), Sense::click());
@@ -120,17 +121,26 @@ impl App {
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // In a narrow window the CPU readout gives way and the views get short names.
+                let room = ui.available_width();
                 if ui.add(egui::Button::new(RichText::new("Big Picture").color(TEXT)).fill(PANEL3)).on_hover_text("For controllers and touch screens (Start on a controller opens it too)").clicked() {
                     self.enter_big_picture();
                 }
                 ui.separator();
-                let cpu = status.cpu_load.load();
-                ui.label(RichText::new(format!("CPU {:>3.0}%", cpu * 100.0)).color(if cpu > 0.8 { REC } else { TEXT_DIM }).small());
-                ui.separator();
+                if room > 560.0 {
+                    let cpu = status.cpu_load.load();
+                    ui.label(RichText::new(format!("CPU {:>3.0}%", cpu * 100.0)).color(if cpu > 0.8 { REC } else { TEXT_DIM }).small());
+                    ui.separator();
+                }
                 let dragging_clip = egui::DragAndDrop::payload::<crate::app::SlotDrag>(ui.ctx()).is_some() || egui::DragAndDrop::payload::<crate::app::ArrClipDrag>(ui.ctx()).is_some();
-                for (v, label) in [(View::Rack, "Rack"), (View::Arrangement, "Arrangement"), (View::Session, "Session")] {
+                let short = room < 470.0;
+                for (v, label) in [(View::Tape, "Tape"), (View::Rack, "Rack"), (View::Arrangement, if short { "Arr." } else { "Arrangement" }), (View::Session, if short { "Sess." } else { "Session" })] {
                     let on = self.view == v;
-                    let tip = if v == View::Rack { "Every track's devices at once (Ctrl+Shift+R)" } else { "Tab switches views (also while dragging a clip)" };
+                    let tip = match v {
+                        View::Rack => "Every track's devices at once (Ctrl+Shift+R)",
+                        View::Tape => "The four-track tape: record what you play, at any speed, backwards, looped",
+                        _ => "Tab switches views (also while dragging a clip)",
+                    };
                     let resp = ui.add(egui::Button::new(RichText::new(label).color(if on { TEXT_DARK } else { TEXT })).fill(if on { ACCENT } else { PANEL3 })).on_hover_text(tip);
                     if resp.clicked() {
                         self.view = v;

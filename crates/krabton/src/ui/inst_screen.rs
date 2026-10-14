@@ -1684,3 +1684,91 @@ mod tests {
         }
     }
 }
+
+// ---------------------------------------------------------------- facet
+
+/// The colours of Facet's four knobs.
+pub(crate) const FACET_COLORS: [Color32; 4] = [BLUE, GREEN, WHITE, Color32::from_rgb(0xff, 0x8c, 0x2e)];
+
+/// Facet: the engine's cycle as the four knobs shape it (with the sound
+/// itself behind it while notes play), and the knobs in their colours. Drag
+/// a knob up or down to turn it; click the engine's name for the next one
+/// (right-click: the one before).
+pub(crate) fn facet_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, height: f32) -> bool {
+    use krabton_engine::dsp::facet;
+    if p.len() < facet::SPECS.len() {
+        let _ = screen(ui, 300.0, height);
+        return false;
+    }
+    let w = 300.0;
+    let rect = screen(ui, w, height);
+    let mut changed = false;
+    let engine = facet::engine_of(p);
+    let names = facet::knob_names(engine);
+    let k = [p[facet::BLUE], p[facet::GREEN], p[facet::WHITE], p[facet::ORANGE]];
+    // The engine's name: click for the next.
+    let title = Rect::from_min_size(rect.min + vec2(8.0, 6.0), vec2(140.0, 16.0));
+    let tresp = ui.interact(title, id.with("engine"), Sense::click());
+    let n = facet::ENGINES.len() as f32;
+    if tresp.clicked() {
+        p[facet::ENGINE] = (engine as f32 + 1.0) % n;
+        changed = true;
+    }
+    if tresp.secondary_clicked() {
+        p[facet::ENGINE] = (engine as f32 + n - 1.0) % n;
+        changed = true;
+    }
+    let painter = ui.painter().clone();
+    caption(&painter, title.left_center(), Align2::LEFT_CENTER, &format!("{} ›", facet::ENGINES[engine]), if tresp.hovered() { WHITE } else { FACET_COLORS[engine % 4] });
+    let voices = live.vals[0].round() as usize;
+    if voices > 0 {
+        caption(&painter, pos2(rect.right() - 8.0, rect.top() + 14.0), Align2::RIGHT_CENTER, &format!("{voices} voice{}", if voices == 1 { "" } else { "s" }), DIM);
+    }
+    // The wave: two cycles of what the knobs make, the sound behind it.
+    let wave_r = Rect::from_min_max(pos2(rect.left() + 10.0, rect.top() + 26.0), pos2(rect.right() - 10.0, rect.top() + height * 0.6));
+    let mid = wave_r.center().y;
+    let amp = wave_r.height() * 0.42;
+    if live.level() > 0.002 {
+        let tail = &live.wave[live.wave.len().saturating_sub(600)..];
+        let peak = tail.iter().fold(0.0f32, |m, x| m.max(x.abs())).max(0.05);
+        let pts: Vec<Pos2> = tail.iter().enumerate().map(|(i, x)| pos2(wave_r.left() + wave_r.width() * i as f32 / tail.len().max(1) as f32, mid - x / peak * amp)).collect();
+        painter.add(Shape::line(pts, Stroke::new(1.0_f32, DIM)));
+    }
+    painter.line_segment([pos2(wave_r.left(), mid), pos2(wave_r.right(), mid)], Stroke::new(1.0_f32, FAINT));
+    let cyc = facet::preview(engine, k, 160);
+    let pts: Vec<Pos2> = (0..320).map(|i| pos2(wave_r.left() + wave_r.width() * i as f32 / 319.0, mid - cyc[i % 160].clamp(-1.3, 1.3) / 1.3 * amp)).collect();
+    painter.add(Shape::line(pts, Stroke::new(2.0_f32, FACET_COLORS[engine % 4])));
+    // The four knobs.
+    let row_top = wave_r.bottom() + 8.0;
+    let kw = (w - 20.0) / 4.0;
+    let radius = ((rect.bottom() - row_top - 22.0) * 0.5).clamp(8.0, 22.0);
+    for i in 0..4 {
+        let c = pos2(rect.left() + 10.0 + kw * (i as f32 + 0.5), row_top + radius + 2.0);
+        let resp = ui.interact(Rect::from_center_size(c, vec2(kw - 4.0, radius * 2.0 + 18.0)), id.with(("knob", i)), Sense::click_and_drag());
+        if resp.dragged() {
+            let v = (p[facet::BLUE + i] - resp.drag_delta().y / 150.0).clamp(0.0, 1.0);
+            if v != p[facet::BLUE + i] {
+                p[facet::BLUE + i] = v;
+                changed = true;
+            }
+        }
+        if resp.hovered() || resp.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+        }
+        let col = FACET_COLORS[i];
+        painter.circle_filled(c, radius, FAINT);
+        painter.circle_stroke(c, radius, Stroke::new(1.5_f32, shade(col, 0.6)));
+        // The value as an arc from the bottom left.
+        let v = k[i].clamp(0.0, 1.0);
+        let a0 = PI * 0.75;
+        let pts: Vec<Pos2> = (0..=24).map(|s| {
+            let a = a0 + v * PI * 1.5 * s as f32 / 24.0;
+            c + vec2(a.cos(), a.sin()) * (radius - 3.0)
+        }).collect();
+        painter.add(Shape::line(pts, Stroke::new(3.0_f32, col)));
+        let a = a0 + v * PI * 1.5;
+        painter.line_segment([c, c + vec2(a.cos(), a.sin()) * (radius - 3.0)], Stroke::new(2.0_f32, col));
+        caption(&painter, pos2(c.x, c.y + radius + 9.0), Align2::CENTER_CENTER, names[i], if resp.hovered() { WHITE } else { shade(col, 0.85) });
+    }
+    changed
+}

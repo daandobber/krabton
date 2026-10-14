@@ -41,6 +41,7 @@ impl App {
                         | Instrument::Mallets { .. }
                         | Instrument::Strings { .. }
                         | Instrument::Winds { .. }
+                        | Instrument::Facet { .. }
                 )
             ),
             Link::Midi(k) => track.midi_devices.get(k).is_some_and(|d| d.kind.is_sequencer()),
@@ -108,6 +109,9 @@ impl App {
                         Instrument::Mallets { .. } => is::stk_screen(ui, id, Family::Mallets, p, &live, h),
                         Instrument::Strings { .. } => is::stk_screen(ui, id, Family::Strings, p, &live, h),
                         Instrument::Winds { .. } => is::stk_screen(ui, id, Family::Winds, p, &live, h),
+                        Instrument::Facet { .. } => {
+                            is::facet_screen(ui, id, p, &live, h);
+                        }
                         _ => {}
                     }
                 }

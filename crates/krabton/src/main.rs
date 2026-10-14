@@ -17,6 +17,7 @@ mod prefs;
 mod pulse;
 mod recording;
 mod shot;
+mod tape;
 mod theme;
 mod ui;
 mod widgets;

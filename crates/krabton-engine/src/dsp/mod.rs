@@ -12,6 +12,7 @@ pub mod machines;
 pub mod braids_synth;
 pub mod drums;
 pub mod elements_synth;
+pub mod facet;
 pub mod drone;
 pub mod dx7;
 pub mod fft;

@@ -101,6 +101,10 @@ pub enum MidiFxKind {
     Chance,
     Bits,
     Percussion,
+    Spinner,
+    Endless,
+    Hands,
+    Draw,
 }
 
 const ARP_STYLES: &[&str] = &["Up", "Down", "Up Down", "Down Up", "Converge", "Diverge", "Random", "Played", "Chord"];
@@ -203,7 +207,7 @@ impl MidiFxKind {
     ];
 
     /// The sequencers' groups, in menu order.
-    pub const SEQUENCER_GROUPS: [&'static str; 5] = ["Classic", "Rhythm", "Generative", "Physics & Chaos", "Ambient"];
+    pub const SEQUENCER_GROUPS: [&'static str; 6] = ["Classic", "Rhythm", "Played", "Generative", "Physics & Chaos", "Ambient"];
 
     /// Which group a sequencer belongs to (see `SEQUENCER_GROUPS`).
     pub fn group(self) -> &'static str {
@@ -211,6 +215,7 @@ impl MidiFxKind {
         match self {
             K::Step | K::Acid | K::DrumGrid | K::Progression | K::GuitarChords | K::Drummer => "Classic",
             K::Euclid | K::DrumMap | K::Marbles | K::Chance | K::Bits | K::Percussion => "Rhythm",
+            K::Spinner | K::Endless | K::Hands | K::Draw => "Played",
             K::Polymeter | K::Turing | K::Life | K::Drunk | K::Markov | K::Words => "Generative",
             K::Bounce | K::Orbits | K::Pong | K::Rain | K::Chaos | K::Automaton | K::Ant | K::Lorenz => "Physics & Chaos",
             K::Loops | K::Bloom | K::Chimes | K::DriftChords | K::Tintinnabuli | K::Pedal => "Ambient",
@@ -218,7 +223,7 @@ impl MidiFxKind {
         }
     }
 
-    pub const SEQUENCERS: [MidiFxKind; 32] = [
+    pub const SEQUENCERS: [MidiFxKind; 36] = [
         MidiFxKind::Step,
         MidiFxKind::Acid,
         MidiFxKind::DrumGrid,
@@ -251,6 +256,10 @@ impl MidiFxKind {
         MidiFxKind::Chance,
         MidiFxKind::Bits,
         MidiFxKind::Percussion,
+        MidiFxKind::Spinner,
+        MidiFxKind::Endless,
+        MidiFxKind::Hands,
+        MidiFxKind::Draw,
     ];
 
     pub fn is_sequencer(self) -> bool {
@@ -270,6 +279,8 @@ impl MidiFxKind {
             MidiFxKind::GuitarChords => sequencers::strum::strum_default(),
             MidiFxKind::Drummer => sequencers::drummer::drummer_default(),
             MidiFxKind::Chance => sequencers::chance::chance_default(),
+            MidiFxKind::Endless => sequencers::played::endless_default(),
+            MidiFxKind::Draw => sequencers::played::draw_default(),
             _ => Vec::new(),
         }
     }
@@ -308,6 +319,10 @@ impl MidiFxKind {
             MidiFxKind::Chance => "Chance",
             MidiFxKind::Bits => "Bits",
             MidiFxKind::Percussion => "Percussion",
+            MidiFxKind::Spinner => "Spinner",
+            MidiFxKind::Endless => "Endless",
+            MidiFxKind::Hands => "Hands",
+            MidiFxKind::Draw => "Draw",
 
             MidiFxKind::Arpeggiator => "Arpeggiator",
             MidiFxKind::Chord => "Chord",
@@ -360,6 +375,10 @@ impl MidiFxKind {
             MidiFxKind::Chance => "A drum grid of chances and conditions: every step a chance to play, a condition (1:2, 3:4, only in a fill, only the first time, if the last one played...) and a ratchet; lanes of their own lengths, fills every few bars",
             MidiFxKind::Bits => "Rhythms from bytebeat formulas: a counter, a formula like t*(t>>5|t>>8), and four drums each listening to one bit of it",
             MidiFxKind::Percussion => "A percussion ensemble: clave or bell, shakers, congas, bongos, low drum and güiro in son, guaguancó, bossa nova, samba, baião, cumbia or bembé, a lead drum that improvises, players brought in by Density",
+            MidiFxKind::Spinner => "Every key you play drops a ball into a turning polygon; each wall it hits plays its note, as hard as it hit",
+            MidiFxKind::Endless => "Record: the notes you play are added one by one (Rest for a rest); then the row plays round and round and a held key moves it",
+            MidiFxKind::Hands => "Hold keys and each plays a rhythm: one pattern for all, or a pattern per key (a groove under your fingers on a drum kit)",
+            MidiFxKind::Draw => "A line drawn across 32 steps, played in the key over a range of octaves, every step or where it moves",
 
             MidiFxKind::Arpeggiator => "Plays held notes one after another, tempo-synced",
             MidiFxKind::Chord => "Turns single notes into chords, also in the project key",
@@ -412,6 +431,10 @@ impl MidiFxKind {
             MidiFxKind::Chance => sequencers::chance::SPECS,
             MidiFxKind::Bits => sequencers::bits::SPECS,
             MidiFxKind::Percussion => sequencers::percussion::SPECS,
+            MidiFxKind::Spinner => sequencers::played::SPINNER,
+            MidiFxKind::Endless => sequencers::played::ENDLESS,
+            MidiFxKind::Hands => sequencers::played::HANDS,
+            MidiFxKind::Draw => sequencers::played::DRAW,
 
             MidiFxKind::Arpeggiator => ARP,
             MidiFxKind::Chord => CHORD,
