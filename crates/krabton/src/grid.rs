@@ -291,7 +291,7 @@ impl App {
             MidiFxKind::Chaos => {
                 dev.params[1] = 2.8 + x as f32 / (self.grid.width - 1) as f32 * 1.2;
             }
-            MidiFxKind::GuitarChords => {
+            MidiFxKind::GuitarChords | MidiFxKind::Ukulele => {
                 use krabton_engine::sequencers::strum as gs;
                 if dev.data.len() < gs::DATA_BYTES {
                     dev.data = gs::strum_default();
@@ -772,14 +772,15 @@ impl App {
                             }
                         }
                     }
-                    MidiFxKind::GuitarChords => {
+                    MidiFxKind::GuitarChords | MidiFxKind::Ukulele => {
                         use krabton_engine::sequencers::strum as gs;
                         // The chord on the neck: high string on top, frets across.
+                        let strings = gs::strings(dev.kind, &dev.params).len() as u32;
                         let shape = if playing && first_seq && vis[1] != u64::MAX { Some(gs::unpack_shape(vis[1])) } else { None };
                         if let Some(shape) = shape {
-                            for (s, f) in shape.iter().enumerate() {
+                            for (s, f) in shape.iter().enumerate().take(strings as usize) {
                                 if let Some(f) = f {
-                                    self.grid.set((*f as u32).min(w - 1), 5 - s as u32, if *f == 0 { 6 } else { 15 });
+                                    self.grid.set((*f as u32).min(w - 1), strings - 1 - s as u32, if *f == 0 { 6 } else { 15 });
                                 }
                             }
                         }

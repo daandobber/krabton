@@ -97,6 +97,7 @@ impl App {
                         krabton_engine::midi_fx::MidiFxKind::DriftChords => "A row per voice, from the bottom: where it sits in the range.",
                         krabton_engine::midi_fx::MidiFxKind::Tintinnabuli => "The melody (bright) and its triad voice (dim). Bottom row: the held tonic.",
                         krabton_engine::midi_fx::MidiFxKind::GuitarChords => "Rows 1-6: the chord on the neck (high string on top). Row 7: the chords. Row 8: the strokes (press to cycle rest, down, up).",
+                        krabton_engine::midi_fx::MidiFxKind::Ukulele => "Rows 1-4: the chord on the neck (the A string on top). Row 7: the chords. Row 8: the strokes (press to cycle rest, down, up).",
                         krabton_engine::midi_fx::MidiFxKind::Pedal => "The held note: the tonic in the middle. Bottom row: the bars until it may move.",
                         krabton_engine::midi_fx::MidiFxKind::Step => "Columns are steps, rows are scale degrees (top = high). Bottom row: step on/off.",
                         krabton_engine::midi_fx::MidiFxKind::Acid => "Rows 1-6: notes (octave, b7, 5, 4, b3, root). Row 7: accent. Row 8: slide.",

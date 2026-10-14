@@ -55,7 +55,9 @@ pub static PROGRESSION: &[ParamSpec] = &[
     ParamSpec::lin("Gate", "Notes", 0.1, 1.0, 0.9, Unit::Percent),
     ParamSpec::lin("Velocity", "Notes", 0.05, 1.0, 0.7, Unit::Percent),
     ParamSpec::toggle("Transpose", "Keys", false),
-    ParamSpec::toggle("Hold", "Keys", false),];
+    ParamSpec::toggle("Hold", "Keys", false),
+    ParamSpec::toggle("Band", "Keys", false),
+];
 
 // ---------------------------------------------------------------- Step data
 

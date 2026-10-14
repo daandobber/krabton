@@ -842,6 +842,9 @@ pub struct Device {
     /// Effects held inside this one (the Glitch Sequencer's slots).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<Device>,
+    /// The preset it was set to last (for the menu).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub preset: String,
 }
 
 impl Device {
@@ -864,6 +867,9 @@ pub struct MidiDevice {
     /// Pattern data for sequencers (steps, Life board, ...).
     #[serde(default)]
     pub data: Vec<u8>,
+    /// The preset it was set to last (for the menu).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub preset: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1209,13 +1215,13 @@ impl Project {
 
     pub fn make_device(&mut self, kind: EffectKind) -> Device {
         let data = if kind == EffectKind::Glitch { crate::dsp::fx::glitch::default_data() } else { Vec::new() };
-        Device { id: self.alloc_id(), kind, enabled: true, params: params::defaults(kind.specs()), plugin: None, data, children: Vec::new() }
+        Device { id: self.alloc_id(), kind, enabled: true, params: params::defaults(kind.specs()), plugin: None, data, children: Vec::new(), preset: String::new() }
     }
 
     /// A device for an effect plug-in; `plugin.instance` is set here.
     pub fn make_plugin_device(&mut self, mut plugin: PluginInstrument) -> Device {
         plugin.instance = self.alloc_id();
-        Device { id: self.alloc_id(), kind: EffectKind::Plugin, enabled: true, params: Vec::new(), plugin: Some(plugin), data: Vec::new(), children: Vec::new() }
+        Device { id: self.alloc_id(), kind: EffectKind::Plugin, enabled: true, params: Vec::new(), plugin: Some(plugin), data: Vec::new(), children: Vec::new(), preset: String::new() }
     }
 
     /// Every hosted plug-in (instruments and effects) by instance.
@@ -1249,7 +1255,12 @@ impl Project {
     }
 
     pub fn make_midi_device(&mut self, kind: crate::midi_fx::MidiFxKind) -> MidiDevice {
-        MidiDevice { id: self.alloc_id(), kind, enabled: true, params: params::defaults(kind.specs()), data: kind.default_data() }
+        let mut params = params::defaults(kind.specs());
+        // Whatever plays the chords joins the band (older sets keep theirs apart).
+        if let Some(b) = crate::sequencers::players::band_param(kind) {
+            params[b] = 1.0;
+        }
+        MidiDevice { id: self.alloc_id(), kind, enabled: true, params, data: kind.default_data(), preset: String::new() }
     }
 
     pub fn add_return(&mut self, name: &str, devices: Vec<Device>) {
@@ -1799,7 +1810,7 @@ mod tests {
         let dev = p.make_plugin_device(fx);
         assert_eq!(dev.name(), "Verb");
         p.tracks[t].devices.push(dev);
-        p.master.devices.push(Device { id: 999, kind: EffectKind::Plugin, enabled: true, params: Vec::new(), plugin: None, data: Vec::new(), children: Vec::new() });
+        p.master.devices.push(Device { id: 999, kind: EffectKind::Plugin, enabled: true, params: Vec::new(), plugin: None, data: Vec::new(), children: Vec::new() , preset: String::new() });
         let json = serde_json::to_string(&p).unwrap();
         let mut back: Project = serde_json::from_str(&json).unwrap();
         back.sanitize();

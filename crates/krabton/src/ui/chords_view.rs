@@ -1,5 +1,5 @@
-//! The Guitar Chords editor: a card per chord with its name and chord
-//! diagram (click the name for the next chord, right-click for the
+//! The Guitar Chords (and Ukulele) editor: a card per chord with its name
+//! and chord diagram (click the name for the next chord, right-click for the
 //! previous; the buttons set the chord type and where on the neck it is
 //! played), and the strum pattern underneath, a stroke per sixteenth
 //! (click to change it, right-click to go back).
@@ -9,6 +9,7 @@ use crate::theme::*;
 use crate::widgets::*;
 use egui::{pos2, vec2, Align2, Color32, FontId, Id, Painter, Rect, Sense, Stroke, Ui};
 use krabton_engine::classic_seq::{self as cs, PROG_BYTES, PROG_SLOTS};
+use krabton_engine::midi_fx::MidiFxKind;
 use krabton_engine::sequencers::strum::{self as gs, Shape};
 
 /// Progressions that suit the guitar: (name, chords as degree, type, neck).
@@ -25,17 +26,20 @@ const PROGRESSIONS: &[(&str, &[(u8, u8, u8)])] = &[
 ];
 
 /// A chord diagram: strings upright (low E on the left), the nut or the
-/// first fret's number, dots on the frets, x and o above.
-pub(crate) fn diagram(p: &Painter, r: Rect, shape: &Shape, color: Color32) {
+/// first fret's number, dots on the frets, x and o above. A ukulele's
+/// diagram has four strings.
+pub(crate) fn diagram(p: &Painter, r: Rect, shape: &Shape, strings: usize, color: Color32) {
+    let strings = strings.clamp(2, 6);
+    let shape = &shape[..strings];
     let fretted: Vec<u8> = shape.iter().flatten().copied().filter(|&f| f > 0).collect();
     let lowest = fretted.iter().copied().min().unwrap_or(1);
     let highest = fretted.iter().copied().max().unwrap_or(1);
     // Four frets from the first fret, or from the lowest one up the neck.
     let first = if highest <= 4 { 1 } else { lowest };
     let top = r.top() + 8.0;
-    let gap_x = r.width() / 5.0;
+    let gap_x = r.width() / (strings - 1) as f32;
     let gap_y = (r.bottom() - top) / 4.0;
-    for s in 0..6 {
+    for s in 0..strings {
         let x = r.left() + s as f32 * gap_x;
         p.line_segment([pos2(x, top), pos2(x, r.bottom())], Stroke::new(1.0_f32, TEXT_DIM));
     }
@@ -64,7 +68,8 @@ pub(crate) fn diagram(p: &Painter, r: Rect, shape: &Shape, color: Color32) {
     }
 }
 
-pub(crate) fn guitar_chords(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, live: Live, accent: Color32, height: f32) -> bool {
+pub(crate) fn guitar_chords(ui: &mut Ui, id: Id, kind: MidiFxKind, params: &mut [f32], data: &mut Vec<u8>, live: Live, accent: Color32, height: f32) -> bool {
+    let open = gs::strings(kind, params);
     let mut changed = false;
     if data.len() < gs::DATA_BYTES {
         let mut d = gs::strum_default();
@@ -107,12 +112,12 @@ pub(crate) fn guitar_chords(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut 
         let (letter, roman) = if degree == 0 { ("rest".to_string(), String::new()) } else { (gs::chord_letter_name(&live.scale, degree, quality), cs::chord_name(&live.scale, degree, quality)) };
         text(&p, pos2(card.left() + 5.0, card.top() + 4.0), Align2::LEFT_TOP, &letter, FontId::proportional(if letter.len() > 5 { 12.0 } else { 16.0 }), ink);
         text(&p, pos2(card.left() + 5.0, card.top() + 23.0), Align2::LEFT_TOP, &roman, small(), TEXT_DIM);
-        let shape = if playing { vis.map(|v| v[1]).filter(|&v| v != u64::MAX).map(gs::unpack_shape) } else { None }.or_else(|| gs::slot_shape(&live.scale, data, slot, 0).map(|s| s.0));
+        let shape = if playing { vis.map(|v| v[1]).filter(|&v| v != u64::MAX).map(gs::unpack_shape) } else { None }.or_else(|| gs::slot_shape_for(kind, params, &live.scale, data, slot, 0).map(|s| s.0));
         if let Some(shape) = shape {
-            let notes: Vec<String> = gs::shape_notes(&shape).iter().map(|n| krabton_engine::note_name(*n as u8)).collect();
+            let notes: Vec<String> = gs::frets_notes(open, &shape).iter().map(|n| krabton_engine::note_name(*n as u8)).collect();
             tresp.on_hover_text(format!("{} · click: next chord, right-click: previous", notes.join(" ")));
             let dr = Rect::from_min_max(pos2(card.left() + cw * 0.5 + 4.0, card.top() + 4.0), pos2(card.right() - 6.0, card.bottom() - 19.0));
-            diagram(&p, dr, &shape, if playing { Color32::WHITE } else { accent });
+            diagram(&p, dr, &shape, open.len(), if playing { Color32::WHITE } else { accent });
         } else {
             tresp.on_hover_text("A rest · click: next chord, right-click: previous");
         }
@@ -232,6 +237,7 @@ mod tests {
                     origin = ui.cursor().min;
                     let live = Live { vis: Some([0 | 1 << 8, gs::pack_shape(&[None, Some(3), Some(2), Some(0), Some(1), Some(0)]), 0, 0]), playing: true, scale: krabton_engine::Scale::default(), kit: 0 };
                     super::super::seq_view::editor(ui, Id::new("t"), MidiFxKind::GuitarChords, &mut params, &mut data, live, &mut 0, accent_now(), height);
+                    super::super::seq_view::editor(ui, Id::new("u"), MidiFxKind::Ukulele, &mut defaults(MidiFxKind::Ukulele.specs()), &mut gs::strum_default(), live, &mut 0, accent_now(), height);
                 });
             });
         }

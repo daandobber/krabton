@@ -30,6 +30,7 @@ pub mod rack;
 pub mod rack_view;
 pub mod rhythm_more_view;
 pub mod played_view;
+pub mod players_view;
 pub mod rhythm_view;
 pub mod scope;
 pub mod seq_more_view;

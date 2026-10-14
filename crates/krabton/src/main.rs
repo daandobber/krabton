@@ -4,6 +4,7 @@
 
 mod app;
 mod audio;
+mod band;
 mod big;
 mod editing;
 mod grid;

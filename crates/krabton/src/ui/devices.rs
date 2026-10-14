@@ -20,6 +20,7 @@ use krabton_engine::dsp::elements_synth;
 use krabton_engine::dsp::macro_osc::{self, HARMONICS, MODEL};
 use krabton_engine::dsp::{sampler, synth};
 use krabton_engine::params::{ParamSpec, Unit};
+use krabton_engine::presets::{self, Preset};
 use krabton_engine::modulation::ModOwner;
 use krabton_engine::{note_name, Command, Device, Instrument, SampleRef};
 use super::modulation::{cell_overlay, ModView};
@@ -106,8 +107,54 @@ pub(crate) fn param_grid_screens(
     changed
 }
 
+/// The presets of a device, picked from its title bar.
+struct PresetMenu<'a> {
+    id: Id,
+    list: &'static [Preset],
+    current: &'a str,
+    picked: &'a mut Option<usize>,
+}
+
+/// A device's presets: a menu, and arrows to step through them.
+fn preset_menu(ui: &mut Ui, menu: PresetMenu) {
+    let n = menu.list.len();
+    if n == 0 {
+        return;
+    }
+    let at = menu.list.iter().position(|p| p.name == menu.current);
+    let step = |d: isize| match at {
+        Some(i) => (i as isize + d).rem_euclid(n as isize) as usize,
+        None if d > 0 => 0,
+        None => n - 1,
+    };
+    if ui.small_button("‹").on_hover_text("Previous preset").clicked() {
+        *menu.picked = Some(step(-1));
+    }
+    let shown = if menu.current.is_empty() { "Presets" } else { menu.current };
+    egui::ComboBox::from_id_salt(menu.id.with("presets"))
+        .width(132.0)
+        .height(420.0)
+        .selected_text(RichText::new(shown).color(if at.is_some() { TEXT } else { TEXT_DIM }))
+        .show_ui(ui, |ui| {
+            for (i, p) in menu.list.iter().enumerate() {
+                if ui.selectable_label(at == Some(i), p.name).clicked() {
+                    *menu.picked = Some(i);
+                }
+            }
+        })
+        .response
+        .on_hover_text("Presets: settings to start from");
+    if ui.small_button("›").on_hover_text("Next preset").clicked() {
+        *menu.picked = Some(step(1));
+    }
+}
+
 /// Device frame with a title bar. Returns the body's inner response.
 fn device_frame<R>(ui: &mut Ui, title: &str, enabled: Option<&mut bool>, height: f32, body: impl FnOnce(&mut Ui) -> R) -> (R, Option<ChainActionKind>) {
+    device_frame_presets(ui, title, enabled, None, height, body)
+}
+
+fn device_frame_presets<R>(ui: &mut Ui, title: &str, enabled: Option<&mut bool>, presets: Option<PresetMenu>, height: f32, body: impl FnOnce(&mut Ui) -> R) -> (R, Option<ChainActionKind>) {
     let mut action = None;
     let r = egui::Frame::new()
         .fill(PANEL2)
@@ -163,6 +210,10 @@ fn device_frame<R>(ui: &mut Ui, title: &str, enabled: Option<&mut bool>, height:
                     }
                     if ui.small_button("x").on_hover_text("Remove").clicked() {
                         action = Some(ChainActionKind::Remove);
+                    }
+                    if let Some(menu) = presets {
+                        ui.add_space(8.0);
+                        preset_menu(ui, menu);
                     }
                 });
                 body(ui)
@@ -368,6 +419,8 @@ impl App {
         let mut params = dev.params.clone();
         let mut data = dev.data.clone();
         let mut children = dev.children.clone();
+        let preset_name = dev.preset.clone();
+        let mut picked = None;
         let mut glitch_edit = crate::ui::glitch_view::GlitchEdit::default();
         let accent = if enabled { accent_now() } else { TEXT_DIM };
         let mut mv = self.mod_view(ModOwner::Device(dev_id));
@@ -388,7 +441,8 @@ impl App {
         let mut toggle_editor = false;
         let mut stomp = false;
         let on = enabled;
-        let (changed, action) = device_frame(ui, &title, Some(&mut enabled), h, |ui| {
+        let menu = PresetMenu { id, list: presets::effect(kind), current: &preset_name, picked: &mut picked };
+        let (changed, action) = device_frame_presets(ui, &title, Some(&mut enabled), Some(menu), h, |ui| {
             if let (Some(p), Some(st)) = (&plugin, &plugin_status) {
                 ui.vertical(|ui| {
                     ui.set_min_width(240.0);
@@ -479,6 +533,13 @@ impl App {
             dev.data = data;
             dev.children = children;
         }
+        if let Some(pr) = picked.and_then(|i| presets::effect(kind).get(i)) {
+            dev.params = presets::apply_to(kind.specs(), pr, &dev.params);
+            if let Some(f) = pr.data {
+                dev.data = f();
+            }
+            dev.preset = pr.name.to_string();
+        }
         action.map(|a| match a {
             ChainActionKind::Remove => ChainAction::Remove(d),
             ChainActionKind::Left => ChainAction::MoveLeft(d),
@@ -495,6 +556,8 @@ impl App {
         let mut data = dev.data.clone();
         let id = Id::new(("midi_device", dev.id));
         let mut mv = self.mod_view(ModOwner::MidiDevice(dev.id));
+        let mut picked = None;
+        let menu = PresetMenu { id, list: presets::midi(dev.kind), current: &dev.preset, picked: &mut picked };
         let (changed, action) = if dev.kind.is_sequencer() {
             // Every sequencer reports its state.
             let status = self.status();
@@ -503,7 +566,7 @@ impl App {
             let live = super::seq_view::Live { vis, playing: self.is_playing(), scale: self.project.scale, kit };
             let accent = if enabled { accent_now() } else { TEXT_DIM };
             let lane = &mut self.grid.poly_lane;
-            device_frame(ui, dev.kind.name(), Some(&mut enabled), h, |ui| {
+            device_frame_presets(ui, dev.kind.name(), Some(&mut enabled), Some(menu), h, |ui| {
                 ui.label(RichText::new(format!("Sequencer · {}", dev.kind.description())).small().color(shade(accent_now(), 0.8)));
                 ui.horizontal_top(|ui| {
                     let a = super::seq_view::editor(ui, id.with("editor"), dev.kind, &mut params, &mut data, live, lane, accent, h - 44.0);
@@ -515,7 +578,7 @@ impl App {
             })
         } else {
             let accent = if enabled { accent_now() } else { TEXT_DIM };
-            device_frame(ui, dev.kind.name(), Some(&mut enabled), h, |ui| {
+            device_frame_presets(ui, dev.kind.name(), Some(&mut enabled), Some(menu), h, |ui| {
                 ui.label(RichText::new("MIDI effect").small().color(shade(accent_now(), 0.8)));
                 param_grid_mod(ui, id, dev.kind.specs(), &mut params, accent, h - 40.0, mv.as_mut())
             })
@@ -526,6 +589,13 @@ impl App {
         if changed {
             target.params = params;
             target.data = data;
+        }
+        if let Some(pr) = picked.and_then(|i| presets::midi(dev.kind).get(i)) {
+            target.params = presets::apply_to(dev.kind.specs(), pr, &target.params);
+            if let Some(f) = pr.data {
+                target.data = f();
+            }
+            target.preset = pr.name.to_string();
         }
         action.map(|a| match a {
             ChainActionKind::Remove => ChainAction::Remove(d),

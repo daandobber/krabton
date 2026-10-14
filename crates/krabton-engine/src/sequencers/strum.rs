@@ -5,11 +5,12 @@
 //! plays it: down strokes sweep from the low strings up, up strokes catch
 //! the top four from the high string down, mutes chuck, and the picking
 //! strokes pluck the bass, an alternating bass or single high strings
-//! (Travis picking, arpeggios).
+//! (Travis picking, arpeggios). Ukulele does the same on four strings, in
+//! the shapes a ukulele player uses.
 
 use super::SeqState;
 use crate::classic_seq::{chord_pitches, prog_slot, CHORD_LENGTHS, PROG_BYTES, PROG_SLOTS};
-use crate::midi_fx::{MidiCtx, MidiEvent};
+use crate::midi_fx::{MidiCtx, MidiEvent, MidiFxKind};
 use crate::params::{ParamSpec, Unit};
 
 /// Open strings in standard tuning, low E to high E.
@@ -35,7 +36,41 @@ pub static SPECS: &[ParamSpec] = &[
     ParamSpec::lin("Humanize", "Strokes", 0.0, 1.0, 0.3, Unit::Percent),
     ParamSpec::toggle("Transpose", "Keys", false),
     ParamSpec::toggle("Hold", "Keys", false),
+    ParamSpec::toggle("Band", "Keys", false),
 ];
+
+pub const TUNING: usize = 8;
+pub const UKE_TUNINGS: &[&str] = &["GCEA", "Low G", "Baritone", "D Tuning"];
+
+/// The open strings of each ukulele tuning, from the string nearest the
+/// chin (where a down stroke starts): the high G of the usual re-entrant
+/// tuning, a low G, the baritone's DGBE, the old ADF#B.
+const UKE_OPEN: [[i32; 4]; 4] = [[67, 60, 64, 69], [55, 60, 64, 69], [50, 55, 59, 64], [69, 62, 66, 71]];
+
+pub static UKE_SPECS: &[ParamSpec] = &[
+    ParamSpec::choice("Length", "Chords", CHORD_LENGTHS, 2),
+    ParamSpec::int("Chords", "Chords", 1.0, 8.0, 4.0, Unit::None),
+    ParamSpec::lin("Strum", "Strokes", 0.0, 80.0, 16.0, Unit::Ms),
+    ParamSpec::lin("Swing", "Strokes", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Gate", "Strokes", 0.1, 1.0, 1.0, Unit::Percent),
+    ParamSpec::toggle("Let Ring", "Strokes", false),
+    ParamSpec::lin("Velocity", "Strokes", 0.05, 1.0, 0.75, Unit::Percent),
+    ParamSpec::lin("Humanize", "Strokes", 0.0, 1.0, 0.3, Unit::Percent),
+    ParamSpec::choice("Tuning", "Strings", UKE_TUNINGS, 0),
+    ParamSpec::toggle("Transpose", "Keys", false),
+    ParamSpec::toggle("Hold", "Keys", false),
+    ParamSpec::toggle("Band", "Keys", false),
+];
+
+/// The open strings a device plays, in the order a down stroke hits them:
+/// six for Guitar Chords, four for Ukulele.
+pub fn strings(kind: MidiFxKind, p: &[f32]) -> &'static [i32] {
+    if kind == MidiFxKind::Ukulele {
+        &UKE_OPEN[(p.get(TUNING).copied().unwrap_or(0.0).round().max(0.0) as usize).min(UKE_OPEN.len() - 1)]
+    } else {
+        &OPEN
+    }
+}
 
 /// Where each chord sits on the neck (the third byte of a chord slot).
 pub const NECKS: &[&str] = &["Open", "Barre", "High"];
@@ -109,6 +144,15 @@ pub const PATTERNS: &[(&str, [u8; 16])] = &[
     ("Travis Picking", [6, 0, 9, 0, 7, 0, 10, 0, 6, 0, 9, 0, 7, 0, 10, 0]),
     ("Arpeggio", [6, 0, 7, 0, 11, 0, 10, 0, 9, 0, 10, 0, 11, 0, 7, 0]),
     ("Waltz Feel", [6, 0, 0, 0, 8, 0, 0, 0, 8, 0, 0, 0, 6, 0, 8, 0]),
+    ("Boom-Chick", [6, 0, 0, 0, 3, 0, 0, 0, 7, 0, 0, 0, 3, 0, 0, 0]),
+    ("Bossa", [6, 0, 0, 8, 0, 0, 8, 0, 7, 0, 0, 8, 0, 0, 8, 0]),
+    ("Calypso", [1, 0, 0, 2, 0, 2, 1, 0, 1, 0, 0, 2, 0, 2, 1, 0]),
+    ("Rasgueado", [1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 0, 2, 0]),
+    ("Downstrokes", [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0]),
+    ("Funk Sixteenths", [1, 5, 2, 5, 5, 2, 1, 5, 2, 5, 1, 2, 5, 2, 1, 2]),
+    ("Fingerpicked Ballad", [6, 0, 11, 0, 10, 0, 9, 0, 7, 0, 11, 0, 10, 0, 9, 0]),
+    ("Ska Upstrokes", [0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 2, 0]),
+    ("Shuffle", [1, 0, 0, 2, 1, 0, 0, 2, 1, 0, 0, 2, 1, 0, 0, 2]),
 ];
 
 /// Chords, then the pattern.
@@ -134,7 +178,81 @@ pub type Shape = [Option<u8>; 6];
 
 /// The MIDI notes of a shape, low string first.
 pub fn shape_notes(shape: &Shape) -> Vec<i32> {
-    shape.iter().enumerate().filter_map(|(s, f)| f.map(|f| OPEN[s] + f as i32)).collect()
+    frets_notes(&OPEN, shape)
+}
+
+/// The notes of a shape on these open strings, in string order.
+pub fn frets_notes(open: &[i32], shape: &Shape) -> Vec<i32> {
+    open.iter().zip(shape).filter_map(|(o, f)| f.map(|f| o + f as i32)).collect()
+}
+
+/// A ukulele chord on four strings (the rest of the shape stays empty):
+/// every string rings a chord tone, every tone is there (a four-note chord
+/// may leave out the fifth), with as few fingers as it takes, open strings
+/// and low frets first: C is 0003, Am 2000, G 0232. `neck` 0 looks in the
+/// first position, 1 from the second fret up, 2 higher.
+pub fn uke_shape(open: &[i32], tones: &[i32], neck: u8) -> Shape {
+    let mut pcs: Vec<i32> = Vec::new();
+    for t in tones {
+        let pc = t.rem_euclid(12);
+        if !pcs.contains(&pc) {
+            pcs.push(pc);
+        }
+    }
+    let Some(&root) = pcs.first() else { return [None; 6] };
+    let fifth = (root + 7).rem_euclid(12);
+    let n = open.len().min(6);
+    let positions: std::ops::RangeInclusive<i32> = match neck {
+        0 => 0..=0,
+        1 => 2..=6,
+        _ => 5..=10,
+    };
+    let mut best: (f32, Shape) = (f32::MIN, [None; 6]);
+    for pos in positions {
+        let window: Vec<i32> = if neck == 0 { (0..=4).collect() } else { (pos..=pos + 3).collect() };
+        let cands: Vec<Vec<i32>> = open[..n].iter().map(|o| window.iter().copied().filter(|f| pcs.contains(&(o + f).rem_euclid(12))).collect()).collect();
+        if cands.iter().any(|c| c.is_empty()) {
+            continue;
+        }
+        // Every way to finger it.
+        let mut idx = vec![0usize; n];
+        loop {
+            let f: Vec<i32> = (0..n).map(|s| cands[s][idx[s]]).collect();
+            let rung: Vec<i32> = (0..n).map(|s| (open[s] + f[s]).rem_euclid(12)).collect();
+            let missing = pcs.iter().filter(|t| !rung.contains(t) && !(**t == fifth && pcs.len() > 3)).count();
+            let fretted: Vec<i32> = f.iter().copied().filter(|&x| x > 0).collect();
+            let lo = fretted.iter().copied().min().unwrap_or(0);
+            let hi = fretted.iter().copied().max().unwrap_or(0);
+            let at_lo = fretted.iter().filter(|&&x| x == lo).count();
+            // A barre takes the lowest fret with one finger.
+            let fingers = if at_lo >= 2 { fretted.len() - at_lo + 1 } else { fretted.len() };
+            if hi - lo <= 3 && fingers <= 4 {
+                let opens = f.iter().filter(|&&x| x == 0).count();
+                let score = -4.0 * missing as f32 - 0.5 * fingers as f32 - 0.15 * f.iter().sum::<i32>() as f32 + 0.3 * opens as f32;
+                if score > best.0 {
+                    let mut shape: Shape = [None; 6];
+                    for s in 0..n {
+                        shape[s] = Some(f[s] as u8);
+                    }
+                    best = (score, shape);
+                }
+            }
+            // The next combination.
+            let mut s = 0;
+            while s < n {
+                idx[s] += 1;
+                if idx[s] < cands[s].len() {
+                    break;
+                }
+                idx[s] = 0;
+                s += 1;
+            }
+            if s == n {
+                break;
+            }
+        }
+    }
+    best.1
 }
 
 /// Finds the shape a guitarist would play for a chord with root `root` (a
@@ -261,6 +379,22 @@ pub fn slot_shape(scale: &crate::scale::Scale, data: &[u8], slot: usize, shift: 
     Some((guitar_shape(root, &tones, quality == 4, neck.min(2)), degree, quality))
 }
 
+/// The shape of chord slot `slot` on the device's strings (a guitar's or a
+/// ukulele's).
+pub fn slot_shape_for(kind: MidiFxKind, p: &[f32], scale: &crate::scale::Scale, data: &[u8], slot: usize, shift: i32) -> Option<(Shape, u8, u8)> {
+    if kind != MidiFxKind::Ukulele {
+        return slot_shape(scale, data, slot, shift);
+    }
+    let (degree, quality, neck) = prog_slot(data, slot);
+    if degree == 0 {
+        return None;
+    }
+    let degree = ((degree as i32 - 1 + shift).rem_euclid(7) + 1) as u8;
+    let notes = chord_pitches(scale, 60 + scale.root as i32, degree, quality, 0);
+    let tones: Vec<i32> = notes.iter().map(|n| n.rem_euclid(12)).collect();
+    Some((uke_shape(strings(kind, p), &tones, neck.min(2)), degree, quality))
+}
+
 /// The name of a chord from its root and tones, like "Am7" or "G".
 pub fn chord_letter_name(scale: &crate::scale::Scale, degree: u8, quality: u8) -> String {
     let notes = chord_pitches(scale, 60 + scale.root as i32, degree, quality, 0);
@@ -326,7 +460,7 @@ pub fn unpack_shape(v: u64) -> Shape {
 impl SeqState {
     /// Runs on a 1/16 grid.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn strum(&mut self, k: i64, p: &[f32], data: &[u8], at: u64, step_frames: f64, out: &mut Vec<MidiEvent>, ctx: &MidiCtx) {
+    pub(crate) fn strum(&mut self, kind: MidiFxKind, k: i64, p: &[f32], data: &[u8], at: u64, step_frames: f64, out: &mut Vec<MidiEvent>, ctx: &MidiCtx) {
         let beats = [1.0, 2.0, 4.0, 8.0][(p[LENGTH].round().max(0.0) as usize).min(3)];
         let per_chord = (beats * 4.0f64).round() as i64;
         let chords = p[CHORDS].round().clamp(1.0, PROG_SLOTS as f32) as i64;
@@ -343,7 +477,7 @@ impl SeqState {
             Some((key, reference)) => (0, key - reference),
             None => (0, 0),
         };
-        let shape = slot_shape(&ctx.scale, data, slot, shift_steps);
+        let shape = slot_shape_for(kind, p, &ctx.scale, data, slot, shift_steps);
         let stroke = pattern_at(data, step);
         self.visual[0] = slot as u64 | (step as u64) << 8 | (stroke as u64) << 16 | (k.rem_euclid(per_chord) as u64) << 24 | (per_chord as u64) << 40;
         self.visual[1] = shape.map(|s| pack_shape(&s.0)).unwrap_or(u64::MAX);
@@ -352,7 +486,7 @@ impl SeqState {
             return;
         }
         // The strings this stroke plays, in the order they are hit.
-        let played: Vec<i32> = shape_notes(&shape).into_iter().map(|n| n + shift_semis).collect();
+        let played: Vec<i32> = frets_notes(strings(kind, p), &shape).into_iter().map(|n| n + shift_semis).collect();
         if played.is_empty() {
             return;
         }
@@ -439,6 +573,48 @@ mod tests {
         assert_eq!(shape_of(11, &[0, 3, 7], 0), "x24432", "Bm");
         // Barre asked for: A major up at the fifth fret.
         assert_eq!(shape_of(9, &[0, 4, 7], 1), "577655", "A barre");
+    }
+
+    #[test]
+    fn ukulele_chords_are_the_ones_players_use() {
+        let uke = |root: i32, ivs: &[i32], tuning: usize, neck: u8| -> String {
+            let tones: Vec<i32> = ivs.iter().map(|i| (root + i).rem_euclid(12)).collect();
+            uke_shape(&UKE_OPEN[tuning], &tones, neck).iter().take(4).map(|f| f.map(|f| char::from_digit(f as u32, 16).unwrap()).unwrap_or('x')).collect()
+        };
+        let maj = [0, 4, 7];
+        assert_eq!(uke(0, &maj, 0, 0), "0003", "C");
+        assert_eq!(uke(9, &[0, 3, 7], 0, 0), "2000", "Am");
+        assert_eq!(uke(5, &maj, 0, 0), "2010", "F");
+        assert_eq!(uke(7, &maj, 0, 0), "0232", "G");
+        assert_eq!(uke(7, &[0, 4, 7, 10], 0, 0), "0212", "G7");
+        assert_eq!(uke(2, &maj, 0, 0), "2220", "D");
+        assert_eq!(uke(10, &maj, 0, 0), "3211", "Bb");
+        // Up the neck every string is fretted.
+        let high = uke(0, &maj, 0, 2);
+        assert!(!high.contains('0'), "{high}");
+        // A baritone is the top four strings of a guitar: G is 0003 there too.
+        assert_eq!(uke(7, &maj, 2, 0), "0003", "G on a baritone");
+    }
+
+    #[test]
+    fn a_ukulele_strums_four_strings_from_the_high_g() {
+        let mut p = defaults(UKE_SPECS);
+        p[HUMANIZE] = 0.0;
+        let data = strum_default();
+        let spb = 24000.0;
+        let mut st = MidiFxState::new(MidiFxKind::Ukulele);
+        let mut ons = Vec::new();
+        for b in 0..(spb / 256.0) as u64 {
+            let now = b * 256;
+            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0 };
+            let mut out = Vec::new();
+            st.process(MidiFxKind::Ukulele, &p, &data, &[], &mut out, &ctx);
+            ons.extend(out.iter().filter(|e| e.on).map(|e| ((now + e.offset as u64) as f64 / spb, e.pitch)));
+        }
+        ons.sort_by(|a, b| a.0.total_cmp(&b.0));
+        // C (0003): G, C, E, then the C on the A string.
+        let first: Vec<u8> = ons.iter().filter(|o| o.0 < 0.2).map(|o| o.1).collect();
+        assert_eq!(first, vec![67, 60, 64, 72]);
     }
 
     #[test]

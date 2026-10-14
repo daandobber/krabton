@@ -76,6 +76,8 @@ pub enum BrowserItem {
     Drums(&'static str),
     Sampler,
     Effect(EffectKind),
+    /// An audio effect set to one of its presets.
+    EffectPreset(EffectKind, &'static str),
     Sample(PathBuf),
     Plugin(krabton_clap::PluginInfo),
     /// A CLAP audio effect.
@@ -83,6 +85,8 @@ pub enum BrowserItem {
     /// An FM voice (155-byte DX7 voice) from a bank.
     FmVoice { bank: String, voice: Vec<u8> },
     MidiFx(krabton_engine::midi_fx::MidiFxKind),
+    /// A MIDI effect or sequencer set to one of its presets.
+    MidiPreset(krabton_engine::midi_fx::MidiFxKind, &'static str),
     /// A Plaits preset.
     Macro(&'static str),
     /// A Braids preset.
@@ -179,9 +183,11 @@ impl BrowserItem {
             BrowserItem::Drums(k) => k.to_string(),
             BrowserItem::Sampler => "Sampler".into(),
             BrowserItem::Effect(k) => k.name().into(),
+            BrowserItem::EffectPreset(k, p) => format!("{}: {p}", k.name()),
             BrowserItem::Sample(p) => p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default(),
             BrowserItem::Plugin(p) | BrowserItem::PluginEffect(p) => p.name.clone(),
             BrowserItem::MidiFx(k) => k.name().into(),
+            BrowserItem::MidiPreset(k, p) => format!("{}: {p}", k.name()),
             BrowserItem::FmVoice { voice, .. } => {
                 krabton_engine::dsp::dx7::Dx7Voice::from_slice(voice).map(|v| format!("FM: {}", v.name())).unwrap_or_default()
             }
@@ -414,6 +420,8 @@ pub struct App {
     pub big: crate::big::BigPicture,
     /// What was lifted off the tape, to drop elsewhere.
     pub(crate) tape_clip: Option<Vec<u32>>,
+    /// The chord players that play the same chords.
+    pub(crate) band: crate::band::Band,
     /// The played track the engine was last told of (for the tape).
     pub(crate) tape_follow_sent: Option<Option<u64>>,
     /// `shot=path`: where the next picture of the window goes, and whether
@@ -551,6 +559,7 @@ impl App {
             quit_requested: false,
             big: crate::big::BigPicture::new(crate::big::start_in_big_picture(start_big)),
             tape_clip: None,
+            band: Default::default(),
             tape_follow_sent: None,
             shot: None,
             env_view: false,
@@ -598,6 +607,7 @@ impl App {
 
     /// Sends the project snapshot (if it changed) followed by queued commands.
     fn sync(&mut self, ctx: &Context) {
+        self.band_frame();
         if *self.last_sent != self.project {
             // Connections to deleted tracks, devices or modulators go away.
             self.project.prune_mod_routes();
@@ -876,7 +886,7 @@ impl App {
         };
         let is_midi = |app: &App, t: usize| app.project.tracks.get(t).map(|t| t.kind == TrackKind::Midi).unwrap_or(false);
         match item {
-            BrowserItem::MidiFx(kind) => {
+            BrowserItem::MidiFx(kind) | BrowserItem::MidiPreset(kind, _) => {
                 let sel = match self.sel_track {
                     TrackSel::Track(t) if is_midi(self, t) => Some(t),
                     _ => None,
@@ -891,6 +901,12 @@ impl App {
                             K::Drummer => Instrument::drums("Studio Kit"),
                             K::Acid => Instrument::synth("Acid"),
                             K::Progression => Instrument::synth("Soft Pad"),
+                            K::PianoPlayer => Instrument::synth("Keys"),
+                            K::BassPlayer => Instrument::synth("Fat Bass"),
+                            K::GuitarChords => Instrument::guitar("Strummed Chords"),
+                            K::Ukulele => Instrument::guitar("Nylon Classical"),
+                            K::Banjo => Instrument::strings("Mandolin"),
+                            K::Section => Instrument::strings("Bowed"),
                             _ => Instrument::synth("Pluck"),
                         };
                         let t = self.add_midi_track(Some(inst));
@@ -900,7 +916,16 @@ impl App {
                 };
                 match track {
                     Some(t) => {
-                        let dev = self.project.make_midi_device(*kind);
+                        let mut dev = self.project.make_midi_device(*kind);
+                        if let BrowserItem::MidiPreset(_, name) = item {
+                            if let Some(pr) = krabton_engine::presets::midi(*kind).iter().find(|p| p.name == *name) {
+                                dev.params = krabton_engine::presets::apply_to(kind.specs(), pr, &dev.params);
+                                if let Some(f) = pr.data {
+                                    dev.data = f();
+                                }
+                                dev.preset = pr.name.to_string();
+                            }
+                        }
                         let chain = &mut self.project.tracks[t].midi_devices;
                         if kind.is_sequencer() {
                             // Sequencers go first so arpeggiators, chords etc. can shape their notes.
@@ -1011,10 +1036,21 @@ impl App {
                     }
                 }
             }
-            BrowserItem::Effect(_) | BrowserItem::PluginEffect(_) => {
+            BrowserItem::Effect(_) | BrowserItem::EffectPreset(..) | BrowserItem::PluginEffect(_) => {
                 let dev = match item {
                     BrowserItem::PluginEffect(info) => self.project.make_plugin_device(PluginManager::make_instrument(info, 0)),
                     BrowserItem::Effect(kind) => self.project.make_device(*kind),
+                    BrowserItem::EffectPreset(kind, name) => {
+                        let mut dev = self.project.make_device(*kind);
+                        if let Some(pr) = krabton_engine::presets::effect(*kind).iter().find(|p| p.name == *name) {
+                            dev.params = krabton_engine::presets::apply_to(kind.specs(), pr, &dev.params);
+                            if let Some(f) = pr.data {
+                                dev.data = f();
+                            }
+                            dev.preset = pr.name.to_string();
+                        }
+                        dev
+                    }
                     _ => return,
                 };
                 match target {
@@ -1796,6 +1832,7 @@ impl App {
         self.sel_track = if self.project.tracks.is_empty() { TrackSel::Master } else { TrackSel::Track(0) };
         self.sel_scene = 0;
         self.recording = false;
+        self.band = Default::default();
         self.tape_load();
     }
 

@@ -25,6 +25,7 @@ pub mod chance;
 pub mod bits;
 pub mod percussion;
 pub mod played;
+pub mod players;
 
 use crate::dsp::Rng;
 use crate::midi_fx::{MidiCtx, MidiEvent};
@@ -282,6 +283,7 @@ pub struct SeqState {
     pub(crate) chance: chance::ChanceState,
     pub(crate) perc: percussion::PercussionState,
     pub(crate) played: Box<played::PlayedState>,
+    pub(crate) players: Box<players::PlayersState>,
     pos: i32,
     /// Packed state for the UI / grid (layout depends on the sequencer).
     pub visual: [u64; 4],
@@ -321,6 +323,7 @@ impl SeqState {
             chance: chance::ChanceState::default(),
             perc: percussion::PercussionState::default(),
             played: Box::default(),
+            players: Box::default(),
             pos: 0,
             visual: [0; 4],
         }
@@ -420,7 +423,7 @@ impl SeqState {
             self.shift = None;
         }
         // Acid and Guitar Chords move their own notes (a semitone line, chord shapes).
-        self.shift_in_note = !matches!(kind, K::Acid | K::GuitarChords | K::Drummer | K::DrumMap | K::Chance | K::Bits | K::Percussion);
+        self.shift_in_note = !matches!(kind, K::Acid | K::GuitarChords | K::Ukulele | K::Drummer | K::DrumMap | K::Chance | K::Bits | K::Percussion);
         if ctx.playing {
             self.flush_pending(ctx, out);
         }
@@ -482,7 +485,7 @@ impl SeqState {
                             K::Acid => self.acid(k, p, data, at, step_frames, out, ctx),
                             K::DrumGrid => self.drum_grid(k, p, data, at, step_frames, out, ctx),
                             K::Progression => self.progression(k, p, data, at, step_frames, out, ctx),
-                            K::GuitarChords => self.strum(k, p, data, at, step_frames, out, ctx),
+                            K::GuitarChords | K::Ukulele => self.strum(kind, k, p, data, at, step_frames, out, ctx),
                             K::Drummer => self.drummer(k, p, data, at, step_frames, out, ctx),
                             K::DrumMap => self.drum_map(k, p, at, step_frames, out, ctx),
                             K::Chance => self.chance_seq(k, p, data, at, step_frames, out, ctx),
@@ -491,6 +494,7 @@ impl SeqState {
                             K::Endless => self.endless(k, p, data, at, step_frames, out, ctx),
                             K::Hands => self.hands(k, p, at, step_frames, out, ctx),
                             K::Draw => self.draw_seq(k, p, data, at, step_frames, out, ctx),
+                            K::PianoPlayer | K::BassPlayer | K::Banjo | K::Section => self.player(kind, k, p, data, at, step_frames, out, ctx),
                             K::Chaos => self.chaos(p, at, step_frames, out, ctx),
                             K::Automaton => self.automaton(p, at, step_frames, out, ctx),
                             K::Ant => self.ant(p, at, step_frames, out, ctx),

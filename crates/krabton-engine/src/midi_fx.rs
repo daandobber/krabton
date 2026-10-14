@@ -105,6 +105,11 @@ pub enum MidiFxKind {
     Endless,
     Hands,
     Draw,
+    PianoPlayer,
+    BassPlayer,
+    Banjo,
+    Section,
+    Ukulele,
 }
 
 const ARP_STYLES: &[&str] = &["Up", "Down", "Up Down", "Down Up", "Converge", "Diverge", "Random", "Played", "Chord"];
@@ -207,13 +212,14 @@ impl MidiFxKind {
     ];
 
     /// The sequencers' groups, in menu order.
-    pub const SEQUENCER_GROUPS: [&'static str; 6] = ["Classic", "Rhythm", "Played", "Generative", "Physics & Chaos", "Ambient"];
+    pub const SEQUENCER_GROUPS: [&'static str; 7] = ["Classic", "Players", "Rhythm", "Played", "Generative", "Physics & Chaos", "Ambient"];
 
     /// Which group a sequencer belongs to (see `SEQUENCER_GROUPS`).
     pub fn group(self) -> &'static str {
         use MidiFxKind as K;
         match self {
-            K::Step | K::Acid | K::DrumGrid | K::Progression | K::GuitarChords | K::Drummer => "Classic",
+            K::Step | K::Acid | K::DrumGrid | K::Progression | K::Drummer => "Classic",
+            K::GuitarChords | K::Ukulele | K::PianoPlayer | K::BassPlayer | K::Banjo | K::Section => "Players",
             K::Euclid | K::DrumMap | K::Marbles | K::Chance | K::Bits | K::Percussion => "Rhythm",
             K::Spinner | K::Endless | K::Hands | K::Draw => "Played",
             K::Polymeter | K::Turing | K::Life | K::Drunk | K::Markov | K::Words => "Generative",
@@ -223,7 +229,7 @@ impl MidiFxKind {
         }
     }
 
-    pub const SEQUENCERS: [MidiFxKind; 36] = [
+    pub const SEQUENCERS: [MidiFxKind; 41] = [
         MidiFxKind::Step,
         MidiFxKind::Acid,
         MidiFxKind::DrumGrid,
@@ -260,6 +266,11 @@ impl MidiFxKind {
         MidiFxKind::Endless,
         MidiFxKind::Hands,
         MidiFxKind::Draw,
+        MidiFxKind::PianoPlayer,
+        MidiFxKind::BassPlayer,
+        MidiFxKind::Banjo,
+        MidiFxKind::Section,
+        MidiFxKind::Ukulele,
     ];
 
     pub fn is_sequencer(self) -> bool {
@@ -276,11 +287,12 @@ impl MidiFxKind {
             MidiFxKind::Progression => crate::classic_seq::progression_default(),
             MidiFxKind::Life => sequencers::life_default(),
             MidiFxKind::Words => sequencers::more::words_default(),
-            MidiFxKind::GuitarChords => sequencers::strum::strum_default(),
+            MidiFxKind::GuitarChords | MidiFxKind::Ukulele => sequencers::strum::strum_default(),
             MidiFxKind::Drummer => sequencers::drummer::drummer_default(),
             MidiFxKind::Chance => sequencers::chance::chance_default(),
             MidiFxKind::Endless => sequencers::played::endless_default(),
             MidiFxKind::Draw => sequencers::played::draw_default(),
+            MidiFxKind::PianoPlayer | MidiFxKind::BassPlayer | MidiFxKind::Banjo | MidiFxKind::Section => sequencers::players::player_default(),
             _ => Vec::new(),
         }
     }
@@ -323,6 +335,11 @@ impl MidiFxKind {
             MidiFxKind::Endless => "Endless",
             MidiFxKind::Hands => "Hands",
             MidiFxKind::Draw => "Draw",
+            MidiFxKind::PianoPlayer => "Piano Player",
+            MidiFxKind::BassPlayer => "Bass Player",
+            MidiFxKind::Banjo => "Banjo Roll",
+            MidiFxKind::Section => "String Section",
+            MidiFxKind::Ukulele => "Ukulele",
 
             MidiFxKind::Arpeggiator => "Arpeggiator",
             MidiFxKind::Chord => "Chord",
@@ -379,6 +396,11 @@ impl MidiFxKind {
             MidiFxKind::Endless => "Record: the notes you play are added one by one (Rest for a rest); then the row plays round and round and a held key moves it",
             MidiFxKind::Hands => "Hold keys and each plays a rhythm: one pattern for all, or a pattern per key (a groove under your fingers on a drum kit)",
             MidiFxKind::Draw => "A line drawn across 32 steps, played in the key over a range of octaves, every step or where it moves",
+            MidiFxKind::PianoPlayer => "A pianist on the chord progression: the left hand on the root, the right voicing each chord close to the last; ballad, stride, Alberti, arpeggio, gospel, bossa, block chords, pop eighths",
+            MidiFxKind::BassPlayer => "A bass player on the chord progression: roots, root and fifth, octaves, a walking line that leans into the next chord, reggae, funk, Motown, eighths",
+            MidiFxKind::Banjo => "A banjo on the chord progression: five strings in open tuning moved to the key, picked in rolls with the high drone string",
+            MidiFxKind::Section => "A string section on the chord progression: three to five voices that move as little as they can, held, pulsing, tremolo, pizzicato, stabs or arpeggio",
+            MidiFxKind::Ukulele => "Ukulele chords the way a ukulele player plays them: four strings (high G, low G, baritone or D tuning), real shapes in the key, strummed or picked in the same patterns as Guitar Chords",
 
             MidiFxKind::Arpeggiator => "Plays held notes one after another, tempo-synced",
             MidiFxKind::Chord => "Turns single notes into chords, also in the project key",
@@ -425,6 +447,7 @@ impl MidiFxKind {
             MidiFxKind::Tintinnabuli => sequencers::ambient::TINTINNABULI,
             MidiFxKind::Pedal => sequencers::ambient::PEDAL,
             MidiFxKind::GuitarChords => sequencers::strum::SPECS,
+            MidiFxKind::Ukulele => sequencers::strum::UKE_SPECS,
             MidiFxKind::Drummer => sequencers::drummer::SPECS,
             MidiFxKind::DrumMap => sequencers::drum_map::SPECS,
             MidiFxKind::Marbles => sequencers::marbles::SPECS,
@@ -435,6 +458,10 @@ impl MidiFxKind {
             MidiFxKind::Endless => sequencers::played::ENDLESS,
             MidiFxKind::Hands => sequencers::played::HANDS,
             MidiFxKind::Draw => sequencers::played::DRAW,
+            MidiFxKind::PianoPlayer => sequencers::players::PIANO,
+            MidiFxKind::BassPlayer => sequencers::players::BASS,
+            MidiFxKind::Banjo => sequencers::players::BANJO,
+            MidiFxKind::Section => sequencers::players::SECTION,
 
             MidiFxKind::Arpeggiator => ARP,
             MidiFxKind::Chord => CHORD,

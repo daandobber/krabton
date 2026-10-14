@@ -1,7 +1,7 @@
 //! Big Picture's Browse page: what you can add, in three columns: the kind
 //! (instruments, drum kits, sequencers, MIDI effects, audio effects), the
-//! thing, and for instruments their presets (FM: the voices of its banks, a
-//! drum machine: its kits). The same instruments as the desktop's browser,
+//! thing, and its presets (FM: the voices of its banks, a drum machine: its
+//! kits). The same instruments as the desktop's browser,
 //! CLAP plug-ins too, in alphabetical order. A loads it onto the selected
 //! track (an instrument replaces the one there), X onto a new track.
 
@@ -37,6 +37,8 @@ enum Presets {
     Named(&'static [&'static str], fn(&'static str) -> BrowserItem),
     /// The voices of the FM banks.
     Fm,
+    Effect(krabton_engine::dsp::effects::EffectKind),
+    Midi(MidiFxKind),
 }
 
 impl App {
@@ -59,10 +61,10 @@ impl App {
                 v
             }
             1 => krabton_engine::dsp::drums::kit_names().into_iter().map(|k| entry(k, "Drum kit".into(), Some(BrowserItem::Drums(k)), Presets::None)).collect(),
-            2 => MidiFxKind::SEQUENCERS.iter().map(|k| entry(k.name(), format!("{} · {}", k.group(), k.description()), Some(BrowserItem::MidiFx(*k)), Presets::None)).collect(),
-            3 => MidiFxKind::ALL.iter().map(|k| entry(k.name(), k.description().to_string(), Some(BrowserItem::MidiFx(*k)), Presets::None)).collect(),
+            2 => MidiFxKind::SEQUENCERS.iter().map(|k| entry(k.name(), format!("{} · {}", k.group(), k.description()), Some(BrowserItem::MidiFx(*k)), Presets::Midi(*k))).collect(),
+            3 => MidiFxKind::ALL.iter().map(|k| entry(k.name(), k.description().to_string(), Some(BrowserItem::MidiFx(*k)), Presets::Midi(*k))).collect(),
             _ => {
-                let mut v: Vec<Entry> = krabton_engine::dsp::effects::EffectKind::ALL.iter().map(|k| entry(k.name(), k.category().to_string(), Some(BrowserItem::Effect(*k)), Presets::None)).collect();
+                let mut v: Vec<Entry> = krabton_engine::dsp::effects::EffectKind::ALL.iter().map(|k| entry(k.name(), k.category().to_string(), Some(BrowserItem::Effect(*k)), Presets::Effect(*k))).collect();
                 for info in self.plugins.effects() {
                     v.push(entry(&info.name, format!("CLAP plug-in · {}", info.vendor), Some(BrowserItem::PluginEffect(info.clone())), Presets::None));
                 }
@@ -78,6 +80,8 @@ impl App {
         match presets {
             Presets::None => Vec::new(),
             Presets::Named(names, make) => names.iter().map(|n| (n.to_string(), String::new(), make(n))).collect(),
+            Presets::Effect(k) => krabton_engine::presets::effect(k).iter().map(|p| (p.name.to_string(), String::new(), BrowserItem::EffectPreset(k, p.name))).collect(),
+            Presets::Midi(k) => krabton_engine::presets::midi(k).iter().map(|p| (p.name.to_string(), String::new(), BrowserItem::MidiPreset(k, p.name))).collect(),
             Presets::Fm => {
                 let banks = self.fm_banks.len();
                 self.fm_banks

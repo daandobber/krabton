@@ -436,6 +436,26 @@ fn plugin_effect_node(info: &krabton_clap::PluginInfo) -> Node {
     Node::item(format!("plugin/{}", info.id), &info.name, Icon::Plugin, hint, BrowserItem::PluginEffect(info.clone()))
 }
 
+/// An effect: with presets, a folder that loads the effect and opens into them.
+fn effect_node(k: EffectKind) -> Node {
+    let list = krabton_engine::presets::effect(k);
+    if list.is_empty() {
+        return Node::item(format!("fx/{}", k.name()), k.name(), Icon::Device, k.description(), BrowserItem::Effect(k));
+    }
+    let kids = list.iter().map(|p| Node::item(format!("fx/{}/{}", k.name(), p.name), p.name, Icon::Preset, k.description(), BrowserItem::EffectPreset(k, p.name))).collect();
+    Node::Folder { tag: None, label: k.name().into(), icon: Icon::Device, hint: k.description().into(), load: Some(BrowserItem::Effect(k)), kids: Kids::Nodes(kids) }
+}
+
+/// A MIDI effect or sequencer, a folder of its presets when it has them.
+fn midi_node(k: MidiFxKind) -> Node {
+    let list = krabton_engine::presets::midi(k);
+    if list.is_empty() {
+        return Node::item(format!("midi/{}", k.name()), k.name(), Icon::Device, k.description(), BrowserItem::MidiFx(k));
+    }
+    let kids = list.iter().map(|p| Node::item(format!("midi/{}/{}", k.name(), p.name), p.name, Icon::Preset, k.description(), BrowserItem::MidiPreset(k, p.name))).collect();
+    Node::Folder { tag: None, label: k.name().into(), icon: Icon::Device, hint: k.description().into(), load: Some(BrowserItem::MidiFx(k)), kids: Kids::Nodes(kids) }
+}
+
 /// The built-in effects in folders by category, as in Live.
 fn effect_nodes() -> Vec<Node> {
     EffectKind::CATEGORIES
@@ -443,7 +463,7 @@ fn effect_nodes() -> Vec<Node> {
         .map(|cat| {
             let mut kinds: Vec<EffectKind> = EffectKind::ALL.into_iter().filter(|k| k.category() == *cat).collect();
             kinds.sort_by_key(|k| k.name());
-            let kids = kinds.into_iter().map(|k| Node::item(format!("fx/{}", k.name()), k.name(), Icon::Device, k.description(), BrowserItem::Effect(k))).collect();
+            let kids = kinds.into_iter().map(effect_node).collect();
             Node::folder(*cat, Icon::Folder, kids)
         })
         .collect()
@@ -453,7 +473,7 @@ fn midi_nodes() -> Vec<Node> {
     let items = |kinds: &[MidiFxKind]| {
         let mut kinds = kinds.to_vec();
         kinds.sort_by_key(|k| k.name());
-        kinds.into_iter().map(|k| Node::item(format!("midi/{}", k.name()), k.name(), Icon::Device, k.description(), BrowserItem::MidiFx(k))).collect::<Vec<_>>()
+        kinds.into_iter().map(midi_node).collect::<Vec<_>>()
     };
     // Sequencers in a folder per group, then the MIDI effects.
     let groups = MidiFxKind::SEQUENCER_GROUPS.iter().map(|g| {

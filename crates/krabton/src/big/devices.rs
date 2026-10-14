@@ -3,8 +3,8 @@
 //! every parameter of the chosen one on the right, a big row each. Move with
 //! the D-pad; on a parameter left and right step it and the right stick turns
 //! it smoothly; the triggers go to the device before or after; the first row
-//! of an instrument changes its preset (a drum track's kit). X turns a device
-//! on or off, Y adds one.
+//! of an instrument changes its preset (a drum track's kit), and of an
+//! effect or a sequencer its preset. X turns a device on or off, Y adds one.
 
 use super::input::{Frame, Nav};
 use super::{fit_text, tile, value_bar, Glyph, Page, Sz, TILE, TILE_HI};
@@ -13,6 +13,7 @@ use crate::theme::*;
 use crate::widgets::*;
 use egui::{pos2, vec2, Align2, Id, Rect, Sense, Ui};
 use krabton_engine::params::{ParamKind, ParamSpec};
+use krabton_engine::presets::{self, Preset};
 use krabton_engine::Instrument;
 
 #[derive(Default)]
@@ -129,8 +130,52 @@ impl App {
         }
     }
 
-    /// The next (or previous) preset of the track's instrument.
-    fn step_preset(&mut self, t: usize, step: i32) {
+    /// The presets of an effect or a MIDI device, and the one it has.
+    fn device_presets(&self, t: usize, link: Link) -> Option<(&'static [Preset], String)> {
+        let track = &self.project.tracks[t];
+        let (list, now) = match link {
+            Link::Instrument => return None,
+            Link::Midi(k) => track.midi_devices.get(k).map(|d| (presets::midi(d.kind), d.preset.clone()))?,
+            Link::Fx(k) => track.devices.get(k).map(|d| (presets::effect(d.kind), d.preset.clone()))?,
+        };
+        (!list.is_empty()).then_some((list, now))
+    }
+
+    /// Sets an effect or a MIDI device to one of its presets.
+    pub(super) fn set_device_preset(&mut self, t: usize, link: Link, i: usize) {
+        let track = &mut self.project.tracks[t];
+        match link {
+            Link::Midi(k) => {
+                let Some(d) = track.midi_devices.get_mut(k) else { return };
+                let Some(pr) = presets::midi(d.kind).get(i) else { return };
+                d.params = presets::apply_to(d.kind.specs(), pr, &d.params);
+                if let Some(f) = pr.data {
+                    d.data = f();
+                }
+                d.preset = pr.name.to_string();
+            }
+            Link::Fx(k) => {
+                let Some(d) = track.devices.get_mut(k) else { return };
+                let Some(pr) = presets::effect(d.kind).get(i) else { return };
+                d.params = presets::apply_to(d.kind.specs(), pr, &d.params);
+                if let Some(f) = pr.data {
+                    d.data = f();
+                }
+                d.preset = pr.name.to_string();
+            }
+            Link::Instrument => {}
+        }
+    }
+
+    /// The next (or previous) preset of the track's instrument, effect or
+    /// MIDI device.
+    fn step_preset(&mut self, t: usize, link: Link, step: i32) {
+        if let Some((list, now)) = self.device_presets(t, link) {
+            let n = list.len() as i32;
+            let i = list.iter().position(|p| p.name == now).map(|i| i as i32).unwrap_or(if step > 0 { -1 } else { 0 });
+            self.set_device_preset(t, link, (i + step).rem_euclid(n) as usize);
+            return;
+        }
         let Some(inst) = self.project.tracks[t].instrument.as_ref() else { return };
         let Some((presets, make)) = presets_of(inst) else { return };
         let now = inst.display_name();
@@ -160,7 +205,11 @@ impl App {
         let link = chain.get(link_i).map(|c| c.0);
         // The rows of the chosen device.
         let specs = link.map(|l| self.link_specs(t, l)).unwrap_or(&[]);
-        let has_preset = link == Some(Link::Instrument) && self.project.tracks[t].instrument.as_ref().and_then(presets_of).is_some();
+        let has_preset = match link {
+            Some(Link::Instrument) => self.project.tracks[t].instrument.as_ref().and_then(presets_of).is_some(),
+            Some(l) => self.device_presets(t, l).is_some(),
+            None => false,
+        };
         let mut rows: Vec<Row> = Vec::new();
         if has_preset {
             rows.push(Row::Preset);
@@ -187,7 +236,7 @@ impl App {
                 (1, Nav::Left | Nav::Right | Nav::A) => {
                     let step = if nav == Nav::Left { -1 } else { 1 };
                     match (rows.get(row_i), link) {
-                        (Some(Row::Preset), _) if nav != Nav::A => self.step_preset(t, step),
+                        (Some(Row::Preset), Some(l)) if nav != Nav::A => self.step_preset(t, l, step),
                         (Some(Row::Param(i)), Some(l)) => {
                             let spec = &specs[*i];
                             let toggle = matches!(spec.kind, ParamKind::Toggle);
@@ -299,15 +348,19 @@ impl App {
             let bar = Rect::from_min_max(pos2(rr.left() + name_w, rr.top() + s.u * 0.15), pos2(rr.right() - s.u * 0.2, rr.bottom() - s.u * 0.15));
             match rows[ri] {
                 Row::Preset => {
+                    let Some(l) = link else { continue };
                     let inst = self.project.tracks[t].instrument.as_ref();
-                    let label = if matches!(inst, Some(Instrument::Drums { .. })) { "Kit" } else { "Preset" };
+                    let (label, name) = match (l, self.device_presets(t, l)) {
+                        (Link::Instrument, _) => (if matches!(inst, Some(Instrument::Drums { .. })) { "Kit" } else { "Preset" }, inst.map(|i| i.display_name()).unwrap_or_default()),
+                        (_, Some((_, now))) if !now.is_empty() => ("Preset", now),
+                        _ => ("Preset", "Choose one".to_string()),
+                    };
                     text(&p, pos2(rr.left() + s.u * 0.35, rr.center().y), Align2::LEFT_CENTER, label, s.f(), accent);
-                    let name = inst.map(|i| i.display_name()).unwrap_or_default();
                     rect_fill(&p, bar, 6.0, BG);
                     fit_text(&p, bar.center(), Align2::CENTER_CENTER, &format!("<  {name}  >"), s.font, bar.width() - 8.0, TEXT);
                     let resp = ui.interact(bar, Id::new(("big_preset", t)), Sense::click());
                     if let Some(pt) = resp.interact_pointer_pos().filter(|_| resp.clicked()) {
-                        self.step_preset(t, if pt.x < bar.center().x { -1 } else { 1 });
+                        self.step_preset(t, l, if pt.x < bar.center().x { -1 } else { 1 });
                         col = 1;
                         row_i = ri;
                     }
