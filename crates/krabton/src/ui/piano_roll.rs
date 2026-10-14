@@ -52,6 +52,9 @@ pub struct PianoState {
     scroll_y: f32,
     pub zoom: f32,
     scroll_x: f32,
+    /// Where the notes were drawn last (the grid, pixels per beat, the
+    /// scroll), for the envelope's line over them.
+    pub(crate) last_view: Option<(Rect, f32, f32)>,
     preview: Option<(u8, Vec<u64>)>,
     marquee: Option<Rect>,
     vel_drag: Option<Vec<usize>>,
@@ -77,6 +80,7 @@ impl Default for PianoState {
             scroll_y: 0.0,
             zoom: 1.0,
             scroll_x: 0.0,
+            last_view: None,
             preview: None,
             marquee: None,
             vel_drag: None,
@@ -345,6 +349,7 @@ impl App {
         let content_w = len as f32 * ppb;
         self.piano.scroll_x = self.piano.scroll_x.clamp(0.0, (content_w - grid_rect.width()).max(0.0));
         let (sx, sy) = (self.piano.scroll_x, self.piano.scroll_y);
+        self.piano.last_view = Some((grid_rect, ppb, sx));
         let bx = |b: f64| grid_rect.left() + b as f32 * ppb - sx;
         let xb = |x: f32| ((x - grid_rect.left() + sx) / ppb) as f64;
         let row_of = |pitch: u8| rows.iter().position(|&r| r == pitch);

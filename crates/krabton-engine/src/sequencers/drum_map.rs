@@ -43,6 +43,10 @@ pub static SPECS: &[ParamSpec] = &[
     ParamSpec::int("Open Hat", "Notes", 0.0, 127.0, 46.0, Unit::None),
     ParamSpec::toggle("Transpose", "Keys", false),
     ParamSpec::toggle("Hold", "Keys", false),
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
 ];
 
 pub const PARTS: usize = 3;

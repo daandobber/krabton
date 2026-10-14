@@ -86,7 +86,16 @@ impl App {
         }
     }
 
+    /// The drawer, its contents in a column in the middle (on a wide screen
+    /// they stay together).
     pub(crate) fn ui_transpose_drawer(&mut self, ui: &mut Ui) {
+        let avail = ui.available_rect_before_wrap();
+        let w = avail.width().min(1060.0);
+        let col = Rect::from_min_size(pos2(avail.left() + (avail.width() - w) * 0.5, avail.top()), vec2(w, avail.height()));
+        ui.scope_builder(egui::UiBuilder::new().max_rect(col).layout(egui::Layout::top_down(egui::Align::Min)), |ui| self.key_drawer_body(ui));
+    }
+
+    fn key_drawer_body(&mut self, ui: &mut Ui) {
         let song = self.project.scale;
         let now_key = self.current_play_key();
         let now = now_key.unwrap_or(song);

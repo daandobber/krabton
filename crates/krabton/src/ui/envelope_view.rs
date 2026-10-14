@@ -101,8 +101,25 @@ impl App {
         }
     }
 
-    /// The clip's envelope editor in `rect`.
+    /// The clip's envelope editor in `rect`, on a canvas of its own (audio clips).
     pub(crate) fn ui_envelopes(&mut self, ui: &mut Ui, rect: Rect, sel: ClipSel) {
+        let bar = Rect::from_min_size(rect.min, vec2(rect.width(), 26.0));
+        let canvas = Rect::from_min_max(pos2(rect.left() + 46.0, bar.bottom() + 6.0), pos2(rect.right() - 10.0, rect.bottom() - 18.0));
+        rect_fill(ui.painter(), rect, 0.0, KNOB);
+        self.envelopes_on(ui, rect, bar, canvas, None, sel);
+    }
+
+    /// The envelope's line over the piano roll's notes (MIDI clips, as in
+    /// Live): `grid` is where the notes are, `ppb` and `sx` its zoom and
+    /// scroll, so the line lies on the same beats.
+    pub(crate) fn ui_envelopes_over(&mut self, ui: &mut Ui, bar: Rect, grid: Rect, ppb: f32, sx: f32, sel: ClipSel) {
+        rect_fill(ui.painter(), bar, 0.0, KNOB);
+        self.envelopes_on(ui, bar.union(grid), bar, grid, Some((ppb, sx)), sel);
+    }
+
+    /// The picker in `bar` and the line on `canvas`; `over` maps beats like
+    /// the piano roll does (else the clip spans the canvas).
+    fn envelopes_on(&mut self, ui: &mut Ui, rect: Rect, bar: Rect, canvas: Rect, over: Option<(f32, f32)>, sel: ClipSel) {
         let t = sel.track();
         let targets = self.env_targets(t);
         let Some(clip) = self.clip_ref(sel).cloned() else { return };
@@ -111,9 +128,6 @@ impl App {
         let current = self.env_target.filter(|tg| targets.iter().any(|x| x.target == *tg)).or_else(|| clip.envelopes.first().map(|e| e.target)).unwrap_or(targets[0].target);
         self.env_target = Some(current);
         let info = targets.iter().find(|x| x.target == current).cloned().unwrap_or_else(|| targets[0].clone());
-        let bar = Rect::from_min_size(rect.min, vec2(rect.width(), 26.0));
-        let canvas = Rect::from_min_max(pos2(rect.left() + 46.0, bar.bottom() + 6.0), pos2(rect.right() - 10.0, rect.bottom() - 18.0));
-        rect_fill(ui.painter(), rect, 0.0, KNOB);
 
         // The picker: device, then parameter; red with a ~ where there is a line.
         let mut bui = ui.new_child(UiBuilder::new().max_rect(bar.shrink2(vec2(6.0, 2.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
@@ -159,38 +173,52 @@ impl App {
         // The canvas.
         let painter = ui.painter_at(rect);
         let len = clip.length.max(0.25);
-        let x_of = |b: f64| canvas.left() + (b / len) as f32 * canvas.width();
-        let b_of = |x: f32| (((x - canvas.left()) / canvas.width()).clamp(0.0, 1.0) as f64) * len;
+        let x_of = |b: f64| match over {
+            Some((ppb, sx)) => canvas.left() + b as f32 * ppb - sx,
+            None => canvas.left() + (b / len) as f32 * canvas.width(),
+        };
+        let b_of = |x: f32| match over {
+            Some((ppb, sx)) => (((x - canvas.left() + sx) / ppb) as f64).clamp(0.0, len),
+            None => (((x - canvas.left()) / canvas.width()).clamp(0.0, 1.0) as f64) * len,
+        };
         let y_of = |v: f32| canvas.bottom() - v.clamp(0.0, 1.0) * canvas.height();
         let v_of = |y: f32| ((canvas.bottom() - y) / canvas.height()).clamp(0.0, 1.0);
-        rect_fill(&painter, canvas, 2.0, PANEL2);
-        // Beats and bars.
-        let mut b = 0.0;
-        while b <= len + 1e-9 {
-            let bar_line = (b % 4.0).abs() < 1e-6;
-            painter.line_segment([pos2(x_of(b), canvas.top()), pos2(x_of(b), canvas.bottom())], Stroke::new(1.0_f32, if bar_line { LINE } else { LINE_SOFT }));
-            if bar_line {
-                text(&painter, pos2(x_of(b) + 3.0, canvas.top() + 2.0), Align2::LEFT_TOP, format!("{}", (b / 4.0) as i64 + 1), small(), TEXT_DIM);
+        if over.is_some() {
+            // Over the notes: they step back so the line stands out.
+            painter.rect_filled(canvas, 0.0, Color32::from_black_alpha(95));
+            text(&painter, pos2(canvas.right() - 4.0, canvas.top() + 2.0), Align2::RIGHT_TOP, info.format(1.0), small(), TEXT_DIM);
+            text(&painter, pos2(canvas.right() - 4.0, canvas.bottom() - 2.0), Align2::RIGHT_BOTTOM, info.format(0.0), small(), TEXT_DIM);
+        } else {
+            rect_fill(&painter, canvas, 2.0, PANEL2);
+            // Beats and bars.
+            let mut b = 0.0;
+            while b <= len + 1e-9 {
+                let bar_line = (b % 4.0).abs() < 1e-6;
+                painter.line_segment([pos2(x_of(b), canvas.top()), pos2(x_of(b), canvas.bottom())], Stroke::new(1.0_f32, if bar_line { LINE } else { LINE_SOFT }));
+                if bar_line {
+                    text(&painter, pos2(x_of(b) + 3.0, canvas.top() + 2.0), Align2::LEFT_TOP, format!("{}", (b / 4.0) as i64 + 1), small(), TEXT_DIM);
+                }
+                b += 1.0;
             }
-            b += 1.0;
+            for v in [0.25f32, 0.5, 0.75] {
+                painter.line_segment([pos2(canvas.left(), y_of(v)), pos2(canvas.right(), y_of(v))], Stroke::new(1.0_f32, LINE_SOFT));
+            }
+            text(&painter, pos2(canvas.left() - 4.0, canvas.top()), Align2::RIGHT_TOP, info.format(1.0), small(), TEXT_DIM);
+            text(&painter, pos2(canvas.left() - 4.0, canvas.bottom()), Align2::RIGHT_BOTTOM, info.format(0.0), small(), TEXT_DIM);
         }
-        for v in [0.25f32, 0.5, 0.75] {
-            painter.line_segment([pos2(canvas.left(), y_of(v)), pos2(canvas.right(), y_of(v))], Stroke::new(1.0_f32, LINE_SOFT));
-        }
-        text(&painter, pos2(canvas.left() - 4.0, canvas.top()), Align2::RIGHT_TOP, info.format(1.0), small(), TEXT_DIM);
-        text(&painter, pos2(canvas.left() - 4.0, canvas.bottom()), Align2::RIGHT_BOTTOM, info.format(0.0), small(), TEXT_DIM);
         let env = clip.envelopes.iter().find(|e| e.target == current).cloned();
         let base = self.env_base(t, current).unwrap_or(0.5);
         let color = rgb(self.project.tracks.get(t).map(|tr| tr.color).unwrap_or([255, 160, 50]));
         match &env {
             Some(e) if !e.points.is_empty() => {
                 let mut pts: Vec<Pos2> = Vec::with_capacity(e.points.len() + 2);
-                pts.push(pos2(canvas.left(), y_of(e.points[0].1)));
+                pts.push(pos2(canvas.left().min(x_of(e.points[0].0)), y_of(e.points[0].1)));
                 pts.extend(e.points.iter().map(|p| pos2(x_of(p.0), y_of(p.1))));
-                pts.push(pos2(canvas.right(), y_of(e.points[e.points.len() - 1].1)));
-                painter.add(Shape::line(pts, Stroke::new(2.0_f32, color)));
+                pts.push(pos2(canvas.right().max(x_of(e.points[e.points.len() - 1].0)), y_of(e.points[e.points.len() - 1].1)));
+                let pc = painter.with_clip_rect(canvas);
+                pc.add(Shape::line(pts, Stroke::new(2.0_f32, if over.is_some() { crate::ui::automation::AUTO } else { color })));
                 for p in &e.points {
-                    painter.circle_filled(pos2(x_of(p.0), y_of(p.1)), 4.0, color);
+                    pc.circle_filled(pos2(x_of(p.0), y_of(p.1)), 4.0, if over.is_some() { crate::ui::automation::AUTO } else { color });
                 }
             }
             _ => {

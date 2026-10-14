@@ -59,7 +59,12 @@ pub static ORBITS: &[ParamSpec] = &[
     ParamSpec::int("Note 7", "Notes", -14.0, 14.0, 11.0, Unit::None),
     ParamSpec::int("Note 8", "Notes", -14.0, 14.0, 14.0, Unit::None),
     ParamSpec::toggle("Transpose", "Keys", false),
-    ParamSpec::toggle("Hold", "Keys", false),];
+    ParamSpec::toggle("Hold", "Keys", false),
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+];
 pub static CHAOS: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
     ParamSpec::lin("Chaos", "Map", 2.8, 4.0, 3.7, Unit::None),
@@ -70,7 +75,12 @@ pub static CHAOS: &[ParamSpec] = &[
     ParamSpec::lin("Gate", "Notes", 0.1, 1.0, 0.6, Unit::Percent),
     ParamSpec::lin("Velocity", "Notes", 0.05, 1.0, 0.8, Unit::Percent),
     ParamSpec::toggle("Transpose", "Keys", false),
-    ParamSpec::toggle("Hold", "Keys", false),];
+    ParamSpec::toggle("Hold", "Keys", false),
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+];
 pub static AUTOMATON: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
     ParamSpec::int("Rule", "Cells", 0.0, 255.0, 90.0, Unit::None),
@@ -81,7 +91,12 @@ pub static AUTOMATON: &[ParamSpec] = &[
     ParamSpec::lin("Gate", "Notes", 0.1, 1.0, 0.5, Unit::Percent),
     ParamSpec::lin("Velocity", "Notes", 0.05, 1.0, 0.7, Unit::Percent),
     ParamSpec::toggle("Transpose", "Keys", false),
-    ParamSpec::toggle("Hold", "Keys", false),];
+    ParamSpec::toggle("Hold", "Keys", false),
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+];
 pub const ANT_PLAY: &[&str] = &["Always", "On Black", "On White"];
 pub static ANT: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
@@ -91,7 +106,12 @@ pub static ANT: &[ParamSpec] = &[
     ParamSpec::lin("Gate", "Notes", 0.1, 1.0, 0.6, Unit::Percent),
     ParamSpec::lin("Velocity", "Notes", 0.05, 1.0, 0.75, Unit::Percent),
     ParamSpec::toggle("Transpose", "Keys", false),
-    ParamSpec::toggle("Hold", "Keys", false),];
+    ParamSpec::toggle("Hold", "Keys", false),
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+];
 pub static PONG: &[ParamSpec] = &[
     ParamSpec::lin("Speed", "Box", 0.25, 4.0, 1.0, Unit::None),
     ParamSpec::lin("Angle", "Box", 15.0, 75.0, 37.0, Unit::None),
@@ -105,7 +125,12 @@ pub static PONG: &[ParamSpec] = &[
     ParamSpec::lin("Gate", "Notes", 0.05, 2.0, 0.25, Unit::None),
     ParamSpec::lin("Velocity", "Notes", 0.05, 1.0, 0.8, Unit::Percent),
     ParamSpec::toggle("Transpose", "Keys", false),
-    ParamSpec::toggle("Hold", "Keys", false),];
+    ParamSpec::toggle("Hold", "Keys", false),
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+];
 pub static MARKOV: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
     ParamSpec::lin("Repeat", "Chances", 0.0, 1.0, 0.15, Unit::Percent),
@@ -119,7 +144,12 @@ pub static MARKOV: &[ParamSpec] = &[
     ParamSpec::lin("Gate", "Notes", 0.1, 1.0, 0.7, Unit::Percent),
     ParamSpec::lin("Velocity", "Notes", 0.05, 1.0, 0.7, Unit::Percent),
     ParamSpec::toggle("Transpose", "Keys", false),
-    ParamSpec::toggle("Hold", "Keys", false),];
+    ParamSpec::toggle("Hold", "Keys", false),
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+];
 pub static RAIN: &[ParamSpec] = &[
     ParamSpec::log("Density", "Rain", 0.1, 16.0, 2.0, Unit::None),
     ParamSpec::lin("Storm", "Rain", 0.0, 1.0, 0.3, Unit::Percent),
@@ -130,7 +160,12 @@ pub static RAIN: &[ParamSpec] = &[
     ParamSpec::lin("Velocity", "Notes", 0.05, 1.0, 0.7, Unit::Percent),
     ParamSpec::lin("Spread", "Notes", 0.0, 1.0, 0.5, Unit::Percent),
     ParamSpec::toggle("Transpose", "Keys", false),
-    ParamSpec::toggle("Hold", "Keys", false),];
+    ParamSpec::toggle("Hold", "Keys", false),
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+];
 pub const WORD_MODES: &[&str] = &["Letters", "Morse"];
 pub static WORDS: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
@@ -140,7 +175,12 @@ pub static WORDS: &[ParamSpec] = &[
     ParamSpec::lin("Gate", "Notes", 0.1, 1.0, 0.8, Unit::Percent),
     ParamSpec::lin("Velocity", "Notes", 0.05, 1.0, 0.75, Unit::Percent),
     ParamSpec::toggle("Transpose", "Keys", false),
-    ParamSpec::toggle("Hold", "Keys", false),];
+    ParamSpec::toggle("Hold", "Keys", false),
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+];
 pub static LORENZ: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
     ParamSpec::lin("Speed", "Attractor", 0.0, 1.0, 0.3, Unit::Percent),
@@ -151,7 +191,12 @@ pub static LORENZ: &[ParamSpec] = &[
     ParamSpec::lin("Gate", "Notes", 0.1, 1.0, 0.6, Unit::Percent),
     ParamSpec::lin("Velocity", "Notes", 0.05, 1.0, 0.75, Unit::Percent),
     ParamSpec::toggle("Transpose", "Keys", false),
-    ParamSpec::toggle("Hold", "Keys", false),];
+    ParamSpec::toggle("Hold", "Keys", false),
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+];
 
 pub fn words_default() -> Vec<u8> {
     b"krabton makes music".to_vec()

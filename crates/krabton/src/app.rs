@@ -2198,6 +2198,20 @@ impl App {
                 "envelopes" => {
                     self.env_view = true;
                     self.detail = DetailTab::Clip;
+                    // envelopes=1: and a volume line on the selected clip, to see.
+                    if nums.first() == Some(&1) {
+                        if let Some(sel) = self.sel_clip {
+                            let t = sel.track();
+                            if let Some(id) = self.project.tracks.get(t).map(|tr| tr.id) {
+                                let target = krabton_engine::modulation::ModTarget::Volume(id);
+                                if let Some(c) = self.clip_mut(sel) {
+                                    c.envelopes.retain(|e| e.target != target);
+                                    c.envelopes.push(krabton_engine::project::Envelope { target, points: vec![(0.0, 0.85), (1.0, 0.3), (2.0, 0.9), (3.0, 0.5)] });
+                                }
+                                self.env_target = Some(target);
+                            }
+                        }
+                    }
                 }
                 "autoarm" => self.auto_arm = !self.auto_arm,
                 "zoom" => self.script_zoom = nums.first().map(|&z| (z as f32 / 100.0).clamp(0.5, 3.0)),
@@ -2767,8 +2781,8 @@ impl eframe::App for App {
         // While a ring plays the left stick, it does not move the cursor.
         let page = self.big.page;
         // On the desktop the controller always plays (as on the Play page).
-        let playing_page = page == crate::big::Page::Play || !self.big.on;
-        let lstick_plays = (playing_page && self.big.play.sticks != crate::big::play::StickMode::Pads) || (self.big.on && page == crate::big::Page::Tape);
+        // (on the desktop the sticks always glide: the left one plays too)
+        let lstick_plays = !self.big.on || (page == crate::big::Page::Play && self.big.play.sticks != crate::big::play::StickMode::Pads) || page == crate::big::Page::Tape;
         self.big.pads.lstick_nav = !(lstick_plays && self.big.menu.is_none());
         let mut pad_input = self.big.pads.poll(ctx, self.big.on);
         if let Some(n) = self.big.script.pop_front() {

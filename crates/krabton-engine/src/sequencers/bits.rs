@@ -48,6 +48,10 @@ pub static SPECS: &[ParamSpec] = &[
     ParamSpec::int("Drum 4", "Lanes", 0.0, 127.0, 39.0, Unit::None),
     ParamSpec::toggle("Transpose", "Keys", false),
     ParamSpec::toggle("Hold", "Keys", false),
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
 ];
 
 /// The formula's byte at step `t`.

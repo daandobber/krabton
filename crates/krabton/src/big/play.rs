@@ -671,9 +671,9 @@ impl App {
     }
 
     /// On the desktop a controller plays, always: the Play page runs
-    /// unseen on the selected track, with its sticks, triggers and buttons
-    /// as set in Big Picture (Start opens Big Picture, the right stick
-    /// pressed records).
+    /// unseen on the selected track, its sticks gliding over the rings (XY
+    /// stays XY), the triggers and buttons as set in Big Picture (Start
+    /// opens Big Picture, the right stick pressed records).
     pub(crate) fn desktop_pad_play(&mut self, ctx: &egui::Context, mut inp: Frame) {
         if self.big.pads.name.is_none() && inp.pressed.is_empty() && inp.stick == (0.0, 0.0) && inp.lstick == (0.0, 0.0) && inp.lt == 0.0 && inp.rt == 0.0 {
             return;
@@ -685,11 +685,17 @@ impl App {
             self.toggle_record();
         }
         let screen = ctx.screen_rect();
+        // Without a screen the pads have no use: the sticks glide.
+        let keep = self.big.play.sticks;
+        if keep == StickMode::Pads {
+            self.big.play.sticks = StickMode::Glide;
+        }
         egui::Area::new(Id::new("desktop_pad_play")).order(egui::Order::Background).fixed_pos(screen.min).interactable(false).show(ctx, |ui| {
             let mut unseen = ui.new_child(egui::UiBuilder::new().max_rect(screen).invisible());
             let s = Sz::of(screen);
             let _ = self.big_play(&mut unseen, screen, &s, inp);
         });
+        self.big.play.sticks = keep;
     }
 
     /// What the controller plays on the desktop, for the status bar.
@@ -697,7 +703,8 @@ impl App {
         self.big.pads.name.as_ref()?;
         let TrackSel::Track(t) = self.sel_track else { return None };
         let track = self.project.tracks.get(t)?;
-        Some(format!("Controller plays {} ({})", track.name, self.big.play.sticks.name()))
+        let mode = if self.big.play.sticks == StickMode::Pads { StickMode::Glide } else { self.big.play.sticks };
+        Some(format!("Controller plays {} ({})", track.name, mode.name()))
     }
 
     pub(crate) fn big_play(&mut self, ui: &mut Ui, r: Rect, s: &Sz, mut inp: Frame) -> Vec<(Glyph, &'static str)> {

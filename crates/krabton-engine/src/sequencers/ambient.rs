@@ -46,6 +46,10 @@ pub static LOOPS: &[ParamSpec] = &[
     ParamSpec::int("Note 7", "Notes", -14.0, 14.0, 11.0, Unit::None),
     KEYS[0],
     KEYS[1],
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
 ];
 
 pub const ECHOES: &[&str] = &["1/2 Bar", "1 Bar", "1.5 Bars", "2 Bars", "3 Bars"];
@@ -114,6 +118,10 @@ pub static BLOOM: &[ParamSpec] = &[
     ParamSpec::choice("Taps", "Bloom", TAP_MODES, 1),
     KEYS[0],
     KEYS[1],
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
 ];
 
 pub static CHIMES: &[ParamSpec] = &[
@@ -129,6 +137,10 @@ pub static CHIMES: &[ParamSpec] = &[
     ParamSpec::lin("Sail", "Build", 0.0, 1.0, 0.5, Unit::Percent),
     KEYS[0],
     KEYS[1],
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
 ];
 
 /// The Chimes sequencer's tubes: how many, and the note of each, from a
@@ -167,6 +179,10 @@ pub static DRIFT_CHORDS: &[ParamSpec] = &[
     ParamSpec::lin("Velocity", "Notes", 0.05, 1.0, 0.5, Unit::Percent),
     KEYS[0],
     KEYS[1],
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
 ];
 
 pub const POSITIONS: &[&str] = &["1st Above", "1st Below", "Alternating", "2nd Above", "2nd Below"];
@@ -182,6 +198,10 @@ pub static TINTINNABULI: &[ParamSpec] = &[
     ParamSpec::lin("Velocity", "Notes", 0.05, 1.0, 0.6, Unit::Percent),
     KEYS[0],
     KEYS[1],
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
 ];
 
 pub const PEDAL_MOVES: &[&str] = &["Fifth", "Fourth", "Octave", "Anywhere"];
@@ -198,6 +218,10 @@ pub static PEDAL: &[ParamSpec] = &[
     ParamSpec::lin("Velocity", "Notes", 0.05, 1.0, 0.7, Unit::Percent),
     KEYS[0],
     KEYS[1],
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
 ];
 
 const SEEDS: usize = 32;

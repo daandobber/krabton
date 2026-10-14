@@ -114,7 +114,16 @@ impl App {
             self.env_view = true;
         }
         tui.separator();
-        if self.env_view {
+        if self.env_view && midi {
+            // The notes stay; the envelope's line lies over them, beat on beat.
+            let pick = Rect::from_min_size(below.min, vec2(below.width(), 26.0));
+            let roll = Rect::from_min_max(pos2(below.left(), pick.bottom()), below.max);
+            self.piano.last_view = None;
+            self.ui_piano_roll(ui, roll, sel);
+            if let Some((grid, ppb, sx)) = self.piano.last_view {
+                self.ui_envelopes_over(ui, pick, grid, ppb, sx, sel);
+            }
+        } else if self.env_view {
             self.ui_envelopes(ui, below, sel);
         } else {
             match &clip.content {

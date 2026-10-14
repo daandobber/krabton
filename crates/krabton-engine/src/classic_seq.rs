@@ -23,7 +23,12 @@ pub static STEP: &[ParamSpec] = &[
     ParamSpec::int("Base Note", "Notes", 24.0, 96.0, 48.0, Unit::None),
     ParamSpec::lin("Velocity", "Notes", 0.1, 1.5, 1.0, Unit::Percent),
     ParamSpec::toggle("Transpose", "Keys", false),
-    ParamSpec::toggle("Hold", "Keys", false),];
+    ParamSpec::toggle("Hold", "Keys", false),
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+];
 pub static ACID: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
     ParamSpec::int("Steps", "Clock", 1.0, 16.0, 16.0, Unit::None),
@@ -35,6 +40,10 @@ pub static ACID: &[ParamSpec] = &[
     // Index 7 was "Key Transpose" before every sequencer had Transpose and Hold.
     ParamSpec::toggle("Transpose", "Keys", false),
     ParamSpec::toggle("Hold", "Keys", false),
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
 ];
 pub static DRUM_GRID: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
@@ -43,7 +52,12 @@ pub static DRUM_GRID: &[ParamSpec] = &[
     ParamSpec::lin("Velocity", "Hits", 0.05, 1.0, 0.75, Unit::Percent),
     ParamSpec::lin("Accent", "Hits", 0.0, 1.0, 0.3, Unit::Percent),
     ParamSpec::toggle("Transpose", "Keys", false),
-    ParamSpec::toggle("Hold", "Keys", false),];
+    ParamSpec::toggle("Hold", "Keys", false),
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+];
 pub const CHORD_LENGTHS: &[&str] = &["1 beat", "2 beats", "1 bar", "2 bars"];
 const CHORD_BEATS: [f64; 4] = [1.0, 2.0, 4.0, 8.0];
 pub const RHYTHMS: &[&str] = &["Hold", "Quarters", "Eighths", "Offbeats", "Stabs", "Charleston", "Arp Up", "Arp Down"];
@@ -57,6 +71,10 @@ pub static PROGRESSION: &[ParamSpec] = &[
     ParamSpec::toggle("Transpose", "Keys", false),
     ParamSpec::toggle("Hold", "Keys", false),
     ParamSpec::toggle("Band", "Keys", false),
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
 ];
 
 // ---------------------------------------------------------------- Step data

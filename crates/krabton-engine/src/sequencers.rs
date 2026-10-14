@@ -46,7 +46,12 @@ pub static POLYMETER: &[ParamSpec] = &[
     ParamSpec::lin("Gate", "Notes", 0.1, 1.0, 0.8, Unit::Percent),
     ParamSpec::lin("Velocity", "Notes", 0.05, 1.0, 0.8, Unit::Percent),
     ParamSpec::toggle("Transpose", "Keys", false),
-    ParamSpec::toggle("Hold", "Keys", false),];
+    ParamSpec::toggle("Hold", "Keys", false),
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+];
 pub static EUCLID: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
     ParamSpec::lin("Velocity", "Clock", 0.05, 1.0, 0.85, Unit::Percent),
@@ -67,7 +72,12 @@ pub static EUCLID: &[ParamSpec] = &[
     ParamSpec::int("Rotate 4", "Ring 4", 0.0, 15.0, 2.0, Unit::None),
     ParamSpec::int("Note 4", "Ring 4", 0.0, 127.0, 37.0, Unit::None),
     ParamSpec::toggle("Transpose", "Keys", false),
-    ParamSpec::toggle("Hold", "Keys", false),];
+    ParamSpec::toggle("Hold", "Keys", false),
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+];
 pub static TURING: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
     ParamSpec::int("Length", "Register", 2.0, 16.0, 8.0, Unit::None),
@@ -78,7 +88,12 @@ pub static TURING: &[ParamSpec] = &[
     ParamSpec::lin("Gate", "Notes", 0.1, 1.0, 0.5, Unit::Percent),
     ParamSpec::lin("Velocity", "Notes", 0.05, 1.0, 0.8, Unit::Percent),
     ParamSpec::toggle("Transpose", "Keys", false),
-    ParamSpec::toggle("Hold", "Keys", false),];
+    ParamSpec::toggle("Hold", "Keys", false),
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+];
 pub static LIFE: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
     ParamSpec::int("Evolve", "Clock", 1.0, 32.0, 16.0, Unit::None),
@@ -86,7 +101,12 @@ pub static LIFE: &[ParamSpec] = &[
     ParamSpec::lin("Gate", "Notes", 0.1, 1.0, 0.6, Unit::Percent),
     ParamSpec::lin("Velocity", "Notes", 0.05, 1.0, 0.7, Unit::Percent),
     ParamSpec::toggle("Transpose", "Keys", false),
-    ParamSpec::toggle("Hold", "Keys", false),];
+    ParamSpec::toggle("Hold", "Keys", false),
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+];
 pub const DROPS: &[&str] = &["1/16", "1/8", "1/4", "1/2", "1 Bar", "2 Bars"];
 pub const DROP_BEATS: [f64; 6] = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0];
 pub const REDROPS: &[&str] = &["At Once", "Next Beat", "Next Bar", "2 Bars"];
@@ -119,7 +139,12 @@ pub static BOUNCE: &[ParamSpec] = &[
     ParamSpec::choice("Drop 7", "Drops", DROPS, 1),
     ParamSpec::choice("Drop 8", "Drops", DROPS, 5),
     ParamSpec::toggle("Transpose", "Keys", false),
-    ParamSpec::toggle("Hold", "Keys", false),];
+    ParamSpec::toggle("Hold", "Keys", false),
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+];
 pub static DRUNK: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
     ParamSpec::int("Step", "Walk", 1.0, 4.0, 1.0, Unit::None),
@@ -129,7 +154,12 @@ pub static DRUNK: &[ParamSpec] = &[
     ParamSpec::lin("Gate", "Notes", 0.1, 1.0, 0.6, Unit::Percent),
     ParamSpec::lin("Velocity", "Notes", 0.05, 1.0, 0.75, Unit::Percent),
     ParamSpec::toggle("Transpose", "Keys", false),
-    ParamSpec::toggle("Hold", "Keys", false),];
+    ParamSpec::toggle("Hold", "Keys", false),
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+];
 
 // ---------------------------------------------------------------- pattern data
 
@@ -242,6 +272,12 @@ pub const MAX_BALLS: usize = 8;
 
 /// Where a sequencer keeps its Transpose and Hold switches (by name: some
 /// sequencers have parameters after them that came later).
+/// Where a sequencer keeps its Dynamics: Vel Low, Vel High, Vel Random and
+/// Vel Accent (every sequencer has them, after its own).
+pub fn dynamics_params(kind: crate::midi_fx::MidiFxKind) -> Option<usize> {
+    kind.specs().iter().position(|s| s.name == "Vel Low")
+}
+
 pub fn keys_params(kind: crate::midi_fx::MidiFxKind) -> (usize, usize) {
     let specs = kind.specs();
     let n = specs.len();
@@ -391,6 +427,32 @@ impl SeqState {
     }
 
     /// Generates this block's notes. `kind` selects the sequencer.
+    /// Dynamics on what a sequencer played: notes on the beat stronger
+    /// (Vel Accent), each a little different (Vel Random), and all of them
+    /// between Vel Low and Vel High. At their defaults nothing changes.
+    fn dynamics(&mut self, kind: crate::midi_fx::MidiFxKind, p: &[f32], events: &mut [MidiEvent], ctx: &MidiCtx) {
+        let Some(i) = dynamics_params(kind) else { return };
+        let (Some(&lo), Some(&hi), Some(&rand), Some(&accent)) = (p.get(i), p.get(i + 1), p.get(i + 2), p.get(i + 3)) else { return };
+        if lo <= 0.0 && hi >= 1.0 && rand <= 0.0 && accent <= 0.0 {
+            return;
+        }
+        let (lo, hi) = (lo.clamp(0.0, 1.0), hi.clamp(0.0, 1.0));
+        for e in events.iter_mut().filter(|e| e.on) {
+            let mut v = e.vel;
+            if accent > 0.0 {
+                let beat = ctx.beat + e.offset as f64 / ctx.samples_per_beat;
+                let f = beat.rem_euclid(1.0);
+                let on_beat = f < 0.04 || f > 0.96;
+                v *= if on_beat { 1.0 + 0.4 * accent } else { 1.0 - 0.3 * accent };
+            }
+            if rand > 0.0 {
+                v *= 1.0 + 0.6 * rand * self.rng.bipolar();
+            }
+            v = v.clamp(0.0, 1.0);
+            e.vel = (lo + v * (hi - lo)).clamp(0.02, 1.0);
+        }
+    }
+
     pub fn process(&mut self, kind: crate::midi_fx::MidiFxKind, p: &[f32], data: &[u8], out: &mut Vec<MidiEvent>, ctx: &MidiCtx) {
         use crate::midi_fx::MidiFxKind as K;
         // Transpose: notes coming in move the pattern instead of sounding;
@@ -422,6 +484,8 @@ impl SeqState {
             self.latched = None;
             self.shift = None;
         }
+        // What came in and passes through is not shaped (only what it plays).
+        let passing = out.len();
         // Acid and Guitar Chords move their own notes (a semitone line, chord shapes).
         self.shift_in_note = !matches!(kind, K::Acid | K::GuitarChords | K::Ukulele | K::Drummer | K::DrumMap | K::Chance | K::Bits | K::Percussion);
         if ctx.playing {
@@ -510,6 +574,8 @@ impl SeqState {
             }
         }
         self.flush_offs(ctx, out);
+        let from = passing.min(out.len());
+        self.dynamics(kind, p, &mut out[from..], ctx);
         if kind == K::Life && !self.seeded {
             // Show the seed while stopped.
             let seed = life_rows(data);
@@ -722,6 +788,51 @@ pub fn life_from_visual(v: &[u64; 4]) -> [u16; 8] {
         *row = ((v[r / 4] >> ((r % 4) * 16)) & 0xffff) as u16;
     }
     rows
+}
+
+#[cfg(test)]
+mod dynamics_tests {
+    use crate::midi_fx::{MidiCtx, MidiEvent, MidiFxKind, MidiFxState};
+    use crate::scale::{Scale, ScaleKind};
+
+    /// The velocities a sequencer plays over two bars.
+    fn vels(kind: MidiFxKind, f: impl Fn(&mut Vec<f32>)) -> Vec<f32> {
+        let mut p = crate::params::defaults(kind.specs());
+        f(&mut p);
+        let data = kind.default_data();
+        let spb = 24000.0;
+        let mut st = MidiFxState::new(kind);
+        let mut out_v = Vec::new();
+        for b in 0..(8.0 * spb / 256.0) as u64 {
+            let now = b * 256;
+            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0 };
+            let mut out: Vec<MidiEvent> = Vec::new();
+            st.process(kind, &p, &data, &[], &mut out, &ctx);
+            out_v.extend(out.iter().filter(|e| e.on).map(|e| e.vel));
+        }
+        out_v
+    }
+
+    #[test]
+    fn every_sequencer_has_dynamics_and_they_shape_its_notes() {
+        for kind in MidiFxKind::SEQUENCERS {
+            assert!(super::dynamics_params(kind).is_some(), "{kind:?} has no Dynamics");
+        }
+        // Step: all between 0.3 and 0.4 with the range; spread with Random.
+        let plain = vels(MidiFxKind::Step, |_| {});
+        assert!(!plain.is_empty());
+        let i = super::dynamics_params(MidiFxKind::Step).unwrap();
+        let ranged = vels(MidiFxKind::Step, |p| {
+            p[i] = 0.3;
+            p[i + 1] = 0.4;
+        });
+        assert!(ranged.iter().all(|v| (0.3..=0.4001).contains(v)), "{ranged:?}");
+        let random = vels(MidiFxKind::Step, |p| p[i + 2] = 1.0);
+        let spread = random.iter().copied().fold(0.0f32, f32::max) - random.iter().copied().fold(1.0f32, f32::min);
+        assert!(spread > 0.2, "{spread}");
+        // Defaults change nothing.
+        assert_eq!(plain, vels(MidiFxKind::Step, |_| {}));
+    }
 }
 
 #[cfg(test)]

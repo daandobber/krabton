@@ -40,6 +40,10 @@ pub static SPINNER: &[ParamSpec] = &[
     ParamSpec::lin("Gate", "Notes", 0.05, 2.0, 0.2, Unit::None),
     ParamSpec::lin("Velocity", "Notes", 0.05, 1.0, 0.9, Unit::Percent),
     ParamSpec::toggle("Keep", "Notes", true),
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
 ];
 
 pub mod endless {
@@ -56,6 +60,10 @@ pub static ENDLESS: &[ParamSpec] = &[
     ParamSpec::toggle("Record", "Record", true),
     ParamSpec::toggle("Transpose", "Keys", true),
     ParamSpec::toggle("Hold", "Keys", false),
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
 ];
 
 pub mod hands {
@@ -87,6 +95,10 @@ pub static HANDS: &[ParamSpec] = &[
     ParamSpec::lin("Gate", "Notes", 0.1, 1.0, 0.5, Unit::Percent),
     ParamSpec::lin("Velocity", "Notes", 0.05, 1.0, 0.85, Unit::Percent),
     ParamSpec::lin("Accent", "Notes", 0.0, 1.0, 0.5, Unit::Percent),
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
 ];
 
 pub mod draw {
@@ -110,6 +122,10 @@ pub static DRAW: &[ParamSpec] = &[
     ParamSpec::lin("Velocity", "Notes", 0.05, 1.0, 0.8, Unit::Percent),
     ParamSpec::toggle("Transpose", "Keys", false),
     ParamSpec::toggle("Hold", "Keys", false),
+    ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
 ];
 
 // ---------------------------------------------------------------- data
