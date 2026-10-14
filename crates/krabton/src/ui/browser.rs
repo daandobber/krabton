@@ -346,7 +346,7 @@ pub(crate) fn instrument_catalog() -> Vec<(&'static str, &'static str, &'static 
     devices().into_iter().map(|d| (d.name, d.hint, d.presets, d.make)).collect()
 }
 
-fn devices() -> [Dev; 28] {
+fn devices() -> [Dev; 30] {
     [
         Dev {
             name: "Analog",
@@ -405,7 +405,9 @@ fn devices() -> [Dev; 28] {
         Dev { name: "Waves", hint: "Wavetable synth: two oscillators morphing through 16 banks of single-cycle waves (Adventure Kid Waveforms), unison, warps, sub, filter, envelopes and an LFO. Drag a stack to move through it", presets: krabton_engine::dsp::waves::preset_names(), make: BrowserItem::Waves, kind: None },
         Dev { name: "Guitar", hint: "A guitar and its family: steel or nylon acoustic, electric with pickups, resonator, archtop, twelve-string, baritone, bass, ukulele, banjo and mandolin. Notes go on the strings and frets a player would use, chords are strummed. Put pedals after it", presets: krabton_engine::dsp::guitar::preset_names(), make: BrowserItem::Guitar, kind: None },
         Dev { name: "Bass Guitar", hint: "An electric bass: four wound strings (E A D G, or Drop D) heard through a pickup at the neck, in the middle or at the bridge, played with the fingers or a pick, muted with the palm. The Guitar with its bass model", presets: krabton_engine::dsp::guitar::BASS_PRESETS, make: BrowserItem::Guitar, kind: Some("Bass") },
-        Dev { name: "Ukulele, Banjo, Mandolin", hint: "The small strings: a ukulele (nylon, the high G), a banjo (a drum head for a body, the short drone string) and a mandolin (doubled courses in fifths). The Guitar with their models; Banjo Roll and Ukulele play them", presets: krabton_engine::dsp::guitar::SMALL_STRINGS_PRESETS, make: BrowserItem::Guitar, kind: Some("Plucked") },
+        Dev { name: "Ukulele", hint: "A ukulele: four nylon strings with the high G, a small bright body. The Guitar with its ukulele model; the Ukulele sequencer plays it", presets: krabton_engine::dsp::guitar::UKULELE_PRESETS, make: BrowserItem::Guitar, kind: Some("Plucked") },
+        Dev { name: "Banjo", hint: "A banjo: a drum head for a body, five strings in open G with the short drone string played open. The Guitar with its banjo model; Banjo Roll plays it", presets: krabton_engine::dsp::guitar::BANJO_PRESETS, make: BrowserItem::Guitar, kind: Some("Plucked") },
+        Dev { name: "Mandolin", hint: "A mandolin: four doubled courses tuned in fifths (G D A E), bright and shimmering. The Guitar with its mandolin model", presets: krabton_engine::dsp::guitar::MANDOLIN_PRESETS, make: BrowserItem::Guitar, kind: Some("Plucked") },
         Dev { name: "Wind Chimes", hint: "A wind chime that plays by itself: the wind pushes the sail, the clapper strikes the tubes (aluminium, brass, steel, bamboo, glass or wood) and you see every strike you hear. Change the tubes, the tuning, the spacing, the clapper and the sail", presets: krabton_engine::dsp::wind_chimes::preset_names(), make: BrowserItem::WindChimes, kind: None },
         Dev { name: "Birds", hint: "Songbirds that sing by themselves: blackbird, robin, song thrush, nightingale, wren, chaffinch, great tit, skylark, sparrow, cuckoo, wood pigeon, tawny owl, loon, gull and a drumming woodpecker. Each sings its species' songs from its own place, near or far; a key makes the bird with the nearest voice sing (Follow Key puts its song on the key)", presets: krabton_engine::dsp::birds::preset_names(), make: BrowserItem::Birds, kind: None },
         Dev { name: "Nature", hint: "The sounds of outside, made from scratch: wind in gusts that whistles and rustles the leaves, rain on leaves, water, a roof or a tent, thunder after the lightning, a brook, the sea, crickets that chirp faster when it is warmer, frogs and a campfire. Play keys and the wind whistles on those notes", presets: krabton_engine::dsp::nature::preset_names(), make: BrowserItem::Nature, kind: None },

@@ -32,6 +32,7 @@ pub mod rotary;
 pub mod shifter;
 pub mod sky;
 pub mod smear;
+pub mod snowglobe;
 pub mod slam;
 pub mod spring;
 pub mod telephone;

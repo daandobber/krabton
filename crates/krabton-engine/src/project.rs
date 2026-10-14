@@ -823,6 +823,11 @@ impl Instrument {
         }
     }
 
+    /// Whether the project's Transpose moves it (drums stay where they are).
+    pub fn transposes(&self) -> bool {
+        !self.is_drums() && self.drum_notes() == 0
+    }
+
     pub fn is_drums(&self) -> bool {
         matches!(self, Instrument::Drums { .. })
     }
@@ -1000,6 +1005,14 @@ pub struct Project {
     /// The four-track tape.
     #[serde(default)]
     pub tape: crate::tape::TapeSettings,
+    /// The key everything melodic plays in right now (the Key drawer), when
+    /// it is not the project's own: every note is moved degree by degree
+    /// from `scale` into it, live. Drums stay.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub play_key: Option<Scale>,
+    /// A new play key waits for the next bar (while the song plays).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub play_key_on_bar: bool,
     /// Heights the user gave devices in the Rack view, by device id (an
     /// instrument by its track's id). The engine ignores them.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
@@ -1052,6 +1065,8 @@ impl Project {
             sections: Vec::new(),
             next_id: 1,
             tape: Default::default(),
+            play_key: None,
+            play_key_on_bar: false,
             rack_heights: Default::default(),
         };
         let mut reverb = p.make_device(EffectKind::Reverb);
@@ -1064,6 +1079,20 @@ impl Project {
     }
 
     /// The default "new set": a drum track, a synth track and an audio track.
+    /// The key the music plays in now: the Key drawer's, or the project's.
+    pub fn sounding_key(&self) -> Scale {
+        self.play_key.unwrap_or(self.scale)
+    }
+
+    /// Makes the key the drawer plays in the project's own: every note of
+    /// the melodic clips moves into it (see `convert_scale`). It sounds the
+    /// same as before.
+    pub fn bake_play_key(&mut self) {
+        if let Some(k) = self.play_key.take() {
+            self.convert_scale(k);
+        }
+    }
+
     pub fn new_default() -> Self {
         let mut p = Self::blank();
         p.add_midi_track(Some(Instrument::drums("Classic 909")));

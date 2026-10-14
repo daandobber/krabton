@@ -307,8 +307,8 @@ impl App {
         if i >= self.project.tracks.len() {
             return;
         }
+        let selected = self.is_selected(i);
         let t = &self.project.tracks[i];
-        let selected = self.sel_track == TrackSel::Track(i);
         let color = rgb(t.color);
         let fill = if selected { color } else { shade(color, 0.72) };
         let name = t.name.clone();
@@ -328,7 +328,8 @@ impl App {
             self.apply_item(&item, DropTarget::Track(i));
         }
         if resp.clicked() {
-            self.sel_track = TrackSel::Track(i);
+            let ctrl = ui.input(|k| k.modifiers.ctrl || k.modifiers.command);
+            self.click_track(i, ctrl);
             self.show_devices();
         }
         if resp.double_clicked() {
@@ -800,19 +801,11 @@ impl App {
         let b3 = Rect::from_min_size(pos2(b2.right() + 3.0, by), vec2(bw, 18.0));
         // MIDI tracks record notes, audio tracks record their input.
         if kind == TrackKind::Midi || kind == TrackKind::Audio {
-            let resp = button(ui, b3, Id::new(("arm", id)), "", arm, REC).on_hover_text("Arm for recording (Ctrl+click for multiple)");
+            let resp = button(ui, b3, Id::new(("arm", id)), "", arm, REC).on_hover_text("Arm for recording (Ctrl+click for more; with several tracks selected, all of them)");
             rec_icon(ui.painter(), b3.center(), 8.0, if arm { TEXT_DARK } else { REC });
             if resp.clicked() {
                 let multi = ui.input(|i| i.modifiers.ctrl || i.modifiers.command);
-                if !multi {
-                    for (k, t) in self.project.tracks.iter_mut().enumerate() {
-                        if k != i {
-                            t.arm = false;
-                        }
-                    }
-                }
-                self.project.tracks[i].arm = !arm;
-                self.sel_track = TrackSel::Track(i);
+                self.click_arm(i, multi);
             }
         }
     }

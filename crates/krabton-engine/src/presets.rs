@@ -131,6 +131,7 @@ pub fn effect(kind: EffectKind) -> &'static [Preset] {
         E::Massive => MASSIVE,
         E::Smear => SMEAR,
         E::Convolution => CONVOLUTION,
+        E::Snowglobe => SNOWGLOBE,
         E::AwTapeDelay2 => AW_TAPE_DELAY,
         _ => &[],
     }
@@ -644,6 +645,23 @@ static SMEAR: &[Preset] = &[
     p("Self-Oscillating", &[("Length", N(250.0)), ("Reflect", N(1.0)), ("Dampen", N(0.5)), ("Mix", N(0.5))]),
     p("Dark Smear", &[("Length", N(500.0)), ("Dampen", N(0.8)), ("Reflect", N(0.75))]),
     p("Metallic", &[("Length", N(30.0)), ("Diffuse", N(0.2)), ("Drag", N(0.2)), ("Reflect", N(0.85))]),
+];
+
+static SNOWGLOBE: &[Preset] = &[
+    p("Layered Loops", &[("Mode", C("Tiles")), ("Variation", C("D")), ("Activity", N(0.7)), ("Space", N(0.35))]),
+    p("Backwards Loops", &[("Mode", C("Tiles")), ("Variation", C("C")), ("Reverse", N(1.0)), ("Space", N(0.4))]),
+    p("Pitch Steps", &[("Mode", C("Steps")), ("Variation", C("B")), ("Activity", N(0.6)), ("Repeats", N(0.2))]),
+    p("Gliding Loop", &[("Mode", C("Slide")), ("Variation", C("B")), ("Space", N(0.5))]),
+    p("Snow Cloud", &[("Mode", C("Mist")), ("Variation", C("A")), ("Activity", N(0.75)), ("Shape", N(0.7)), ("Space", N(0.6)), ("Mix", N(0.6))]),
+    p("Shimmer Cloud", &[("Mode", C("Mist")), ("Variation", C("C")), ("Activity", N(0.6)), ("Shape", N(0.8)), ("Space", N(0.7)), ("Mix", N(0.55))]),
+    p("Ringing Cave", &[("Mode", C("Cave")), ("Variation", C("B")), ("Repeats", N(0.6)), ("Space", N(0.4))]),
+    p("Strummed Grains", &[("Mode", C("Harp")), ("Variation", C("A")), ("Activity", N(0.6)), ("Shape", N(0.2)), ("Space", N(0.4))]),
+    p("Shuffled Blocks", &[("Mode", C("Shuffle")), ("Variation", C("C")), ("Activity", N(0.8)), ("Space", N(0.15))]),
+    p("Stutter", &[("Mode", C("Chop")), ("Variation", C("D")), ("Activity", N(0.5)), ("Space", N(0.0)), ("Mix", N(1.0))]),
+    p("Climbing Arp", &[("Mode", C("Climb")), ("Variation", C("A")), ("Repeats", N(0.7)), ("Space", N(0.35))]),
+    p("Dotted Echoes", &[("Mode", C("Rhythm")), ("Variation", C("B")), ("Repeats", N(0.45)), ("Space", N(0.25))]),
+    p("Bending Echoes", &[("Mode", C("Bend")), ("Variation", C("C")), ("Repeats", N(0.5)), ("Space", N(0.3))]),
+    p("Frozen Glitter", &[("Mode", C("Mist")), ("Variation", C("C")), ("Activity", N(0.9)), ("Space", N(0.8)), ("Filter", N(0.2)), ("Mix", N(0.7))]),
 ];
 
 static CONVOLUTION: &[Preset] = &[

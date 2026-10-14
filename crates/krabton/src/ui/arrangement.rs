@@ -528,7 +528,8 @@ impl App {
         let kind_txt = if kind == TrackKind::Midi { "MIDI" } else { "Audio" };
         text(&p, pos2(r.left() + 12.0, r.top() + 28.0), Align2::LEFT_CENTER, kind_txt, small(), TEXT_DIM);
         if resp.clicked() {
-            self.sel_track = TrackSel::Track(i);
+            let ctrl = ui.input(|k| k.modifiers.ctrl || k.modifiers.command);
+            self.click_track(i, ctrl);
             self.show_devices();
         }
         if resp.double_clicked() {
@@ -548,10 +549,11 @@ impl App {
         }
         if kind == TrackKind::Midi {
             let b3 = Rect::from_min_size(pos2(b2.right() + 4.0, by), vec2(22.0, 17.0));
-            let resp = button(ui, b3, Id::new(("arr_arm", id)), "", arm, REC);
+            let resp = button(ui, b3, Id::new(("arr_arm", id)), "", arm, REC).on_hover_text("Arm for recording (Ctrl+click for more)");
             rec_icon(ui.painter(), b3.center(), 7.0, if arm { TEXT_DARK } else { REC });
             if resp.clicked() {
-                self.project.tracks[i].arm = !arm;
+                let multi = ui.input(|k| k.modifiers.ctrl || k.modifiers.command);
+                self.click_arm(i, multi);
             }
         }
         let (ml, mr) = self.meters.get(i).copied().unwrap_or((0.0, 0.0));

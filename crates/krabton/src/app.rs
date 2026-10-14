@@ -355,6 +355,14 @@ pub struct App {
     pub view: View,
     pub detail: DetailTab,
     pub sel_track: TrackSel,
+    /// More tracks selected with Ctrl+click (by id), besides `sel_track`.
+    pub(crate) sel_more: Vec<u64>,
+    /// The Key drawer at the bottom is open.
+    pub(crate) transpose_open: bool,
+    /// Its buttons keep the key (on) or only while held, like chord buttons.
+    pub(crate) key_latch: bool,
+    /// A key button held (with the latch off).
+    pub(crate) key_held: bool,
     pub sel_clip: Option<ClipSel>,
     pub sel_scene: usize,
     pub file_path: Option<PathBuf>,
@@ -512,6 +520,10 @@ impl App {
             view: View::Session,
             detail: DetailTab::Clip,
             sel_track: TrackSel::Track(0),
+            sel_more: Vec::new(),
+            transpose_open: false,
+            key_latch: true,
+            key_held: false,
             sel_clip: Some(ClipSel::Slot { track: 0, scene: 1 }),
             sel_scene: 0,
             file_path: None,
@@ -1229,15 +1241,108 @@ impl App {
 
     /// The MIDI tracks that hear a live note (see `Project::live_note_targets`).
     fn note_targets_from(&self, channel: Option<u8>) -> Vec<usize> {
-        let selected = match self.sel_track {
-            TrackSel::Track(i) => Some(i),
-            _ => None,
-        };
-        self.project.live_note_targets(selected, channel)
+        self.project.live_note_targets_of(&self.selected_tracks(), channel)
+    }
+
+    /// The selected tracks: the one with the focus first, then the ones
+    /// added with Ctrl+click.
+    pub(crate) fn selected_tracks(&self) -> Vec<usize> {
+        let mut v = Vec::new();
+        if let TrackSel::Track(i) = self.sel_track {
+            v.push(i);
+        }
+        for id in &self.sel_more {
+            if let Some(i) = self.project.tracks.iter().position(|t| t.id == *id) {
+                if !v.contains(&i) {
+                    v.push(i);
+                }
+            }
+        }
+        v
+    }
+
+    pub(crate) fn is_selected(&self, i: usize) -> bool {
+        self.sel_track == TrackSel::Track(i) || self.project.tracks.get(i).is_some_and(|t| self.sel_more.contains(&t.id))
+    }
+
+    /// A click on a track's name: it alone, or with Ctrl it joins (or
+    /// leaves) the selection.
+    pub(crate) fn click_track(&mut self, i: usize, ctrl: bool) {
+        let Some(id) = self.project.tracks.get(i).map(|t| t.id) else { return };
+        if !ctrl {
+            self.sel_more.clear();
+            self.sel_track = TrackSel::Track(i);
+            return;
+        }
+        if self.sel_track == TrackSel::Track(i) {
+            // The focus goes to another selected track, if there is one.
+            if let Some(next) = self.sel_more.pop() {
+                if let Some(k) = self.project.tracks.iter().position(|t| t.id == next) {
+                    self.sel_track = TrackSel::Track(k);
+                }
+            }
+        } else if let Some(k) = self.sel_more.iter().position(|x| *x == id) {
+            self.sel_more.remove(k);
+        } else {
+            if let TrackSel::Track(old) = self.sel_track {
+                if let Some(t) = self.project.tracks.get(old) {
+                    if !self.sel_more.contains(&t.id) {
+                        self.sel_more.push(t.id);
+                    }
+                }
+            }
+            self.sel_track = TrackSel::Track(i);
+        }
+    }
+
+    /// A click on a track's arm button: it alone is armed (all of the
+    /// selection when it is part of one); with Ctrl it is armed too.
+    pub(crate) fn click_arm(&mut self, i: usize, ctrl: bool) {
+        let Some(now) = self.project.tracks.get(i).map(|t| !t.arm) else { return };
+        let sel = self.selected_tracks();
+        let group = if sel.len() > 1 && sel.contains(&i) { sel } else { vec![i] };
+        if !ctrl {
+            for (k, t) in self.project.tracks.iter_mut().enumerate() {
+                if !group.contains(&k) {
+                    t.arm = false;
+                }
+            }
+        }
+        for &k in &group {
+            if let Some(t) = self.project.tracks.get_mut(k) {
+                if matches!(t.kind, TrackKind::Midi | TrackKind::Audio) {
+                    t.arm = now;
+                }
+            }
+        }
+        if group.len() == 1 && !ctrl {
+            self.click_track(i, false);
+        }
     }
 
     fn note_targets(&self) -> Vec<usize> {
         self.note_targets_from(None)
+    }
+
+    /// What you play sounds as you play it, also when the Key drawer moves
+    /// the song into another key: the note is sent as the song's key's
+    /// note that the drawer moves back to it.
+    fn unmove_live(&self, pitch: u8) -> u8 {
+        let Some(to) = self.project.play_key.filter(|k| *k != self.project.scale) else { return pitch };
+        let from = self.project.scale;
+        let mut q = krabton_engine::scale::convert_pitch(pitch, &to, &from) as i32;
+        // The way back may land an octave off (a tritone apart).
+        let back = krabton_engine::scale::convert_pitch(q.clamp(0, 127) as u8, &from, &to) as i32;
+        let off = pitch as i32 - back;
+        if off % 12 == 0 {
+            q += off;
+        }
+        q.clamp(0, 127) as u8
+    }
+
+    /// How many tracks the computer keyboard plays.
+    pub(crate) fn note_targets_count(&self) -> usize {
+        self.note_targets().len()
     }
 
     /// Auditions a note on one specific track (piano roll keys, drum pads).
@@ -1256,7 +1361,8 @@ impl App {
     /// A live note from the computer keyboard (`channel` None) or a MIDI
     /// device.
     pub fn note_on_from(&mut self, channel: Option<u8>, pitch: u8, vel: f32) -> (u8, Vec<u64>) {
-        let pitch = if self.snap_input && self.project.scale_mode { self.project.scale.snap(pitch) } else { pitch };
+        let pitch = if self.snap_input && self.project.scale_mode { self.project.sounding_key().snap(pitch) } else { pitch };
+        let pitch = self.unmove_live(pitch);
         let targets = self.note_targets_from(channel);
         let status = self.status();
         let playing = self.is_playing();
@@ -1832,6 +1938,7 @@ impl App {
         self.sel_track = if self.project.tracks.is_empty() { TrackSel::Master } else { TrackSel::Track(0) };
         self.sel_scene = 0;
         self.recording = false;
+        self.sel_more.clear();
         self.band = Default::default();
         self.tape_load();
     }
@@ -2391,6 +2498,15 @@ impl App {
                 "clipview" => self.detail = DetailTab::Clip,
                 "track" => self.sel_track = TrackSel::Track(nums.first().copied().unwrap_or(0)),
                 "master" => self.sel_track = TrackSel::Master,
+                "transposeopen" => self.transpose_open = true,
+                // playkey=ROOT[,KIND]: the song plays in that key (KIND an index into the scales).
+                "playkey" => {
+                    let root = nums.first().copied().unwrap_or(0) as u8 % 12;
+                    let kind = nums.get(1).and_then(|&k| krabton_engine::ScaleKind::ALL.get(k).copied()).unwrap_or(self.project.scale.kind);
+                    self.project.play_key = Some(krabton_engine::Scale::new(root, kind));
+                }
+                // selmore=N: track N joins the selection (as Ctrl+click).
+                "selmore" => self.click_track(nums.first().copied().unwrap_or(0), true),
                 "routetrack" => {
                     self.route_into_new_audio_track(nums.first().copied().unwrap_or(0));
                 }
@@ -2682,6 +2798,11 @@ impl eframe::App for App {
             .exact_height(22.0)
             .frame(egui::Frame::new().fill(theme::BG).inner_margin(egui::Margin::symmetric(8, 2)))
             .show(ctx, |ui| self.ui_statusbar(ui));
+        // The Transpose drawer slides up above it.
+        egui::TopBottomPanel::bottom("transpose_drawer")
+            .resizable(false)
+            .frame(egui::Frame::new().fill(theme::PANEL2).inner_margin(egui::Margin::symmetric(12, 8)))
+            .show_animated(ctx, self.transpose_open, |ui| self.ui_transpose_drawer(ui));
         // The browser runs from top to bottom, next to the detail view, as in Live.
         let fg = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("panel_grips")));
         if self.browser.visible {

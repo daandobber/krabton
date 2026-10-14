@@ -210,6 +210,12 @@ impl Project {
     /// Auto when armed (or, with nothing armed, when selected), Off never.
     /// `channel` is `None` for the computer keyboard and the grid.
     pub fn live_note_targets(&self, selected: Option<usize>, channel: Option<u8>) -> Vec<usize> {
+        self.live_note_targets_of(selected.as_slice(), channel)
+    }
+
+    /// The same with several tracks selected: with none armed, the notes go
+    /// to all of them.
+    pub fn live_note_targets_of(&self, selected: &[usize], channel: Option<u8>) -> Vec<usize> {
         let from_device = channel.is_some();
         let hears = |t: &crate::project::Track| {
             t.kind == TrackKind::Midi && t.midi_in.accepts(from_device) && (t.midi_channel.is_none() || !from_device || t.midi_channel == channel)
@@ -222,7 +228,7 @@ impl Project {
                 hears(t)
                     && match t.monitor {
                         Monitor::In => true,
-                        Monitor::Auto => t.arm || (!any_armed && selected == Some(*i)),
+                        Monitor::Auto => t.arm || (!any_armed && selected.contains(i)),
                         Monitor::Off => false,
                     }
             })
@@ -291,6 +297,18 @@ mod tests {
         let mut order = p.routing_order();
         order.sort();
         assert_eq!(order, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn several_selected_tracks_all_hear_the_keyboard() {
+        let mut p = Project::blank();
+        for _ in 0..3 {
+            p.add_midi_track(None);
+        }
+        assert_eq!(p.live_note_targets_of(&[0, 2], None), vec![0, 2]);
+        // Arming takes over from the selection.
+        p.tracks[1].arm = true;
+        assert_eq!(p.live_note_targets_of(&[0, 2], None), vec![1]);
     }
 
     #[test]

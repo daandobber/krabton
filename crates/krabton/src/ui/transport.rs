@@ -3,7 +3,7 @@
 use crate::app::{App, View};
 use crate::theme::*;
 use crate::widgets::*;
-use egui::{vec2, Align2, RichText, Sense, Ui};
+use egui::{pos2, vec2, Align2, Color32, FontId, Rect, RichText, Sense, Ui};
 use krabton_engine::{Command, Instrument, Quantize};
 use std::sync::atomic::Ordering;
 use std::time::Instant;
@@ -47,8 +47,18 @@ impl App {
                 .response
                 .on_hover_text("Global launch quantization");
             let scale_on = self.project.scale_mode;
-            let scale_btn = egui::Button::new(RichText::new(self.project.scale.name()).color(if scale_on { TEXT_DARK } else { TEXT })).fill(if scale_on { ACCENT } else { PANEL3 });
-            let resp = ui.add(scale_btn).on_hover_text("Key & scale of the project. Click to change or convert the whole project; right-click toggles scale mode.");
+            // The key it plays in (the Key drawer's, with a star).
+            let moved = self.project.play_key.filter(|k| *k != self.project.scale);
+            let key_name = match moved {
+                Some(k) => format!("{}*", k.name()),
+                None => self.project.scale.name(),
+            };
+            let scale_btn = egui::Button::new(RichText::new(key_name).color(if scale_on { TEXT_DARK } else { TEXT })).fill(if scale_on { ACCENT } else { PANEL3 });
+            let tip = match moved {
+                Some(k) => format!("The song is in {}; the Key drawer plays it in {}. Click to change or convert the whole project; right-click toggles scale mode.", self.project.scale.name(), k.name()),
+                None => "Key & scale of the project. Click to change or convert the whole project; right-click toggles scale mode.".to_string(),
+            };
+            let resp = ui.add(scale_btn).on_hover_text(tip);
             if resp.clicked() {
                 self.open_scale_dialog();
             }
@@ -341,6 +351,143 @@ impl App {
         });
     }
 
+    /// The Key drawer: the whole song in another key at the press of a key,
+    /// on a keyboard (the root, the scale kept) or on chord buttons laid out
+    /// round the circle of fifths as on an omnichord or an accordion's bass
+    /// side (major, minor and seventh rows). Drums stay; what you play
+    /// sounds as you play it.
+    pub(crate) fn ui_transpose_drawer(&mut self, ui: &mut Ui) {
+        use krabton_engine::{Scale, ScaleKind};
+        let song = self.project.scale;
+        let now = self.project.sounding_key();
+        let moved = self.project.play_key.filter(|k| *k != song).is_some();
+        // What a press asks for this frame: a key (the song's own: back).
+        let mut want: Option<Scale> = None;
+        let mut released = false;
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Key").strong().size(16.0).color(TEXT));
+            ui.add_space(8.0);
+            let waiting = self.status().key_waiting.load(Ordering::Relaxed);
+            let txt = if waiting {
+                format!("{}  from the next bar", now.name())
+            } else if moved {
+                format!("{}  plays in  {}", song.name(), now.name())
+            } else {
+                format!("{}, the song's own", song.name())
+            };
+            let col = if waiting && !super::session::blink() { TEXT_DIM } else if moved || waiting { ACCENT } else { TEXT_DIM };
+            ui.label(RichText::new(txt).size(14.0).color(col));
+            if waiting {
+                ui.ctx().request_repaint();
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.small_button("x").on_hover_text("Close").clicked() {
+                    self.transpose_open = false;
+                }
+                let on_bar = self.project.play_key_on_bar;
+                if ui.selectable_label(on_bar, "Next bar").on_hover_text("On: a new key starts on the first beat of the next bar while the song plays. Off: at once").clicked() {
+                    self.project.play_key_on_bar = !on_bar;
+                }
+                let latch = self.key_latch;
+                if ui.selectable_label(latch, "Hold").on_hover_text("On: a press keeps the key. Off: the key lasts while you hold it, like a chord button").clicked() {
+                    self.key_latch = !latch;
+                }
+                if moved {
+                    if ui.button("Make it the key").on_hover_text("Write it into the set: every clip's notes move into this key and it becomes the song's key. It sounds the same").clicked() {
+                        self.project.bake_play_key();
+                        self.toast(format!("The song is in {} now", self.project.scale.name()));
+                    }
+                    if ui.button(format!("Back to {}", song.name())).clicked() {
+                        self.project.play_key = None;
+                    }
+                }
+            });
+        });
+        ui.add_space(6.0);
+        ui.horizontal_top(|ui| {
+            // The keyboard: an octave; a key is the root, the scale stays.
+            const NAMES: [&str; 12] = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
+            let kw = 34.0;
+            let kh = 96.0;
+            let (rect, resp) = ui.allocate_exact_size(vec2(7.0 * kw, kh), Sense::click_and_drag());
+            let p = ui.painter().clone();
+            let whites = [0u8, 2, 4, 5, 7, 9, 11];
+            let blacks = [(1u8, 0.0f32), (3, 1.0), (6, 3.0), (8, 4.0), (10, 5.0)];
+            let white_r = |k: usize| Rect::from_min_size(pos2(rect.left() + k as f32 * kw, rect.top()), vec2(kw - 2.0, kh));
+            let black_r = |after: f32| Rect::from_min_size(pos2(rect.left() + (after + 1.0) * kw - kw * 0.32, rect.top()), vec2(kw * 0.62, kh * 0.6));
+            let hit = resp.interact_pointer_pos().or(resp.hover_pos()).and_then(|pt| {
+                blacks.iter().find(|(_, a)| black_r(*a).contains(pt)).map(|b| b.0).or_else(|| (0..7).find(|&k| white_r(k).contains(pt)).map(|k| whites[k]))
+            });
+            for (k, &pc) in whites.iter().enumerate() {
+                let r = white_r(k);
+                let lit = now.root % 12 == pc;
+                p.rect_filled(r, 3.0, if lit { ACCENT } else if hit == Some(pc) { Color32::from_gray(225) } else { Color32::from_gray(200) });
+                text(&p, pos2(r.center().x, r.bottom() - 12.0), Align2::CENTER_CENTER, NAMES[pc as usize], FontId::proportional(13.0), TEXT_DARK);
+                if song.root % 12 == pc {
+                    p.circle_filled(pos2(r.center().x, r.bottom() - 28.0), 3.5, if lit { TEXT_DARK } else { ACCENT });
+                }
+            }
+            for &(pc, after) in &blacks {
+                let r = black_r(after);
+                let lit = now.root % 12 == pc;
+                p.rect_filled(r, 3.0, if lit { ACCENT } else if hit == Some(pc) { Color32::from_gray(70) } else { Color32::from_gray(35) });
+                text(&p, pos2(r.center().x, r.bottom() - 10.0), Align2::CENTER_CENTER, NAMES[pc as usize], FontId::proportional(10.0), if lit { TEXT_DARK } else { TEXT_DIM });
+                if song.root % 12 == pc {
+                    p.circle_filled(pos2(r.center().x, r.bottom() - 22.0), 3.0, ACCENT);
+                }
+            }
+            let pressed = ui.input(|i| i.pointer.primary_pressed()) && resp.hovered();
+            if let (true, Some(pc)) = (pressed, hit) {
+                want = Some(Scale::new(pc, now.kind));
+            }
+            if resp.drag_stopped() || (resp.clicked() && !self.key_latch) {
+                released = true;
+            }
+            resp.on_hover_text("Press a key: the song plays from that root, in the same scale. The dot is the song's own key");
+            ui.add_space(18.0);
+            // The chord buttons: round the circle of fifths, a row per kind.
+            let order: [u8; 12] = [1, 8, 3, 10, 5, 0, 7, 2, 9, 4, 11, 6];
+            let rows: [(&str, ScaleKind); 3] = [("", ScaleKind::Major), ("m", ScaleKind::Minor), ("7", ScaleKind::Mixolydian)];
+            let (bw, bh) = (44.0, 28.0);
+            let (grid, gresp) = ui.allocate_exact_size(vec2(12.0 * bw, 3.0 * bh + 8.0), Sense::click_and_drag());
+            let cell = |c: usize, r: usize| Rect::from_min_size(pos2(grid.left() + c as f32 * bw, grid.top() + r as f32 * (bh + 4.0)), vec2(bw - 4.0, bh));
+            let ghit = gresp.interact_pointer_pos().or(gresp.hover_pos()).and_then(|pt| {
+                (0..3).flat_map(|r| (0..12).map(move |c| (c, r))).find(|&(c, r)| cell(c, r).contains(pt))
+            });
+            for (r, (suffix, kind)) in rows.iter().enumerate() {
+                for (c, &pc) in order.iter().enumerate() {
+                    let rr = cell(c, r);
+                    let key = Scale::new(pc, *kind);
+                    let on = now == key;
+                    let own = song == key;
+                    let hot = ghit == Some((c, r));
+                    p.rect_filled(rr, 4.0, if on { ACCENT } else if hot { PANEL3.gamma_multiply(1.4) } else { PANEL3 });
+                    if own {
+                        p.rect_stroke(rr, 4.0, egui::Stroke::new(1.5_f32, ACCENT), egui::StrokeKind::Inside);
+                    }
+                    text(&p, rr.center(), Align2::CENTER_CENTER, &format!("{}{}", NAMES[pc as usize], suffix), FontId::proportional(13.0), if on { TEXT_DARK } else { TEXT });
+                }
+            }
+            let gpressed = ui.input(|i| i.pointer.primary_pressed()) && gresp.hovered();
+            if let (true, Some((c, r))) = (gpressed, ghit) {
+                want = Some(Scale::new(order[c], rows[r].1));
+            }
+            if gresp.drag_stopped() || (gresp.clicked() && !self.key_latch) {
+                released = true;
+            }
+            gresp.on_hover_text("Chord buttons, as on an omnichord: major, minor and seventh keys round the circle of fifths. The outlined one is the song's own");
+        });
+        if let Some(k) = want {
+            self.project.play_key = if k == song { None } else { Some(k) };
+            self.key_held = !self.key_latch;
+        }
+        // Without Hold, letting go goes back to the song's key.
+        if released && self.key_held && !self.key_latch {
+            self.project.play_key = None;
+            self.key_held = false;
+        }
+    }
+
     pub(crate) fn ui_statusbar(&mut self, ui: &mut Ui) {
         ui.horizontal_centered(|ui| {
             if let Some((msg, at)) = &self.message {
@@ -362,6 +509,23 @@ impl App {
                             .color(TEXT_DIM)
                             .small(),
                     );
+                }
+                // What you play goes to more than one track.
+                let targets = self.note_targets_count();
+                if targets > 1 {
+                    ui.separator();
+                    ui.label(RichText::new(format!("Playing into {targets} tracks")).color(ACCENT).small());
+                }
+                ui.separator();
+                let moved = self.project.play_key.filter(|k| *k != self.project.scale);
+                let label = match moved {
+                    Some(k) => format!("Key: {}", k.name()),
+                    None => "Key".to_string(),
+                };
+                let open = self.transpose_open;
+                let btn = egui::Button::new(RichText::new(format!("{} {}", if open { "v" } else { "^" }, label)).small().color(if moved.is_some() { TEXT_DARK } else { TEXT })).fill(if moved.is_some() { ACCENT } else { PANEL3 });
+                if ui.add(btn).on_hover_text("Play the whole song in another key: a keyboard and chord buttons").clicked() {
+                    self.transpose_open = !open;
                 }
                 if let Some(job) = &self.export_job {
                     ui.separator();

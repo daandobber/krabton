@@ -143,8 +143,14 @@ pub fn preset_names() -> &'static [&'static str] {
         "Muted Bass",
         "Bright Bass",
         "Ukulele",
+        "Strummed Ukulele",
+        "Soft Ukulele",
         "Banjo",
+        "Clawhammer Banjo",
+        "Bright Banjo",
         "Mandolin",
+        "Soft Mandolin",
+        "Bright Mandolin",
     ]
 }
 
@@ -182,6 +188,12 @@ pub fn preset(name: &str) -> Vec<f32> {
         "Muted Bass" => set(&[(MODEL, m(BASS)), (PLUCK, finger), (PICKUP, neck), (PALM_MUTE, 0.6), (HARDNESS, 0.35), (BRIGHTNESS, 0.3), (SUSTAIN, 4.0), (STRUM, 0.0), (TONE, 0.35), (BODY, 0.05), (WIDTH, 0.1), (VOLUME, 3.0)]),
         "Bright Bass" => set(&[(MODEL, m(BASS)), (PLUCK, finger), (PICKUP, bridge), (HARDNESS, 0.7), (BRIGHTNESS, 0.62), (SUSTAIN, 7.0), (STIFFNESS, 0.6), (STRUM, 0.0), (TONE, 0.85), (BODY, 0.05), (WIDTH, 0.1)]),
         "Ukulele" => set(&[(MODEL, m(UKULELE)), (PLUCK, finger), (PICK_POSITION, 0.2), (HARDNESS, 0.5), (BRIGHTNESS, 0.5), (SUSTAIN, 2.5), (STIFFNESS, 0.3), (STRUM, 18.0), (STRUM_DIRECTION, alternate), (BODY, 0.85), (RELEASE_NOISE, 0.15)]),
+        "Strummed Ukulele" => set(&[(MODEL, m(UKULELE)), (PICK_POSITION, 0.16), (HARDNESS, 0.6), (BRIGHTNESS, 0.55), (SUSTAIN, 2.0), (STIFFNESS, 0.3), (STRUM, 26.0), (STRUM_DIRECTION, alternate), (HUMANIZE, 0.45), (BODY, 0.85), (WIDTH, 0.75)]),
+        "Soft Ukulele" => set(&[(MODEL, m(UKULELE)), (PLUCK, finger), (PICK_POSITION, 0.25), (HARDNESS, 0.3), (BRIGHTNESS, 0.38), (SUSTAIN, 3.0), (STIFFNESS, 0.25), (STRUM, 30.0), (BODY, 0.9), (RELEASE_NOISE, 0.1)]),
+        "Clawhammer Banjo" => set(&[(MODEL, m(BANJO)), (PLUCK, finger), (PICK_POSITION, 0.14), (HARDNESS, 0.55), (BRIGHTNESS, 0.6), (SUSTAIN, 2.5), (STRUM, 14.0), (STRUM_DIRECTION, 0.0), (BODY, 0.85), (TONE, 0.55)]),
+        "Bright Banjo" => set(&[(MODEL, m(BANJO)), (PICK_POSITION, 0.08), (HARDNESS, 0.9), (BRIGHTNESS, 0.8), (SUSTAIN, 1.6), (STRUM, 8.0), (BODY, 0.95), (TONE, 0.85)]),
+        "Soft Mandolin" => set(&[(MODEL, m(MANDOLIN)), (PLUCK, finger), (PICK_POSITION, 0.18), (HARDNESS, 0.4), (BRIGHTNESS, 0.45), (SUSTAIN, 3.0), (BEATING, 0.4), (STRUM, 16.0), (BODY, 0.85), (WIDTH, 0.7)]),
+        "Bright Mandolin" => set(&[(MODEL, m(MANDOLIN)), (PICK_POSITION, 0.09), (HARDNESS, 0.85), (BRIGHTNESS, 0.78), (SUSTAIN, 2.2), (BEATING, 0.55), (STRUM, 9.0), (BODY, 0.8), (TONE, 0.8), (WIDTH, 0.75)]),
         "Banjo" => set(&[(MODEL, m(BANJO)), (PLUCK, finger), (PICK_POSITION, 0.1), (HARDNESS, 0.8), (BRIGHTNESS, 0.7), (SUSTAIN, 2.0), (STRUM, 10.0), (BODY, 0.9), (TONE, 0.7)]),
         "Mandolin" => set(&[(MODEL, m(MANDOLIN)), (PICK_POSITION, 0.12), (HARDNESS, 0.7), (BRIGHTNESS, 0.65), (SUSTAIN, 2.5), (BEATING, 0.45), (STRUM, 12.0), (BODY, 0.8), (WIDTH, 0.7)]),
         _ => {}
@@ -260,9 +272,11 @@ pub fn family_name(p: &[f32]) -> &'static str {
     }
 }
 
-/// The presets of the bass and of the small strings, for the browser.
+/// The presets of the bass, the ukulele, the banjo and the mandolin, for the browser.
 pub const BASS_PRESETS: &[&str] = &["Finger Bass", "Picked Bass", "Muted Bass", "Bright Bass"];
-pub const SMALL_STRINGS_PRESETS: &[&str] = &["Ukulele", "Banjo", "Mandolin"];
+pub const UKULELE_PRESETS: &[&str] = &["Ukulele", "Strummed Ukulele", "Soft Ukulele"];
+pub const BANJO_PRESETS: &[&str] = &["Banjo", "Clawhammer Banjo", "Bright Banjo"];
+pub const MANDOLIN_PRESETS: &[&str] = &["Mandolin", "Soft Mandolin", "Bright Mandolin"];
 
 /// The name of what a model is tuned to: the Tuning, or its own.
 pub fn tuning_name(model: usize, tuning: usize) -> &'static str {

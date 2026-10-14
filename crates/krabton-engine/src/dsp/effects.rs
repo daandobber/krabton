@@ -78,6 +78,7 @@ pub enum EffectKind {
     Massive,
     Smear,
     Convolution,
+    Snowglobe,
     /// A hosted effect plug-in (`Device::plugin`), not in `ALL`.
     Plugin,
 }
@@ -191,7 +192,7 @@ static UTILITY: &[ParamSpec] = &[
 ];
 
 impl EffectKind {
-    pub const ALL: [EffectKind; 71] = [
+    pub const ALL: [EffectKind; 72] = [
         EffectKind::Eq3,
         EffectKind::AutoFilter,
         EffectKind::Compressor,
@@ -248,6 +249,7 @@ impl EffectKind {
         EffectKind::Massive,
         EffectKind::Smear,
         EffectKind::Convolution,
+        EffectKind::Snowglobe,
         EffectKind::AwGalactic,
         EffectKind::AwVerbity2,
         EffectKind::AwChamber,
@@ -339,6 +341,7 @@ impl EffectKind {
             EffectKind::Slam => "Dynamics",
             EffectKind::Moo => "Delay & Loop",
             EffectKind::Sky | EffectKind::Massive | EffectKind::Smear | EffectKind::Convolution => "Reverb & Resonance",
+            EffectKind::Snowglobe => "Delay & Loop",
         }
     }
 
@@ -388,6 +391,7 @@ impl EffectKind {
             EffectKind::Massive => "Massive",
             EffectKind::Smear => "Smear",
             EffectKind::Convolution => "Convolution",
+            EffectKind::Snowglobe => "Snowglobe",
             EffectKind::AwGalactic => "Galactic",
             EffectKind::AwVerbity2 => "Verbity2",
             EffectKind::AwChamber => "Chamber",
@@ -466,6 +470,7 @@ impl EffectKind {
             EffectKind::Massive => "Echoes and reverb as one huge thing: eight lines that feed each other, spread by Warp, held for ever at full Feedback, blurred by Density; modes from blooming echoes to bottomless dark spaces",
             EffectKind::Smear => "A swarm of short echoes smeared into a cave: Length, Diffuse, Dampen, Drag (slides the echoes, bending the pitch) and Reflect, which rings for ever all the way up",
             EffectKind::Convolution => "A space's answer to a click, played for everything: rooms, halls, a cathedral, plate, spring, stairwell, garage, cave, tunnel, forest, a speaker cabinet, or a WAV of your own; size, decay, reverse",
+            EffectKind::Snowglobe => "A small world of loops, grains, glitches and echoes made from what comes in, on the beat: eleven modes (Tiles, Steps, Slide, Mist, Cave, Harp, Shuffle, Chop, Climb, Rhythm, Bend) with four variations, Activity, Repeats, Shape, Filter, its own reverb (Space), Hold and Reverse",
             EffectKind::AwGalactic => "A huge, lush, slowly drifting stereo reverb for pads and ambient spaces (Airwindows)",
             EffectKind::AwVerbity2 => "A smooth, dense room-to-hall reverb with size, sustain and darkness (Airwindows)",
             EffectKind::AwChamber => "An echo-chamber reverb with size, decay, highpass and lowpass (Airwindows)",
@@ -543,6 +548,7 @@ impl EffectKind {
             EffectKind::Massive => super::fx::massive::SPECS,
             EffectKind::Smear => super::fx::smear::SPECS,
             EffectKind::Convolution => super::fx::convolution::SPECS,
+            EffectKind::Snowglobe => super::fx::snowglobe::SPECS,
             EffectKind::AwGalactic => super::fx::airwindows::GALACTIC,
             EffectKind::AwVerbity2 => super::fx::airwindows::VERBITY2,
             EffectKind::AwChamber => super::fx::airwindows::CHAMBER,
@@ -631,6 +637,7 @@ pub enum EffectState {
     Massive(Box<super::fx::massive::Massive>),
     Smear(Box<super::fx::smear::Smear>),
     Convolution(Box<super::fx::convolution::Convolution>),
+    Snowglobe(Box<super::fx::snowglobe::Snowglobe>),
     Rings(Box<super::rings_synth::RingsFx>),
     Clouds(Box<super::fx::clouds::CloudsFx>),
     Beads(Box<super::fx::beads::BeadsFx>),
@@ -723,6 +730,7 @@ impl EffectState {
             EffectKind::Massive => EffectState::Massive(Box::new(super::fx::massive::Massive::new(sr))),
             EffectKind::Smear => EffectState::Smear(Box::new(super::fx::smear::Smear::new(sr))),
             EffectKind::Convolution => EffectState::Convolution(Box::new(super::fx::convolution::Convolution::new(sr))),
+            EffectKind::Snowglobe => EffectState::Snowglobe(Box::new(super::fx::snowglobe::Snowglobe::new(sr))),
             EffectKind::AwGalactic => Self::airwindows(kind, "Galactic", sr),
             EffectKind::AwVerbity2 => Self::airwindows(kind, "Verbity2", sr),
             EffectKind::AwChamber => Self::airwindows(kind, "Chamber", sr),
@@ -831,6 +839,7 @@ impl EffectState {
             EffectState::Massive(_) => EffectKind::Massive,
             EffectState::Smear(_) => EffectKind::Smear,
             EffectState::Convolution(_) => EffectKind::Convolution,
+            EffectState::Snowglobe(_) => EffectKind::Snowglobe,
             EffectState::Airwindows(kind, _) => *kind,
             EffectState::Rings(_) => EffectKind::Rings,
             EffectState::Clouds(_) => EffectKind::Clouds,
@@ -1082,6 +1091,7 @@ impl EffectState {
             EffectState::Massive(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Smear(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Convolution(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
+            EffectState::Snowglobe(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Airwindows(_, e) => e.process(p, &mut l[..n], &mut r[..n]),
             EffectState::Rings(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Clouds(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),

@@ -186,6 +186,8 @@ pub struct EngineStatus {
     pub seqs: SeqBank,
     /// The tape's audio and where it is.
     pub reel: crate::tape::Reel,
+    /// A new play key waits for the next bar.
+    pub key_waiting: AtomicBool,
 }
 
 /// The visual state of every sequencer (see `MidiFxState::visual`), by
@@ -257,6 +259,7 @@ impl EngineStatus {
             rec_dropped: AtomicU64::new(0),
             seqs: SeqBank::new(),
             reel: crate::tape::Reel::new(),
+            key_waiting: AtomicBool::new(false),
         }
     }
 }
@@ -748,6 +751,8 @@ struct TrackRt {
     fx_sig: u64,
     /// Note-ons minus note-offs the instrument received, per pitch.
     sounding: [u8; 128],
+    /// How far the Key drawer moved each pitch (its note-off goes there too).
+    shifted: [i8; 128],
     /// Notes and level for the modulators.
     signal: TrackSignal,
     /// The pitch bend in semitones.
@@ -799,6 +804,7 @@ impl TrackRt {
             midi_fx: Vec::new(),
             fx_sig: FX_SIG_EMPTY,
             sounding: [0; 128],
+            shifted: [0; 128],
             bend: 0.0,
             signal: TrackSignal::default(),
             l: vec![0.0; MAX_BLOCK],
@@ -994,6 +1000,8 @@ impl Drop for DenormalGuard {
 
 pub struct Engine {
     sr: f32,
+    /// The play key the music is in now (it may wait for a bar to follow the project's).
+    key_now: Option<crate::scale::Scale>,
     project: Arc<Project>,
     cmd_rx: Receiver<Command>,
     garbage_tx: Sender<Garbage>,
@@ -1054,6 +1062,7 @@ impl Engine {
             garbage_tx,
             status: status.clone(),
             playing: false,
+            key_now: None,
             song_pos: 0.0,
             session_pos: 0.0,
             start_marker: 0.0,
@@ -1653,6 +1662,28 @@ impl Engine {
             None => self.in_buf.fill(0.0),
         }
 
+        // The Key drawer's key: at once, or on the next bar's first beat
+        // (notes before it in this block keep the old key).
+        let (key_old, key_new, key_at) = {
+            let want = project.play_key;
+            if want == self.key_now {
+                (want, want, usize::MAX)
+            } else if !project.play_key_on_bar || !playing {
+                self.key_now = want;
+                (want, want, usize::MAX)
+            } else {
+                let bar = project.beats_per_bar_f().max(1.0);
+                let next = (s0 / bar - 1e-9).ceil() * bar;
+                let at = ((next - s0) * spb).round().max(0.0);
+                if at < seg as f64 {
+                    (self.key_now, want, at as usize)
+                } else {
+                    (self.key_now, self.key_now, usize::MAX)
+                }
+            }
+        };
+        status.key_waiting.store(project.play_key != self.key_now && key_at == usize::MAX, RELAXED);
+
         for oi in 0..self.order.len() {
             let ti = self.order[oi];
             let Some(track) = project.tracks.get(ti) else { continue };
@@ -1667,7 +1698,7 @@ impl Engine {
                 self.midi_scratch.extend_from_slice(&src.midi_out);
             }
             let Some(rt) = self.tracks.get_mut(ti) else { continue };
-            let TrackRt { instrument, devices, playing: pc, overridden, offs, events, fx_buf, live, midi_fx, fx_sig, sounding, signal, bend, l, r, gain_l, gain_r, sends, pre_l, pre_r, post_l, post_r, out_l, out_r, to_master, midi_out, .. } = &mut **rt;
+            let TrackRt { instrument, devices, playing: pc, overridden, offs, events, fx_buf, live, midi_fx, fx_sig, sounding, shifted, signal, bend, l, r, gain_l, gain_r, sends, pre_l, pre_r, post_l, post_r, out_l, out_r, to_master, midi_out, .. } = &mut **rt;
             l[..seg].fill(0.0);
             r[..seg].fill(0.0);
             events.clear();
@@ -1829,6 +1860,9 @@ impl Engine {
                     InstState::Nature(s) => s.playing = ctx.playing,
                     _ => {}
                 }
+                // The Key drawer moves what it plays into its key (not drums).
+                let melodic = inst.transposes();
+                let moved = |p: u8, s: i8| (p as i32 + s as i32).clamp(0, 127) as u8;
                 let mut pos = 0;
                 for ev in events.iter() {
                     let o = (ev.offset as usize).min(seg);
@@ -1836,13 +1870,20 @@ impl Engine {
                         instrument.render(inst, ov, &mut l[pos..o], &mut r[pos..o], sr);
                         pos = o;
                     }
-                    let n = &mut sounding[(ev.pitch & 127) as usize];
+                    let k = (ev.pitch & 127) as usize;
+                    let n = &mut sounding[k];
                     if ev.on {
                         *n = n.saturating_add(1).min(8);
-                        instrument.note_on(inst, ov, ev.pitch, ev.vel, sr);
+                        let key = if (ev.offset as usize) >= key_at { key_new } else { key_old };
+                        let np = match key.filter(|k| melodic && *k != project.scale) {
+                            Some(key) => crate::scale::convert_pitch(ev.pitch, &project.scale, &key),
+                            None => ev.pitch,
+                        };
+                        shifted[k] = (np as i32 - ev.pitch as i32).clamp(-127, 127) as i8;
+                        instrument.note_on(inst, ov, np, ev.vel, sr);
                     } else {
                         *n = n.saturating_sub(1);
-                        instrument.note_off(inst, ov, ev.pitch);
+                        instrument.note_off(inst, ov, moved(ev.pitch, shifted[k]));
                     }
                 }
                 if pos < seg {
@@ -2031,6 +2072,10 @@ impl Engine {
             if let Some((s, _)) = self.preview.take() {
                 self.trash(GarbageInner::Sample(s));
             }
+        }
+        // The bar came: the new key is the key now.
+        if key_at != usize::MAX {
+            self.key_now = key_new;
         }
     }
 
@@ -2571,6 +2616,103 @@ mod tests {
         let loudest = (0..s.overview_len()).map(|k| s.peak(k)).fold(0.0f32, f32::max);
         assert!(loudest > 0.05, "{loudest}");
         assert!(h.status.reel.spool(0).is_none(), "other tracks take no memory");
+    }
+
+    /// The period (in samples) of the left channel, by autocorrelation.
+    fn period(out: &[f32]) -> f32 {
+        let x: Vec<f32> = out.chunks(2).map(|c| c[0]).skip(4800).take(9600).collect();
+        let corr = |lag: usize| -> f32 {
+            let (mut s, mut e) = (0.0f32, 0.0f32);
+            for i in 0..x.len() - lag {
+                s += x[i] * x[i + lag];
+                e += x[i] * x[i];
+            }
+            s / e.max(1e-9)
+        };
+        let c: Vec<f32> = (0..1400).map(corr).collect();
+        // Past the first dip below zero, the first peak near the highest.
+        let start = (1..1400).find(|&l| c[l] < 0.0).unwrap_or(20);
+        let best = c[start..].iter().copied().fold(f32::MIN, f32::max);
+        (start + 1..1399).find(|&l| c[l] > 0.85 * best && c[l] >= c[l - 1] && c[l] >= c[l + 1]).map(|l| l as f32).unwrap_or(0.0)
+    }
+
+    #[test]
+    fn the_play_key_moves_what_plays_and_lets_go_where_it_played() {
+        let mut p = Project::new_default();
+        p.scale = crate::scale::Scale::new(0, crate::scale::ScaleKind::Major);
+        let ti = p.tracks.iter().position(|t| matches!(t.instrument, Some(Instrument::Synth { .. }))).expect("a synth track");
+        let id = p.tracks[ti].id;
+        for t in p.tracks.iter_mut() {
+            t.arrangement.clear();
+        }
+        let play = |p: &Project| {
+            let (mut e, h) = Engine::new(48000.0, Arc::new(p.clone()));
+            h.send(Command::NoteOn { track: id, pitch: 48, velocity: 0.9 });
+            let out = run(&mut e, 0.4);
+            (e, h, out)
+        };
+        // C (48) in C major; played in G major it is G (a fifth up, 3/2).
+        let (_, _, low) = play(&p);
+        p.play_key = Some(crate::scale::Scale::new(7, crate::scale::ScaleKind::Major));
+        let (mut e, h, high) = play(&p);
+        let (a, b) = (period(&low), period(&high));
+        // G is the nearest root: a fourth down (or a fifth up).
+        let ratio = a / b;
+        assert!((ratio - 2f32.powf(-5.0 / 12.0)).abs() < 0.03 || (ratio - 2f32.powf(7.0 / 12.0)).abs() < 0.04, "G against C: periods {a} and {b}");
+        // The key changes while the note is held: its note-off still finds it.
+        let mut q = p.clone();
+        q.play_key = None;
+        h.send(Command::SetProject(Arc::new(q)));
+        h.send(Command::NoteOff { track: id, pitch: 48 });
+        run(&mut e, 2.0);
+        let tail = run(&mut e, 0.2);
+        assert!(peak(&tail) < 1e-3, "the note was let go: {}", peak(&tail));
+    }
+
+    #[test]
+    fn a_play_key_on_the_bar_waits_for_the_bar() {
+        let mut p = Project::new_default();
+        p.scale = crate::scale::Scale::new(0, crate::scale::ScaleKind::Major);
+        p.play_key_on_bar = true;
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p.clone()));
+        h.send(Command::Play);
+        // A bar in, the key is asked for: it waits until the next bar.
+        let bar_s = p.beats_per_bar_f() * 60.0 / p.bpm;
+        run(&mut e, (bar_s * 1.25) as f32);
+        p.play_key = Some(crate::scale::Scale::new(7, crate::scale::ScaleKind::Major));
+        h.send(Command::SetProject(Arc::new(p.clone())));
+        run(&mut e, 0.05);
+        assert!(h.status.key_waiting.load(RELAXED), "it waits");
+        assert_eq!(e.key_now, None);
+        run(&mut e, (bar_s * 0.8) as f32);
+        assert!(!h.status.key_waiting.load(RELAXED));
+        assert_eq!(e.key_now, p.play_key, "the next bar brought it");
+        // Stopped, a key comes at once.
+        h.send(Command::Stop);
+        run(&mut e, 0.05);
+        p.play_key = None;
+        h.send(Command::SetProject(Arc::new(p.clone())));
+        run(&mut e, 0.05);
+        assert_eq!(e.key_now, None);
+    }
+
+    #[test]
+    fn baking_the_play_key_keeps_the_sound_and_leaves_drums() {
+        let mut p = crate::demo::demo_project();
+        let root = p.scale.root;
+        let notes = |p: &Project, i: usize| -> Vec<u8> {
+            p.tracks[i].slots.iter().flatten().filter_map(|c| if let crate::project::ClipContent::Midi { notes } = &c.content { Some(notes.iter().map(|n| n.pitch).collect::<Vec<_>>()) } else { None }).flatten().collect()
+        };
+        let drums = p.tracks.iter().position(|t| t.instrument.as_ref().is_some_and(|i| i.is_drums())).expect("drums");
+        let keys = (0..p.tracks.len()).find(|&i| p.tracks[i].instrument.as_ref().is_some_and(|x| x.transposes()) && !notes(&p, i).is_empty()).expect("a melodic track with notes");
+        let (d0, k0) = (notes(&p, drums), notes(&p, keys));
+        let kind = p.scale.kind;
+        p.play_key = Some(crate::scale::Scale::new((root + 3) % 12, kind));
+        p.bake_play_key();
+        assert_eq!(p.play_key, None);
+        assert_eq!(p.scale.root, (root + 3) % 12);
+        assert_eq!(notes(&p, drums), d0, "drums stay");
+        assert_eq!(notes(&p, keys), k0.iter().map(|n| n + 3).collect::<Vec<_>>());
     }
 
     #[test]

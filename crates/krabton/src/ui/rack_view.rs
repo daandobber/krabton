@@ -161,10 +161,11 @@ impl App {
                     self.project.tracks[i].mixer.solo = !solo;
                 }
                 if kind == TrackKind::Midi || kind == TrackKind::Audio {
-                    let resp = button(ui, b(2.0), Id::new(("rack_arm", key)), "", arm, REC).on_hover_text("Arm for recording");
+                    let resp = button(ui, b(2.0), Id::new(("rack_arm", key)), "", arm, REC).on_hover_text("Arm for recording (Ctrl+click for more)");
                     rec_icon(ui.painter(), b(2.0).center(), 8.0, if arm { TEXT_DARK } else { REC });
                     if resp.clicked() {
-                        self.project.tracks[i].arm = !arm;
+                        let multi = ui.input(|k| k.modifiers.ctrl || k.modifiers.command);
+                        self.click_arm(i, multi);
                     }
                 }
             }
