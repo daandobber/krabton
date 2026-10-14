@@ -938,6 +938,33 @@ pub struct Track {
     /// MIDI channel (0-15) to listen to; `None` is all channels.
     #[serde(default)]
     pub midi_channel: Option<u8>,
+    /// Automation on the arrangement (as in Live): lines in song beats that
+    /// move the mixer, the instrument and the effects while the track
+    /// follows the arrangement.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub automation: Vec<Envelope>,
+    /// The parameter whose line is drawn over the clips (Automation mode).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_shown: Option<crate::modulation::ModTarget>,
+    /// More parameters, each in a lane of its own under the track.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub auto_lanes: Vec<crate::modulation::ModTarget>,
+}
+
+impl Track {
+    /// The automation line of `target`, if it has one.
+    pub fn automation_of(&self, target: crate::modulation::ModTarget) -> Option<&Envelope> {
+        self.automation.iter().find(|e| e.target == target)
+    }
+
+    /// The automation line of `target`, made when it has none.
+    pub fn automation_mut(&mut self, target: crate::modulation::ModTarget) -> &mut Envelope {
+        if let Some(i) = self.automation.iter().position(|e| e.target == target) {
+            return &mut self.automation[i];
+        }
+        self.automation.push(Envelope { target, points: Vec::new() });
+        self.automation.last_mut().expect("just pushed")
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1013,6 +1040,15 @@ pub struct Project {
     /// A new play key waits for the next bar (while the song plays).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub play_key_on_bar: bool,
+    /// A sequence of keys the song moves through, a step every
+    /// `key_seq_bars` bars (None: its own key), while `key_seq_on` and the
+    /// song plays.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub key_seq: Vec<Option<Scale>>,
+    #[serde(default, skip_serializing_if = "is_zero_u8")]
+    pub key_seq_bars: u8,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub key_seq_on: bool,
     /// Heights the user gave devices in the Rack view, by device id (an
     /// instrument by its track's id). The engine ignores them.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
@@ -1067,6 +1103,9 @@ impl Project {
             tape: Default::default(),
             play_key: None,
             play_key_on_bar: false,
+            key_seq: Vec::new(),
+            key_seq_bars: 1,
+            key_seq_on: false,
             rack_heights: Default::default(),
         };
         let mut reverb = p.make_device(EffectKind::Reverb);
@@ -1082,6 +1121,17 @@ impl Project {
     /// The key the music plays in now: the Key drawer's, or the project's.
     pub fn sounding_key(&self) -> Scale {
         self.play_key.unwrap_or(self.scale)
+    }
+
+    /// How many beats a step of the key sequence lasts.
+    pub fn key_seq_step_beats(&self) -> f64 {
+        self.beats_per_bar_f().max(1.0) * self.key_seq_bars.max(1) as f64
+    }
+
+    /// The step of the key sequence at `beat` (the session clock).
+    pub fn key_seq_step(&self, beat: f64) -> Option<usize> {
+        let n = self.key_seq.len();
+        (n > 0).then(|| ((beat / self.key_seq_step_beats()).floor().max(0.0) as usize) % n)
     }
 
     /// Makes the key the drawer plays in the project's own: every note of
@@ -1326,6 +1376,9 @@ impl Project {
             output: AudioOutput::Master,
             midi_in: MidiInput::AllIns,
             midi_channel: None,
+            automation: Vec::new(),
+            auto_shown: None,
+            auto_lanes: Vec::new(),
         }
     }
 

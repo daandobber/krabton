@@ -363,6 +363,10 @@ pub struct App {
     pub(crate) key_latch: bool,
     /// A key button held (with the latch off).
     pub(crate) key_held: bool,
+    /// The step of the key sequence the next press fills.
+    pub(crate) key_seq_sel: Option<usize>,
+    /// The drawer shows every key's chord buttons.
+    pub(crate) key_all: bool,
     pub sel_clip: Option<ClipSel>,
     pub sel_scene: usize,
     pub file_path: Option<PathBuf>,
@@ -524,6 +528,8 @@ impl App {
             transpose_open: false,
             key_latch: true,
             key_held: false,
+            key_seq_sel: None,
+            key_all: false,
             sel_clip: Some(ClipSel::Slot { track: 0, scene: 1 }),
             sel_scene: 0,
             file_path: None,
@@ -1328,7 +1334,7 @@ impl App {
     /// the song into another key: the note is sent as the song's key's
     /// note that the drawer moves back to it.
     fn unmove_live(&self, pitch: u8) -> u8 {
-        let Some(to) = self.project.play_key.filter(|k| *k != self.project.scale) else { return pitch };
+        let Some(to) = self.current_play_key().filter(|k| *k != self.project.scale) else { return pitch };
         let from = self.project.scale;
         let mut q = krabton_engine::scale::convert_pitch(pitch, &to, &from) as i32;
         // The way back may land an octave off (a tritone apart).
@@ -2179,6 +2185,21 @@ impl App {
                 "ambient" => self.load_ambient(),
                 "stop" => self.cmd(Command::Stop),
                 "arrangement" => self.view = View::Arrangement,
+                // automation[=TRACK]: Automation mode, and on TRACK a volume line and a pan lane to see.
+                "automation" => {
+                    self.view = View::Arrangement;
+                    self.arr.automation = true;
+                    if let Some(&ti) = nums.first() {
+                        if let Some(tr) = self.project.tracks.get_mut(ti) {
+                            let id = tr.id;
+                            use krabton_engine::modulation::ModTarget;
+                            tr.auto_shown = Some(ModTarget::Volume(id));
+                            tr.automation_mut(ModTarget::Volume(id)).points = vec![(0.0, 0.8), (4.0, 0.8), (8.0, 0.3), (12.0, 0.6), (16.0, 0.85)];
+                            tr.automation_mut(ModTarget::Pan(id)).points = vec![(0.0, 0.5), (2.0, 0.1), (6.0, 0.9), (10.0, 0.5)];
+                            tr.auto_lanes = vec![ModTarget::Pan(id)];
+                        }
+                    }
+                }
                 "session" => self.view = View::Session,
                 "rackview" => self.view = View::Rack,
                 "tapeview" => self.view = View::Tape,
@@ -2499,6 +2520,13 @@ impl App {
                 "track" => self.sel_track = TrackSel::Track(nums.first().copied().unwrap_or(0)),
                 "master" => self.sel_track = TrackSel::Master,
                 "transposeopen" => self.transpose_open = true,
+                // keyseq=D1,D2,..: a key sequence of degrees of the song's key, running.
+                "keyseq" => {
+                    let song = self.project.scale;
+                    self.project.key_seq = nums.iter().map(|&d| if d == 0 { None } else { Some(song.degree_key(d)) }).collect();
+                    self.project.key_seq_on = true;
+                }
+                "keyall" => self.key_all = true,
                 // playkey=ROOT[,KIND]: the song plays in that key (KIND an index into the scales).
                 "playkey" => {
                     let root = nums.first().copied().unwrap_or(0) as u8 % 12;
@@ -2748,8 +2776,10 @@ impl eframe::App for App {
         // Controllers (and in Big Picture the keyboard) speak through the same actions.
         // While a ring plays the left stick, it does not move the cursor.
         let page = self.big.page;
-        let lstick_plays = (page == crate::big::Page::Play && self.big.play.sticks != crate::big::play::StickMode::Pads) || page == crate::big::Page::Tape;
-        self.big.pads.lstick_nav = !(self.big.on && lstick_plays && self.big.menu.is_none());
+        // On the desktop the controller always plays (as on the Play page).
+        let playing_page = page == crate::big::Page::Play || !self.big.on;
+        let lstick_plays = (playing_page && self.big.play.sticks != crate::big::play::StickMode::Pads) || (self.big.on && page == crate::big::Page::Tape);
+        self.big.pads.lstick_nav = !(lstick_plays && self.big.menu.is_none());
         let mut pad_input = self.big.pads.poll(ctx, self.big.on);
         if let Some(n) = self.big.script.pop_front() {
             pad_input.pressed.push(n);
@@ -2768,9 +2798,11 @@ impl eframe::App for App {
         }
         if !self.big.on {
             self.handle_keys(ctx);
-            // Start on a controller opens Big Picture.
+            // Start on a controller opens Big Picture; otherwise it plays.
             if pad_input.has(crate::big::input::Nav::Start) {
                 self.enter_big_picture();
+            } else {
+                self.desktop_pad_play(ctx, pad_input.clone());
             }
         }
         self.validate_selection();

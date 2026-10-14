@@ -198,6 +198,62 @@ impl Scale {
     }
 }
 
+impl Scale {
+    /// The key whose home is a degree of this scale, in the same notes: in
+    /// C major the IV is F Lydian, the vi A minor (Aeolian), the V G
+    /// Mixolydian; moving a song there sounds like the chord changing while
+    /// the key stays. Scales without such a mode move their root only.
+    pub fn degree_key(&self, degree: usize) -> Scale {
+        let iv = self.intervals();
+        let n = iv.len().max(1);
+        let d = degree % n;
+        let root = ((self.root as usize + iv[d] as usize) % 12) as u8;
+        let rot: Vec<u8> = (0..n).map(|k| (iv[(d + k) % n] as i32 - iv[d] as i32).rem_euclid(12) as u8).collect();
+        let kind = ScaleKind::ALL.iter().copied().find(|k| k.intervals() == rot.as_slice()).unwrap_or(self.kind);
+        Scale::new(root, kind)
+    }
+
+    /// The chord on a degree as a roman numeral: upper case major, lower
+    /// case minor, ° diminished (I, ii, iii, IV, V, vi, vii° in major).
+    pub fn numeral(&self, degree: usize) -> String {
+        const NUMS: [&str; 7] = ["I", "II", "III", "IV", "V", "VI", "VII"];
+        let iv = self.intervals();
+        let n = iv.len();
+        if n != 7 {
+            return format!("{}", degree % n.max(1) + 1);
+        }
+        let d = degree % 7;
+        let up = |k: usize| (iv[(d + k) % 7] as i32 - iv[d] as i32).rem_euclid(12);
+        let (third, fifth) = (up(2), up(4));
+        let name = NUMS[d];
+        match (third, fifth) {
+            (4, 7) => name.to_string(),
+            (3, 6) => format!("{}°", name.to_lowercase()),
+            (4, 8) => format!("{name}+"),
+            _ => name.to_lowercase(),
+        }
+    }
+
+    /// The chord on a degree by name: its root, m for minor, ° diminished.
+    pub fn chord_name(&self, degree: usize) -> String {
+        let k = self.degree_key(degree);
+        let iv = k.intervals();
+        let third = iv.get(2).copied().unwrap_or(4);
+        let fifth = iv.get(4).copied().unwrap_or(7);
+        let root = NOTE_NAMES[k.root as usize % 12];
+        match (third, fifth) {
+            (3, 6) => format!("{root}°"),
+            (3, _) => format!("{root}m"),
+            _ => root.to_string(),
+        }
+    }
+
+    /// The pitch classes of the scale, a bit each.
+    pub fn mask(&self) -> u16 {
+        self.intervals().iter().fold(0u16, |m, &i| m | 1 << ((self.root as usize + i as usize) % 12))
+    }
+}
+
 /// Where a note goes when the project changes key from `from` to `to`.
 ///
 /// Scales with the same number of notes map degree to degree (A minor's
@@ -225,6 +281,26 @@ pub fn convert_pitch(pitch: u8, from: &Scale, to: &Scale) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn degree_keys_stay_in_the_notes() {
+        let c = Scale::new(0, ScaleKind::Major);
+        assert_eq!(c.degree_key(3), Scale::new(5, ScaleKind::Lydian), "IV of C is F Lydian");
+        assert_eq!(c.degree_key(4), Scale::new(7, ScaleKind::Mixolydian));
+        assert_eq!(c.degree_key(5), Scale::new(9, ScaleKind::Minor));
+        assert_eq!(c.degree_key(3).mask(), c.mask(), "the same notes");
+        assert_eq!(c.numeral(0), "I");
+        assert_eq!(c.numeral(5), "vi");
+        assert_eq!(c.numeral(6), "vii°");
+        assert_eq!(c.chord_name(5), "Am");
+        let a = Scale::new(9, ScaleKind::Minor);
+        assert_eq!(a.numeral(3), "iv");
+        assert_eq!(a.numeral(2), "III");
+        assert_eq!(a.degree_key(3), Scale::new(2, ScaleKind::Dorian), "iv of A minor is D Dorian");
+        // C played in F Lydian: C E G becomes F A C.
+        let to = c.degree_key(3);
+        assert_eq!([60u8, 64, 67].map(|p| convert_pitch(p, &c, &to)), [65, 69, 72]);
+    }
 
     #[test]
     fn contains_and_degrees() {

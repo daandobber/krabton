@@ -394,8 +394,9 @@ impl App {
             _ => 0,
         };
         // The armed track is the one that hears the pads: when another is
-        // armed, the arm moves here.
-        if self.project.tracks.iter().enumerate().any(|(i, tr)| tr.arm && i != t) {
+        // armed, the arm moves here (in Big Picture; on the desktop the arms
+        // stay as they are).
+        if self.big.on && self.project.tracks.iter().enumerate().any(|(i, tr)| tr.arm && i != t) {
             for (i, tr) in self.project.tracks.iter_mut().enumerate() {
                 tr.arm = i == t;
             }
@@ -667,6 +668,36 @@ impl App {
             self.note_off(p, &ids);
         }
         self.big.play.on_pad.remove(&who);
+    }
+
+    /// On the desktop a controller plays, always: the Play page runs
+    /// unseen on the selected track, with its sticks, triggers and buttons
+    /// as set in Big Picture (Start opens Big Picture, the right stick
+    /// pressed records).
+    pub(crate) fn desktop_pad_play(&mut self, ctx: &egui::Context, mut inp: Frame) {
+        if self.big.pads.name.is_none() && inp.pressed.is_empty() && inp.stick == (0.0, 0.0) && inp.lstick == (0.0, 0.0) && inp.lt == 0.0 && inp.rt == 0.0 {
+            return;
+        }
+        if self.project.tracks.is_empty() || !matches!(self.sel_track, TrackSel::Track(_)) {
+            return;
+        }
+        if inp.take(Nav::Record) {
+            self.toggle_record();
+        }
+        let screen = ctx.screen_rect();
+        egui::Area::new(Id::new("desktop_pad_play")).order(egui::Order::Background).fixed_pos(screen.min).interactable(false).show(ctx, |ui| {
+            let mut unseen = ui.new_child(egui::UiBuilder::new().max_rect(screen).invisible());
+            let s = Sz::of(screen);
+            let _ = self.big_play(&mut unseen, screen, &s, inp);
+        });
+    }
+
+    /// What the controller plays on the desktop, for the status bar.
+    pub(crate) fn desktop_pad_label(&self) -> Option<String> {
+        self.big.pads.name.as_ref()?;
+        let TrackSel::Track(t) = self.sel_track else { return None };
+        let track = self.project.tracks.get(t)?;
+        Some(format!("Controller plays {} ({})", track.name, self.big.play.sticks.name()))
     }
 
     pub(crate) fn big_play(&mut self, ui: &mut Ui, r: Rect, s: &Sz, mut inp: Frame) -> Vec<(Glyph, &'static str)> {

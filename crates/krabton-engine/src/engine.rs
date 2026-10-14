@@ -1639,6 +1639,16 @@ impl Engine {
                         }
                     }
                 }
+                // The arrangement's automation, while the track follows the arrangement.
+                if rt.playing.is_none() && !rt.overridden {
+                    for e in &track.automation {
+                        if let Some(v) = e.value_at(a0) {
+                            if self.envs.len() < self.envs.capacity() {
+                                self.envs.push((e.target, v));
+                            }
+                        }
+                    }
+                }
             }
         }
         self.mods.tick(&project, &self.signals, ModClock { frames: seg, sr, samples_per_beat: spb, beat: s0 }, playing, &self.envs);
@@ -1664,7 +1674,19 @@ impl Engine {
 
         // The Key drawer's key: at once, or on the next bar's first beat
         // (notes before it in this block keep the old key).
-        let (key_old, key_new, key_at) = {
+        let (key_old, key_new, key_at) = if project.key_seq_on && playing && !project.key_seq.is_empty() {
+            // The key sequence: a step per so many bars, changing on the bar.
+            let step = project.key_seq_step_beats();
+            let key_of = |pos: f64| project.key_seq_step(pos).and_then(|k| project.key_seq[k]);
+            let next = (s0 / step - 1e-9).ceil() * step;
+            let at = ((next - s0) * spb).round().max(0.0);
+            if at < seg as f64 {
+                (key_of(s0 - 1e-6), key_of(next + 1e-6), at as usize)
+            } else {
+                let k = key_of(s0);
+                (k, k, usize::MAX)
+            }
+        } else {
             let want = project.play_key;
             if want == self.key_now {
                 (want, want, usize::MAX)
@@ -1682,7 +1704,11 @@ impl Engine {
                 }
             }
         };
-        status.key_waiting.store(project.play_key != self.key_now && key_at == usize::MAX, RELAXED);
+        if key_at == usize::MAX {
+            self.key_now = key_new;
+        }
+        let sequencing = project.key_seq_on && playing && !project.key_seq.is_empty();
+        status.key_waiting.store(!sequencing && project.play_key != self.key_now && key_at == usize::MAX, RELAXED);
 
         for oi in 0..self.order.len() {
             let ti = self.order[oi];
@@ -2667,6 +2693,49 @@ mod tests {
         run(&mut e, 2.0);
         let tail = run(&mut e, 0.2);
         assert!(peak(&tail) < 1e-3, "the note was let go: {}", peak(&tail));
+    }
+
+    #[test]
+    fn arrangement_automation_moves_the_volume() {
+        // A synth note held; the volume line falls to silence at beat 2.
+        let mut p = Project::new_default();
+        let ti = p.tracks.iter().position(|t| matches!(t.instrument, Some(Instrument::Synth { .. }))).expect("a synth track");
+        let id = p.tracks[ti].id;
+        for t in p.tracks.iter_mut() {
+            t.arrangement.clear();
+        }
+        let env = p.tracks[ti].automation_mut(crate::modulation::ModTarget::Volume(id));
+        env.points = vec![(0.0, crate::project::db_to_fader_pos(0.0)), (2.0, crate::project::db_to_fader_pos(0.0)), (2.01, 0.0)];
+        let spb = 60.0 / p.bpm as f32;
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        h.send(Command::Play);
+        h.send(Command::NoteOn { track: id, pitch: 60, velocity: 0.9 });
+        run(&mut e, spb * 0.5);
+        let before = track_level(&mut e, &h, ti, spb);
+        run(&mut e, spb * 1.0);
+        let after = track_level(&mut e, &h, ti, spb);
+        assert!(before > 0.01, "playing before: {before}");
+        assert!(after < 0.05 * before, "silent after: {after} (before {before})");
+    }
+
+    #[test]
+    fn the_key_sequence_steps_on_the_bars() {
+        use crate::scale::{Scale, ScaleKind};
+        let mut p = Project::new_default();
+        p.scale = Scale::new(0, ScaleKind::Major);
+        let f = p.scale.degree_key(3);
+        p.key_seq = vec![None, Some(f)];
+        p.key_seq_bars = 1;
+        p.key_seq_on = true;
+        let bar_s = (p.beats_per_bar_f() * 60.0 / p.bpm) as f32;
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        h.send(Command::Play);
+        run(&mut e, bar_s * 0.5);
+        assert_eq!(e.key_now, None, "bar 1: the song's key");
+        run(&mut e, bar_s);
+        assert_eq!(e.key_now, Some(f), "bar 2: F Lydian");
+        run(&mut e, bar_s);
+        assert_eq!(e.key_now, None, "bar 3: round again");
     }
 
     #[test]

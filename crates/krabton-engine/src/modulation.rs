@@ -594,12 +594,13 @@ impl ModRuntime {
         self.track_mix.resize(p.tracks.len(), MixMod::NONE);
         self.return_mix.clear();
         self.return_mix.resize(p.returns.len(), MixMod::NONE);
-        // Clip envelopes need a parameter set for whatever they move.
+        // Clip envelopes and the arrangement's automation need a parameter
+        // set for whatever they move.
         self.has_env = false;
         for t in &p.tracks {
             let clips = t.slots.iter().flatten().chain(t.arrangement.iter().map(|a| &a.clip));
-            for c in clips {
-                for e in &c.envelopes {
+            for e in clips.flat_map(|c| c.envelopes.iter()).chain(t.automation.iter()) {
+                {
                     self.has_env = true;
                     if let ModTarget::Param { owner, .. } = e.target {
                         if !self.slots.iter().any(|s| s.owner == owner) {

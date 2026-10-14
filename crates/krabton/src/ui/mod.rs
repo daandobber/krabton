@@ -2,6 +2,7 @@
 
 pub mod ambient_view;
 pub mod arrangement;
+pub mod automation;
 pub mod beads_view;
 pub mod browser;
 pub mod chime_view;
@@ -18,6 +19,7 @@ pub mod glitch_view;
 pub mod grains_view;
 pub mod inst_screen;
 pub mod io_section;
+pub mod key_drawer;
 pub mod lens;
 pub mod grid_panel;
 pub mod modulation;

@@ -63,11 +63,33 @@ pub struct ArrState {
     lane_top: f32,
     sec_drag: Option<SectionDrag>,
     pub sel_section: Option<u64>,
+    /// Automation mode: the lines over the clips, and the lanes under them.
+    pub(crate) automation: bool,
+    /// Paint the automation along the grid instead of placing points.
+    pub(crate) auto_draw: bool,
+    pub(crate) auto_drag: Option<crate::ui::automation::AutoDrag>,
+    /// Where each track starts (from the first), and the end of the last.
+    pub(crate) tops: Vec<f32>,
 }
 
 impl Default for ArrState {
     fn default() -> Self {
-        Self { px_per_beat: 18.0, scroll_x: 0.0, scroll_y: 0.0, grid: 4.0, follow: true, drag: None, loop_drag: None, lane_top: 0.0, sec_drag: None, sel_section: None }
+        Self {
+            px_per_beat: 18.0,
+            scroll_x: 0.0,
+            scroll_y: 0.0,
+            grid: 4.0,
+            follow: true,
+            drag: None,
+            loop_drag: None,
+            lane_top: 0.0,
+            sec_drag: None,
+            sel_section: None,
+            automation: false,
+            auto_draw: false,
+            auto_drag: None,
+            tops: Vec::new(),
+        }
     }
 }
 
@@ -141,6 +163,18 @@ impl App {
             if tui.button("+").on_hover_text("Zoom in").clicked() {
                 self.arr.px_per_beat = (self.arr.px_per_beat * 1.4).min(400.0);
             }
+            tui.separator();
+            let auto = self.arr.automation;
+            let a = egui::Button::new(egui::RichText::new("Automation").color(if auto { TEXT_DARK } else { TEXT })).fill(if auto { crate::ui::automation::AUTO } else { PANEL3 });
+            if tui.add(a).on_hover_text("Show and draw automation over the clips: pick a parameter in a track's header, + for more lanes").clicked() {
+                self.arr.automation = !auto;
+            }
+            if auto {
+                let draw = self.arr.auto_draw;
+                if tui.selectable_label(draw, "Draw").on_hover_text("Paint the line along the grid (off: click for points, drag them)").clicked() {
+                    self.arr.auto_draw = !draw;
+                }
+            }
             tui.label(egui::RichText::new("Double-click a MIDI lane to create a clip. Drag edges to resize. Alt = no snap.").small().color(TEXT_DIM));
         }
 
@@ -171,13 +205,23 @@ impl App {
             }
         }
         self.arr.scroll_x = self.arr.scroll_x.max(0.0);
-        let content_h = nt as f32 * lane_h + 60.0;
+        // Where each track starts: its lane, and in Automation mode its
+        // automation lanes under it.
+        let auto_h = (lane_h * 0.7).clamp(30.0, 120.0);
+        let mut tops = Vec::with_capacity(nt + 1);
+        let mut acc = 0.0f32;
+        for tr in &self.project.tracks {
+            tops.push(acc);
+            acc += lane_h + if self.arr.automation { tr.auto_lanes.len() as f32 * auto_h } else { 0.0 };
+        }
+        tops.push(acc);
+        let content_h = acc + 60.0;
         self.arr.scroll_y = self.arr.scroll_y.clamp(0.0, (content_h - lanes.height()).max(0.0));
         let sx = self.arr.scroll_x;
         let sy = self.arr.scroll_y;
         let bx = |beat: f64| lanes.left() + beat as f32 * ppb - sx;
         let xb = |x: f32| ((x - lanes.left() + sx) / ppb) as f64;
-        let lane_y = |i: usize| lanes.top() + i as f32 * lane_h - sy;
+        let lane_y = |i: usize| lanes.top() + tops.get(i).copied().unwrap_or(acc) - sy;
         self.arr.lane_top = lane_y(0);
         // A drag that ended elsewhere (e.g. dropped in the session view).
         if !ui.input(|i| i.pointer.any_down()) {
@@ -227,7 +271,26 @@ impl App {
             let head = Rect::from_min_size(pos2(heads.left(), y), vec2(head_w - 1.0, lane_h - 1.0));
             self.arr_head(&mut hui, i, head);
             self.arr_lane(&mut lui, i, lane, &bx, &xb, free);
+            // The automation lanes under it.
+            if self.arr.automation {
+                let n = self.project.tracks.get(i).map(|t| t.auto_lanes.len()).unwrap_or(0);
+                for k in 0..n {
+                    let ky = y + lane_h + k as f32 * auto_h;
+                    let kl = Rect::from_min_size(pos2(lanes.left(), ky), vec2(lanes.width(), auto_h - 1.0));
+                    let kh = Rect::from_min_size(pos2(heads.left(), ky), vec2(head_w - 1.0, auto_h - 1.0));
+                    if !kl.intersects(lanes) {
+                        continue;
+                    }
+                    lui.painter().rect_filled(kl, 0.0, PANEL2);
+                    lui.painter().line_segment([pos2(kl.left(), kl.bottom() + 0.5), pos2(kl.right(), kl.bottom() + 0.5)], Stroke::new(1.0_f32, LINE_SOFT));
+                    self.auto_lane_head(&mut hui, i, k, kh);
+                    if let Some(target) = self.project.tracks.get(i).and_then(|t| t.auto_lanes.get(k)).copied() {
+                        self.auto_lane(&mut lui, i, target, kl, &bx, &xb, free, false);
+                    }
+                }
+            }
         }
+        self.arr.tops = tops.clone();
         if nt == 0 {
             p.text(lanes.center(), Align2::CENTER_CENTER, "No tracks yet: drop an instrument from the browser", body(), TEXT_DIM);
         }
@@ -525,8 +588,21 @@ impl App {
         rect_fill(&p, r, 0.0, if selected { PANEL3 } else { PANEL2 });
         rect_fill(&p, Rect::from_min_size(r.min, vec2(5.0, r.height())), 0.0, color);
         text_in(&p, Rect::from_min_max(pos2(r.left() + 8.0, r.top() + 2.0), pos2(r.right() - 4.0, r.top() + 22.0)), &name, body(), TEXT);
-        let kind_txt = if kind == TrackKind::Midi { "MIDI" } else { "Audio" };
-        text(&p, pos2(r.left() + 12.0, r.top() + 28.0), Align2::LEFT_CENTER, kind_txt, small(), TEXT_DIM);
+        if self.arr.automation {
+            // What the line over the clips shows, and + for another lane.
+            let cr = Rect::from_min_max(pos2(r.left() + 8.0, r.top() + 20.0), pos2(r.right() - 40.0, r.top() + 38.0));
+            let cur = self.project.tracks[i].auto_shown;
+            if let Some(pick) = self.auto_chooser(ui, cr, i, cur, Id::new(("auto_pick", id))) {
+                self.project.tracks[i].auto_shown = pick;
+            }
+            let plus = Rect::from_min_size(pos2(r.right() - 36.0, r.top() + 21.0), vec2(18.0, 16.0));
+            if button(ui, plus, Id::new(("auto_plus", id)), "+", false, ACCENT).on_hover_text("Another automation lane under this track").clicked() {
+                self.add_auto_lane(i);
+            }
+        } else {
+            let kind_txt = if kind == TrackKind::Midi { "MIDI" } else { "Audio" };
+            text(&p, pos2(r.left() + 12.0, r.top() + 28.0), Align2::LEFT_CENTER, kind_txt, small(), TEXT_DIM);
+        }
         if resp.clicked() {
             let ctrl = ui.input(|k| k.modifiers.ctrl || k.modifiers.command);
             self.click_track(i, ctrl);
@@ -625,6 +701,12 @@ impl App {
             let r = Rect::from_min_max(pos2(x0, lane.top() + 1.0), pos2(x1.max(x0 + 3.0), lane.bottom() - 1.0));
             self.arr_clip(ui, i, cid, r, lane, color, free);
         }
+        // Automation over the clips.
+        if self.arr.automation {
+            if let Some(target) = self.project.tracks.get(i).and_then(|t| t.auto_shown) {
+                self.auto_lane(ui, i, target, lane, bx, xb, free, true);
+            }
+        }
         // A recording in progress grows from where it started.
         let spb = self.engine.status.sample_rate.load() as f64 * 60.0 / self.project.bpm.max(1.0);
         if let Some(take) = self.take_on(tid, crate::recording::TakeTarget::Arrangement) {
@@ -685,9 +767,12 @@ impl App {
                     // Moving up or down takes the clip to another track of the same kind.
                     let mut i = i;
                     if matches!(d.kind, DragKind::Move) {
-                        let row = ((pos.y - self.arr.lane_top) / self.lane_h()).floor();
-                        if row >= 0.0 && (row as usize) < self.project.tracks.len() {
-                            let to = row as usize;
+                        // The track under the pointer (its own lane, not its automation lanes).
+                        let rel = pos.y - self.arr.lane_top;
+                        let nt = self.project.tracks.len();
+                        let lane_h = self.lane_h();
+                        let row = self.arr.tops.iter().take(nt).rposition(|&top| rel >= top).filter(|&k| rel < self.arr.tops[k] + lane_h);
+                        if let Some(to) = row {
                             if to != i && self.project.tracks[to].kind == self.project.tracks[i].kind {
                                 if let Some(at) = self.project.tracks[i].arrangement.iter().position(|a| a.id == cid) {
                                     let ac = self.project.tracks[i].arrangement.remove(at);
