@@ -1536,7 +1536,7 @@ impl PadVoice {
         // instead of stopping dead (a cymbal keeps ringing).
         self.tail = None;
         if self.active && !self.choking && (!pad.layers.is_empty() || pad.sample.is_some()) {
-            let vel_gain = if pad.layers.is_empty() { self.vel.powf(1.3) } else { self.vel.powf(0.5) }.max(0.02);
+            let vel_gain = pad.vel_gain(self.vel);
             self.tail = Some((self.layer, self.rr, self.sample_pos, vel_gain * self.amp * self.choke));
         }
         self.active = true;
@@ -1553,9 +1553,10 @@ impl PadVoice {
         for (i, p) in self.phase.iter_mut().enumerate() {
             *p = if i % 2 == 0 { 0.0 } else { 0.37 * i as f32 % 1.0 };
         }
-        let d = pad.decay.max(0.05);
+        // Velocity moves the tone and the decay as much as the pad says.
+        let (tone, decay) = pad.vel_tone_decay(vel);
+        let d = decay.max(0.05);
         let tr = 2f32.powf(pad.tune / 12.0);
-        let tone = pad.tone;
         self.env3_coef = decay_coef(0.004, sr);
         self.amp_coef = 1.0;
         self.env2_coef = 0.0;
@@ -1859,7 +1860,7 @@ impl DrumState {
                 continue;
             }
             // Recorded layers carry most of the dynamics themselves.
-            let vel_gain = if pad.layers.is_empty() { v.vel.powf(1.3) } else { v.vel.powf(0.5) }.max(0.02);
+            let vel_gain = pad.vel_gain(v.vel);
             let level = pad.level_db + if pad.layers.is_empty() { 0.0 } else { pad.trim_db };
             let gain = db_to_gain(level) * vel_gain * 0.32;
             let (pl, pr) = pan_gains(pad.pan);
@@ -2085,6 +2086,34 @@ mod tests {
             d.render(&pads, &mut l, &mut r, sr);
         }
         assert!(!d.voices[open].active, "the open hat was choked");
+    }
+
+    #[test]
+    fn velocity_mod_lengthens_and_brightens_a_crash() {
+        // A crash, hit softly and hard: with Vel > Decay up the hard hit
+        // rings longer; with Vel > Level at 0 both are as loud.
+        let mut pad = DrumPad::new(DrumVoice::AcCrash);
+        pad.vel_decay = 1.0;
+        let (_, soft) = pad.vel_tone_decay(0.3);
+        let (_, hard) = pad.vel_tone_decay(1.0);
+        assert!(hard > 2.0 * soft, "{soft} {hard}");
+        pad.vel_tone = 1.0;
+        assert!(pad.vel_tone_decay(1.0).0 > pad.vel_tone_decay(0.3).0);
+        pad.vel_level = 0.0;
+        assert!((pad.vel_gain(0.2) - pad.vel_gain(1.0)).abs() < 1e-6);
+        // Heard: the hard hit is still ringing when the soft one is gone.
+        let tail = |vel: f32| {
+            let pads = vec![pad.clone()];
+            let mut d = DrumState::new();
+            d.note_on(&pads, pads[0].note, vel, 48000.0);
+            let mut l = vec![0.0f32; 48000 * 3];
+            let mut r = vec![0.0f32; 48000 * 3];
+            for (cl, cr) in l.chunks_mut(256).zip(r.chunks_mut(256)) {
+                d.render(&pads, cl, cr, 48000.0);
+            }
+            l[48000 * 2..].iter().map(|v| v * v).sum::<f32>()
+        };
+        assert!(tail(1.0) > 4.0 * tail(0.3), "{} {}", tail(1.0), tail(0.3));
     }
 
     #[test]

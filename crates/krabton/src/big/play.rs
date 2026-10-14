@@ -1332,6 +1332,11 @@ impl App {
     /// Where each finger is (by touch id; None once lifted), or the mouse
     /// (HOLD_MOUSE) when there is no touch screen.
     fn pointers(&mut self, ui: &Ui) -> Vec<(u64, Option<Pos2>)> {
+        // On the desktop the page runs unseen for the controller only: the
+        // mouse and fingers belong to the desktop.
+        if !self.big.on {
+            return Vec::new();
+        }
         let touches: Vec<(u64, egui::TouchPhase, Pos2)> = ui.input(|i| {
             i.events
                 .iter()

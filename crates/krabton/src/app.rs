@@ -359,14 +359,8 @@ pub struct App {
     pub(crate) sel_more: Vec<u64>,
     /// The Key drawer at the bottom is open.
     pub(crate) transpose_open: bool,
-    /// Its buttons keep the key (on) or only while held, like chord buttons.
-    pub(crate) key_latch: bool,
-    /// A key button held (with the latch off).
-    pub(crate) key_held: bool,
     /// The step of the key sequence the next press fills.
     pub(crate) key_seq_sel: Option<usize>,
-    /// The drawer shows every key's chord buttons.
-    pub(crate) key_all: bool,
     pub sel_clip: Option<ClipSel>,
     pub sel_scene: usize,
     pub file_path: Option<PathBuf>,
@@ -526,10 +520,7 @@ impl App {
             sel_track: TrackSel::Track(0),
             sel_more: Vec::new(),
             transpose_open: false,
-            key_latch: true,
-            key_held: false,
             key_seq_sel: None,
-            key_all: false,
             sel_clip: Some(ClipSel::Slot { track: 0, scene: 1 }),
             sel_scene: 0,
             file_path: None,
@@ -2526,7 +2517,6 @@ impl App {
                     self.project.key_seq = nums.iter().map(|&d| if d == 0 { None } else { Some(song.degree_key(d)) }).collect();
                     self.project.key_seq_on = true;
                 }
-                "keyall" => self.key_all = true,
                 // playkey=ROOT[,KIND]: the song plays in that key (KIND an index into the scales).
                 "playkey" => {
                     let root = nums.first().copied().unwrap_or(0) as u8 % 12;

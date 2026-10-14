@@ -31,6 +31,9 @@ static PAD_SPECS: &[ParamSpec] = &[
     ParamSpec::log("Decay", "Pad", 0.1, 4.0, 1.0, Unit::None),
     ParamSpec::lin("Tone", "Pad", 0.0, 1.0, 0.5, Unit::Percent),
     ParamSpec::lin("Pan", "Pad", -1.0, 1.0, 0.0, Unit::Pan),
+    ParamSpec::lin("Vel > Level", "Velocity", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vel > Tone", "Velocity", -1.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Vel > Decay", "Velocity", -1.0, 1.0, 0.0, Unit::Percent),
 ];
 
 enum ChainAction {
@@ -1686,7 +1689,7 @@ impl App {
                                     for name in macros.iter().flatten() {
                                         specs.push(ParamSpec::lin(name, "Pad", 0.0, 1.0, 0.5, Unit::Percent));
                                     }
-                                    let mut vals = vec![pad.level_db, pad.tune, pad.decay, pad.tone, pad.pan];
+                                    let mut vals = vec![pad.level_db, pad.tune, pad.decay, pad.tone, pad.pan, pad.vel_level, pad.vel_tone, pad.vel_decay];
                                     vals.extend(macros.iter().zip([pad.a, pad.b]).filter(|(m, _)| m.is_some()).map(|(_, v)| v));
                                     if param_grid(ui, Id::new(("pad_params", track_id, k)), &specs, &mut vals, accent_now(), h - 80.0) {
                                         pad.level_db = vals[0];
@@ -1694,7 +1697,10 @@ impl App {
                                         pad.decay = vals[2];
                                         pad.tone = vals[3];
                                         pad.pan = vals[4];
-                                        let mut extra = vals[5..].iter();
+                                        pad.vel_level = vals[5];
+                                        pad.vel_tone = vals[6];
+                                        pad.vel_decay = vals[7];
+                                        let mut extra = vals[8..].iter();
                                         if macros[0].is_some() {
                                             pad.a = *extra.next().unwrap_or(&pad.a);
                                         }

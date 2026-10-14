@@ -474,6 +474,33 @@ pub struct DrumPad {
     /// is loaded; the pad's own level comes on top.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub trim_db: f32,
+    /// What velocity does to the pad: how much it sets the loudness (0:
+    /// always full, 1: all of it), and how much a hard hit brightens it and
+    /// lengthens it (-1..1; negative turns it around).
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub vel_level: f32,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub vel_tone: f32,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub vel_decay: f32,
+}
+
+impl DrumPad {
+    /// The gain velocity gives a hit (recorded layers carry most of the
+    /// dynamics themselves).
+    pub fn vel_gain(&self, vel: f32) -> f32 {
+        let curve = if self.layers.is_empty() { vel.powf(1.3) } else { vel.powf(0.5) }.max(0.02);
+        1.0 + (curve - 1.0) * self.vel_level.clamp(0.0, 1.0)
+    }
+
+    /// The tone and decay of a hit at `vel`, moved by the velocity knobs
+    /// (around a usual velocity of 0.7).
+    pub fn vel_tone_decay(&self, vel: f32) -> (f32, f32) {
+        let dv = vel.clamp(0.0, 1.0) - 0.7;
+        let tone = (self.tone + self.vel_tone.clamp(-1.0, 1.0) * dv * 1.2).clamp(0.0, 1.0);
+        let decay = self.decay * 2f32.powf(self.vel_decay.clamp(-1.0, 1.0) * dv * 2.5);
+        (tone, decay)
+    }
 }
 
 fn half() -> f32 {
@@ -513,6 +540,9 @@ impl DrumPad {
             choke: 0,
             layers: Vec::new(),
             trim_db: 0.0,
+            vel_level: 1.0,
+            vel_tone: 0.0,
+            vel_decay: 0.0,
         }
     }
 }
