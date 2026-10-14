@@ -330,7 +330,8 @@ pub(crate) fn guitar_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive,
         changed |= set(p, POSITION, (f - 1).clamp(0, 12) as f32);
     }
     let painter = frame(ui, rect);
-    let electric = p[MODEL].round() >= 2.0;
+    let model = (p[MODEL].round().max(0.0) as usize).min(MODELS.len() - 1);
+    let electric = is_electric(model);
     let wood = if electric { Color32::from_rgb(0x2a, 0x1d, 0x14) } else { Color32::from_rgb(0x3a, 0x28, 0x18) };
     rect_fill(&painter, neck, 2.0, wood);
     let capo = p[CAPO].round().clamp(0.0, 12.0) as i32;
@@ -361,17 +362,20 @@ pub(crate) fn guitar_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive,
         rect_line(&painter, Rect::from_center_size(pos2(x, neck.center().y), vec2(6.0, neck.height() + 8.0)), 2.0, 1.0, DIM);
     }
     let tuning = (p[TUNING].round().max(0.0) as usize).min(TUNINGS.len() - 1);
-    let open = TUNING_NOTES[tuning];
-    let gap = neck.height() / 6.0;
+    let open = open_strings(model, tuning);
+    // The strings it has, spread over the neck (a ukulele's four wider apart).
+    let strings: Vec<usize> = (0..6).filter(|&s| open[s].is_some()).collect();
+    let count = strings.len().max(1);
+    let gap = neck.height() / count as f32;
     let t = ui.input(|i| i.time) as f32;
     let mut any = false;
-    for s in 0..6 {
-        let y = neck.top() + gap * (5 - s) as f32 + gap * 0.5;
+    for (row, &s) in strings.iter().enumerate() {
+        let y = neck.top() + gap * (count - 1 - row) as f32 + gap * 0.5;
         let fret = live.vals[s];
         let level = live.vals[6 + s].max(0.0);
         let held = fret >= 0.0;
         let from = if held && fret as i32 > capo { (fret_x(fret - 1.0) + fret_x(fret)) * 0.5 } else { neck.left() };
-        let thick = 1.0 + (5 - s) as f32 * 0.3;
+        let thick = 1.0 + (5 - s.min(5)) as f32 * 0.3 * if MODELS[model] == "Bass" { 1.8 } else { 1.0 };
         let amp = if held { (level * 30.0).min(3.0) } else { 0.0 };
         let base = if held { mix(Color32::from_rgb(0xb0, 0xb0, 0xb8), YELLOW, (amp / 3.0).min(1.0)) } else { Color32::from_rgb(0x90, 0x90, 0x98) };
         // Behind the finger the string is still; from it to the bridge it rings.
@@ -402,13 +406,14 @@ pub(crate) fn guitar_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive,
         if p.get(STRING_MODE).is_some_and(|m| m.round() as usize == 3) && 6 - p.get(ONE_STRING).map(|v| v.round().clamp(1.0, 6.0) as usize).unwrap_or(3) == s {
             painter.line_segment([pos2(neck.left(), y), pos2(neck.right(), y)], Stroke::new(thick + 3.0, YELLOW.gamma_multiply(0.12)));
         }
-        let name = krabton_engine::note_name(open[s] + capo as u8);
+        let name = krabton_engine::note_name(open[s].unwrap_or(0) + capo as u8);
         let name = name.trim_end_matches(|c: char| c.is_ascii_digit() || c == '-');
         caption(&painter, pos2(rect.left() + 8.0, y), Align2::LEFT_CENTER, name, if held { YELLOW } else { DIM });
     }
-    let model = MODELS[(p[MODEL].round().max(0.0) as usize).min(MODELS.len() - 1)];
+    let tuned = tuning_name(model, tuning);
+    let model = MODELS[model];
     let mode = (p.get(STRING_MODE).copied().unwrap_or(0.0).round().max(0.0) as usize).min(STRING_MODES.len() - 1);
-    let title = if mode == 0 { format!("{}  ·  {}", model, TUNINGS[tuning]) } else { format!("{}  ·  {}  ·  {}", model, TUNINGS[tuning], STRING_MODES[mode].to_lowercase()) };
+    let title = if mode == 0 { format!("{}  ·  {}", model, tuned) } else { format!("{}  ·  {}  ·  {}", model, tuned, STRING_MODES[mode].to_lowercase()) };
     caption(&painter, rect.left_top() + vec2(10.0, 6.0), Align2::LEFT_TOP, &title, accent_now());
     if capo > 0 {
         caption(&painter, pos2(rect.right() - 10.0, rect.top() + 6.0), Align2::RIGHT_TOP, &format!("capo {capo}"), DIM);

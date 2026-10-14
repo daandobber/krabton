@@ -902,10 +902,10 @@ impl App {
                             K::Acid => Instrument::synth("Acid"),
                             K::Progression => Instrument::synth("Soft Pad"),
                             K::PianoPlayer => Instrument::synth("Keys"),
-                            K::BassPlayer => Instrument::synth("Fat Bass"),
+                            K::BassPlayer => Instrument::guitar("Finger Bass"),
                             K::GuitarChords => Instrument::guitar("Strummed Chords"),
-                            K::Ukulele => Instrument::guitar("Nylon Classical"),
-                            K::Banjo => Instrument::strings("Mandolin"),
+                            K::Ukulele => Instrument::guitar("Ukulele"),
+                            K::Banjo => Instrument::guitar("Banjo"),
                             K::Section => Instrument::strings("Bowed"),
                             _ => Instrument::synth("Pluck"),
                         };

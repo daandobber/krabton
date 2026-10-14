@@ -2081,6 +2081,12 @@ impl Engine {
 
 fn sync_devices(devs: &[Device], rts: &mut Vec<(u64, EffectState)>, sr: f32, trash: &mut Vec<GarbageInner>, parked: &mut Vec<(u64, Box<dyn AudioProcessor>)>) {
     sync_chain(devs, rts, sr, trash, parked);
+    // A convolution's file comes with the device.
+    for (d, (_, st)) in devs.iter().zip(rts.iter_mut()) {
+        if let EffectState::Convolution(c) = st {
+            c.set_file(d.sample.as_ref());
+        }
+    }
     // Effects inside effects (the Glitch Sequencer's slots).
     for (d, (_, st)) in devs.iter().zip(rts.iter_mut()) {
         if let EffectState::Glitch(g) = st {

@@ -420,6 +420,8 @@ impl App {
         let mut data = dev.data.clone();
         let mut children = dev.children.clone();
         let preset_name = dev.preset.clone();
+        let conv_file = dev.sample.clone();
+        let mut conv_act = None;
         let mut picked = None;
         let mut glitch_edit = crate::ui::glitch_view::GlitchEdit::default();
         let accent = if enabled { accent_now() } else { TEXT_DIM };
@@ -433,6 +435,7 @@ impl App {
             EffectKind::Grains => 360.0,
             EffectKind::OpenAir => 380.0,
             EffectKind::Beads => 400.0,
+            EffectKind::Convolution => 340.0,
             _ => 400.0,
         };
         let mut width = self.prefs.layout.display(kind.name(), default_w);
@@ -506,6 +509,10 @@ impl App {
                 crate::ui::lens::comp_panel(ui, id, dev_id, &mut params, accent, h, mv.as_mut(), &status, &mut width)
             } else if kind == EffectKind::LensLimiter {
                 crate::ui::lens::limiter_panel(ui, id, dev_id, &mut params, accent, h, mv.as_mut(), &status, &mut width)
+            } else if kind == EffectKind::Convolution {
+                let (c, act) = convolution_face(ui, id, &mut params, conv_file.as_ref(), accent, h, mv.as_mut(), &mut width);
+                conv_act = act;
+                c
             } else {
                 param_grid_mod(ui, id, kind.specs(), &mut params, accent, h - 24.0, mv.as_mut())
             }
@@ -533,6 +540,19 @@ impl App {
             dev.data = data;
             dev.children = children;
         }
+        match conv_act {
+            Some(ConvAct::Load(path)) => match SampleRef::load(&path) {
+                Ok(s) => {
+                    let dev = self.chain_mut(sel)?.get_mut(d)?;
+                    dev.sample = Some(s);
+                    dev.params[krabton_engine::dsp::fx::convolution::SPACE] = krabton_engine::dsp::fx::convolution::FILE as f32;
+                }
+                Err(e) => self.toast(e),
+            },
+            Some(ConvAct::Clear) => self.chain_mut(sel)?.get_mut(d)?.sample = None,
+            None => {}
+        }
+        let dev = self.chain_mut(sel)?.get_mut(d)?;
         if let Some(pr) = picked.and_then(|i| presets::effect(kind).get(i)) {
             dev.params = presets::apply_to(kind.specs(), pr, &dev.params);
             if let Some(f) = pr.data {
@@ -1868,6 +1888,90 @@ enum Marker {
 
 /// The nearest frame to `f` where the left channel crosses zero (within
 /// about 4 ms), so loops do not click.
+/// What the Convolution's face asks for.
+enum ConvAct {
+    Load(std::path::PathBuf),
+    Clear,
+}
+
+/// The Convolution's face: the answer it plays, falling away (or the file's
+/// sound), with the space's name; drop a WAV or FLAC on it, or Load one,
+/// for Your File. Its knobs beside it.
+#[allow(clippy::too_many_arguments)]
+fn convolution_face(ui: &mut Ui, id: Id, params: &mut [f32], file: Option<&SampleRef>, accent: Color32, h: f32, mv: Option<&mut ModView>, width: &mut f32) -> (bool, Option<ConvAct>) {
+    use krabton_engine::dsp::fx::convolution::{self as cv, FILE, SPACES};
+    let mut act = None;
+    let changed = ui
+        .horizontal_top(|ui| {
+            ui.vertical(|ui| {
+                let (rect, resp) = ui.allocate_exact_size(vec2(*width, (h - 58.0).max(70.0)), Sense::click());
+                let space = (params[cv::SPACE].round().max(0.0) as usize).min(SPACES.len() - 1);
+                let size = params[cv::SIZE];
+                let decay = params[cv::DECAY];
+                let reverse = params[cv::REVERSE] >= 0.5;
+                if space == FILE {
+                    draw_waveform(ui, rect, file, -1.0);
+                    if file.is_none() {
+                        text(ui.painter(), rect.center(), Align2::CENTER_CENTER, "Drop a WAV or FLAC here, or Load one", small(), TEXT_DIM);
+                    }
+                } else {
+                    // The answer's loudness over time (made small, kept until it changes).
+                    let key = (space as u64) << 40 | ((size * 100.0) as u64) << 20 | ((decay * 100.0) as u64) << 1 | reverse as u64;
+                    let cache = id.with("sketch");
+                    let pts = match ui.ctx().memory(|m| m.data.get_temp::<(u64, std::sync::Arc<Vec<f32>>)>(cache)) {
+                        Some((k, v)) if k == key => v,
+                        _ => {
+                            let v = std::sync::Arc::new(cv::sketch(space, size, decay, reverse, 160));
+                            ui.ctx().memory_mut(|m| m.data.insert_temp(cache, (key, v.clone())));
+                            v
+                        }
+                    };
+                    let p = ui.painter();
+                    rect_fill(p, rect, 3.0, BG);
+                    let n = pts.len().max(1);
+                    let w = rect.width() / n as f32;
+                    for (i, v) in pts.iter().enumerate() {
+                        let x = rect.left() + i as f32 * w;
+                        let bar = v * (rect.height() - 22.0);
+                        let r = Rect::from_min_max(pos2(x, rect.bottom() - 4.0 - bar), pos2(x + w.max(1.0), rect.bottom() - 4.0));
+                        p.rect_filled(r, 0.0, shade(accent, 0.35 + 0.55 * v));
+                    }
+                    text(p, pos2(rect.left() + 8.0, rect.top() + 10.0), Align2::LEFT_CENTER, SPACES[space], egui::FontId::proportional(14.0), TEXT);
+                    if reverse {
+                        text(p, pos2(rect.right() - 8.0, rect.top() + 10.0), Align2::RIGHT_CENTER, "reversed", small(), TEXT_DIM);
+                    }
+                }
+                if let Some(item) = drop_payload::<BrowserItem>(&resp) {
+                    if let BrowserItem::Sample(path) = &*item {
+                        act = Some(ConvAct::Load(path.clone()));
+                    }
+                }
+                if resp.dnd_hover_payload::<BrowserItem>().is_some() {
+                    rect_line(ui.painter(), rect, 2.0, 2.0, accent_now());
+                }
+                resp.on_hover_text("The space's answer to a click, as it falls away. Drop a WAV or FLAC from the browser on it to play your own (Your File). Drag the right edge to make it wider");
+                width_grip(ui, id.with("conv_width"), rect, width, 200.0, 1200.0);
+                ui.horizontal(|ui| {
+                    if ui.small_button("Load file...").on_hover_text("An impulse response of your own (WAV or FLAC)").clicked() {
+                        if let Some(path) = rfd::FileDialog::new().add_filter("Audio", &["wav", "flac", "WAV", "FLAC"]).pick_file() {
+                            act = Some(ConvAct::Load(path));
+                        }
+                    }
+                    if let Some(s) = file {
+                        ui.label(RichText::new(&s.name).small().color(TEXT_DIM));
+                        if ui.small_button("x").on_hover_text("Forget the file").clicked() {
+                            act = Some(ConvAct::Clear);
+                        }
+                    }
+                });
+            });
+            ui.add_space(6.0);
+            param_grid_mod(ui, id, cv::SPECS, params, accent, h - 24.0, mv)
+        })
+        .inner;
+    (changed, act)
+}
+
 fn snap_to_zero(s: &SampleRef, f: f64) -> f64 {
     let x = &s.left;
     let c = (f as usize).min(x.len().saturating_sub(2));

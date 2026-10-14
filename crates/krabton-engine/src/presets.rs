@@ -127,6 +127,10 @@ pub fn effect(kind: EffectKind) -> &'static [Preset] {
         E::AwAir3 => AW_AIR,
         E::AwCapacitor2 => AW_CAPACITOR,
         E::AwDeRez2 => AW_DEREZ,
+        E::Sky => SKY,
+        E::Massive => MASSIVE,
+        E::Smear => SMEAR,
+        E::Convolution => CONVOLUTION,
         E::AwTapeDelay2 => AW_TAPE_DELAY,
         _ => &[],
     }
@@ -608,6 +612,55 @@ static MOO: &[Preset] = &[
     p("Barber Pole", &[("Shift", N(60.0)), ("Sideband", C("Up")), ("Delay", N(0.08)), ("Feedback", N(0.85))]),
     p("Spiral Apart", &[("Shift", N(40.0)), ("Sideband", C("Both")), ("Feedback", N(0.7))]),
     p("Alien", &[("Shift", N(300.0)), ("Sideband", C("Up")), ("Delay", N(0.15)), ("Feedback", N(0.6))]),
+];
+
+static SKY: &[Preset] = &[
+    p("Huge Cloud", &[("Type", C("Cloud")), ("Decay", N(12.0)), ("Size", N(0.9)), ("Character", N(0.7)), ("Modulation", N(0.6)), ("Mix", N(0.45))]),
+    p("Bloom Pad", &[("Type", C("Bloom")), ("Decay", N(8.0)), ("Character", N(0.7)), ("Mix", N(0.4))]),
+    p("Choir Tail", &[("Type", C("Chorale")), ("Decay", N(6.0)), ("Character", N(0.3)), ("Mix", N(0.4))]),
+    p("Volume Swells", &[("Type", C("Swell")), ("Decay", N(7.0)), ("Character", N(0.5)), ("Mix", N(0.55))]),
+    p("Magneto Echo", &[("Type", C("Magneto")), ("Decay", N(4.0)), ("Character", N(0.4)), ("Mix", N(0.4))]),
+    p("Shimmer Sky", &[("Type", C("Hall")), ("Decay", N(10.0)), ("Shimmer", N(0.6)), ("Size", N(0.8)), ("Mix", N(0.45))]),
+    p("Small Room", &[("Type", C("Room")), ("Decay", N(0.8)), ("Size", N(0.4)), ("Character", N(0.6)), ("Mix", N(0.25))]),
+    p("Bright Plate", &[("Type", C("Plate")), ("Decay", N(2.5)), ("High", N(12000.0)), ("Character", N(0.6)), ("Mix", N(0.3))]),
+    p("Dark Hall", &[("Type", C("Hall")), ("Decay", N(6.0)), ("High", N(2500.0)), ("Low", N(1.4)), ("Mix", N(0.35))]),
+];
+
+static MASSIVE: &[Preset] = &[
+    p("Blooming Echoes", &[("Mode", C("Nebula")), ("Delay", N(350.0)), ("Warp", N(0.4)), ("Feedback", N(0.8)), ("Density", N(0.6))]),
+    p("Comet Trails", &[("Mode", C("Comet")), ("Delay", N(400.0)), ("Feedback", N(0.7)), ("Density", N(0.3)), ("Warp", N(0.2))]),
+    p("Rhythm Pulsar", &[("Mode", C("Pulsar")), ("Sync", C("1/8")), ("Feedback", N(0.6)), ("Density", N(0.2))]),
+    p("Vast Space", &[("Mode", C("Quasar")), ("Delay", N(600.0)), ("Feedback", N(0.9)), ("Density", N(0.9))]),
+    p("Endless Horizon", &[("Mode", C("Horizon")), ("Delay", N(800.0)), ("Feedback", N(0.95)), ("Density", N(0.8)), ("Mix", N(0.6))]),
+    p("Bottomless", &[("Mode", C("Void")), ("Delay", N(900.0)), ("Feedback", N(0.93)), ("Density", N(1.0)), ("High Cut", N(4000.0))]),
+    p("Wobbly Echoes", &[("Mode", C("Drift")), ("Delay", N(300.0)), ("Feedback", N(0.7)), ("Mod Depth", N(0.7)), ("Mod Rate", N(0.8))]),
+    p("Halo Pad", &[("Mode", C("Halo")), ("Delay", N(500.0)), ("Feedback", N(0.85)), ("Density", N(0.8)), ("Mix", N(0.55))]),
+    p("Infinite Hold", &[("Mode", C("Quasar")), ("Delay", N(700.0)), ("Feedback", N(1.0)), ("Density", N(0.9)), ("Mix", N(0.6))]),
+];
+
+static SMEAR: &[Preset] = &[
+    p("Cavern", &[("Length", N(400.0)), ("Diffuse", N(0.8)), ("Reflect", N(0.7)), ("Dampen", N(0.4))]),
+    p("Short Swarm", &[("Length", N(60.0)), ("Drag", N(0.8)), ("Reflect", N(0.5))]),
+    p("Self-Oscillating", &[("Length", N(250.0)), ("Reflect", N(1.0)), ("Dampen", N(0.5)), ("Mix", N(0.5))]),
+    p("Dark Smear", &[("Length", N(500.0)), ("Dampen", N(0.8)), ("Reflect", N(0.75))]),
+    p("Metallic", &[("Length", N(30.0)), ("Diffuse", N(0.2)), ("Drag", N(0.2)), ("Reflect", N(0.85))]),
+];
+
+static CONVOLUTION: &[Preset] = &[
+    p("Studio", &[("Space", C("Studio")), ("Mix", N(0.25))]),
+    p("Concert Hall", &[("Space", C("Concert Hall"))]),
+    p("Cathedral", &[("Space", C("Cathedral")), ("Pre-Delay", N(20.0)), ("Mix", N(0.4))]),
+    p("Huge Hall", &[("Space", C("Concert Hall")), ("Size", N(1.8)), ("Decay", N(1.5)), ("Mix", N(0.4))]),
+    p("Reverse Cathedral", &[("Space", C("Cathedral")), ("Reverse", N(1.0)), ("Mix", N(0.45))]),
+    p("Plate", &[("Space", C("Plate"))]),
+    p("Spring Tank", &[("Space", C("Spring Tank")), ("Mix", N(0.3))]),
+    p("Stairwell", &[("Space", C("Stairwell"))]),
+    p("Parking Garage", &[("Space", C("Parking Garage"))]),
+    p("Cave", &[("Space", C("Cave")), ("Mix", N(0.4))]),
+    p("Tunnel", &[("Space", C("Tunnel"))]),
+    p("Forest", &[("Space", C("Forest")), ("Mix", N(0.4))]),
+    p("Speaker Cab", &[("Space", C("Speaker Cab")), ("Mix", N(1.0)), ("High Cut", N(9000.0))]),
+    p("Small Cab", &[("Space", C("Speaker Cab")), ("Size", N(0.7)), ("Mix", N(1.0))]),
 ];
 
 static AW_GALACTIC: &[Preset] = &[

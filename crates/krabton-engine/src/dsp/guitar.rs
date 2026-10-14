@@ -29,6 +29,14 @@
 //! magnetic pickup: a comb for its distance from the bridge (two for the
 //! coils of a humbucker) and the resonance of the coil's inductance against
 //! the cable, swept by the tone control.
+//!
+//! Its relatives use the same strings with their own bodies and tunings: a
+//! resonator (a metal cone: nasal and ringing), a carved archtop, a
+//! twelve-string (the lower four courses with an octave string, the upper
+//! two doubled), a baritone (a fourth lower), an electric bass (four wound
+//! strings into a pickup), a ukulele (four nylon strings, the high G), a
+//! banjo (a drum head for a body, five strings with the short drone string)
+//! and a mandolin (four doubled courses in fifths).
 
 use super::biquad::{self, Coefs, State};
 use super::{db_to_gain, midi_to_freq, pan_gains, DcBlock, OnePole, Rng, Svf, TAU};
@@ -68,7 +76,7 @@ pub const ONE_STRING: usize = 25;
 /// numbering: 1 is the high E), a slide guitar.
 pub const STRING_MODES: &[&str] = &["Like a Player", "Lowest Fret", "In Position", "One String"];
 
-pub const MODELS: &[&str] = &["Acoustic Steel", "Acoustic Nylon", "Electric Clean", "Electric Humbucker"];
+pub const MODELS: &[&str] = &["Acoustic Steel", "Acoustic Nylon", "Electric Clean", "Electric Humbucker", "Resonator", "Archtop", "Twelve-String", "Baritone", "Bass", "Ukulele", "Banjo", "Mandolin"];
 pub const TUNINGS: &[&str] = &["Standard", "Drop D", "DADGAD", "Open G", "Open D"];
 pub const PLUCKS: &[&str] = &["Pick", "Finger"];
 pub const DIRECTIONS: &[&str] = &["Down", "Up", "Alternate"];
@@ -126,6 +134,17 @@ pub fn preset_names() -> &'static [&'static str] {
         "Palm Muted",
         "Drop D Chug",
         "Open G Slide",
+        "Resonator Slide",
+        "Jazz Archtop",
+        "Twelve-String Jangle",
+        "Baritone Twang",
+        "Finger Bass",
+        "Picked Bass",
+        "Muted Bass",
+        "Bright Bass",
+        "Ukulele",
+        "Banjo",
+        "Mandolin",
     ]
 }
 
@@ -137,6 +156,7 @@ pub fn preset(name: &str) -> Vec<f32> {
         }
     };
     let (nylon, clean, humbucker) = (NYLON as f32, CLEAN as f32, HUMBUCKER as f32);
+    let m = |k: usize| k as f32;
     let (neck, bridge) = (0.0, 2.0);
     let (finger, on, alternate) = (1.0, 1.0, 2.0);
     match name {
@@ -153,6 +173,17 @@ pub fn preset(name: &str) -> Vec<f32> {
         // Clean, meant for the drive pedals and the amp.
         "Drop D Chug" => set(&[(MODEL, humbucker), (TUNING, 1.0), (PICKUP, bridge), (PALM_MUTE, 0.55), (HARDNESS, 0.8), (STRUM, 5.0), (HUMANIZE, 0.25), (TONE, 0.85), (BODY, 0.05), (WIDTH, 0.25), (VOLUME, 2.0)]),
         "Open G Slide" => set(&[(MODEL, clean), (TUNING, 3.0), (PICKUP, bridge), (SLIDE, 140.0), (SUSTAIN, 10.0), (HARDNESS, 0.55), (STRUM, 20.0), (BODY, 0.25), (WIDTH, 0.4)]),
+        "Resonator Slide" => set(&[(MODEL, m(RESONATOR)), (TUNING, 4.0), (SLIDE, 160.0), (PLUCK, finger), (HARDNESS, 0.65), (SUSTAIN, 7.0), (BRIGHTNESS, 0.62), (STRUM, 18.0), (BODY, 0.85)]),
+        "Jazz Archtop" => set(&[(MODEL, m(ARCHTOP)), (HARDNESS, 0.4), (BRIGHTNESS, 0.42), (SUSTAIN, 4.0), (STRUM, 12.0), (BODY, 0.8), (TONE, 0.5), (POSITION, 5.0)]),
+        "Twelve-String Jangle" => set(&[(MODEL, m(TWELVE)), (BEATING, 0.5), (HARDNESS, 0.6), (STRUM, 28.0), (STRUM_DIRECTION, alternate), (BRIGHTNESS, 0.62), (SUSTAIN, 7.0), (BODY, 0.75), (WIDTH, 0.85)]),
+        "Baritone Twang" => set(&[(MODEL, m(BARITONE)), (HARDNESS, 0.6), (BRIGHTNESS, 0.55), (SUSTAIN, 8.0), (STRUM, 20.0), (BODY, 0.7)]),
+        "Finger Bass" => set(&[(MODEL, m(BASS)), (PLUCK, finger), (PICKUP, neck), (HARDNESS, 0.45), (BRIGHTNESS, 0.4), (SUSTAIN, 6.0), (STRUM, 0.0), (TONE, 0.5), (BODY, 0.05), (WIDTH, 0.1), (RELEASE_NOISE, 0.4)]),
+        "Picked Bass" => set(&[(MODEL, m(BASS)), (PICKUP, bridge), (HARDNESS, 0.75), (BRIGHTNESS, 0.55), (SUSTAIN, 5.0), (STRUM, 0.0), (TONE, 0.75), (PALM_MUTE, 0.15), (BODY, 0.05), (WIDTH, 0.1)]),
+        "Muted Bass" => set(&[(MODEL, m(BASS)), (PLUCK, finger), (PICKUP, neck), (PALM_MUTE, 0.6), (HARDNESS, 0.35), (BRIGHTNESS, 0.3), (SUSTAIN, 4.0), (STRUM, 0.0), (TONE, 0.35), (BODY, 0.05), (WIDTH, 0.1), (VOLUME, 3.0)]),
+        "Bright Bass" => set(&[(MODEL, m(BASS)), (PLUCK, finger), (PICKUP, bridge), (HARDNESS, 0.7), (BRIGHTNESS, 0.62), (SUSTAIN, 7.0), (STIFFNESS, 0.6), (STRUM, 0.0), (TONE, 0.85), (BODY, 0.05), (WIDTH, 0.1)]),
+        "Ukulele" => set(&[(MODEL, m(UKULELE)), (PLUCK, finger), (PICK_POSITION, 0.2), (HARDNESS, 0.5), (BRIGHTNESS, 0.5), (SUSTAIN, 2.5), (STIFFNESS, 0.3), (STRUM, 18.0), (STRUM_DIRECTION, alternate), (BODY, 0.85), (RELEASE_NOISE, 0.15)]),
+        "Banjo" => set(&[(MODEL, m(BANJO)), (PLUCK, finger), (PICK_POSITION, 0.1), (HARDNESS, 0.8), (BRIGHTNESS, 0.7), (SUSTAIN, 2.0), (STRUM, 10.0), (BODY, 0.9), (TONE, 0.7)]),
+        "Mandolin" => set(&[(MODEL, m(MANDOLIN)), (PICK_POSITION, 0.12), (HARDNESS, 0.7), (BRIGHTNESS, 0.65), (SUSTAIN, 2.5), (BEATING, 0.45), (STRUM, 12.0), (BODY, 0.8), (WIDTH, 0.7)]),
         _ => {}
     }
     p
@@ -164,7 +195,7 @@ const MAX_FRET: i32 = 20;
 const CTRL: usize = 16;
 const MAX_AP: usize = 4;
 /// The lowest frequency a string loop has room for.
-const LOWEST_HZ: f32 = 50.0;
+const LOWEST_HZ: f32 = 30.0;
 const QUEUE: usize = 16;
 const N_MODES: usize = 14;
 
@@ -172,19 +203,86 @@ const STEEL: usize = 0;
 const NYLON: usize = 1;
 const CLEAN: usize = 2;
 const HUMBUCKER: usize = 3;
+const RESONATOR: usize = 4;
+const ARCHTOP: usize = 5;
+const TWELVE: usize = 6;
+const BARITONE: usize = 7;
+const BASS: usize = 8;
+const UKULELE: usize = 9;
+const BANJO: usize = 10;
+const MANDOLIN: usize = 11;
+
+/// A string the instrument does not have.
+const NO_STRING: i32 = -1000;
 
 /// Decay scaling (low frequencies, high frequencies) per model: nylon dies
-/// sooner and much darker, a solid body sustains longer.
-const MODEL_DECAY: [(f32, f32); 4] = [(1.0, 1.0), (0.75, 0.45), (1.4, 1.1), (1.5, 1.0)];
+/// sooner and much darker, a solid body sustains longer, a banjo's head
+/// takes the energy out quickly and brightly.
+const MODEL_DECAY: [(f32, f32); 12] = [(1.0, 1.0), (0.75, 0.45), (1.4, 1.1), (1.5, 1.0), (0.85, 1.3), (0.8, 0.75), (1.0, 1.05), (1.1, 0.9), (1.7, 0.55), (0.5, 0.55), (0.4, 1.5), (0.6, 1.2)];
 
 /// Output level per model, so that a strummed chord is about as loud on
 /// each (the pickups hear the strings much louder than the bodies do).
-const MODEL_GAIN: [f32; 4] = [2.0, 2.6, 0.6, 0.6];
+const MODEL_GAIN: [f32; 12] = [2.0, 2.6, 0.6, 0.6, 1.8, 2.8, 1.95, 2.0, 0.8, 4.6, 2.9, 3.5];
+
+/// Whether a model is heard through a pickup.
+pub fn is_electric(model: usize) -> bool {
+    matches!(model, CLEAN | HUMBUCKER | BASS)
+}
+
+/// The open strings of a model (MIDI notes in the order a down stroke hits
+/// them, None where it has no string), without a capo. The guitars take
+/// the Tuning; the others have their own.
+pub fn open_strings(model: usize, tuning: usize) -> [Option<u8>; 6] {
+    let t = TUNING_NOTES[tuning.min(TUNING_NOTES.len() - 1)];
+    match model {
+        // A fourth below the guitar.
+        BARITONE => t.map(|n| Some(n - 5)),
+        // E A D G; Drop D lowers the E.
+        BASS => [Some(if tuning == 1 { 26 } else { 28 }), Some(33), Some(38), Some(43), None, None],
+        // The re-entrant G C E A.
+        UKULELE => [Some(67), Some(60), Some(64), Some(69), None, None],
+        // Open G with the short drone string first: g D G B D.
+        BANJO => [Some(67), Some(50), Some(55), Some(59), Some(62), None],
+        // G D A E in fifths.
+        MANDOLIN => [Some(55), Some(62), Some(69), Some(76), None, None],
+        _ => t.map(Some),
+    }
+}
+
+/// What the instrument is called (for a new track): a Bass, a Ukulele...
+pub fn family_name(p: &[f32]) -> &'static str {
+    match p.get(MODEL).map(|v| v.round().max(0.0) as usize) {
+        Some(BASS) => "Bass",
+        Some(UKULELE) => "Ukulele",
+        Some(BANJO) => "Banjo",
+        Some(MANDOLIN) => "Mandolin",
+        _ => "Guitar",
+    }
+}
+
+/// The presets of the bass and of the small strings, for the browser.
+pub const BASS_PRESETS: &[&str] = &["Finger Bass", "Picked Bass", "Muted Bass", "Bright Bass"];
+pub const SMALL_STRINGS_PRESETS: &[&str] = &["Ukulele", "Banjo", "Mandolin"];
+
+/// The name of what a model is tuned to: the Tuning, or its own.
+pub fn tuning_name(model: usize, tuning: usize) -> &'static str {
+    match model {
+        BASS if tuning == 1 => "Drop D",
+        BASS => "EADG",
+        UKULELE => "GCEA",
+        BANJO => "Open G",
+        MANDOLIN => "GDAE",
+        BARITONE => ["B Standard", "Drop A", "ADGCDG", "Open D", "Open A"][tuning.min(4)],
+        _ => TUNINGS[tuning.min(TUNINGS.len() - 1)],
+    }
+}
 
 /// Inharmonicity coefficients of the open strings at Stiffness 50 %.
 const B_STEEL: [f32; 6] = [9e-5, 7e-5, 5e-5, 4e-5, 8e-5, 5e-5];
 const B_ELECTRIC: [f32; 6] = [8e-5, 6e-5, 5e-5, 1.2e-4, 8e-5, 5e-5];
 const B_NYLON: [f32; 6] = [3e-5, 2.5e-5, 2e-5, 1e-5, 1e-5, 1e-5];
+const B_BASS: [f32; 6] = [2.4e-4, 2e-4, 1.6e-4, 1.3e-4, 1e-4, 1e-4];
+const B_LIGHT: [f32; 6] = [4e-5, 6e-5, 4e-5, 3e-5, 3e-5, 3e-5];
 
 /// Body modes (Hz, Q, gain) of a steel-string flat top: the air (Helmholtz)
 /// resonance, the top and back plate modes, then a brighter, denser top.
@@ -222,6 +320,112 @@ const NYLON_MODES: [(f32, f32, f32); N_MODES] = [
     (3300.0, 5.0, 0.05),
     (4200.0, 4.0, 0.03),
 ];
+
+/// A resonator: the metal cone rings nasal and bright, its modes sharp.
+const RESONATOR_MODES: [(f32, f32, f32); N_MODES] = [
+    (180.0, 10.0, 0.5),
+    (420.0, 24.0, 0.9),
+    (640.0, 30.0, -0.7),
+    (900.0, 28.0, 0.85),
+    (1250.0, 30.0, -0.6),
+    (1600.0, 26.0, 0.7),
+    (2100.0, 22.0, 0.5),
+    (2700.0, 20.0, -0.4),
+    (3300.0, 18.0, 0.42),
+    (4100.0, 15.0, 0.3),
+    (5200.0, 12.0, 0.25),
+    (6500.0, 10.0, -0.15),
+    (7800.0, 9.0, 0.12),
+    (9500.0, 8.0, 0.08),
+];
+
+/// A carved archtop: little air below, woody and focused in the mids.
+const ARCHTOP_MODES: [(f32, f32, f32); N_MODES] = [
+    (110.0, 12.0, 0.45),
+    (210.0, 14.0, -0.7),
+    (280.0, 16.0, 0.65),
+    (380.0, 15.0, 0.6),
+    (470.0, 14.0, -0.5),
+    (600.0, 12.0, 0.5),
+    (760.0, 11.0, -0.35),
+    (950.0, 10.0, 0.38),
+    (1200.0, 9.0, -0.3),
+    (1500.0, 8.0, 0.3),
+    (1950.0, 7.0, 0.2),
+    (2500.0, 6.0, -0.15),
+    (3200.0, 5.0, 0.1),
+    (4000.0, 4.0, 0.06),
+];
+
+/// A ukulele: a small body, its air resonance high.
+const UKULELE_MODES: [(f32, f32, f32); N_MODES] = [
+    (240.0, 12.0, 0.8),
+    (420.0, 16.0, -0.7),
+    (520.0, 18.0, 0.65),
+    (700.0, 14.0, 0.5),
+    (880.0, 13.0, -0.4),
+    (1050.0, 12.0, 0.4),
+    (1300.0, 11.0, -0.3),
+    (1600.0, 10.0, 0.28),
+    (2000.0, 9.0, 0.22),
+    (2500.0, 8.0, -0.2),
+    (3100.0, 7.0, 0.15),
+    (3800.0, 6.0, 0.1),
+    (4600.0, 5.0, 0.06),
+    (5500.0, 4.0, 0.04),
+];
+
+/// A banjo: a drum head, its modes at the ratios of a stretched membrane
+/// (the zeros of the Bessel functions) and ringing sharply.
+const BANJO_MODES: [(f32, f32, f32); N_MODES] = [
+    (330.0, 30.0, 1.0),
+    (526.0, 34.0, -0.85),
+    (705.0, 36.0, 0.8),
+    (758.0, 36.0, -0.6),
+    (875.0, 38.0, 0.7),
+    (963.0, 38.0, -0.55),
+    (1041.0, 40.0, 0.6),
+    (1155.0, 40.0, -0.5),
+    (1340.0, 36.0, 0.5),
+    (1520.0, 32.0, -0.45),
+    (1900.0, 26.0, 0.45),
+    (2600.0, 20.0, 0.4),
+    (3400.0, 16.0, -0.3),
+    (4500.0, 12.0, 0.3),
+];
+
+/// A mandolin: a small carved body, bright and quick.
+const MANDOLIN_MODES: [(f32, f32, f32); N_MODES] = [
+    (190.0, 10.0, 0.55),
+    (380.0, 14.0, 0.8),
+    (560.0, 16.0, -0.6),
+    (700.0, 15.0, 0.6),
+    (900.0, 14.0, -0.45),
+    (1150.0, 12.0, 0.45),
+    (1450.0, 11.0, -0.35),
+    (1800.0, 10.0, 0.35),
+    (2200.0, 9.0, 0.3),
+    (2800.0, 8.0, -0.25),
+    (3500.0, 7.0, 0.2),
+    (4300.0, 6.0, 0.15),
+    (5300.0, 5.0, 0.1),
+    (6500.0, 4.0, 0.06),
+];
+
+/// The body of a model, and how much its modes are moved (a baritone is a
+/// bigger steel-string body).
+fn body_modes(model: usize) -> (&'static [(f32, f32, f32); N_MODES], f32) {
+    match model {
+        NYLON => (&NYLON_MODES, 1.0),
+        RESONATOR => (&RESONATOR_MODES, 1.0),
+        ARCHTOP => (&ARCHTOP_MODES, 1.0),
+        BARITONE => (&STEEL_MODES, 0.85),
+        UKULELE => (&UKULELE_MODES, 1.0),
+        BANJO => (&BANJO_MODES, 1.0),
+        MANDOLIN => (&MANDOLIN_MODES, 1.0),
+        _ => (&STEEL_MODES, 1.0),
+    }
+}
 
 /// Early reflections (seconds, gain) for each side: a small room.
 const ROOM: [[(f32, f32); 6]; 2] = [
@@ -375,6 +579,8 @@ struct Slot {
     age: u32,
     b: f32,
     stages: usize,
+    /// The second loop is the octave string of a twelve-string's course.
+    octave: bool,
 }
 
 impl Slot {
@@ -395,6 +601,7 @@ impl Slot {
             age: 0,
             b: 0.0,
             stages: 0,
+            octave: false,
         }
     }
 
@@ -496,6 +703,10 @@ impl GString {
             (HUMBUCKER, 2) => ([0.052, 0.082, 0.0, 0.0], 2),
             // Both pickups.
             (HUMBUCKER, _) => ([0.205, 0.235, 0.052, 0.082], 4),
+            (BASS, 0) => ([0.22, 0.0, 0.0, 0.0], 1),
+            // A split coil in the middle.
+            (BASS, 1) => ([0.15, 0.17, 0.0, 0.0], 2),
+            (BASS, _) => ([0.085, 0.0, 0.0, 0.0], 1),
             _ => ([0.0; 4], 0),
         };
         self.n_pick = n;
@@ -628,7 +839,10 @@ struct Ctl {
 impl Ctl {
     fn new(p: &[f32], sr: f32) -> Self {
         let choice = |i: usize, n: usize| (p[i].round().max(0.0) as usize).min(n - 1);
-        Self {
+        let model = choice(MODEL, MODELS.len());
+        // Doubled courses beat more against each other.
+        let course = if matches!(model, TWELVE | MANDOLIN) { 2.5 } else { 1.0 };
+        let mut c = Self {
             sr,
             bend_cents: 0.0,
             mode: if p.len() > STRING_MODE { choice(STRING_MODE, STRING_MODES.len()) } else { 0 },
@@ -645,7 +859,7 @@ impl Ctl {
             // Decay time around 2.5 kHz.
             t60_hi: 0.04 * 60f32.powf(p[BRIGHTNESS].clamp(0.0, 1.0)),
             stiffness: p[STIFFNESS].clamp(0.0, 1.0),
-            beat_ratio: cents(p[BEATING].clamp(0.0, 1.0) * 2.5),
+            beat_ratio: cents(p[BEATING].clamp(0.0, 1.0) * 2.5 * course),
             palm: p[PALM_MUTE].clamp(0.0, 1.0),
             let_ring: p[LET_RING] >= 0.5,
             rel_noise: p[RELEASE_NOISE].clamp(0.0, 1.0),
@@ -657,24 +871,36 @@ impl Ctl {
             tone: p[TONE].clamp(0.0, 1.0),
             body: p[BODY].clamp(0.0, 1.0),
             width: p[WIDTH].clamp(0.0, 1.0),
-            gain: db_to_gain(p[VOLUME].clamp(-24.0, 12.0)) * MODEL_GAIN[choice(MODEL, MODELS.len())],
+            gain: db_to_gain(p[VOLUME].clamp(-24.0, 12.0)) * MODEL_GAIN[model],
             glide_k: (-(CTRL as f32) / (0.09 * sr)).exp(),
+        };
+        // One String on a string the instrument lacks takes the next one down.
+        while c.one > 0 && c.open()[c.one] == NO_STRING {
+            c.one -= 1;
         }
+        c
     }
 
     fn electric(&self) -> bool {
-        self.model >= CLEAN
+        is_electric(self.model)
     }
 
-    /// Open strings with the capo on.
+    /// Open strings with the capo on (NO_STRING where there is none).
     fn open(&self) -> [i32; 6] {
-        TUNING_NOTES[self.tuning].map(|n| n as i32 + self.capo)
+        open_strings(self.model, self.tuning).map(|n| n.map(|n| n as i32 + self.capo).unwrap_or(NO_STRING))
+    }
+
+    /// The open string's frequency (without the capo), for the pick and pickup.
+    fn nut_hz(&self, s: usize) -> f32 {
+        midi_to_freq(open_strings(self.model, self.tuning)[s].unwrap_or(60) as f32)
     }
 
     fn inharmonicity(&self, s: usize, fret: i32) -> f32 {
         let base = match self.model {
-            NYLON => B_NYLON[s],
-            STEEL => B_STEEL[s],
+            NYLON | UKULELE => B_NYLON[s],
+            STEEL | RESONATOR | ARCHTOP | TWELVE | BARITONE => B_STEEL[s],
+            BASS => B_BASS[s],
+            BANJO | MANDOLIN => B_LIGHT[s],
             _ => B_ELECTRIC[s],
         };
         // B grows with the inverse square of the vibrating length.
@@ -682,8 +908,16 @@ impl Ctl {
     }
 
     fn wound(&self, s: usize) -> bool {
-        // Acoustic steel sets have a wound G too.
-        s < if self.model == STEEL { 4 } else { 3 }
+        match self.model {
+            UKULELE => false,
+            // The banjo's fourth string (the low D) is the wound one.
+            BANJO => s == 1,
+            MANDOLIN => s < 2,
+            BASS => true,
+            // Acoustic steel sets have a wound G too.
+            STEEL | RESONATOR | ARCHTOP | TWELVE | BARITONE => s < 4,
+            _ => s < 3,
+        }
     }
 }
 
@@ -692,9 +926,10 @@ fn decay_times(c: &Ctl, f: f32, polar: usize, released: bool) -> (f32, f32) {
     let (sus_k, bright_k) = MODEL_DECAY[c.model];
     let mut lo = c.sustain * sus_k * (110.0 / f).sqrt();
     let mut hi = c.t60_hi * bright_k;
-    if polar == 1 {
+    if polar == 1 && !matches!(c.model, TWELVE | MANDOLIN) {
         // The polarisation across the top drives the bridge harder and
-        // loses its energy sooner.
+        // loses its energy sooner (on a doubled course it is the other
+        // string, which rings as long).
         lo *= 0.5;
         hi *= 0.8;
     }
@@ -753,7 +988,7 @@ fn update_slot(s: &mut Slot, c: &Ctl) {
     }
     let f = s.freq * cents(s.glide + vib + c.bend_cents);
     for (k, lp) in s.loops.iter_mut().enumerate() {
-        let fk = if k == 1 { f * c.beat_ratio } else { f };
+        let fk = if k == 1 { f * c.beat_ratio * if s.octave { 2.0 } else { 1.0 } } else { f };
         let (lo, hi) = decay_times(c, fk, k, s.released);
         tune_loop(lp, fk, lo, hi, s.b, s.stages, c.sr);
     }
@@ -838,13 +1073,17 @@ impl Output {
         let sr = c.sr;
         if self.model != c.model {
             self.model = c.model;
+            // A bass pickup hears the low E's fundamental.
+            for hp in self.pickup_hp.iter_mut() {
+                hp.set(if c.model == BASS { 25.0 } else { 70.0 }, sr);
+            }
             if !c.electric() {
-                let table = if c.model == NYLON { &NYLON_MODES } else { &STEEL_MODES };
+                let (table, scale) = body_modes(c.model);
                 // The two sides hear slightly different bodies (two mics).
                 for (k, &(f, q, g)) in table.iter().enumerate() {
                     let spread = if k % 2 == 0 { 0.025 } else { -0.02 };
                     for ch in 0..2 {
-                        let fc = f * (1.0 + if ch == 0 { spread } else { -spread });
+                        let fc = scale * f * (1.0 + if ch == 0 { spread } else { -spread });
                         self.modes[k].c[ch] = biquad::bandpass(fc as f64, sr as f64, q as f64);
                         self.modes[k].gain[ch] = g * if (k + ch) % 3 == 0 { 0.8 } else { 1.0 };
                     }
@@ -856,7 +1095,11 @@ impl Output {
             self.tone_c = biquad::high_shelf(3000.0, sr as f64, 0.7, (-10.0 + 16.0 * c.tone) as f64);
         }
         // The pickup coil's resonance with the cable, lowered by the tone control.
-        let (fc, q) = if c.model == HUMBUCKER { (1000.0 * 2.8f32.powf(c.tone), 0.7 + 1.1 * c.tone) } else { (1300.0 * 3.85f32.powf(c.tone), 0.8 + 1.6 * c.tone) };
+        let (fc, q) = match c.model {
+            HUMBUCKER => (1000.0 * 2.8f32.powf(c.tone), 0.7 + 1.1 * c.tone),
+            BASS => (700.0 * 3.2f32.powf(c.tone), 0.7 + 0.9 * c.tone),
+            _ => (1300.0 * 3.85f32.powf(c.tone), 0.8 + 1.6 * c.tone),
+        };
         for f in self.pickup.iter_mut() {
             f.set_q(fc, q, sr);
         }
@@ -1103,9 +1346,8 @@ impl GuitarState {
     }
 
     fn control(&mut self, c: &Ctl) {
-        let tuning = &TUNING_NOTES[c.tuning];
         for (s, st) in self.strings.iter_mut().enumerate() {
-            st.set_pickup(c, midi_to_freq(tuning[s] as f32));
+            st.set_pickup(c, c.nut_hz(s));
             for slot in st.slots.iter_mut() {
                 if !slot.active {
                     continue;
@@ -1137,7 +1379,7 @@ impl GuitarState {
     fn start(&mut self, pd: Pending, c: &Ctl) {
         let sr = c.sr;
         let s = pd.string;
-        let f_nut = midi_to_freq(TUNING_NOTES[c.tuning][s] as f32);
+        let f_nut = c.nut_hz(s);
         let freq = midi_to_freq(pd.note as f32);
         let fret = pd.fret + c.capo;
         let b = c.inharmonicity(s, fret);
@@ -1181,6 +1423,7 @@ impl GuitarState {
             slot.vib_phase = 0.0;
             slot.b = b;
             slot.stages = stages;
+            slot.octave = c.model == TWELVE && s < 4;
             // Hard plucks stretch the string: a few cents sharp at first.
             let low = 1.0 - s as f32 / 10.0;
             slot.glide = 16.0 * x * x * if c.finger { 0.6 } else { 1.0 } * low * (1.0 - 0.7 * palm);
@@ -1191,16 +1434,24 @@ impl GuitarState {
             let pulse = c.pick_pos * (1.0 + 0.15 * c.humanize * st.rng.bipolar()) * sr / f_nut;
             let mut fc = if c.finger { 450.0 * 5f32.powf(x) } else { 1400.0 * 8f32.powf(x) };
             fc *= 1.0 - 0.6 * palm;
-            if c.model == NYLON {
-                fc *= 0.8;
+            match c.model {
+                NYLON | UKULELE => fc *= 0.8,
+                BANJO => fc *= 1.4,
+                BASS => fc *= 0.6,
+                _ => {}
             }
             let level = (1.0 - c.vel_sens) + c.vel_sens * v.powf(1.4);
             let amp = 0.3 * level * (1.0 - 0.35 * palm) * if pd.up { -1.0 } else { 1.0 };
             let noise = if c.finger { 0.04 } else { 0.12 } * x;
             st.excite(period, pulse.min(0.5 * period), fc, amp, noise, sr);
-            let theta = 0.4 + 0.4 * st.rng.unipolar();
-            let (sn, cs) = theta.sin_cos();
-            st.exc_w = [cs / (sn + cs), sn / (sn + cs)];
+            st.exc_w = if matches!(c.model, TWELVE | MANDOLIN) {
+                // Both strings of the course are struck.
+                [0.5, 0.5]
+            } else {
+                let theta = 0.4 + 0.4 * st.rng.unipolar();
+                let (sn, cs) = theta.sin_cos();
+                [cs / (sn + cs), sn / (sn + cs)]
+            };
         }
         if pd.release {
             st.held = false;
@@ -1281,6 +1532,10 @@ impl GuitarState {
                     if used & (1 << s) != 0 || f < 0 || f > max_fret {
                         continue;
                     }
+                    // A banjo's short fifth string is played open.
+                    if c.model == BANJO && s == 0 && f > 0 {
+                        continue;
+                    }
                     let place = match c.mode {
                         1 => 0.5 * f as f32,
                         3 => {
@@ -1326,8 +1581,8 @@ impl GuitarState {
         self.n_incoming = 0;
         let open = c.open();
         let max_fret = MAX_FRET - c.capo;
-        let lowest = *open.iter().min().unwrap_or(&40);
-        let highest = open.iter().max().unwrap_or(&64) + max_fret;
+        let lowest = open.iter().copied().filter(|&o| o != NO_STRING).min().unwrap_or(40);
+        let highest = open.iter().copied().filter(|&o| o != NO_STRING).max().unwrap_or(64) + max_fret;
         // (pitch, key, velocity, released), ascending, one per pitch.
         let mut notes = [(0i32, 0u8, 0.0f32, false); QUEUE];
         let mut k = 0;
@@ -1598,6 +1853,58 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn every_relative_is_in_tune_on_its_own_strings() {
+        let sr = 48000.0f32;
+        for model in RESONATOR..MODELS.len() {
+            let mut p = still("Steel Acoustic");
+            p[MODEL] = model as f32;
+            p[BEATING] = 0.0;
+            for (s, k) in open_strings(model, 0).iter().enumerate() {
+                let Some(k) = *k else { continue };
+                let mut st = GuitarState::new(sr);
+                st.note_on(&p, k, 0.7);
+                let n = (0.8 * sr) as usize;
+                let mut l = vec![0.0; n];
+                let mut r = vec![0.0; n];
+                for (cl, cr) in l.chunks_mut(64).zip(r.chunks_mut(64)) {
+                    st.render(&p, cl, cr);
+                }
+                // On a string it has (a re-entrant ukulele may take the A on the G string).
+                let open = open_strings(model, 0);
+                let on: Vec<usize> = (0..6).filter(|&j| st.frets()[j].is_some()).collect();
+                assert!(on.len() == 1 && open[on[0]].is_some_and(|o| o as i32 + st.frets()[on[0]].unwrap() as i32 == k as i32), "{}: note {k} (string {s}) lands on {:?}", MODELS[model], st.frets());
+                assert!(l.iter().all(|v| v.is_finite()), "{}", MODELS[model]);
+                let want = midi_to_freq(k as f32);
+                let got = fundamental_hz(&l[(0.3 * sr) as usize..], sr, want);
+                let cents = 1200.0 * (got / want).log2();
+                assert!(cents.abs() < 3.0, "{}: string {s} plays {got} Hz, wants {want} Hz ({cents:.1} ct)", MODELS[model]);
+            }
+        }
+    }
+
+    #[test]
+    fn a_ukulele_has_four_strings_and_a_bass_goes_low() {
+        // A chord on a ukulele: four notes at most, on its strings.
+        let p = still("Ukulele");
+        let mut st = GuitarState::new(SR);
+        for k in [60, 64, 67, 72, 76] {
+            st.note_on(&p, k, 0.8);
+        }
+        let _ = render(&mut st, &p, 0.3);
+        let f = st.frets();
+        assert!(f[4].is_none() && f[5].is_none(), "{f:?}");
+        assert!(f.iter().flatten().count() == 4, "{f:?}");
+        // The bass's low E is E1, an octave below the guitar's.
+        let p = still("Finger Bass");
+        let mut st = GuitarState::new(SR);
+        st.note_on(&p, 28, 0.8);
+        let (l, _) = render(&mut st, &p, 1.0);
+        assert_eq!(st.frets()[0], Some(0));
+        let got = fundamental_hz(&l[(0.3 * SR) as usize..], SR, 41.2);
+        assert!((got - 41.2).abs() < 0.3, "{got}");
     }
 
     #[test]

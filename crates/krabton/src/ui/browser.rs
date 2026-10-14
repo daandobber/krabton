@@ -315,7 +315,7 @@ fn sound_type(name: &str) -> Option<&'static str> {
         "Brass & Winds"
     } else if any(&["bell", "mallet", "marimba", "vibraphone", "vibe", "glock", "kalimba", "steel drum", "chime", "gong", "glass", "toy box"]) {
         "Mallets & Bells"
-    } else if any(&["pluck", "guitar"]) {
+    } else if any(&["pluck", "guitar", "ukulele", "banjo", "mandolin", "resonator", "archtop", "twelve", "baritone", "slide"]) {
         "Plucked"
     } else if any(&["voice", "choir", "vowel", "talking", "formant"]) {
         "Voices"
@@ -346,7 +346,7 @@ pub(crate) fn instrument_catalog() -> Vec<(&'static str, &'static str, &'static 
     devices().into_iter().map(|d| (d.name, d.hint, d.presets, d.make)).collect()
 }
 
-fn devices() -> [Dev; 26] {
+fn devices() -> [Dev; 28] {
     [
         Dev {
             name: "Analog",
@@ -403,7 +403,9 @@ fn devices() -> [Dev; 26] {
         Dev { name: "Mono", hint: "The small mono of the early eighties: saw, pulse with PWM, a sub oscillator (an octave or two down) and noise into a self-oscillating four-pole filter, one envelope (or the gate for the amplifier), LFO, portamento. Behaviour and presets after HUSH ONE by Charles Vestal (MIT)", presets: krabton_engine::dsp::mono101::preset_names(), make: BrowserItem::Mono101, kind: None },
         Dev { name: "Drone", hint: "A drone that keeps moving: tanpura strings with a buzzing bridge, a PADsynth pad, swelling FM pairs and wind, all drifting slowly. Hold a key for minutes", presets: krabton_engine::dsp::drone::preset_names(), make: BrowserItem::Drone, kind: None },
         Dev { name: "Waves", hint: "Wavetable synth: two oscillators morphing through 16 banks of single-cycle waves (Adventure Kid Waveforms), unison, warps, sub, filter, envelopes and an LFO. Drag a stack to move through it", presets: krabton_engine::dsp::waves::preset_names(), make: BrowserItem::Waves, kind: None },
-        Dev { name: "Guitar", hint: "A six-string guitar, steel or nylon acoustic or electric with pickups: notes go on the strings and frets a guitarist would use, chords are strummed. Put pedals after it", presets: krabton_engine::dsp::guitar::preset_names(), make: BrowserItem::Guitar, kind: None },
+        Dev { name: "Guitar", hint: "A guitar and its family: steel or nylon acoustic, electric with pickups, resonator, archtop, twelve-string, baritone, bass, ukulele, banjo and mandolin. Notes go on the strings and frets a player would use, chords are strummed. Put pedals after it", presets: krabton_engine::dsp::guitar::preset_names(), make: BrowserItem::Guitar, kind: None },
+        Dev { name: "Bass Guitar", hint: "An electric bass: four wound strings (E A D G, or Drop D) heard through a pickup at the neck, in the middle or at the bridge, played with the fingers or a pick, muted with the palm. The Guitar with its bass model", presets: krabton_engine::dsp::guitar::BASS_PRESETS, make: BrowserItem::Guitar, kind: Some("Bass") },
+        Dev { name: "Ukulele, Banjo, Mandolin", hint: "The small strings: a ukulele (nylon, the high G), a banjo (a drum head for a body, the short drone string) and a mandolin (doubled courses in fifths). The Guitar with their models; Banjo Roll and Ukulele play them", presets: krabton_engine::dsp::guitar::SMALL_STRINGS_PRESETS, make: BrowserItem::Guitar, kind: Some("Plucked") },
         Dev { name: "Wind Chimes", hint: "A wind chime that plays by itself: the wind pushes the sail, the clapper strikes the tubes (aluminium, brass, steel, bamboo, glass or wood) and you see every strike you hear. Change the tubes, the tuning, the spacing, the clapper and the sail", presets: krabton_engine::dsp::wind_chimes::preset_names(), make: BrowserItem::WindChimes, kind: None },
         Dev { name: "Birds", hint: "Songbirds that sing by themselves: blackbird, robin, song thrush, nightingale, wren, chaffinch, great tit, skylark, sparrow, cuckoo, wood pigeon, tawny owl, loon, gull and a drumming woodpecker. Each sings its species' songs from its own place, near or far; a key makes the bird with the nearest voice sing (Follow Key puts its song on the key)", presets: krabton_engine::dsp::birds::preset_names(), make: BrowserItem::Birds, kind: None },
         Dev { name: "Nature", hint: "The sounds of outside, made from scratch: wind in gusts that whistles and rustles the leaves, rain on leaves, water, a roof or a tent, thunder after the lightning, a brook, the sea, crickets that chirp faster when it is warmer, frogs and a campfire. Play keys and the wind whistles on those notes", presets: krabton_engine::dsp::nature::preset_names(), make: BrowserItem::Nature, kind: None },

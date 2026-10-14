@@ -810,6 +810,7 @@ impl Instrument {
     pub fn track_name(&self) -> String {
         match self {
             Instrument::Plugin(p) => p.name.clone(),
+            Instrument::Guitar { params, .. } => crate::dsp::guitar::family_name(params).to_string(),
             i => i.kind_name().to_string(),
         }
     }
@@ -845,6 +846,9 @@ pub struct Device {
     /// The preset it was set to last (for the menu).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub preset: String,
+    /// A sound file it plays with (Convolution's own answer).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample: Option<SampleRef>,
 }
 
 impl Device {
@@ -1215,13 +1219,13 @@ impl Project {
 
     pub fn make_device(&mut self, kind: EffectKind) -> Device {
         let data = if kind == EffectKind::Glitch { crate::dsp::fx::glitch::default_data() } else { Vec::new() };
-        Device { id: self.alloc_id(), kind, enabled: true, params: params::defaults(kind.specs()), plugin: None, data, children: Vec::new(), preset: String::new() }
+        Device { id: self.alloc_id(), kind, enabled: true, params: params::defaults(kind.specs()), plugin: None, data, children: Vec::new(), preset: String::new(), sample: None }
     }
 
     /// A device for an effect plug-in; `plugin.instance` is set here.
     pub fn make_plugin_device(&mut self, mut plugin: PluginInstrument) -> Device {
         plugin.instance = self.alloc_id();
-        Device { id: self.alloc_id(), kind: EffectKind::Plugin, enabled: true, params: Vec::new(), plugin: Some(plugin), data: Vec::new(), children: Vec::new(), preset: String::new() }
+        Device { id: self.alloc_id(), kind: EffectKind::Plugin, enabled: true, params: Vec::new(), plugin: Some(plugin), data: Vec::new(), children: Vec::new(), preset: String::new(), sample: None }
     }
 
     /// Every hosted plug-in (instruments and effects) by instance.
@@ -1810,7 +1814,7 @@ mod tests {
         let dev = p.make_plugin_device(fx);
         assert_eq!(dev.name(), "Verb");
         p.tracks[t].devices.push(dev);
-        p.master.devices.push(Device { id: 999, kind: EffectKind::Plugin, enabled: true, params: Vec::new(), plugin: None, data: Vec::new(), children: Vec::new() , preset: String::new() });
+        p.master.devices.push(Device { id: 999, kind: EffectKind::Plugin, enabled: true, params: Vec::new(), plugin: None, data: Vec::new(), children: Vec::new() , preset: String::new(), sample: None });
         let json = serde_json::to_string(&p).unwrap();
         let mut back: Project = serde_json::from_str(&json).unwrap();
         back.sanitize();

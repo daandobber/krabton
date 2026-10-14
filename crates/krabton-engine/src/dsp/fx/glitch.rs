@@ -1279,7 +1279,7 @@ mod tests {
         let mut g = Glitch::new(SR);
         let mut util = crate::params::defaults(super::super::super::effects::EffectKind::Utility.specs());
         util[0] = -60.0;
-        let child = Device { id: 7, kind: super::super::super::effects::EffectKind::Utility, enabled: true, params: util, plugin: None, data: Vec::new(), children: Vec::new() , preset: String::new() };
+        let child = Device { id: 7, kind: super::super::super::effects::EffectKind::Utility, enabled: true, params: util, plugin: None, data: Vec::new(), children: Vec::new() , preset: String::new(), sample: None };
         g.children.push((7, EffectState::new(child.kind, SR)));
         let mut data = empty_data();
         paint(&mut data, 0, 1, 1, FIRST_SLOT);
