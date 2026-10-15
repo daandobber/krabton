@@ -23,9 +23,12 @@
 //! along the row, and the pipes they pass sound briefly on the way (Slide).
 //! The pipes are the notes of the song's key. Neighbours lets the lips catch
 //! the next pipe as well. A flute with finger holes plays one note: notes
-//! held together slur under the fingers, the same note again is tongued, a
-//! big leap cracks as it overblows, and Neighbours flicks a finger to the
-//! note above just before each note.
+//! held together slur under the fingers: a leap is fingered at once (the
+//! tone dips and speaks again), a step of a tone or less can slide as a
+//! finger leaves its hole (Glide), the same note again is tongued, a big
+//! leap cracks as it overblows, and Neighbours flicks a finger to the note
+//! above just before each note. Slides follow a player's curve, not a
+//! synthesizer's.
 //!
 //! Original code.
 
@@ -243,6 +246,11 @@ struct Voice {
     speak: f32,
     speak_at: f32,
     flut: f32,
+    /// A slide: from this frequency to the target, how far along (1: there)
+    /// and how long it takes.
+    glide_from: f32,
+    glide_pos: f32,
+    glide_dur: f32,
 }
 
 impl Voice {
@@ -278,6 +286,9 @@ impl Voice {
             speak: 1.0,
             speak_at: 0.0,
             flut: 0.0,
+            glide_from: 261.6,
+            glide_pos: 1.0,
+            glide_dur: 0.05,
         }
     }
 
@@ -292,6 +303,7 @@ impl Voice {
         self.owner = owner;
         self.f = f;
         self.target = f;
+        self.glide_pos = 1.0;
         self.t = 0.0;
         self.vel = vel;
         self.amp = amp;
@@ -305,6 +317,19 @@ impl Voice {
         // It speaks anew: soon after the breath, sooner when slid into.
         self.speak = 0.0;
         self.speak_at = if fresh < 0.5 { 0.002 } else { 0.006 + 0.003 * (note % 5) as f32 };
+    }
+
+    /// Goes to `f` in `secs` (at once when that is next to nothing).
+    fn glide_to(&mut self, f: f32, secs: f32) {
+        if secs <= 0.002 {
+            self.f = f;
+            self.glide_pos = 1.0;
+        } else {
+            self.glide_from = self.f.max(1.0);
+            self.glide_pos = 0.0;
+            self.glide_dur = secs;
+        }
+        self.target = f;
     }
 
     fn stop(&mut self) {
@@ -440,8 +465,10 @@ impl PanFluteState {
         if poly == 1 {
             let v = &mut self.voices[0];
             let legato = v.gate;
-            if !legato || p[GLIDE] <= 0.001 {
-                v.f = f;
+            if legato {
+                v.glide_to(f, p[GLIDE].clamp(0.0, 1.0));
+            } else {
+                v.glide_to(f, 0.0);
             }
             if !legato {
                 v.t = 0.0;
@@ -451,7 +478,6 @@ impl PanFluteState {
             }
             v.slur = legato;
             v.fresh = if legato { 0.25 } else { 1.0 };
-            v.target = f;
             v.note = note;
             v.owner = note;
             v.amp = 1.0;
@@ -564,6 +590,7 @@ impl PanFluteState {
         for v in self.voices[1..].iter_mut() {
             v.stop();
         }
+        let glide = p[GLIDE].clamp(0.0, 1.0);
         let v = &mut self.voices[0];
         let legato = v.gate;
         if legato {
@@ -574,19 +601,16 @@ impl PanFluteState {
             if leap == 0 || leap > 9 {
                 v.t = 0.0;
             }
-            if p[GLIDE] <= 0.001 {
-                v.f = f;
-            }
+            Self::finger(v, f, leap, glide);
         } else {
             v.t = 0.0;
             v.vel = vel;
             v.slur = false;
             v.fresh = 1.0;
-            v.f = f;
+            v.glide_to(f, 0.0);
             v.speak = 0.0;
             v.speak_at = 0.008;
         }
-        v.target = f;
         v.note = note;
         v.owner = note;
         v.amp = 1.0;
@@ -597,11 +621,22 @@ impl PanFluteState {
         v.pan = pan;
         // A finger flicked to the note above, just before.
         if let Some(gf) = grace {
-            v.target = gf;
-            if !legato {
-                v.f = gf;
-            }
+            v.glide_to(gf, if legato { 0.01 } else { 0.0 });
             v.then = Some((f, hold));
+        }
+    }
+
+    /// The fingers move to `f`, `leap` semitones away: a step of a tone or
+    /// less slides (a finger leaving its hole) in `glide` seconds, a leap
+    /// is fingered at once and the tone dips and speaks again.
+    fn finger(v: &mut Voice, f: f32, leap: i32, glide: f32) {
+        if leap <= 2 && glide > 0.002 {
+            v.glide_to(f, glide);
+        } else {
+            v.glide_to(f, 0.012);
+            if leap > 0 {
+                v.speak = v.speak.min(0.55);
+            }
         }
     }
 
@@ -634,15 +669,19 @@ impl PanFluteState {
             if v.note == note || v.owner == note {
                 // Back to the key still held, slurred.
                 if let Some(&prev) = self.stack.last() {
+                    let leap = (prev as i32 - v.note as i32).abs();
+                    let pf = Self::freq(p, prev);
+                    let glide = p[GLIDE].clamp(0.0, 1.0);
+                    if mouth_of(p) {
+                        Self::finger(v, pf, leap, glide);
+                    } else {
+                        v.glide_to(pf, glide);
+                    }
                     v.note = prev;
                     v.owner = prev;
-                    v.target = Self::freq(p, prev);
                     v.then = None;
                     v.slur = true;
                     v.fresh = 0.15;
-                    if p[GLIDE] <= 0.001 {
-                        v.f = v.target;
-                    }
                 } else {
                     v.stop();
                 }
@@ -693,8 +732,6 @@ impl PanFluteState {
         let vib_delay = p[VIB_DELAY].clamp(0.0, 3.0);
         let att = 1.0 - (-1.0 / (p[ATTACK].clamp(0.005, 2.0) * 0.4 * sr)).exp();
         let rel = 1.0 - (-1.0 / (p[RELEASE].clamp(0.01, 4.0) * 0.4 * sr)).exp();
-        let glide = p[GLIDE].clamp(0.0, 1.0);
-        let glide_k = if glide > 0.001 { 1.0 - (-1.0 / (glide * 0.35 * sr)).exp() } else { 1.0 };
         let space = k(SPACE);
         let gain = db_to_gain(p[VOLUME]) * 0.42;
         let ring = (m.ring * mat.ring).min(0.96);
@@ -734,8 +771,7 @@ impl PanFluteState {
                 // A finger moves.
                 if let Some((tf, wait)) = v.then {
                     if wait as usize <= len {
-                        v.target = tf;
-                        v.f = tf;
+                        v.glide_to(tf, 0.0);
                         v.then = None;
                     } else {
                         v.then = Some((tf, wait - len as u32));
@@ -754,7 +790,14 @@ impl PanFluteState {
                 let mut peak = 0.0f32;
                 for j in 0..len {
                     v.t += 1.0 / sr;
-                    v.f += (v.target - v.f) * glide_k;
+                    // A slide eases in and out, evenly in pitch.
+                    if v.glide_pos < 1.0 {
+                        v.glide_pos = (v.glide_pos + 1.0 / (v.glide_dur * sr)).min(1.0);
+                        let s = v.glide_pos * v.glide_pos * (3.0 - 2.0 * v.glide_pos);
+                        v.f = v.glide_from * (v.target / v.glide_from).powf(s);
+                    } else {
+                        v.f = v.target;
+                    }
                     v.env += ((if v.gate { 1.0 } else { 0.0 }) - v.env) * if v.gate { att } else { rel };
                     // A slow wander of the pitch, as a player's breath does.
                     v.drift += 0.0005 * (self.rng.bipolar() - v.drift * 0.05);
@@ -1079,6 +1122,31 @@ mod tests {
         };
         let (bamboo, pan) = (early_share("Bansuri Evening"), early_share("Andes Pan Flute"));
         assert!(bamboo < 0.7 * pan, "bamboo {bamboo} pan {pan}");
+    }
+
+    #[test]
+    fn a_finger_flute_fingers_a_leap_at_once_and_slides_a_step() {
+        let mut p = plain("Bansuri Evening");
+        p[GLIDE] = 0.3;
+        p[VIBRATO] = 0.0;
+        let window = |st: &mut PanFluteState, p: &[f32]| {
+            let (l, _) = run(st, p, 0.12);
+            l[(0.03 * SR) as usize..(0.09 * SR) as usize].to_vec()
+        };
+        // A fifth: there almost at once.
+        let mut st = PanFluteState::new(SR);
+        st.note_on(&p, 60, 0.8);
+        let _ = run(&mut st, &p, 0.5);
+        st.note_on(&p, 67, 0.8);
+        let w = window(&mut st, &p);
+        assert!(mag(&w, midi_to_freq(67.0)) > 4.0 * mag(&w, midi_to_freq(60.0)), "leap");
+        // A tone: still on its way.
+        let mut st = PanFluteState::new(SR);
+        st.note_on(&p, 67, 0.8);
+        let _ = run(&mut st, &p, 0.5);
+        st.note_on(&p, 69, 0.8);
+        let w = window(&mut st, &p);
+        assert!(mag(&w, midi_to_freq(69.0)) < 2.0 * mag(&w, midi_to_freq(68.0)), "step slides");
     }
 
     #[test]
