@@ -1,15 +1,30 @@
 //! Melodica: a keyboard you blow into, the honky little reed organ of
 //! cartoon bands and dub records. Every key opens a free reed (see
-//! `free_reed`); the plastic body and the mouthpiece colour them (Body),
-//! close up, with the warmth of a microphone near the case.
+//! `free_reed`), and its tone follows a real melodica's, measured. The reed
+//! lets the air through in a pulse whose width is never still: narrow as a
+//! note starts (bright, its gaps far up), widening to nearly half the cycle
+//! as the reed swings out (the even harmonics weak: the honk), and
+//! breathing with the player's pressure and vibrato, so the gaps in the
+//! spectrum sweep through the harmonics and each rises and falls by many
+//! dB, as they do in the recordings. The case keeps it level up to about
+//! 3 kHz, then it falls away steeply, some 20 dB by 5.6 kHz (Tone moves
+//! where; Body how strongly the case colours it); each reed has a few dB
+//! of its own. Blown softly it is darker above 500 Hz, up to 14 dB; at the
+//! start the high harmonics come in last. Fitted to recordings of a
+//! melodica (Sampleson's Melox samples, 2017): only measured numbers are
+//! here, no recording.
 //!
 //! It is a real one, not a perfect one: every key is a few cents off in its
 //! own way (Tuning), so chords beat; the breath is never still (Life): the
 //! pressure wanders, and with it the loudness, the brightness and a little
 //! of the pitch, and the vibrato from the diaphragm wavers in speed and
-//! depth. A hard note is tongued ("pah"), a soft one swells in; letting go
-//! shuts the valve with a puff and the pitch lifts as the pressure drops.
-//! The plastic keys click (Keys).
+//! depth; as measured, a player's breath moves the loudness by a few dB two
+//! or three times a second while the pitch holds within a cent or two. A
+//! note starts some 40 cents flat and rises into place in 35 ms. A hard
+//! note is tongued ("pah"), a soft one swells in; letting go shuts the valve
+//! with a puff and the pitch lifts as the pressure drops. There is hardly
+//! any breath in the held tone, only as a note starts. The plastic keys
+//! click (Keys): a short tick between 0.5 and 2 kHz.
 //!
 //! Played with the mouth (Playing: Mouth) all the reeds share one breath:
 //! a chord divides the air between its notes, a key added dips it for a
@@ -29,7 +44,7 @@ use super::free_reed::{free_reed, Blow, Reed};
 use super::fx::echo::{self, Echo};
 use super::fx::hall::{self, Hall};
 use super::fx::spring::{self, SpringReverb};
-use super::{db_to_gain, midi_to_freq, pan_gains, OnePole, Rng, Svf};
+use super::{db_to_gain, midi_to_freq, pan_gains, OnePole, Rng};
 use crate::params::{ParamSpec, Unit};
 use std::f32::consts::TAU;
 
@@ -131,6 +146,60 @@ pub fn preset(name: &str) -> Vec<f32> {
 const MAX_VOICES: usize = 8;
 const CHUNK: usize = 64;
 
+/// A melodica's case over frequency (dB), fitted to recordings of a real
+/// one with the reed's own fall (some 1.3 dB an octave) taken out: level to
+/// about 3 kHz with small bumps, then a steep fall. Below 266 Hz it holds.
+const BODY_HZ: [f32; 21] = [265.7, 321.4, 388.9, 470.5, 569.2, 688.7, 833.3, 1008.1, 1219.7, 1475.7, 1785.5, 2160.2, 2613.6, 3162.1, 3825.8, 4628.8, 5600.3, 6775.7, 8197.8, 9918.3, 12000.0];
+const BODY_DB: [f32; 21] = [0.0, -1.2, -2.1, -2.2, -1.3, 0.1, -0.5, -2.8, -2.0, -3.5, -4.0, -2.9, -0.1, -1.0, -4.7, -13.2, -21.0, -28.3, -21.6, -29.2, -43.5];
+
+/// The body's level at `f` Hz, between the measured points.
+fn body_db(f: f32) -> f32 {
+    if f <= BODY_HZ[0] {
+        return BODY_DB[0];
+    }
+    let n = BODY_HZ.len();
+    if f >= BODY_HZ[n - 1] {
+        return BODY_DB[n - 1] - 24.0 * (f / BODY_HZ[n - 1]).log2();
+    }
+    let i = BODY_HZ.partition_point(|&h| h <= f) - 1;
+    let t = (f / BODY_HZ[i]).ln() / (BODY_HZ[i + 1] / BODY_HZ[i]).ln();
+    BODY_DB[i] + (BODY_DB[i + 1] - BODY_DB[i]) * t
+}
+
+/// Each reed's own few dB, harmonic by harmonic (-1..1), always the same.
+fn reed_print(note: u8, k: usize) -> f32 {
+    let h = (note as u32).wrapping_mul(2_654_435_761) ^ (k as u32).wrapping_mul(2_246_822_519);
+    let h = h ^ (h >> 15);
+    (h.wrapping_mul(0x2c1b_3c6d) >> 16 & 0xffff) as f32 / 32_767.5 - 1.0
+}
+
+/// The level (dB) of harmonic `k` at `f` Hz of key `note`, blown `blown`
+/// hard, `env` far into its start, `t` seconds after it; `swing` is how the
+/// breath moves the reed now (1: still); `tone` moves where it falls away,
+/// `body` sets how strongly the case colours it.
+#[allow(clippy::too_many_arguments)]
+fn melodica_db(f: f32, k: usize, note: u8, blown: f32, env: f32, t: f32, swing: f32, tone: f32, body: f32) -> f32 {
+    // The air pulse: narrow as it starts, nearly half the cycle once the
+    // reed swings out, breathing with the pressure. Its gaps are never
+    // quite empty.
+    // (Measured: once it sounds the pulse is wider the higher the key, about
+    // 0.38 of the cycle at C4 to nearly half at C5, where the odd harmonics
+    // ring and the even ones all but vanish.)
+    let grow = 1.0 - (-t / 0.12).exp();
+    let held = 0.38 + 0.12 * ((note as f32 - 60.0) / 12.0).clamp(-0.5, 1.0);
+    let duty = (0.2 + (held - 0.2) * grow * swing).clamp(0.12, 0.5);
+    let x = std::f32::consts::PI * k as f32 * duty;
+    let pulse = (x.sin() / x).abs().max(0.03) * (k as f32).powf(0.85);
+    let fe = f / (0.75 + 0.5 * tone);
+    let mut db = 20.0 * pulse.log10() + body_db(fe) * (0.5 + 0.8 * body);
+    // Every reed a few dB of its own.
+    db += 2.0 * reed_print(note, k) * if k <= 2 { 0.5 } else { 1.0 };
+    // Softly blown, and at the very start, the high harmonics are weaker.
+    let over = ((fe / 500.0).log2() / 3.0).clamp(0.0, 1.0);
+    let started = env.clamp(0.0, 1.0);
+    db - over * (14.0 * (1.0 - blown).clamp(0.0, 1.0) + 24.0 * (1.0 - started * started))
+}
+
 /// How far a key is off, -1..1, always the same for the same key.
 fn key_error(note: u8) -> f32 {
     let h = (note as u32).wrapping_mul(2_654_435_761) >> 16;
@@ -172,9 +241,6 @@ pub struct MelodicaState {
     wr: Vec<f32>,
     el: Vec<f32>,
     er: Vec<f32>,
-    body0: [Svf; 2],
-    body1: [Svf; 2],
-    body2: [Svf; 2],
     hall: Box<Hall>,
     hall_p: Vec<f32>,
     echo: Box<Echo>,
@@ -214,9 +280,6 @@ impl MelodicaState {
             wr: vec![0.0; CHUNK],
             el: vec![0.0; CHUNK],
             er: vec![0.0; CHUNK],
-            body0: [Svf::new(), Svf::new()],
-            body1: [Svf::new(), Svf::new()],
-            body2: [Svf::new(), Svf::new()],
             hall: Box::new(Hall::new(sr)),
             hall_p: crate::params::defaults(hall::SPECS),
             echo: Box::new(Echo::new(sr)),
@@ -267,15 +330,20 @@ impl MelodicaState {
                 v.pan = pan;
             } else {
                 v.start(note, note, f, vel, 1.0, pan);
-                v.rise = 0.12;
+                v.rise = 0.08;
+                v.bend_from = -0.6;
+                v.bend_t = 0.035;
             }
             return;
         }
         let i = (0..poly).find(|&i| self.voices[i].owner == note && self.voices[i].gate).unwrap_or_else(|| free_reed(&self.voices[..poly]));
         let v = &mut self.voices[i];
         v.start(note, note, f, vel, 1.0, pan);
-        // As the valve shuts and the pressure drops, it lifts a little.
-        v.rise = 0.12;
+        // As the valve shuts and the pressure drops, it lifts a little; it
+        // starts some 30 cents flat and rises into place.
+        v.rise = 0.08;
+        v.bend_from = -0.6;
+        v.bend_t = 0.035;
     }
 
     pub fn note_off(&mut self, p: &[f32], note: u8) {
@@ -339,23 +407,21 @@ impl MelodicaState {
         let (depth, rate) = (k(VIBRATO), p[VIB_RATE].clamp(1.0, 12.0));
         let life = k(LIFE);
         let body = k(BODY);
+        let tone = (k(TONE) - 0.2 * tube).max(0.0);
         let (space, drive, echo_amt, spring_amt) = (k(SPACE), k(DRIVE), k(ECHO), k(SPRING));
-        let gain = db_to_gain(p[VOLUME]) * 0.13;
+        let gain = db_to_gain(p[VOLUME]) * 0.2;
         for c in 0..2 {
-            self.body0[c].set_q(420.0, 0.9, sr);
-            self.body1[c].set_q(1150.0 * (1.0 - 0.2 * tube), 2.5, sr);
-            self.body2[c].set_q(2700.0 * (1.0 - 0.15 * tube), 3.0, sr);
             self.tape_lp[c].set(9000.0 - 3500.0 * drive, sr);
         }
-        self.click_hp.set(1800.0, sr);
-        self.click_lp.set(6500.0, sr);
+        self.click_hp.set(500.0, sr);
+        self.click_lp.set(2000.0, sr);
         let n = l.len().min(r.len());
         let mut done = 0;
         while done < n {
             let len = CHUNK.min(n - done);
             let dt = len as f32 / sr;
             // The breath wanders: slow, unsteady, never a machine's.
-            for (w, fc) in self.wander.iter_mut().zip([1.1f32, 0.7, 0.35, 0.25]) {
+            for (w, fc) in self.wander.iter_mut().zip([2.5f32, 0.7, 0.35, 0.25]) {
                 let a = (TAU * fc * dt).min(0.5);
                 *w += a * (self.rng.bipolar() / (a / 6.0).sqrt() - *w);
             }
@@ -381,7 +447,10 @@ impl MelodicaState {
             } else {
                 0.0
             };
-            let wander = (1.0 + 0.12 * life * self.wander[0]).clamp(0.6, 1.4);
+            let wander = db_to_gain(7.5 * life * self.wander[0].clamp(-2.5, 2.5));
+            // The breath swings the reed: the pressure's wander and the vibrato.
+            let swing = (1.0 + 0.12 * life * self.wander[0].clamp(-2.5, 2.5) + 0.15 * self.vib[0]).clamp(0.6, 1.3);
+            let shape = move |f: f32, k: usize, note: u8, blown: f32, env: f32, t: f32| melodica_db(f, k, note, blown, env, t, swing, tone, body);
             let share = if mouth { (1.0 / open.max(1) as f32).sqrt() * (1.0 - self.dip) * (1.0 - 0.3 * tired) } else { 1.0 } * wander;
             self.dip *= (-dt / 0.06).exp();
             let blow = Blow {
@@ -391,17 +460,18 @@ impl MelodicaState {
                 glide_k,
                 bright: 0.93 + 0.06 * k(TONE) - 0.06 * tube,
                 duty: 0.36 - 0.14 * k(TONE),
-                breath: k(BREATH) * (1.0 + 0.6 * tube) * (1.0 + 0.6 * tired),
+                breath: k(BREATH) * 0.12 * (1.0 + 0.6 * tube) * (1.0 + 0.6 * tired),
                 beat: k(BEAT) * 0.3,
                 vib: &self.vib[..len],
-                vib_amp: 0.35,
-                vib_pitch: 0.08,
-                pitch_bend: self.pitch_bend + 0.03 * life * self.wander[1],
+                vib_amp: 0.5,
+                vib_pitch: 0.02,
+                pitch_bend: self.pitch_bend + 0.015 * life * self.wander[1],
                 share,
                 radiate: 0.75 - 0.3 * tube,
                 ping: 0.04,
                 tongue: 0.35 * (1.0 - 0.6 * tube),
                 puff_off: 0.5,
+                shape: Some(&shape),
             };
             self.dl[..len].fill(0.0);
             self.dr[..len].fill(0.0);
@@ -421,22 +491,18 @@ impl MelodicaState {
                 }
             }
             self.air = self.air * 0.8 + air * 0.2;
-            // The body and the mouthpiece, close up; the keys; the preamp and tape.
-            let click_k = (-1.0 / (0.0015 * sr)).exp();
-            let thump_k = (-1.0 / (0.012 * sr)).exp();
+            // The keys; the preamp and tape.
+            let click_k = (-1.0 / (0.012 * sr)).exp();
+            let thump_k = (-1.0 / (0.008 * sr)).exp();
             let drive_g = 1.0 + 5.0 * drive;
             for j in 0..len {
                 let nz = self.click_lp.lp(self.click_hp.hp(self.rng.bipolar()));
                 self.thump_ph = (self.thump_ph + 240.0 / sr).fract();
-                let key = (nz * self.click * 0.5 + (TAU * self.thump_ph).sin() * self.thump * 0.35) * 0.08;
+                let key = (nz * self.click * 0.6 + (TAU * self.thump_ph).sin() * self.thump * 0.15) * 0.06;
                 self.click *= click_k;
                 self.thump *= thump_k;
                 for (c, d) in [&mut self.dl, &mut self.dr].into_iter().enumerate() {
-                    let x = d[j];
-                    let b0 = self.body0[c].tick(x).band;
-                    let b1 = self.body1[c].tick(x).band;
-                    let b2 = self.body2[c].tick(x).band;
-                    let mut y = (x * (1.0 - 0.3 * body) + body * (b0 * 0.5 + b1 * 1.3 + b2 * 0.8)) * gain + key;
+                    let mut y = d[j] * gain + key;
                     if drive > 0.001 {
                         y = self.tape_lp[c].lp((y * drive_g).tanh() / drive_g.sqrt());
                     }
@@ -654,6 +720,65 @@ mod tests {
             let high = pr[9..14].iter().sum::<f32>() / 5.0;
             assert!(mid > 0.25, "{name}: harmonics 4-8 at {:.1} dB", 20.0 * mid.log10());
             assert!(high > 0.1, "{name}: harmonics 10-14 at {:.1} dB", 20.0 * high.log10());
+        }
+    }
+
+    #[test]
+    fn its_harmonics_move_as_a_real_ones_do() {
+        // The second harmonic at the start and later: the pulse widens, it
+        // falls away (as in the recordings, by many dB).
+        let p = dry("Melodica");
+        let mut st = MelodicaState::new(SR);
+        st.note_on(&p, 67, 0.8);
+        let l = run(&mut st, &p, 1.0);
+        let f = midi_to_freq(67.0);
+        let h2 = |a: f32, b: f32| {
+            let w = &l[(a * SR) as usize..(b * SR) as usize];
+            mag(w, 2.0 * f) / mag(w, f)
+        };
+        let (early, late) = (h2(0.02, 0.07), h2(0.5, 0.9));
+        assert!(early > 2.5 * late, "h2/h1 early {early:.3} late {late:.3}");
+    }
+
+    #[test]
+    fn it_falls_away_above_four_kilohertz_like_a_real_one() {
+        // A3: the harmonics from 5.5 to 8 kHz far below those from 1 to 3 kHz.
+        let p = dry("Melodica");
+        let mut st = MelodicaState::new(SR);
+        st.note_on(&p, 57, 0.8);
+        let l = run(&mut st, &p, 1.0);
+        let t = &l[(0.4 * SR) as usize..];
+        let f0 = midi_to_freq(57.0) * 2f32.powf(-0.04 / 12.0);
+        let band = |lo: f32, hi: f32| {
+            let hs: Vec<f32> = (1..60).map(|k| k as f32 * f0).filter(|f| *f >= lo && *f < hi).map(|f| mag(t, f)).collect();
+            20.0 * (hs.iter().sum::<f32>() / hs.len() as f32).log10()
+        };
+        let (mid, top) = (band(1000.0, 3000.0), band(5500.0, 8000.0));
+        assert!(top < mid - 15.0, "1-3 kHz {mid:.1} dB, 5.5-8 kHz {top:.1} dB");
+    }
+
+    /// MELODICA_WAV=folder writes a few notes of it to listen to and to measure.
+    #[test]
+    fn notes_to_listen_to() {
+        let Ok(dir) = std::env::var("MELODICA_WAV") else { return };
+        for (name, note) in [("Melodica", 60u8), ("Melodica", 67), ("Melodica", 72), ("Dub Melodica", 67)] {
+            let p = preset(name);
+            let mut st = MelodicaState::new(SR);
+            st.bpm = 90.0;
+            st.note_on(&p, note, 0.8);
+            let n = (2.5 * SR) as usize;
+            let (mut l, mut r) = (vec![0.0; n], vec![0.0; n]);
+            for (a, b) in l.chunks_mut(256).zip(r.chunks_mut(256)) {
+                st.render(&p, a, b);
+            }
+            st.note_off(&p, note);
+            let (mut l2, mut r2) = (vec![0.0; n], vec![0.0; n]);
+            for (a, b) in l2.chunks_mut(256).zip(r2.chunks_mut(256)) {
+                st.render(&p, a, b);
+            }
+            let inter: Vec<f32> = l.iter().chain(&l2).zip(r.iter().chain(&r2)).flat_map(|(a, b)| [*a, *b]).collect();
+            let path = std::path::Path::new(&dir).join(format!("{}-{note}.wav", name.replace(' ', "_")));
+            crate::render::write_wav(&path, SR as u32, &inter).unwrap();
         }
     }
 

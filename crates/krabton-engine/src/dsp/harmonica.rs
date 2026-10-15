@@ -433,6 +433,7 @@ impl HarmonicaState {
                 ping: 0.09,
                 tongue: 0.2,
                 puff_off: 0.0,
+                shape: None,
             };
             self.dl[..len].fill(0.0);
             let mut air = 0.0f32;

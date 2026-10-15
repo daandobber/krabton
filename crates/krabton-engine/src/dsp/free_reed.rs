@@ -17,7 +17,7 @@ use super::{OnePole, Rng};
 use std::f32::consts::{LN_2, PI, TAU};
 
 /// Harmonics at most (fewer when they would pass the Nyquist frequency).
-pub const MAX_H: usize = 40;
+pub const MAX_H: usize = 64;
 /// A reed that belongs to no key.
 pub const NONE: u8 = 255;
 
@@ -80,6 +80,11 @@ pub struct Blow<'a> {
     pub tongue: f32,
     /// A puff of air as a key lets go and its valve shuts.
     pub puff_off: f32,
+    /// An instrument's own measured tone instead of the plain reed: the
+    /// level (dB) of a harmonic at a frequency, given its number, the key,
+    /// how hard it is blown (0..1), how far it has started (0..1) and how
+    /// long it has sounded (seconds).
+    pub shape: Option<&'a dyn Fn(f32, usize, u8, f32, f32, f32) -> f32>,
 }
 
 /// One reed sounding.
@@ -199,7 +204,29 @@ impl Reed {
         let blown = (self.env * (0.2 + 0.8 * self.vel) * b.share).min(1.0);
         let bright = (b.bright * self.dark * (0.88 + 0.12 * blown)).clamp(0.3, 0.985);
         let duty = (b.duty * (1.0 - 0.45 * blown) * (2.0 - self.dark).clamp(0.6, 1.4)).clamp(0.08, 0.5);
-        self.n_h = reed_spectrum(&mut self.amps, self.f, sr, duty, bright, b.radiate);
+        self.n_h = match b.shape {
+            Some(shape) => {
+                // The instrument's own tone, its power kept.
+                let lim = 0.45 * sr;
+                let mut n = 0;
+                let mut power = 0.0;
+                for (k, a) in self.amps.iter_mut().enumerate() {
+                    let fk = (k + 1) as f32 * self.f;
+                    if fk >= lim {
+                        break;
+                    }
+                    *a = 10f32.powf(shape(fk, k + 1, self.note, blown, self.env, self.t) / 20.0);
+                    power += *a * *a;
+                    n = k + 1;
+                }
+                let norm = 0.8 / power.sqrt().max(1e-6);
+                for a in self.amps[..n].iter_mut() {
+                    *a *= norm;
+                }
+                n
+            }
+            None => reed_spectrum(&mut self.amps, self.f, sr, duty, bright, b.radiate),
+        };
         // The air rushes while the reed is out of the slot: this much of the cycle.
         let gap = (PI * duty).cos();
         let ping_f = self.f * 6.27;
