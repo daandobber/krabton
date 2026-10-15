@@ -117,7 +117,7 @@ pub fn preset(name: &str) -> Vec<f32> {
         "Bright Melodica" => &[(TONE, 0.85), (BREATH, 0.15), (BODY, 0.5), (SPACE, 0.2)],
         "Tube Melodica" => &[(TUBE, 0.85), (TONE, 0.35), (BREATH, 0.35), (ATTACK, 0.06), (RELEASE, 0.2), (SPACE, 0.3)],
         "Lullaby" => &[(VIBRATO, 0.25), (TONE, 0.35), (BREATH, 0.3), (ATTACK, 0.08), (RELEASE, 0.4), (SPACE, 0.55)],
-        "Bass Melodica" => &[(TRANSPOSE, -12.0), (TONE, 0.4), (BODY, 0.7), (VOICES, 4.0), (BREATH, 0.3), (SPACE, 0.2)],
+        "Bass Melodica" => &[(TRANSPOSE, -12.0), (TONE, 0.4), (BODY, 0.7), (VOICES, 4.0), (BREATH, 0.3), (SPACE, 0.2), (VOLUME, -3.0)],
         "Accordion" => &[(PLAYING, 0.0), (BEAT, 0.55), (BODY, 0.4), (VIBRATO, 0.0), (TONE, 0.65), (ATTACK, 0.02), (RELEASE, 0.08), (TUNING, 0.1), (LIFE, 0.2), (KEYS, 0.35), (SPACE, 0.2)],
         "Harmonium" => &[(PLAYING, 0.0), (BEAT, 0.08), (BODY, 0.3), (TONE, 0.4), (BREATH, 0.15), (VIBRATO, 0.05), (ATTACK, 0.15), (RELEASE, 0.5), (TUNING, 0.1), (LIFE, 0.25), (KEYS, 0.15), (SPACE, 0.5)],
         _ => &[],
@@ -340,7 +340,7 @@ impl MelodicaState {
         let life = k(LIFE);
         let body = k(BODY);
         let (space, drive, echo_amt, spring_amt) = (k(SPACE), k(DRIVE), k(ECHO), k(SPRING));
-        let gain = db_to_gain(p[VOLUME]) * 0.17;
+        let gain = db_to_gain(p[VOLUME]) * 0.13;
         for c in 0..2 {
             self.body0[c].set_q(420.0, 0.9, sr);
             self.body1[c].set_q(1150.0 * (1.0 - 0.2 * tube), 2.5, sr);
@@ -389,8 +389,8 @@ impl MelodicaState {
                 att,
                 rel,
                 glide_k,
-                bright: 0.72 + 0.24 * k(TONE) - 0.12 * tube,
-                duty: 0.42 - 0.18 * k(TONE),
+                bright: 0.93 + 0.06 * k(TONE) - 0.06 * tube,
+                duty: 0.36 - 0.14 * k(TONE),
                 breath: k(BREATH) * (1.0 + 0.6 * tube) * (1.0 + 0.6 * tired),
                 beat: k(BEAT) * 0.3,
                 vib: &self.vib[..len],
@@ -398,7 +398,7 @@ impl MelodicaState {
                 vib_pitch: 0.08,
                 pitch_bend: self.pitch_bend + 0.03 * life * self.wander[1],
                 share,
-                radiate: 0.45 - 0.25 * tube,
+                radiate: 0.75 - 0.3 * tube,
                 ping: 0.04,
                 tongue: 0.35 * (1.0 - 0.6 * tube),
                 puff_off: 0.5,
@@ -627,6 +627,34 @@ mod tests {
             high_share(&l[(0.4 * SR) as usize..])
         };
         assert!(bright(1.0) > 1.2 * bright(0.25), "{} {}", bright(1.0), bright(0.25));
+    }
+
+    /// Harmonics 1 to 16 of a note, each against the first.
+    fn profile(p: &[f32], note: u8) -> Vec<f32> {
+        let mut st = MelodicaState::new(SR);
+        st.note_on(p, note, 0.8);
+        let l = run(&mut st, p, 1.0);
+        let t = &l[(0.4 * SR) as usize..];
+        // The real pitch: the strongest near the note.
+        let f0 = midi_to_freq(note as f32);
+        let f = (-30..=30).map(|c| f0 * 2f32.powf(c as f32 / 1200.0)).max_by(|a, b| mag(t, *a).total_cmp(&mag(t, *b))).unwrap();
+        let h1 = mag(t, f);
+        (1..=16).map(|k| mag(t, f * k as f32) / h1).collect()
+    }
+
+    #[test]
+    fn a_melodica_is_reedy_not_a_flute() {
+        // Its upper harmonics stay strong: the honk of a free reed.
+        for name in ["Melodica", "Dusty Melodica", "Dub Melodica"] {
+            let pr = profile(&dry(name), 57);
+            if std::env::var("REED_REPORT").is_ok() {
+                eprintln!("{name}: {}", pr.iter().map(|v| format!("{:.0}", 20.0 * v.max(1e-6).log10())).collect::<Vec<_>>().join(" "));
+            }
+            let mid = pr[3..8].iter().sum::<f32>() / 5.0;
+            let high = pr[9..14].iter().sum::<f32>() / 5.0;
+            assert!(mid > 0.25, "{name}: harmonics 4-8 at {:.1} dB", 20.0 * mid.log10());
+            assert!(high > 0.1, "{name}: harmonics 10-14 at {:.1} dB", 20.0 * high.log10());
+        }
     }
 
     #[test]

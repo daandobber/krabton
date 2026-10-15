@@ -21,24 +21,28 @@ pub const MAX_H: usize = 40;
 /// A reed that belongs to no key.
 pub const NONE: u8 = 255;
 
-/// The harmonics of a reed's air pulse: `duty` the share of the cycle it is
-/// open, `bright` how much each harmonic keeps of the one below, `radiate`
-/// how much of the pulse's change is heard rather than the pulse (0..1).
-/// Their power is kept the same, so a brighter reed is not a louder one.
+/// The harmonics of a reed's air pulse. The pulse opens sharply and closes
+/// more softly, so it falls like a sawtooth (1/k) with a gentle ripple where
+/// a square-edged pulse would have holes; `duty` is the share of the cycle
+/// it is open (narrower: brighter, the ripple further up), `bright` how much
+/// each harmonic keeps of the one below, `radiate` how much of the pulse's
+/// change is heard rather than the pulse (0..1, up to a flat buzz). Their
+/// power is kept the same, so a brighter reed is not a louder one.
 pub fn reed_spectrum(out: &mut [f32; MAX_H], f: f32, sr: f32, duty: f32, bright: f32, radiate: f32) -> usize {
     let lim = 0.45 * sr;
     let mut n = 0;
     let mut tilt = 1.0;
     let mut power = 0.0;
+    let step = bright.powf((duty / 0.3).clamp(0.3, 3.0));
     for (k, a) in out.iter_mut().enumerate() {
         let h = (k + 1) as f32;
         if h * f >= lim || tilt < 2e-4 {
             break;
         }
-        let x = PI * h * duty;
-        *a = x.sin() / x * tilt * h.powf(radiate);
+        let ripple = 1.0 - 0.22 * (1.0 - (TAU * h * duty).cos());
+        *a = h.powf(radiate - 1.0) * tilt * ripple;
         power += *a * *a;
-        tilt *= bright;
+        tilt *= step;
         n = k + 1;
     }
     let norm = 0.8 / power.sqrt().max(1e-6);
@@ -193,7 +197,7 @@ impl Reed {
         // The spectrum for this block, from how hard it is blown now: harder
         // is a narrower pulse and a brighter reed.
         let blown = (self.env * (0.2 + 0.8 * self.vel) * b.share).min(1.0);
-        let bright = (b.bright * self.dark * (0.65 + 0.35 * blown)).clamp(0.3, 0.97);
+        let bright = (b.bright * self.dark * (0.88 + 0.12 * blown)).clamp(0.3, 0.985);
         let duty = (b.duty * (1.0 - 0.45 * blown) * (2.0 - self.dark).clamp(0.6, 1.4)).clamp(0.08, 0.5);
         self.n_h = reed_spectrum(&mut self.amps, self.f, sr, duty, bright, b.radiate);
         // The air rushes while the reed is out of the slot: this much of the cycle.
@@ -294,7 +298,7 @@ mod tests {
         let mut b = [0.0; MAX_H];
         reed_spectrum(&mut a, 220.0, 48000.0, 0.45, 0.9, 0.5);
         reed_spectrum(&mut b, 220.0, 48000.0, 0.15, 0.9, 0.5);
-        let hi = |x: &[f32; MAX_H]| x[4..12].iter().map(|v| v.abs()).sum::<f32>() / x[0].abs();
+        let hi = |x: &[f32; MAX_H]| x[4..12].iter().map(|v| v * v).sum::<f32>() / x.iter().map(|v| v * v).sum::<f32>();
         assert!(hi(&b) > 1.5 * hi(&a));
         // Nothing above the Nyquist frequency.
         let n = reed_spectrum(&mut a, 3000.0, 48000.0, 0.3, 0.95, 0.5);

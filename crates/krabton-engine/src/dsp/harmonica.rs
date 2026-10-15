@@ -389,7 +389,7 @@ impl HarmonicaState {
         let (depth, rate) = (k(THROAT), p[VIB_RATE].clamp(1.0, 12.0));
         let (closed, wah_amt) = (k(HANDS), k(WAH));
         let space = k(SPACE);
-        let gain = db_to_gain(p[VOLUME]) * 0.09;
+        let gain = db_to_gain(p[VOLUME]) * 0.12;
         for c in 0..2 {
             self.comb[c].set_q(2300.0, 2.0, sr);
         }
@@ -420,8 +420,8 @@ impl HarmonicaState {
                 att,
                 rel,
                 glide_k: 1.0,
-                bright: 0.8 + 0.17 * k(TONE),
-                duty: 0.45 - 0.1 * k(TONE),
+                bright: 0.94 + 0.05 * k(TONE),
+                duty: 0.34 - 0.1 * k(TONE),
                 breath: k(BREATH),
                 beat: k(BEAT) * 0.3,
                 vib: &self.vib[..len],
@@ -429,7 +429,7 @@ impl HarmonicaState {
                 vib_pitch: 0.12,
                 pitch_bend: self.pitch_bend,
                 share: 1.0,
-                radiate: 0.85,
+                radiate: 0.9,
                 ping: 0.09,
                 tongue: 0.2,
                 puff_off: 0.0,
