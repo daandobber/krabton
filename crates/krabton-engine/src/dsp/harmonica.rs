@@ -431,6 +431,8 @@ impl HarmonicaState {
                 share: 1.0,
                 radiate: 0.85,
                 ping: 0.09,
+                tongue: 0.2,
+                puff_off: 0.0,
             };
             self.dl[..len].fill(0.0);
             let mut air = 0.0f32;

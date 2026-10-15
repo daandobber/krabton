@@ -1902,6 +1902,12 @@ impl Engine {
                         s.beat = ctx.beat;
                         s.bpm = ctx.bpm;
                     }
+                    InstState::Melodica(s) => {
+                        // Its echo keeps the song's time.
+                        s.playing = ctx.playing;
+                        s.beat = ctx.beat;
+                        s.bpm = ctx.bpm;
+                    }
                     InstState::Birds(s) => s.playing = ctx.playing,
                     InstState::Nature(s) => s.playing = ctx.playing,
                     // The pipes of a pan flute, a harp's key: the song's key now.

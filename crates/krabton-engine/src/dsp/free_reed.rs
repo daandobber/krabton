@@ -72,6 +72,10 @@ pub struct Blow<'a> {
     pub ping: f32,
     /// What each reed gets of the air (one breath for several).
     pub share: f32,
+    /// A tongued start: a push of pressure on a hard note ("pah").
+    pub tongue: f32,
+    /// A puff of air as a key lets go and its valve shuts.
+    pub puff_off: f32,
 }
 
 /// One reed sounding.
@@ -109,6 +113,9 @@ pub struct Reed {
     phase2: f32,
     ping_ph: f32,
     wobble: f32,
+    /// Seconds since it was let go.
+    off_t: f32,
+    was_gate: bool,
     amps: [f32; MAX_H],
     n_h: usize,
     hp: OnePole,
@@ -142,6 +149,8 @@ impl Default for Reed {
             phase2: 0.37,
             ping_ph: 0.0,
             wobble: 0.0,
+            off_t: 0.0,
+            was_gate: false,
             amps: [0.0; MAX_H],
             n_h: 0,
             hp: OnePole::default(),
@@ -192,13 +201,24 @@ impl Reed {
         let ping_f = self.f * 6.27;
         let ping = if ping_f < 0.45 * sr { b.ping } else { 0.0 };
         let beat = if b.beat > 0.0 { (b.beat * LN_2 / 12.0).exp() } else { 0.0 };
+        // A soft note swells in, a hard one speaks at once.
+        let att = (b.att * (0.5 + 0.8 * self.vel)).min(1.0);
+        if self.was_gate && !self.gate {
+            self.off_t = 0.0;
+        }
+        self.was_gate = self.gate;
         let mut peak = 0.0f32;
         for (j, o) in out.iter_mut().enumerate() {
             self.t += 1.0 / sr;
+            if !self.gate {
+                self.off_t += 1.0 / sr;
+            }
             self.f += (self.target - self.f) * b.glide_k;
-            self.env += ((if self.gate { 1.0 } else { 0.0 }) - self.env) * if self.gate { b.att } else { b.rel };
+            self.env += ((if self.gate { 1.0 } else { 0.0 }) - self.env) * if self.gate { att } else { b.rel };
             let vib = b.vib.get(j).copied().unwrap_or(0.0);
-            let press = self.env * (0.45 + 0.55 * self.vel) * b.share * self.amp * (1.0 + vib * b.vib_amp);
+            // Tongued: a push of pressure as a hard note starts.
+            let accent = 1.0 + b.tongue * self.vel * self.vel * (-self.t / 0.05).exp();
+            let press = self.env * (0.45 + 0.55 * self.vel) * b.share * self.amp * (1.0 + vib * b.vib_amp) * accent;
             if self.rough > 0.0 {
                 self.wobble += 0.004 * (rng.bipolar() - self.wobble * 0.02);
                 self.wobble = self.wobble.clamp(-1.0, 1.0);
@@ -220,7 +240,11 @@ impl Reed {
             let open = (((TAU * self.phase).cos() - gap) / (1.0 - gap)).max(0.0);
             let puff = (-self.t / 0.03).exp();
             let nz = self.lp.lp(self.hp.hp(rng.bipolar()));
-            let air = nz * (b.breath * self.airy * (0.1 + 0.6 * press) * open * 1.6 + b.breath.max(0.1) * 0.5 * puff) * self.env;
+            let mut air = nz * (b.breath * self.airy * (0.1 + 0.6 * press) * open * 1.6 + b.breath.max(0.1) * 0.5 * puff) * self.env;
+            // The valve shuts with a puff.
+            if !self.gate && b.puff_off > 0.0 {
+                air += nz * b.puff_off * b.breath.max(0.1) * 0.6 * (-self.off_t / 0.025).exp();
+            }
             // The tongue's second mode, ringing a moment as it starts.
             let mut zing = 0.0;
             if ping > 0.0 && self.t < 0.25 {
