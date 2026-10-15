@@ -1,10 +1,14 @@
 //! Free reeds, as in a melodica, a harmonica, an accordion: a brass tongue
 //! swings through a slot and lets the air through in a pulse once a cycle.
-//! The tone is that pulse's spectrum: narrower (and so brighter) when it is
-//! blown harder, its highest harmonics softened by the reed itself. A reed
-//! takes a moment to start, sinks a little flat when blown hard, and a
-//! second reed a few cents off makes it beat (tremolo, musette). The breath
-//! hisses through the slot along with it.
+//! What is heard is how fast that flow changes: the pulse's spectrum tilted
+//! up (Radiate: from the soft pulse itself to its sharp edges, buzzy), the
+//! pulse narrower and brighter when blown harder, the highest harmonics
+//! softened by the reed itself. The breath is not a hiss on top: the air
+//! only rushes while the reed is out of the slot, so it pulses with the
+//! tone, plus a puff as the note starts. The tongue's second mode (at 6.27
+//! times the note, a cantilever's) pings as it starts. A reed takes a moment
+//! to start, sinks a little flat when blown hard, and a second reed a few
+//! cents off makes it beat (tremolo, musette).
 //!
 //! The reed here is shared by the Melodica and the Harmonica, which decide
 //! which reeds sound and how they are blown. Original code.
@@ -18,20 +22,28 @@ pub const MAX_H: usize = 40;
 pub const NONE: u8 = 255;
 
 /// The harmonics of a reed's air pulse: `duty` the share of the cycle it is
-/// open, `bright` how much each harmonic keeps of the one below.
-pub fn reed_spectrum(out: &mut [f32; MAX_H], f: f32, sr: f32, duty: f32, bright: f32) -> usize {
+/// open, `bright` how much each harmonic keeps of the one below, `radiate`
+/// how much of the pulse's change is heard rather than the pulse (0..1).
+/// Their power is kept the same, so a brighter reed is not a louder one.
+pub fn reed_spectrum(out: &mut [f32; MAX_H], f: f32, sr: f32, duty: f32, bright: f32, radiate: f32) -> usize {
     let lim = 0.45 * sr;
     let mut n = 0;
     let mut tilt = 1.0;
+    let mut power = 0.0;
     for (k, a) in out.iter_mut().enumerate() {
         let h = (k + 1) as f32;
         if h * f >= lim || tilt < 2e-4 {
             break;
         }
         let x = PI * h * duty;
-        *a = x.sin() / x * tilt;
+        *a = x.sin() / x * tilt * h.powf(radiate);
+        power += *a * *a;
         tilt *= bright;
         n = k + 1;
+    }
+    let norm = 0.8 / power.sqrt().max(1e-6);
+    for a in out[..n].iter_mut() {
+        *a *= norm;
     }
     n
 }
@@ -54,6 +66,10 @@ pub struct Blow<'a> {
     pub vib_amp: f32,
     pub vib_pitch: f32,
     pub pitch_bend: f32,
+    /// How much of the flow's change is heard (0 soft, 1 buzzy).
+    pub radiate: f32,
+    /// The tongue's ping as it starts.
+    pub ping: f32,
     /// What each reed gets of the air (one breath for several).
     pub share: f32,
 }
@@ -91,6 +107,7 @@ pub struct Reed {
     pub tech: u8,
     phase: f32,
     phase2: f32,
+    ping_ph: f32,
     wobble: f32,
     amps: [f32; MAX_H],
     n_h: usize,
@@ -123,6 +140,7 @@ impl Default for Reed {
             tech: 0,
             phase: 0.0,
             phase2: 0.37,
+            ping_ph: 0.0,
             wobble: 0.0,
             amps: [0.0; MAX_H],
             n_h: 0,
@@ -168,7 +186,11 @@ impl Reed {
         let blown = (self.env * (0.2 + 0.8 * self.vel) * b.share).min(1.0);
         let bright = (b.bright * self.dark * (0.65 + 0.35 * blown)).clamp(0.3, 0.97);
         let duty = (b.duty * (1.0 - 0.45 * blown) * (2.0 - self.dark).clamp(0.6, 1.4)).clamp(0.08, 0.5);
-        self.n_h = reed_spectrum(&mut self.amps, self.f, sr, duty, bright);
+        self.n_h = reed_spectrum(&mut self.amps, self.f, sr, duty, bright, b.radiate);
+        // The air rushes while the reed is out of the slot: this much of the cycle.
+        let gap = (PI * duty).cos();
+        let ping_f = self.f * 6.27;
+        let ping = if ping_f < 0.45 * sr { b.ping } else { 0.0 };
         let beat = if b.beat > 0.0 { (b.beat * LN_2 / 12.0).exp() } else { 0.0 };
         let mut peak = 0.0f32;
         for (j, o) in out.iter_mut().enumerate() {
@@ -193,10 +215,19 @@ impl Reed {
                 self.phase2 = (self.phase2 + f * beat / sr).fract();
                 y = 0.62 * (y + harmonics(&self.amps[..self.n_h], self.phase2));
             }
-            // The breath through the slot, more at the start.
-            let puff = (-self.t / 0.04).exp();
-            let nz = self.lp.lp(self.hp.hp(rng.bipolar())) * (b.breath * self.airy * (0.25 + press) + 0.3 * puff * self.env) * self.env;
-            let s = y * press + nz * 0.5;
+            // The air through the slot, pulsing with the reed, and a puff as
+            // the note starts.
+            let open = (((TAU * self.phase).cos() - gap) / (1.0 - gap)).max(0.0);
+            let puff = (-self.t / 0.03).exp();
+            let nz = self.lp.lp(self.hp.hp(rng.bipolar()));
+            let air = nz * (b.breath * self.airy * (0.1 + 0.6 * press) * open * 1.6 + b.breath.max(0.1) * 0.5 * puff) * self.env;
+            // The tongue's second mode, ringing a moment as it starts.
+            let mut zing = 0.0;
+            if ping > 0.0 && self.t < 0.25 {
+                self.ping_ph = (self.ping_ph + ping_f / sr).fract();
+                zing = (TAU * self.ping_ph).sin() * ping * press * (-self.t / 0.05).exp();
+            }
+            let s = y * press + air * 0.5 + zing;
             peak = peak.max(s.abs());
             *o += s;
         }
@@ -237,12 +268,16 @@ mod tests {
     fn a_narrower_pulse_is_brighter() {
         let mut a = [0.0; MAX_H];
         let mut b = [0.0; MAX_H];
-        reed_spectrum(&mut a, 220.0, 48000.0, 0.45, 0.9);
-        reed_spectrum(&mut b, 220.0, 48000.0, 0.15, 0.9);
+        reed_spectrum(&mut a, 220.0, 48000.0, 0.45, 0.9, 0.5);
+        reed_spectrum(&mut b, 220.0, 48000.0, 0.15, 0.9, 0.5);
         let hi = |x: &[f32; MAX_H]| x[4..12].iter().map(|v| v.abs()).sum::<f32>() / x[0].abs();
         assert!(hi(&b) > 1.5 * hi(&a));
         // Nothing above the Nyquist frequency.
-        let n = reed_spectrum(&mut a, 3000.0, 48000.0, 0.3, 0.95);
+        let n = reed_spectrum(&mut a, 3000.0, 48000.0, 0.3, 0.95, 0.5);
         assert!(n as f32 * 3000.0 < 0.45 * 48000.0 + 3000.0);
+        // Hearing the change is buzzier than hearing the pulse.
+        reed_spectrum(&mut a, 220.0, 48000.0, 0.4, 0.9, 0.0);
+        reed_spectrum(&mut b, 220.0, 48000.0, 0.4, 0.9, 1.0);
+        assert!(hi(&b) > 2.0 * hi(&a));
     }
 }

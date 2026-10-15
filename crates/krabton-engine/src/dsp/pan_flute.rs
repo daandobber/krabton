@@ -8,7 +8,9 @@
 //! with a chiff, a puff of breath and a flash of the overblown harmonic,
 //! and may scoop up into its pitch (a shakuhachi's meri); vibrato comes in
 //! after a while, more in loudness for a pan flute, more in pitch for a
-//! shakuhachi.
+//! shakuhachi. A flute blown across an edge has to speak: first the breath
+//! rings in the pipe, then the tone grows out of it, unsteady for a moment
+//! and never quite still (a pan pipe speaks at once).
 //!
 //! What it is made of colours it (Material): bamboo, wood and clay soak up
 //! the high harmonics and breathe more, metal and glass ring along with a
@@ -145,14 +147,17 @@ struct Model {
     scoop_t: f32,
     /// A little buzz (the wooden flute's two chambers).
     buzz: f32,
+    /// How much the tone has to speak: grow out of the breath, unsteady at
+    /// first (0: at once, as a pan pipe does).
+    speak: f32,
 }
 
 const MODEL_DATA: [Model; 5] = [
-    Model { stopped: true, harm: [1.0, 0.0, 0.18, 0.0, 0.06, 0.0], breath: 0.11, ring: 0.9, chiff: 0.8, flash: 3, vib_amp: 0.7, scoop: 0.6, scoop_t: 0.06, buzz: 0.0 },
-    Model { stopped: false, harm: [1.0, 0.35, 0.18, 0.1, 0.05, 0.03], breath: 0.18, ring: 0.85, chiff: 0.6, flash: 2, vib_amp: 0.3, scoop: 1.2, scoop_t: 0.2, buzz: 0.0 },
-    Model { stopped: true, harm: [1.0, 0.05, 0.03, 0.01, 0.0, 0.0], breath: 0.04, ring: 0.6, chiff: 0.25, flash: 2, vib_amp: 0.5, scoop: 0.3, scoop_t: 0.05, buzz: 0.0 },
-    Model { stopped: false, harm: [1.0, 0.25, 0.12, 0.05, 0.02, 0.01], breath: 0.13, ring: 0.9, chiff: 0.4, flash: 2, vib_amp: 0.5, scoop: 0.8, scoop_t: 0.12, buzz: 0.0 },
-    Model { stopped: false, harm: [1.0, 0.3, 0.22, 0.08, 0.05, 0.02], breath: 0.09, ring: 0.92, chiff: 0.5, flash: 2, vib_amp: 0.6, scoop: 0.5, scoop_t: 0.08, buzz: 0.25 },
+    Model { stopped: true, harm: [1.0, 0.0, 0.18, 0.0, 0.06, 0.0], breath: 0.11, ring: 0.9, chiff: 0.8, flash: 3, vib_amp: 0.7, scoop: 0.6, scoop_t: 0.06, buzz: 0.0, speak: 0.0 },
+    Model { stopped: false, harm: [1.0, 0.35, 0.18, 0.1, 0.05, 0.03], breath: 0.18, ring: 0.85, chiff: 0.6, flash: 2, vib_amp: 0.3, scoop: 1.2, scoop_t: 0.2, buzz: 0.0, speak: 1.0 },
+    Model { stopped: true, harm: [1.0, 0.05, 0.03, 0.01, 0.0, 0.0], breath: 0.04, ring: 0.6, chiff: 0.25, flash: 2, vib_amp: 0.5, scoop: 0.3, scoop_t: 0.05, buzz: 0.0, speak: 0.5 },
+    Model { stopped: false, harm: [1.0, 0.25, 0.12, 0.05, 0.02, 0.01], breath: 0.13, ring: 0.9, chiff: 0.4, flash: 2, vib_amp: 0.5, scoop: 0.8, scoop_t: 0.12, buzz: 0.0, speak: 1.0 },
+    Model { stopped: false, harm: [1.0, 0.3, 0.22, 0.08, 0.05, 0.02], breath: 0.09, ring: 0.92, chiff: 0.5, flash: 2, vib_amp: 0.6, scoop: 0.5, scoop_t: 0.08, buzz: 0.25, speak: 0.9 },
 ];
 
 /// What the walls do to the sound.
@@ -233,6 +238,11 @@ struct Voice {
     /// The wall's ring.
     wall1: f32,
     wall2: f32,
+    /// How far the tone has spoken (0..1), when it starts to, and the
+    /// turbulence that keeps it from standing still.
+    speak: f32,
+    speak_at: f32,
+    flut: f32,
 }
 
 impl Voice {
@@ -265,6 +275,9 @@ impl Voice {
             then: None,
             wall1: 0.0,
             wall2: 0.0,
+            speak: 1.0,
+            speak_at: 0.0,
+            flut: 0.0,
         }
     }
 
@@ -289,6 +302,9 @@ impl Voice {
         self.then = None;
         self.gate = true;
         self.pan = pan;
+        // It speaks anew: soon after the breath, sooner when slid into.
+        self.speak = 0.0;
+        self.speak_at = if fresh < 0.5 { 0.002 } else { 0.006 + 0.003 * (note % 5) as f32 };
     }
 
     fn stop(&mut self) {
@@ -430,6 +446,8 @@ impl PanFluteState {
             if !legato {
                 v.t = 0.0;
                 v.vel = vel;
+                v.speak = 0.0;
+                v.speak_at = 0.008;
             }
             v.slur = legato;
             v.fresh = if legato { 0.25 } else { 1.0 };
@@ -565,6 +583,8 @@ impl PanFluteState {
             v.slur = false;
             v.fresh = 1.0;
             v.f = f;
+            v.speak = 0.0;
+            v.speak_at = 0.008;
         }
         v.target = f;
         v.note = note;
@@ -679,6 +699,11 @@ impl PanFluteState {
         let gain = db_to_gain(p[VOLUME]) * 0.42;
         let ring = (m.ring * mat.ring).min(0.96);
         let wall_r = (-1.0 / (mat.wall_t.max(0.001) * sr)).exp();
+        // How a flute blown across an edge speaks.
+        let sp = m.speak;
+        let speak_fresh = 1.0 - (-1.0 / ((0.012 + 0.5 * p[ATTACK].clamp(0.005, 1.0)) * sr)).exp();
+        let speak_slur = 1.0 - (-1.0 / (0.008 * sr)).exp();
+        let flut_a = TAU * 10.0 / sr;
         let n = l.len().min(r.len());
         let lim = 0.45 * sr;
         let mut done = 0;
@@ -725,6 +750,7 @@ impl PanFluteState {
                 let wf = (v.f * mat.wall_ratio).min(0.42 * sr);
                 let wall_c = 2.0 * wall_r * (TAU * wf / sr).cos();
                 let fresh = v.fresh;
+                let speak_k = if v.slur { speak_slur } else { speak_fresh };
                 let mut peak = 0.0f32;
                 for j in 0..len {
                     v.t += 1.0 / sr;
@@ -738,7 +764,18 @@ impl PanFluteState {
                     let depth = vibrato * vin * vin * (3.0 - 2.0 * vin);
                     v.vib_ph = (v.vib_ph + vib_rate / sr).fract();
                     let vib = (TAU * v.vib_ph).sin() * depth;
-                    let semis = scoop + vib * (1.0 - m.vib_amp) * 0.4 + v.drift * 0.04 + pitch_bend;
+                    // The tone speaks after the breath, unsteady at first.
+                    if sp > 0.0 {
+                        if v.gate && v.t > v.speak_at {
+                            v.speak += (1.0 - v.speak) * speak_k;
+                        }
+                        v.flut += flut_a * (68.0 * self.rng.bipolar() - v.flut);
+                    } else {
+                        v.speak = 1.0;
+                    }
+                    let unspoken = 1.0 - v.speak;
+                    let rough = sp * (0.02 + 0.15 * unspoken);
+                    let semis = scoop + vib * (1.0 - m.vib_amp) * 0.4 + v.drift * 0.04 + pitch_bend + sp * 0.03 * v.flut * (1.0 - 0.7 * v.speak);
                     let f = v.f * (semis * (std::f32::consts::LN_2 / 12.0)).exp();
                     let press = v.env * (0.55 + 0.45 * v.vel) * (1.0 + vib * m.vib_amp * 0.35) * share * v.amp;
                     v.phase = (v.phase + f / sr).fract();
@@ -762,16 +799,19 @@ impl PanFluteState {
                         ck = ck * c1 - sk * s1;
                         sk = s_next;
                     }
-                    // The chiff: a puff and an overblown flash at the start.
+                    // The chiff: a puff and an overblown flash at the start (rough
+                    // with the turbulence where the tone has to speak).
                     let ch = chiff * m.chiff * fresh * (0.4 + 0.6 * v.vel) * (-v.t / 0.035).exp();
-                    y += ch * 0.6 * flash_s;
+                    y *= v.speak * v.speak * (1.0 + rough * v.flut);
+                    y += if sp > 0.0 { ch * 0.25 * flash_s * (0.5 + 0.5 * v.flut.abs().min(2.0)) } else { ch * 0.6 * flash_s };
                     if m.buzz > 0.0 {
                         y += m.buzz * 0.4 * (y * y.abs() - 0.15);
                     }
                     // Breath: noise from the jet, rippling with the tone, then
                     // ringing in the pipe.
                     let nz = v.lp2.lp(v.lp.lp(v.hp.hp(self.rng.bipolar()))) * (1.0 + 0.6 * s1);
-                    let amount = (breath * 2.0 * m.breath * (0.4 + 0.6 * press) + ch * 0.8) * mat.breath;
+                    let onset = sp * unspoken * v.env * 0.25 * (0.4 + chiff) * if v.slur { 0.3 } else { 1.0 };
+                    let amount = (breath * 2.0 * m.breath * (0.4 + 0.6 * press) + ch * 0.8 + onset) * mat.breath;
                     let delay = if m.stopped { sr / (2.0 * f) } else { sr / f };
                     let d = delay.clamp(2.0, (LINE - 2) as f32);
                     let rp = v.w as f32 + LINE as f32 - d;
@@ -797,7 +837,7 @@ impl PanFluteState {
                     // Mostly what rings in the pipe (on its harmonics), only a
                     // little of the plain hiss.
                     let breath_out = (fb * (1.0 - ring) * 2.6 + nz * amount * 0.12) * 1.4 * v.amp.sqrt();
-                    let out = (press * y * 0.5 + breath_out * v.env.max(ch) + wall) * gain;
+                    let out = (press * y * 0.5 + breath_out * v.env.max(ch).max(onset * 2.0) + wall) * gain;
                     peak = peak.max(out.abs());
                     self.dl[j] += out * pl;
                     self.dr[j] += out * pr;
@@ -1021,6 +1061,24 @@ mod tests {
         let (l, _) = run(&mut st, &p, 1.0);
         let tail = &l[(0.4 * SR) as usize..];
         assert!(mag(tail, midi_to_freq(60.0)) > 0.2 * mag(tail, midi_to_freq(67.0)));
+    }
+
+    #[test]
+    fn a_bamboo_flute_speaks_out_of_its_breath_a_pan_pipe_at_once() {
+        // How much of the first 20 ms is the tone, against a moment later.
+        let early_share = |name: &str| {
+            let mut p = plain(name);
+            p[BREATH] = 0.3;
+            let mut st = PanFluteState::new(SR);
+            st.note_on(&p, 69, 0.9);
+            let (l, _) = run(&mut st, &p, 0.3);
+            let e = &l[(0.004 * SR) as usize..(0.024 * SR) as usize];
+            let s = &l[(0.2 * SR) as usize..(0.22 * SR) as usize];
+            let rms = |x: &[f32]| (x.iter().map(|v| v * v).sum::<f32>() / x.len() as f32).sqrt();
+            (mag(e, 440.0) / rms(e).max(1e-9)) / (mag(s, 440.0) / rms(s).max(1e-9))
+        };
+        let (bamboo, pan) = (early_share("Bansuri Evening"), early_share("Andes Pan Flute"));
+        assert!(bamboo < 0.7 * pan, "bamboo {bamboo} pan {pan}");
     }
 
     #[test]

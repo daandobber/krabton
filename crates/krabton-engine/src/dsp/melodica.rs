@@ -279,6 +279,8 @@ impl MelodicaState {
                 vib_pitch: 0.08,
                 pitch_bend: self.pitch_bend,
                 share,
+                radiate: 0.45 - 0.25 * tube,
+                ping: 0.04,
             };
             self.dl[..len].fill(0.0);
             self.dr[..len].fill(0.0);

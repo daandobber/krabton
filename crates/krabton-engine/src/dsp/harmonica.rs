@@ -10,9 +10,14 @@
 //! upwards. Past what bends reach it is overblown: thin, edgy and a little
 //! unsteady. Blowing and drawing never sound together: a note the other way
 //! takes over. The lips cover one hole or more (Mouth), and the holes
-//! beside it sound along in the same breath: chords, a train's chug. The
-//! hands around it (Hands) muffle it, and opening them on each note (Wah)
-//! says wah. Free plays every note plainly, as a chromatic harmonica.
+//! beside it sound along in the same breath: chords, a train's chug.
+//!
+//! Its small reeds are bright and buzzy (what is heard is the flow's change,
+//! and the tongue pings as it starts), and the player's mouth and throat
+//! are part of the instrument: two vowel formants, an "aw" with open hands
+//! that closes to an "oo" as the hands cup around it (Hands), and opening
+//! them on every note (Wah) says wah. Free plays every note plainly, as a
+//! chromatic harmonica.
 //!
 //! The harp is in a key: its own, or the song's (Song) played in a
 //! position: 1st straight, 2nd cross harp (the blues: a harp a fourth up),
@@ -210,6 +215,8 @@ pub struct HarmonicaState {
     dr: Vec<f32>,
     hands: [Svf; 2],
     comb: [Svf; 2],
+    tract1: Svf,
+    tract2: Svf,
     hall: Box<Hall>,
     hall_p: Vec<f32>,
 }
@@ -235,6 +242,8 @@ impl HarmonicaState {
             dr: vec![0.0; CHUNK],
             hands: [Svf::new(), Svf::new()],
             comb: [Svf::new(), Svf::new()],
+            tract1: Svf::new(),
+            tract2: Svf::new(),
             hall: Box::new(Hall::new(sr)),
             hall_p: crate::params::defaults(hall::SPECS),
         }
@@ -380,7 +389,7 @@ impl HarmonicaState {
         let (depth, rate) = (k(THROAT), p[VIB_RATE].clamp(1.0, 12.0));
         let (closed, wah_amt) = (k(HANDS), k(WAH));
         let space = k(SPACE);
-        let gain = db_to_gain(p[VOLUME]) * 0.12;
+        let gain = db_to_gain(p[VOLUME]) * 0.09;
         for c in 0..2 {
             self.comb[c].set_q(2300.0, 2.0, sr);
         }
@@ -397,24 +406,31 @@ impl HarmonicaState {
             self.wah += (1.0 - self.wah) * (1.0 - (-dt / 0.18).exp());
             let shut = (closed + wah_amt * 0.75 * (1.0 - self.wah) * (1.0 - closed)).clamp(0.0, 1.0);
             self.hands_now = shut;
-            let cutoff = 700.0 * 2f32.powf(3.3 * (1.0 - shut));
+            // The mouth and throat: "aw" open, "oo" as the hands close.
+            let o = 1.0 - 0.8 * shut;
+            self.tract1.set_q(320.0 + 380.0 * o, 2.5, sr);
+            self.tract2.set_q(760.0 + 640.0 * o, 3.5, sr);
+            // The hands: a softer lowpass round it.
+            let cutoff = 2200.0 * 2f32.powf(2.2 * (1.0 - shut));
             for c in 0..2 {
-                self.hands[c].set_q(cutoff, 0.7 + 1.3 * closed, sr);
+                self.hands[c].set_q(cutoff, 0.707 + 0.6 * closed, sr);
             }
             let blow = Blow {
                 sr,
                 att,
                 rel,
                 glide_k: 1.0,
-                bright: 0.74 + 0.22 * k(TONE),
-                duty: 0.36 - 0.14 * k(TONE),
-                breath: k(BREATH) * 1.2,
+                bright: 0.8 + 0.17 * k(TONE),
+                duty: 0.45 - 0.1 * k(TONE),
+                breath: k(BREATH),
                 beat: k(BEAT) * 0.3,
                 vib: &self.vib[..len],
                 vib_amp: 0.5,
                 vib_pitch: 0.12,
                 pitch_bend: self.pitch_bend,
                 share: 1.0,
+                radiate: 0.85,
+                ping: 0.09,
             };
             self.dl[..len].fill(0.0);
             let mut air = 0.0f32;
@@ -431,12 +447,14 @@ impl HarmonicaState {
                 }
             }
             self.air = self.air * 0.8 + air * 0.2;
-            // The comb's small chambers, then the hands.
+            // The comb's small chambers, the mouth and throat, then the hands.
             for j in 0..len {
                 let x = self.dl[j];
                 let c = self.comb[0].tick(x).band;
-                // (the cupped hands resonate: as loud open or closed)
-                let y = self.hands[0].tick(x + 0.45 * c).low * gain / (0.75 + 0.6 * closed);
+                let v1 = self.tract1.tick(x).band;
+                let v2 = self.tract2.tick(x).band;
+                let y = x * 0.55 + 0.2 * c + 1.1 * v1 + 0.8 * v2;
+                let y = self.hands[0].tick(y).low * gain;
                 self.dl[j] = y;
                 self.dr[j] = y;
             }
