@@ -507,10 +507,11 @@ pub(crate) fn nature_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive,
 
 // ---------------------------------------------------------------- pan flute
 
-/// The pipes of a pan flute (two octaves of a major scale from the key's
-/// C; a note between two pipes lights both, as a player bends it), or the
-/// flute with its finger holes. Breath streams over the pipes that sound.
-/// Drag up or down: the breath.
+/// The pipes of a pan flute (two octaves of the song's key from C4; a note
+/// between two pipes lights both, as a player bends it) with the lips on
+/// them (Mouth), or the flute with its finger holes, in the colour of what
+/// it is made of. Breath streams over the pipes that sound. Drag up or
+/// down: the breath.
 pub(crate) fn pan_flute_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, height: f32) -> bool {
     use krabton_engine::dsp::pan_flute::*;
     let w = 300.0;
@@ -539,6 +540,22 @@ pub(crate) fn pan_flute_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLi
     }
     let bamboo = Color32::from_rgb(0xc8, 0xa8, 0x6a);
     let wood = Color32::from_rgb(0x8a, 0x5c, 0x36);
+    let clay = Color32::from_rgb(0xb0, 0x62, 0x3c);
+    // What it is made of.
+    let material = (p[MATERIAL].round().max(0.0) as usize).min(MATERIALS.len() - 1);
+    let made = match material {
+        1 => bamboo,
+        2 => wood,
+        3 => clay,
+        4 => Color32::from_rgb(0xc4, 0xc8, 0xcf),
+        5 => Color32::from_rgb(0x9f, 0xc8, 0xd8),
+        6 => Color32::from_rgb(0xe6, 0xdc, 0xc0),
+        7 => Color32::from_rgb(0xd8, 0x50, 0x48),
+        _ if model == 4 => wood,
+        _ if model == 2 => clay,
+        _ => bamboo,
+    };
+    let mouth_mode = p[PLAYING] >= 0.5;
     let breath_dots = |painter: &Painter, at: Pos2, lv: f32, seed: f32| {
         for d in 0..8 {
             let ph = (t * 1.8 + hash(d as f32 + seed)).fract();
@@ -548,15 +565,18 @@ pub(crate) fn pan_flute_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLi
     };
     let transpose = p[TRANSPOSE].round() as i32;
     if model == 0 {
-        // Pipes: two octaves of C major and a top C, from C4 (moved by Transpose).
-        const STEPS: [i32; 15] = [0, 2, 4, 5, 7, 9, 11, 12, 14, 16, 17, 19, 21, 23, 24];
-        let low = 60 + transpose;
-        let n = STEPS.len();
+        // Pipes: two octaves of the song's key from C4 (moved by Transpose).
+        let mask = if on && v[18] >= 1.0 { v[18] as u32 } else { 0b1010_1011_0101 };
+        let pipes: Vec<i32> = (60..=84).filter(|n| (mask >> (n % 12)) & 1 == 1).collect();
+        let n = pipes.len().max(1);
         let pw = (w - 40.0) / n as f32;
         let top = rect.top() + 34.0;
         let longest = rect.height() - 60.0;
-        for (i, &s) in STEPS.iter().enumerate() {
-            let note = low + s;
+        // The lips are on the pipe nearest where the mouth is.
+        let lips_x = pipes.iter().enumerate().min_by_key(|(_, &pn)| (pn - v[19] as i32).abs()).filter(|_| on).map(|(i, _)| rect.left() + 20.0 + (i as f32 + 0.5) * pw);
+        for (i, &pn) in pipes.iter().enumerate() {
+            let s = pn - 60;
+            let note = pn + transpose;
             // Length as the pitch: halves every octave.
             let len = longest * 2f32.powf(-(s as f32) / 12.0 * 0.85);
             let x = rect.left() + 20.0 + i as f32 * pw;
@@ -564,14 +584,14 @@ pub(crate) fn pan_flute_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLi
             // How much it sounds: the nearest pipe to each note.
             let mut lv = 0.0f32;
             for &(nn, l) in &sounding {
-                let d = (nn as i32 + transpose - note).abs();
+                let d = (nn as i32 - pn).abs();
                 if d == 0 {
                     lv = lv.max(l);
-                } else if d == 1 && !STEPS.contains(&(nn as i32 + transpose - low)) {
+                } else if d == 1 && !pipes.contains(&(nn as i32)) {
                     lv = lv.max(l * 0.5);
                 }
             }
-            let c = mix(bamboo, accent, 0.6 * lv);
+            let c = mix(made, accent, 0.6 * lv);
             painter.rect_filled(pipe, 3.0, shade(c, 0.85 + 0.15 * hash(i as f32)));
             painter.rect_filled(Rect::from_min_size(pipe.min + vec2(2.0, 2.0), vec2(2.0, pipe.height() - 4.0)), 1.0, mix(c, Color32::WHITE, 0.35).gamma_multiply(0.7));
             painter.add(Shape::ellipse_filled(pos2(pipe.center().x, top), vec2(pipe.width() * 0.5, 2.5), Color32::from_rgb(0x20, 0x18, 0x10)));
@@ -581,6 +601,15 @@ pub(crate) fn pan_flute_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLi
             }
             if s % 12 == 0 {
                 painter.text(pos2(pipe.center().x, pipe.bottom() + 2.0), Align2::CENTER_TOP, krabton_engine::note_name(note.clamp(0, 127) as u8), FontId::monospace(8.0), DIM);
+            }
+        }
+        // The lips, where the mouth is on the row.
+        if mouth_mode {
+            if let Some(lx) = lips_x {
+                let x = ui.ctx().animate_value_with_time(id.with("lips"), lx, 0.08);
+                let lip = Color32::from_rgb(0xc8, 0x70, 0x78);
+                painter.add(Shape::ellipse_filled(pos2(x, top - 9.0), vec2(pw * 0.9 + 4.0, 4.0), lip));
+                painter.add(Shape::ellipse_filled(pos2(x, top - 5.0), vec2(pw * 0.8 + 3.0, 2.5), shade(lip, 0.75)));
             }
         }
         // The binding across.
@@ -594,7 +623,7 @@ pub(crate) fn pan_flute_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLi
         // Holes open from the foot as the note climbs the scale.
         const DEGREE: [usize; 12] = [0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6];
         let open = if sounding.is_empty() { 0 } else { DEGREE[note.rem_euclid(12) as usize] };
-        let c = mix(if model == 4 { wood } else { bamboo }, accent, 0.4 * lv);
+        let c = mix(made, accent, 0.4 * lv);
         let mid = rect.center() + vec2(0.0, 8.0);
         if model == 2 {
             painter.add(Shape::ellipse_filled(mid, vec2(80.0, 44.0), c));
@@ -653,9 +682,17 @@ pub(crate) fn pan_flute_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLi
     painter.rect_filled(meter, 2.0, FAINT);
     let fill = meter.height() * p[BREATH].clamp(0.0, 1.0);
     painter.rect_filled(Rect::from_min_max(pos2(meter.left(), meter.bottom() - fill), meter.max), 2.0, accent.gamma_multiply(0.35 + 0.65 * br.min(1.0)));
-    caption(&painter, rect.left_top() + vec2(10.0, 6.0), Align2::LEFT_TOP, MODELS[model], accent);
+    let name = if material == 0 { MODELS[model].to_string() } else { format!("{}, {}", MODELS[model], MATERIALS[material].to_lowercase()) };
+    caption(&painter, rect.left_top() + vec2(10.0, 6.0), Align2::LEFT_TOP, &name, accent);
     let voices = p[VOICES].round() as usize;
-    caption(&painter, pos2(rect.right() - 20.0, rect.top() + 6.0), Align2::RIGHT_TOP, &if voices <= 1 { "one voice".to_string() } else { format!("{voices} voices") }, DIM);
+    let how = if mouth_mode {
+        "mouth".to_string()
+    } else if voices <= 1 {
+        "one voice".to_string()
+    } else {
+        format!("{voices} voices")
+    };
+    caption(&painter, pos2(rect.right() - 20.0, rect.top() + 6.0), Align2::RIGHT_TOP, &how, DIM);
     ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
     resp.on_hover_text("Drag up or down: the breath. The pipes (or holes) of the notes you play light up");
     changed

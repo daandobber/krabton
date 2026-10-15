@@ -28,6 +28,8 @@ use crate::dsp::birds::BirdsState;
 use crate::dsp::nature::NatureState;
 use crate::dsp::facet::FacetState;
 use crate::dsp::pan_flute::PanFluteState;
+use crate::dsp::melodica::MelodicaState;
+use crate::dsp::harmonica::HarmonicaState;
 use crate::piano::{library::PianoLibrary, PianoState};
 use crate::dsp::rings_synth::RingsState;
 use crate::dsp::braids_synth::BraidsSynthState;
@@ -438,6 +440,8 @@ enum InstState {
     Birds(Box<BirdsState>),
     Nature(Box<NatureState>),
     PanFlute(Box<PanFluteState>),
+    Melodica(Box<MelodicaState>),
+    Harmonica(Box<HarmonicaState>),
     Facet(Box<FacetState>),
     Plugin { instance: u64, proc: Option<Box<dyn AudioProcessor>>, pending: Vec<PluginEvent> },
 }
@@ -461,6 +465,8 @@ impl InstState {
             InstState::Guitar(s) => s.pitch_bend = semis,
             InstState::BeadsSynth(s) => s.pitch_bend = semis,
             InstState::PanFlute(s) => s.pitch_bend = semis,
+            InstState::Melodica(s) => s.pitch_bend = semis,
+            InstState::Harmonica(s) => s.pitch_bend = semis,
             InstState::Facet(s) => s.pitch_bend = semis,
             InstState::Voice(s) => s.pitch_bend = semis,
             InstState::Monk(s) => s.pitch_bend = semis,
@@ -500,6 +506,8 @@ impl InstState {
             Some(Instrument::Birds { .. }) => InstState::Birds(Box::new(BirdsState::new(sr))),
             Some(Instrument::Nature { .. }) => InstState::Nature(Box::new(NatureState::new(sr))),
             Some(Instrument::PanFlute { .. }) => InstState::PanFlute(Box::new(PanFluteState::new(sr))),
+            Some(Instrument::Melodica { .. }) => InstState::Melodica(Box::new(MelodicaState::new(sr))),
+            Some(Instrument::Harmonica { .. }) => InstState::Harmonica(Box::new(HarmonicaState::new(sr))),
             Some(Instrument::Facet { .. }) => InstState::Facet(Box::new(FacetState::new(sr))),
         }
     }
@@ -551,6 +559,8 @@ impl InstState {
                 | (InstState::Birds(_), Some(Instrument::Birds { .. }))
                 | (InstState::Nature(_), Some(Instrument::Nature { .. }))
                 | (InstState::PanFlute(_), Some(Instrument::PanFlute { .. }))
+                | (InstState::Melodica(_), Some(Instrument::Melodica { .. }))
+                | (InstState::Harmonica(_), Some(Instrument::Harmonica { .. }))
                 | (InstState::Facet(_), Some(Instrument::Facet { .. }))
         ) || matches!((self, i), (InstState::Plugin { instance, .. }, Some(Instrument::Plugin(p))) if *instance == p.instance)
     }
@@ -587,6 +597,8 @@ impl InstState {
             (InstState::Birds(s), Instrument::Birds { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Nature(s), Instrument::Nature { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::PanFlute(s), Instrument::PanFlute { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Melodica(s), Instrument::Melodica { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Harmonica(s), Instrument::Harmonica { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Facet(s), Instrument::Facet { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             _ => {}
         }
@@ -622,6 +634,8 @@ impl InstState {
             (InstState::Birds(s), Instrument::Birds { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Nature(s), Instrument::Nature { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::PanFlute(s), Instrument::PanFlute { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Melodica(s), Instrument::Melodica { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Harmonica(s), Instrument::Harmonica { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Facet(s), Instrument::Facet { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             _ => {}
         }
@@ -658,6 +672,8 @@ impl InstState {
             InstState::Birds(s) => s.all_off(),
             InstState::Nature(s) => s.all_off(),
             InstState::PanFlute(s) => s.all_off(),
+            InstState::Melodica(s) => s.all_off(),
+            InstState::Harmonica(s) => s.all_off(),
             InstState::Facet(s) => s.all_off(),
             InstState::None => {}
         }
@@ -684,6 +700,8 @@ impl InstState {
             InstState::Birds(s) => s.visual(out),
             InstState::Nature(s) => s.visual(out),
             InstState::PanFlute(s) => s.visual(out),
+            InstState::Melodica(s) => s.visual(out),
+            InstState::Harmonica(s) => s.visual(out),
             InstState::Facet(s) => s.visual(out),
             _ => return false,
         }
@@ -720,6 +738,8 @@ impl InstState {
             (InstState::Birds(s), Instrument::Birds { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Nature(s), Instrument::Nature { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::PanFlute(s), Instrument::PanFlute { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Melodica(s), Instrument::Melodica { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Harmonica(s), Instrument::Harmonica { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Facet(s), Instrument::Facet { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Plugin { proc, pending, .. }, Instrument::Plugin(_)) => {
                 if let Some(p) = proc {
@@ -1884,6 +1904,9 @@ impl Engine {
                     }
                     InstState::Birds(s) => s.playing = ctx.playing,
                     InstState::Nature(s) => s.playing = ctx.playing,
+                    // The pipes of a pan flute, a harp's key: the song's key now.
+                    InstState::PanFlute(s) => s.key = key_new.unwrap_or(project.scale).mask(),
+                    InstState::Harmonica(s) => s.song_key = key_new.unwrap_or(project.scale),
                     _ => {}
                 }
                 // The Key drawer moves what it plays into its key (not drums).

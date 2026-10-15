@@ -346,7 +346,7 @@ pub(crate) fn instrument_catalog() -> Vec<(&'static str, &'static str, &'static 
     devices().into_iter().map(|d| (d.name, d.hint, d.presets, d.make)).collect()
 }
 
-fn devices() -> [Dev; 30] {
+fn devices() -> [Dev; 28] {
     [
         Dev {
             name: "Analog",
@@ -404,15 +404,13 @@ fn devices() -> [Dev; 30] {
         Dev { name: "Drone", hint: "A drone that keeps moving: tanpura strings with a buzzing bridge, a PADsynth pad, swelling FM pairs and wind, all drifting slowly. Hold a key for minutes", presets: krabton_engine::dsp::drone::preset_names(), make: BrowserItem::Drone, kind: None },
         Dev { name: "Waves", hint: "Wavetable synth: two oscillators morphing through 16 banks of single-cycle waves (Adventure Kid Waveforms), unison, warps, sub, filter, envelopes and an LFO. Drag a stack to move through it", presets: krabton_engine::dsp::waves::preset_names(), make: BrowserItem::Waves, kind: None },
         Dev { name: "Guitar", hint: "A guitar and its family: steel or nylon acoustic, electric with pickups, resonator, archtop, twelve-string, baritone, bass, ukulele, banjo and mandolin. Notes go on the strings and frets a player would use, chords are strummed. Put pedals after it", presets: krabton_engine::dsp::guitar::preset_names(), make: BrowserItem::Guitar, kind: None },
-        Dev { name: "Bass Guitar", hint: "An electric bass: four wound strings (E A D G, or Drop D) heard through a pickup at the neck, in the middle or at the bridge, played with the fingers or a pick, muted with the palm. The Guitar with its bass model", presets: krabton_engine::dsp::guitar::BASS_PRESETS, make: BrowserItem::Guitar, kind: Some("Bass") },
-        Dev { name: "Ukulele", hint: "A ukulele: four nylon strings with the high G, a small bright body. The Guitar with its ukulele model; the Ukulele sequencer plays it", presets: krabton_engine::dsp::guitar::UKULELE_PRESETS, make: BrowserItem::Guitar, kind: Some("Plucked") },
-        Dev { name: "Banjo", hint: "A banjo: a drum head for a body, five strings in open G with the short drone string played open. The Guitar with its banjo model; Banjo Roll plays it", presets: krabton_engine::dsp::guitar::BANJO_PRESETS, make: BrowserItem::Guitar, kind: Some("Plucked") },
-        Dev { name: "Mandolin", hint: "A mandolin: four doubled courses tuned in fifths (G D A E), bright and shimmering. The Guitar with its mandolin model", presets: krabton_engine::dsp::guitar::MANDOLIN_PRESETS, make: BrowserItem::Guitar, kind: Some("Plucked") },
         Dev { name: "Wind Chimes", hint: "A wind chime that plays by itself: the wind pushes the sail, the clapper strikes the tubes (aluminium, brass, steel, bamboo, glass or wood) and you see every strike you hear. Change the tubes, the tuning, the spacing, the clapper and the sail", presets: krabton_engine::dsp::wind_chimes::preset_names(), make: BrowserItem::WindChimes, kind: None },
         Dev { name: "Birds", hint: "Songbirds that sing by themselves: blackbird, robin, song thrush, nightingale, wren, chaffinch, great tit, skylark, sparrow, cuckoo, wood pigeon, tawny owl, loon, gull and a drumming woodpecker. Each sings its species' songs from its own place, near or far; a key makes the bird with the nearest voice sing (Follow Key puts its song on the key)", presets: krabton_engine::dsp::birds::preset_names(), make: BrowserItem::Birds, kind: None },
         Dev { name: "Nature", hint: "The sounds of outside, made from scratch: wind in gusts that whistles and rustles the leaves, rain on leaves, water, a roof or a tent, thunder after the lightning, a brook, the sea, crickets that chirp faster when it is warmer, frogs and a campfire. Play keys and the wind whistles on those notes", presets: krabton_engine::dsp::nature::preset_names(), make: BrowserItem::Nature, kind: None },
         Dev { name: "Facet", hint: "One synth, six engines, four knobs: Crease (phase distortion), Swarm (seven saws), Fold (wavefolding and FM), Grit (digital steps and noise), Partials (additive) and Wide (pulses and a wide chorus)", presets: krabton_engine::dsp::facet::preset_names(), make: BrowserItem::Facet, kind: None },
-        Dev { name: "Pan Flute", hint: "Blown pipes: pan flute (closed pipes, odd harmonics), shakuhachi, ocarina, bamboo flute and wooden flute, with breath that rings in the pipe, a chiff at the start, scoops, vibrato that comes in after a while, legato glide or chords", presets: krabton_engine::dsp::pan_flute::preset_names(), make: BrowserItem::PanFlute, kind: None },
+        Dev { name: "Pan Flute", hint: "Blown pipes: pan flute (closed pipes, odd harmonics), shakuhachi, ocarina, bamboo flute and wooden flute, of bamboo, wood, clay, metal, glass, bone or plastic, with breath that rings in the pipe, a chiff at the start, scoops, vibrato that comes in after a while. Played as a mouth plays it (the lips on one pipe or two neighbours, sliding along the row) or freely", presets: krabton_engine::dsp::pan_flute::preset_names(), make: BrowserItem::PanFlute, kind: None },
+        Dev { name: "Melodica", hint: "A keyboard you blow into: free reeds sharing one breath (a chord divides the air), the plastic body, the mouthpiece or the tube; a second reed for an accordion's musette, or its own air for each key like a harmonium", presets: krabton_engine::dsp::melodica::preset_names(), make: BrowserItem::Melodica, kind: None },
+        Dev { name: "Harmonica", hint: "A diatonic harp in any key or the song's (straight, cross harp, slant): every note in its hole, blown or drawn, missing ones bent or overblown; never blow and draw at once; the lips over more holes for chords, the hands cupped around it for a wah. Or free, as a chromatic harmonica", presets: krabton_engine::dsp::harmonica::preset_names(), make: BrowserItem::Harmonica, kind: None },
         Dev { name: "Beads", hint: "The wavetable synth of Mutable Instruments Beads, played with keys: twelve banks of waves (sines, drawbars, voices, metal, FM and more), and grains of them seeded while you hold a key (or always, or with the song's clock), each randomized in wave, size, shape and pitch, with Beads' reverb and its tape and lo-fi qualities", presets: krabton_engine::dsp::beads_synth::preset_names(), make: BrowserItem::BeadsSynth, kind: None },
     ]
 }
@@ -763,7 +761,18 @@ impl App {
         let mut out: Vec<Node> = devices()
             .into_iter()
             .map(|d| {
-                let kids = d.presets.iter().map(|p| Node::item(format!("inst/{}/{p}", d.name), *p, Icon::Preset, d.hint, (d.make)(p))).collect();
+                let kids = if d.name == "Guitar" {
+                    // Its family, a folder each.
+                    krabton_engine::dsp::guitar::FAMILY
+                        .iter()
+                        .map(|(name, presets)| {
+                            let kids = presets.iter().map(|p| Node::item(format!("inst/{}/{p}", d.name), *p, Icon::Preset, d.hint, (d.make)(p))).collect();
+                            Node::Folder { tag: None, label: (*name).into(), icon: Icon::Folder, hint: d.hint.into(), load: Some((d.make)(presets[0])), kids: Kids::Nodes(kids) }
+                        })
+                        .collect()
+                } else {
+                    d.presets.iter().map(|p| Node::item(format!("inst/{}/{p}", d.name), *p, Icon::Preset, d.hint, (d.make)(p))).collect()
+                };
                 Node::Folder { tag: None, label: d.name.into(), icon: Icon::Device, hint: d.hint.into(), load: Some((d.make)(d.presets[0])), kids: Kids::Nodes(kids) }
             })
             .collect();

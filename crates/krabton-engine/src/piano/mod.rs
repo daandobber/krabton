@@ -468,7 +468,16 @@ mod tests {
     fn lib() -> Arc<PianoLibrary> {
         static LIB: std::sync::OnceLock<Arc<PianoLibrary>> = std::sync::OnceLock::new();
         LIB.get_or_init(|| {
-            let dir = std::env::temp_dir().join(format!("krabton-piano-test-{}", std::process::id()));
+            // The libraries of earlier runs go (one still open elsewhere stays).
+            let tmp = std::env::temp_dir();
+            if let Ok(rd) = std::fs::read_dir(&tmp) {
+                for e in rd.flatten() {
+                    if e.file_name().to_string_lossy().starts_with("krabton-piano-test-") {
+                        let _ = std::fs::remove_dir_all(e.path());
+                    }
+                }
+            }
+            let dir = tmp.join(format!("krabton-piano-test-{}", std::process::id()));
             library::write_test_library(&dir, 48000);
             PianoLibrary::open(&dir).unwrap()
         })

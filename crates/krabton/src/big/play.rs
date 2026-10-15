@@ -352,6 +352,8 @@ pub fn telling_params(inst: &Instrument) -> [Option<usize>; 2] {
         Instrument::Birds { .. } => Some(("Busy", "Pitch")),
         Instrument::Nature { .. } => Some(("Wind", "Rain")),
         Instrument::PanFlute { .. } => Some(("Breath", "Tone")),
+        Instrument::Melodica { .. } => Some(("Breath", "Tone")),
+        Instrument::Harmonica { .. } => Some(("Hands", "Bends")),
         _ => None,
     };
     let named = |n: &str| specs.iter().position(|s| s.name == n && smooth(s));

@@ -32,6 +32,8 @@ impl App {
                         | Instrument::Birds { .. }
                         | Instrument::Nature { .. }
                         | Instrument::PanFlute { .. }
+                        | Instrument::Melodica { .. }
+                        | Instrument::Harmonica { .. }
                         | Instrument::Guitar { .. }
                         | Instrument::Monk { .. }
                         | Instrument::Rings { .. }
@@ -93,6 +95,12 @@ impl App {
                         }
                         Instrument::PanFlute { .. } => {
                             nv::pan_flute_screen(ui, id, p, &live, h);
+                        }
+                        Instrument::Melodica { .. } => {
+                            crate::ui::reed_view::melodica_screen(ui, id, p, &live, h);
+                        }
+                        Instrument::Harmonica { .. } => {
+                            crate::ui::reed_view::harmonica_screen(ui, id, p, &live, h);
                         }
                         Instrument::Guitar { .. } => {
                             es::guitar_screen(ui, id, p, &live, h);

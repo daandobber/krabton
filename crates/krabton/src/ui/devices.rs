@@ -1123,12 +1123,50 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("drag up or down in the screen for the breath; one voice plays legato, more play chords").small().color(TEXT_DIM));
+                            ui.label(RichText::new("drag up or down in the screen for the breath; Mouth plays as a mouth does (the lips on one pipe or two neighbours), Free plays anything").small().color(TEXT_DIM));
                         });
                         ui.horizontal_top(|ui| {
                             super::nature_view::pan_flute_screen(ui, Id::new(("pan_flute_screen", track_id)), params, &live, h - 48.0);
                             ui.add_space(6.0);
                             param_grid_mod(ui, Id::new(("pan_flute", track_id)), krabton_engine::dsp::pan_flute::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
+                        });
+                    }
+                    Instrument::Melodica { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("melodica_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in krabton_engine::dsp::melodica::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = krabton_engine::dsp::melodica::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("drag up or down in the screen for the breath; Mouth: one breath for every key, Free: its own air for each").small().color(TEXT_DIM));
+                        });
+                        ui.horizontal_top(|ui| {
+                            super::reed_view::melodica_screen(ui, Id::new(("melodica_screen", track_id)), params, &live, h - 48.0);
+                            ui.add_space(6.0);
+                            param_grid_mod(ui, Id::new(("melodica", track_id)), krabton_engine::dsp::melodica::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
+                        });
+                    }
+                    Instrument::Harmonica { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("harmonica_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in krabton_engine::dsp::harmonica::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = krabton_engine::dsp::harmonica::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("drag up or down in the screen for the hands; Holes: blow, draw, bend and overblow as on a real harp, Free: any note").small().color(TEXT_DIM));
+                        });
+                        ui.horizontal_top(|ui| {
+                            super::reed_view::harmonica_screen(ui, Id::new(("harmonica_screen", track_id)), params, &live, h - 48.0);
+                            ui.add_space(6.0);
+                            param_grid_mod(ui, Id::new(("harmonica", track_id)), krabton_engine::dsp::harmonica::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
                         });
                     }
                     Instrument::Guitar { preset, params } => {

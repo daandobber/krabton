@@ -277,6 +277,27 @@ pub const BASS_PRESETS: &[&str] = &["Finger Bass", "Picked Bass", "Muted Bass", 
 pub const UKULELE_PRESETS: &[&str] = &["Ukulele", "Strummed Ukulele", "Soft Ukulele"];
 pub const BANJO_PRESETS: &[&str] = &["Banjo", "Clawhammer Banjo", "Bright Banjo"];
 pub const MANDOLIN_PRESETS: &[&str] = &["Mandolin", "Soft Mandolin", "Bright Mandolin"];
+pub const GUITAR_PRESETS: &[&str] = &[
+    "Steel Acoustic",
+    "Nylon Classical",
+    "Fingerpicked",
+    "Strummed Chords",
+    "DADGAD Drone",
+    "Clean Electric",
+    "Funky Neck",
+    "Jazz Box",
+    "Bridge Bite",
+    "Palm Muted",
+    "Drop D Chug",
+    "Open G Slide",
+    "Resonator Slide",
+    "Jazz Archtop",
+    "Twelve-String Jangle",
+    "Baritone Twang",
+];
+
+/// The Guitar's presets by instrument (the browser shows them in folders).
+pub const FAMILY: &[(&str, &[&str])] = &[("Guitars", GUITAR_PRESETS), ("Bass", BASS_PRESETS), ("Ukulele", UKULELE_PRESETS), ("Banjo", BANJO_PRESETS), ("Mandolin", MANDOLIN_PRESETS)];
 
 /// The name of what a model is tuned to: the Tuning, or its own.
 pub fn tuning_name(model: usize, tuning: usize) -> &'static str {

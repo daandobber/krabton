@@ -131,6 +131,8 @@ pub enum BrowserItem {
     Nature(&'static str),
     /// A Pan Flute preset.
     PanFlute(&'static str),
+    Melodica(&'static str),
+    Harmonica(&'static str),
     /// A Facet preset.
     Facet(&'static str),
     /// A Beads (instrument) preset.
@@ -178,6 +180,8 @@ impl BrowserItem {
             BrowserItem::Birds(p) => format!("Birds: {p}"),
             BrowserItem::Nature(p) => format!("Nature: {p}"),
             BrowserItem::PanFlute(p) => format!("Pan Flute: {p}"),
+            BrowserItem::Melodica(p) => format!("Melodica: {p}"),
+            BrowserItem::Harmonica(p) => format!("Harmonica: {p}"),
             BrowserItem::Facet(p) => format!("Facet: {p}"),
             BrowserItem::Piano(p) => format!("Grand Piano: {p}"),
             BrowserItem::Drums(k) => k.to_string(),
@@ -997,7 +1001,7 @@ impl App {
                 }
                 self.toast(format!("Loading {} ...", info.name));
             }
-            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) => {
+            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::Harmonica(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) => {
                 let inst = match item {
                     BrowserItem::Synth(p) => Instrument::synth(p),
                     BrowserItem::Macro(p) => Instrument::macro_osc(p),
@@ -1024,6 +1028,8 @@ impl App {
                     BrowserItem::Birds(p) => Instrument::birds(p),
                     BrowserItem::Nature(p) => Instrument::nature(p),
                     BrowserItem::PanFlute(p) => Instrument::pan_flute(p),
+                    BrowserItem::Melodica(p) => Instrument::melodica(p),
+                    BrowserItem::Harmonica(p) => Instrument::harmonica(p),
                     BrowserItem::Facet(p) => Instrument::facet(p),
                     BrowserItem::Drums(k) => Instrument::drums(k),
                     _ => Instrument::sampler(None),
@@ -2327,6 +2333,18 @@ impl App {
                     let names = krabton_engine::dsp::pan_flute::preset_names();
                     let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
                     self.apply_item(&BrowserItem::PanFlute(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "melodica" => {
+                    let names = krabton_engine::dsp::melodica::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Melodica(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "harmonica" => {
+                    let names = krabton_engine::dsp::harmonica::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Harmonica(p), DropTarget::NewTrack);
                     self.detail = DetailTab::Devices;
                 }
                 "facet" => {

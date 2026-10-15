@@ -663,6 +663,10 @@ pub enum Instrument {
     Nature { preset: String, params: Vec<f32> },
     /// Pan Flute: blown pipes: pan flute, shakuhachi, ocarina, bamboo and wooden flutes.
     PanFlute { preset: String, params: Vec<f32> },
+    /// Melodica: a keyboard you blow into, free reeds sharing one breath.
+    Melodica { preset: String, params: Vec<f32> },
+    /// Harmonica: a diatonic harp, blown and drawn, bent and overblown.
+    Harmonica { preset: String, params: Vec<f32> },
     /// One synth, six engines, four knobs (see `dsp::facet`).
     Facet { preset: String, params: Vec<f32> },
     /// Beads: the wavetable synth of Mutable Instruments Beads, played with keys, with its grains.
@@ -779,6 +783,14 @@ impl Instrument {
         Instrument::PanFlute { preset: preset.to_string(), params: crate::dsp::pan_flute::preset(preset) }
     }
 
+    pub fn melodica(preset: &str) -> Self {
+        Instrument::Melodica { preset: preset.to_string(), params: crate::dsp::melodica::preset(preset) }
+    }
+
+    pub fn harmonica(preset: &str) -> Self {
+        Instrument::Harmonica { preset: preset.to_string(), params: crate::dsp::harmonica::preset(preset) }
+    }
+
     pub fn facet(preset: &str) -> Self {
         Instrument::Facet { preset: preset.to_string(), params: crate::dsp::facet::preset(preset) }
     }
@@ -818,6 +830,8 @@ impl Instrument {
             Instrument::Birds { .. } => "Birds",
             Instrument::Nature { .. } => "Nature",
             Instrument::PanFlute { .. } => "Pan Flute",
+            Instrument::Melodica { .. } => "Melodica",
+            Instrument::Harmonica { .. } => "Harmonica",
             Instrument::Facet { .. } => "Facet",
         }
     }
@@ -831,7 +845,7 @@ impl Instrument {
             Instrument::Sampler { sample, .. } => sample.as_ref().map(|s| s.name.clone()).unwrap_or_else(|| "Empty".into()),
             Instrument::Plugin(p) => p.name.clone(),
             Instrument::Fm { voice, .. } => Dx7Voice::from_slice(voice).map(|v| v.name()).unwrap_or_else(|| "FM".into()),
-            Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Modular { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } | Instrument::Monk { preset, .. } | Instrument::Piano { preset, .. } | Instrument::Bassline { preset, .. } | Instrument::Mono101 { preset, .. } | Instrument::Drone { preset, .. } | Instrument::Waves { preset, .. } | Instrument::Guitar { preset, .. } | Instrument::WindChimes { preset, .. } | Instrument::Birds { preset, .. } | Instrument::Nature { preset, .. } | Instrument::PanFlute { preset, .. } | Instrument::Facet { preset, .. } | Instrument::BeadsSynth { preset, .. } => preset.clone(),
+            Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Modular { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } | Instrument::Monk { preset, .. } | Instrument::Piano { preset, .. } | Instrument::Bassline { preset, .. } | Instrument::Mono101 { preset, .. } | Instrument::Drone { preset, .. } | Instrument::Waves { preset, .. } | Instrument::Guitar { preset, .. } | Instrument::WindChimes { preset, .. } | Instrument::Birds { preset, .. } | Instrument::Nature { preset, .. } | Instrument::PanFlute { preset, .. } | Instrument::Melodica { preset, .. } | Instrument::Harmonica { preset, .. } | Instrument::Facet { preset, .. } | Instrument::BeadsSynth { preset, .. } => preset.clone(),
         }
     }
 
@@ -1640,6 +1654,8 @@ impl Project {
                 Some(Instrument::Birds { params, .. }) => params::fix_len(params, crate::dsp::birds::SPECS),
                 Some(Instrument::Nature { params, .. }) => params::fix_len(params, crate::dsp::nature::SPECS),
                 Some(Instrument::PanFlute { params, .. }) => params::fix_len(params, crate::dsp::pan_flute::SPECS),
+                Some(Instrument::Melodica { params, .. }) => params::fix_len(params, crate::dsp::melodica::SPECS),
+                Some(Instrument::Harmonica { params, .. }) => params::fix_len(params, crate::dsp::harmonica::SPECS),
                 Some(Instrument::Facet { params, .. }) => params::fix_len(params, crate::dsp::facet::SPECS),
                 // Shakers became an instrument; their kits are the Drum Rack's.
                 Some(Instrument::Drums { engine, .. }) if *engine == drums::DrumEngine::Shakers => *engine = drums::DrumEngine::Rack,
