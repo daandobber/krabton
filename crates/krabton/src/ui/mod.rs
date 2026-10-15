@@ -24,6 +24,7 @@ pub mod lens;
 pub mod grid_panel;
 pub mod modulation;
 pub mod mono101_view;
+pub mod minimal_view;
 pub mod nature_view;
 pub mod reed_view;
 pub mod open_air_view;

@@ -94,6 +94,9 @@ pub enum MidiFxKind {
     DriftChords,
     Tintinnabuli,
     Pedal,
+    Glass,
+    Satie,
+    Riley,
     GuitarChords,
     Drummer,
     DrumMap,
@@ -212,7 +215,7 @@ impl MidiFxKind {
     ];
 
     /// The sequencers' groups, in menu order.
-    pub const SEQUENCER_GROUPS: [&'static str; 7] = ["Classic", "Players", "Rhythm", "Played", "Generative", "Physics & Chaos", "Ambient"];
+    pub const SEQUENCER_GROUPS: [&'static str; 8] = ["Classic", "Players", "Rhythm", "Played", "Generative", "Physics & Chaos", "Ambient", "Minimal"];
 
     /// Which group a sequencer belongs to (see `SEQUENCER_GROUPS`).
     pub fn group(self) -> &'static str {
@@ -225,11 +228,12 @@ impl MidiFxKind {
             K::Polymeter | K::Turing | K::Life | K::Drunk | K::Markov | K::Words => "Generative",
             K::Bounce | K::Orbits | K::Pong | K::Rain | K::Chaos | K::Automaton | K::Ant | K::Lorenz => "Physics & Chaos",
             K::Loops | K::Bloom | K::Chimes | K::DriftChords | K::Tintinnabuli | K::Pedal => "Ambient",
+            K::Glass | K::Satie | K::Riley => "Minimal",
             _ => "MIDI Effects",
         }
     }
 
-    pub const SEQUENCERS: [MidiFxKind; 41] = [
+    pub const SEQUENCERS: [MidiFxKind; 44] = [
         MidiFxKind::Step,
         MidiFxKind::Acid,
         MidiFxKind::DrumGrid,
@@ -255,6 +259,9 @@ impl MidiFxKind {
         MidiFxKind::DriftChords,
         MidiFxKind::Tintinnabuli,
         MidiFxKind::Pedal,
+        MidiFxKind::Glass,
+        MidiFxKind::Satie,
+        MidiFxKind::Riley,
         MidiFxKind::GuitarChords,
         MidiFxKind::Drummer,
         MidiFxKind::DrumMap,
@@ -324,6 +331,9 @@ impl MidiFxKind {
             MidiFxKind::DriftChords => "Drift Chords",
             MidiFxKind::Tintinnabuli => "Tintinnabuli",
             MidiFxKind::Pedal => "Pedal",
+            MidiFxKind::Glass => "Glass",
+            MidiFxKind::Satie => "Satie",
+            MidiFxKind::Riley => "Riley",
             MidiFxKind::GuitarChords => "Guitar Chords",
             MidiFxKind::Drummer => "Drummer",
             MidiFxKind::DrumMap => "Drum Map",
@@ -385,6 +395,9 @@ impl MidiFxKind {
             MidiFxKind::DriftChords => "Slowly changing chords: one voice moves a step, the others are held",
             MidiFxKind::Tintinnabuli => "A stepwise melody with a voice on the nearest note of the tonic triad, over a held tonic",
             MidiFxKind::Pedal => "A held drone note that now and then moves to the fifth, fourth or octave",
+            MidiFxKind::Glass => "After Philip Glass: a broken chord repeated and repeated over a slow round of chords: three against two, rocking, broken, an additive figure that grows and shrinks, or pulsing chords, the bass held under each",
+            MidiFxKind::Satie => "After Erik Satie: a Gymnopédie (a slow waltz, bass on one, a seventh chord on two, a sparse falling melody), a Gnossienne (oom-pah in four, a melody turning with grace notes) or a Sarabande (ninth chords sliding in parallel)",
+            MidiFxKind::Riley => "After Terry Riley's In C: players each repeat a short figure as long as they like before moving on, never far apart, over a steady pulse; or a Rainbow of modal loops of different lengths turning against each other",
             MidiFxKind::GuitarChords => "Guitar chords the way a guitarist plays them: real chord shapes in the key, strummed down and up in patterns, or picked",
             MidiFxKind::Drummer => "A drummer who plays styles (rock, funk, house, boom bap, bossa nova, jazz...): ghost notes, accents, fills with a crash after, humanized; edit the groove in its grid",
             MidiFxKind::DrumMap => "A topographic drum sequencer: a map of 25 grooves (straight to broken, laid back to driving) that blend as you move; a fill per drum from backbone to every ghost note, and chaos that shakes it every two bars",
@@ -446,6 +459,9 @@ impl MidiFxKind {
             MidiFxKind::DriftChords => sequencers::ambient::DRIFT_CHORDS,
             MidiFxKind::Tintinnabuli => sequencers::ambient::TINTINNABULI,
             MidiFxKind::Pedal => sequencers::ambient::PEDAL,
+            MidiFxKind::Glass => sequencers::minimal::GLASS,
+            MidiFxKind::Satie => sequencers::minimal::SATIE,
+            MidiFxKind::Riley => sequencers::minimal::RILEY,
             MidiFxKind::GuitarChords => sequencers::strum::SPECS,
             MidiFxKind::Ukulele => sequencers::strum::UKE_SPECS,
             MidiFxKind::Drummer => sequencers::drummer::SPECS,

@@ -179,6 +179,9 @@ pub fn midi(kind: MidiFxKind) -> &'static [Preset] {
         K::DriftChords => DRIFT_CHORDS,
         K::Tintinnabuli => TINTINNABULI,
         K::Pedal => PEDAL,
+        K::Glass => GLASS,
+        K::Satie => SATIE,
+        K::Riley => RILEY,
         K::GuitarChords => GUITAR_CHORDS,
         K::Ukulele => UKULELE,
         K::Drummer => DRUMMER,
@@ -910,6 +913,28 @@ static BLOOM: &[Preset] = &[p("Pond", &[]), p("Long Echoes", &[("Echoes", N(10.0
 static CHIMES: &[Preset] = &[p("Breeze", &[("Wind", N(0.3))]), p("Windy", &[("Wind", N(0.8)), ("Gusts", N(0.9))]), p("Low Chimes", &[("Base Note", N(60.0)), ("Octaves", N(1.0))])];
 static DRIFT_CHORDS: &[Preset] = &[p("Slow Drift", &[("Change", C("4 Bars"))]), p("Restless", &[("Change", C("1 Bar")), ("Movement", N(0.8))]), p("Wide Voicing", &[("Spread", N(4.0)), ("Voices", N(6.0))])];
 static TINTINNABULI: &[Preset] = &[p("Bells", &[]), p("Alternating", &[("Position", C("Alternating"))]), p("Slow Line", &[("Rate", C("1/4")), ("Length", N(1.2))])];
+static GLASS: &[Preset] = &[
+    p("Opening", &[]),
+    p("Metamorphosis", &[("Figure", C("Rocking")), ("Chords", C("1 6")), ("Repeats", N(4.0)), ("Rate", C("1/8"))]),
+    p("Additive", &[("Figure", C("Additive")), ("Chords", C("1 7 6 5"))]),
+    p("Broken Organ", &[("Figure", C("Broken")), ("Chords", C("1 6 3 7")), ("Rate", C("1/16")), ("Repeats", N(8.0)), ("Sevenths", N(1.0))]),
+    p("Pulsing Chords", &[("Figure", C("Pulse")), ("Chords", C("1 4 1 5")), ("Repeats", N(8.0)), ("Accent", N(0.6))]),
+    p("Circle", &[("Figure", C("Broken")), ("Chords", C("Circle")), ("Repeats", N(2.0)), ("Octaves", N(3.0))]),
+];
+static SATIE: &[Preset] = &[
+    p("Gymnopédie", &[]),
+    p("Gnossienne", &[("Style", C("Gnossienne")), ("Harmony", C("Minor")), ("Rubato", N(0.45))]),
+    p("Sarabande", &[("Style", C("Sarabande")), ("Pedal", N(0.8))]),
+    p("Lydian Waltz", &[("Harmony", C("Lydian")), ("Wander", N(0.5))]),
+    p("Quiet Waltz", &[("Melody", N(0.4)), ("Velocity", N(0.4)), ("Pedal", N(0.9))]),
+];
+static RILEY: &[Preset] = &[
+    p("In C", &[]),
+    p("Ensemble", &[("Players", N(5.0)), ("Spread", N(0.8)), ("Patience", N(0.7))]),
+    p("Restless", &[("Players", N(3.0)), ("Patience", N(0.15))]),
+    p("Rainbow", &[("Style", C("Rainbow")), ("Rate", C("1/16")), ("Pulse", N(0.0)), ("Players", N(3.0))]),
+    p("Curved Air", &[("Style", C("Rainbow")), ("Rate", C("1/16")), ("Players", N(5.0)), ("Spread", N(0.8)), ("Patience", N(0.8))]),
+];
 static PEDAL: &[Preset] = &[p("Low Drone", &[("Change", C("Never"))]), p("Organ Pedal", &[("Octave", N(1.0)), ("Fifth", N(1.0))]), p("Moving Bass", &[("Change", C("1 Bar")), ("Moves", N(0.7))])];
 static DRUMMER: &[Preset] = &[
     p("Steady", &[("Complexity", N(0.2)), ("Energy", N(0.5))]),

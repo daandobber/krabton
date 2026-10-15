@@ -346,7 +346,7 @@ pub(crate) fn instrument_catalog() -> Vec<(&'static str, &'static str, &'static 
     devices().into_iter().map(|d| (d.name, d.hint, d.presets, d.make)).collect()
 }
 
-fn devices() -> [Dev; 28] {
+fn devices() -> [Dev; 29] {
     [
         Dev {
             name: "Analog",
@@ -408,6 +408,7 @@ fn devices() -> [Dev; 28] {
         Dev { name: "Birds", hint: "Songbirds that sing by themselves: blackbird, robin, song thrush, nightingale, wren, chaffinch, great tit, skylark, sparrow, cuckoo, wood pigeon, tawny owl, loon, gull and a drumming woodpecker. Each sings its species' songs from its own place, near or far; a key makes the bird with the nearest voice sing (Follow Key puts its song on the key)", presets: krabton_engine::dsp::birds::preset_names(), make: BrowserItem::Birds, kind: None },
         Dev { name: "Nature", hint: "The sounds of outside, made from scratch: wind in gusts that whistles and rustles the leaves, rain on leaves, water, a roof or a tent, thunder after the lightning, a brook, the sea, crickets that chirp faster when it is warmer, frogs and a campfire. Play keys and the wind whistles on those notes", presets: krabton_engine::dsp::nature::preset_names(), make: BrowserItem::Nature, kind: None },
         Dev { name: "Facet", hint: "One synth, six engines, four knobs: Crease (phase distortion), Swarm (seven saws), Fold (wavefolding and FM), Grit (digital steps and noise), Partials (additive) and Wide (pulses and a wide chorus)", presets: krabton_engine::dsp::facet::preset_names(), make: BrowserItem::Facet, kind: None },
+        Dev { name: "Bass Guitar", hint: "An electric bass: four wound strings (E A D G, or Drop D) heard through a pickup at the neck, in the middle or at the bridge, played with the fingers or a pick, muted with the palm. The Guitar with its bass model (also in the Guitar's folder)", presets: krabton_engine::dsp::guitar::BASS_PRESETS, make: BrowserItem::Guitar, kind: Some("Bass") },
         Dev { name: "Pan Flute", hint: "Blown pipes: pan flute (closed pipes, odd harmonics), shakuhachi, ocarina, bamboo flute and wooden flute, of bamboo, wood, clay, metal, glass, bone or plastic, with breath that rings in the pipe, a chiff at the start, scoops, vibrato that comes in after a while. Played as a mouth plays it (the lips on one pipe or two neighbours, sliding along the row) or freely", presets: krabton_engine::dsp::pan_flute::preset_names(), make: BrowserItem::PanFlute, kind: None },
         Dev { name: "Melodica", hint: "A keyboard you blow into, a real one: every key a little out of tune, a breath that is never still, tongued or swelling notes, clicking keys; free reeds sharing one breath, the plastic body, the mouthpiece or the tube; and a dub desk after it: drive, a tape echo on the beat, a spring reverb", presets: krabton_engine::dsp::melodica::preset_names(), make: BrowserItem::Melodica, kind: None },
         Dev { name: "Harmonica", hint: "A diatonic harp in any key or the song's (straight, cross harp, slant): every note in its hole, blown or drawn, missing ones bent or overblown; never blow and draw at once; the lips over more holes for chords, the hands cupped around it for a wah. Or free, as a chromatic harmonica", presets: krabton_engine::dsp::harmonica::preset_names(), make: BrowserItem::Harmonica, kind: None },

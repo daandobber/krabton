@@ -556,6 +556,20 @@ mod tests {
         out
     }
 
+    /// Polls until `done` holds for what came in (a busy machine can be slow
+    /// to deliver), or two seconds passed.
+    fn poll_until(m: &mut Monome, done: impl Fn(&[Event]) -> bool) -> Vec<Event> {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut events = Vec::new();
+        loop {
+            events.extend(m.poll());
+            if done(&events) || Instant::now() > deadline {
+                return events;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     /// A fake serialosc + fake grid on localhost, talking real OSC/UDP.
     #[test]
     fn discovers_connects_reads_keys_and_sends_leds() {
@@ -575,8 +589,7 @@ mod tests {
         // serialosc answers with one grid.
         let dev = OscMessage::new("/serialosc/device", vec![OscArg::Str("m1000042".into()), OscArg::Str("monome 128".into()), OscArg::Int(grid_port as i32)]);
         serialosc.send_to(&dev.encode(), client).unwrap();
-        std::thread::sleep(Duration::from_millis(30));
-        let events = m.poll();
+        let events = poll_until(&mut m, |e| e.iter().any(|e| matches!(e, Event::GridConnected { .. })));
         assert!(events.contains(&Event::Devices));
         assert!(events.iter().any(|e| matches!(e, Event::GridConnected { .. })));
         assert_eq!(m.grid_id(), Some("m1000042"));
@@ -589,8 +602,7 @@ mod tests {
         // The grid reports its size and a key press.
         grid.send_to(&OscMessage::new("/sys/size", vec![OscArg::Int(16), OscArg::Int(8)]).encode(), client).unwrap();
         grid.send_to(&OscMessage::new("/krabton/grid/key", vec![OscArg::Int(3), OscArg::Int(2), OscArg::Int(1)]).encode(), client).unwrap();
-        std::thread::sleep(Duration::from_millis(30));
-        let events = m.poll();
+        let events = poll_until(&mut m, |e| e.contains(&Event::Key { x: 3, y: 2, down: true }));
         assert!(events.contains(&Event::Key { x: 3, y: 2, down: true }), "{events:?}");
         assert_eq!(m.grid_size, (16, 8));
 
@@ -612,8 +624,7 @@ mod tests {
 
         // Unplugging.
         serialosc.send_to(&OscMessage::new("/serialosc/remove", vec![OscArg::Str("m1000042".into()), OscArg::Str("monome 128".into()), OscArg::Int(grid_port as i32)]).encode(), client).unwrap();
-        std::thread::sleep(Duration::from_millis(30));
-        let events = m.poll();
+        let events = poll_until(&mut m, |e| e.contains(&Event::Disconnected { id: "m1000042".into() }));
         assert!(events.contains(&Event::Disconnected { id: "m1000042".into() }));
         assert!(m.grid_id().is_none());
     }
@@ -675,8 +686,7 @@ mod tests {
         let client = SocketAddr::from(([127, 0, 0, 1], m.local_port()));
         let dev = OscMessage::new("/serialosc/device", vec![OscArg::Str("m0000007".into()), OscArg::Str("monome arc 4".into()), OscArg::Int(arc.local_addr().unwrap().port() as i32)]);
         serialosc.send_to(&dev.encode(), client).unwrap();
-        std::thread::sleep(Duration::from_millis(30));
-        let events = m.poll();
+        let events = poll_until(&mut m, |e| e.iter().any(|e| matches!(e, Event::GridConnected { .. })));
         assert!(events.contains(&Event::ArcConnected { id: "m0000007".into() }));
         arc.send_to(&OscMessage::new("/krabton_arc/enc/delta", vec![OscArg::Int(2), OscArg::Int(-3)]).encode(), client).unwrap();
         std::thread::sleep(Duration::from_millis(30));

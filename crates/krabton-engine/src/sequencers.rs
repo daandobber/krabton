@@ -16,6 +16,7 @@
 //! sampler for triggers and notes) have their own modules.
 
 pub mod ambient;
+pub mod minimal;
 pub mod strum;
 pub mod drummer;
 pub mod more;
@@ -311,8 +312,11 @@ pub struct SeqState {
     ball_last: [f64; MAX_BALLS],
     /// Where the next block should start; anything else is a jump (loop, locate).
     next_beat: f64,
+    /// The last step played (a step on a block's edge plays once).
+    last_step: i64,
     pub(crate) extra: Box<more::Extra>,
     pub(crate) ambient: Box<ambient::Ambient>,
+    pub(crate) minimal: Box<minimal::Minimal>,
     pub(crate) drum: drummer::DrummerState,
     pub(crate) map: drum_map::DrumMapState,
     pub(crate) marbles: Box<marbles::MarblesState>,
@@ -351,8 +355,10 @@ impl SeqState {
             balls_ready: false,
             ball_last: [f64::NEG_INFINITY; MAX_BALLS],
             next_beat: f64::NEG_INFINITY,
+            last_step: i64::MIN,
             extra: Box::default(),
             ambient: Box::default(),
+            minimal: Box::default(),
             drum: drummer::DrummerState::default(),
             map: drum_map::DrumMapState::default(),
             marbles: Box::default(),
@@ -530,13 +536,19 @@ impl SeqState {
                     K::Percussion => percussion::step_beats(p),
                     K::Drummer => rate_beats(p.get(drummer::RATE).copied().unwrap_or(2.0)),
                     K::Chaos | K::Automaton | K::Ant | K::Markov | K::Words | K::Lorenz | K::Tintinnabuli => rate_beats(p[0]),
+                    K::Glass => rate_beats(p[0]) / minimal::GLASS_TICKS,
+                    K::Satie => rate_beats(p[0]) / minimal::SATIE_TICKS,
+                    K::Riley => rate_beats(p[0]) / minimal::RILEY_TICKS,
                     _ => 0.25,
                 };
                 let beat0 = ctx.beat;
                 let beat1 = beat0 + ctx.len as f64 / ctx.samples_per_beat;
                 let mut k = (beat0 / rate - 1e-9).ceil() as i64;
                 while (k as f64) * rate < beat1 {
-                    if k >= 0 {
+                    // A step on the edge between two blocks can land in both
+                    // (rounding): it plays once.
+                    if k >= 0 && k != self.last_step {
+                        self.last_step = k;
                         let at = ctx.now + (((k as f64) * rate - beat0).max(0.0) * ctx.samples_per_beat) as u64;
                         let step_frames = rate * ctx.samples_per_beat;
                         match kind {
@@ -566,6 +578,9 @@ impl SeqState {
                             K::Words => self.words(p, data, at, step_frames, out, ctx),
                             K::Lorenz => self.lorenz(p, at, step_frames, out, ctx),
                             K::Tintinnabuli => self.tintinnabuli(k, p, at, step_frames, out, ctx),
+                            K::Glass => self.glass(k, p, at, step_frames, out, ctx),
+                            K::Satie => self.satie(k, p, at, step_frames, out, ctx),
+                            K::Riley => self.riley(k, p, at, step_frames, out, ctx),
                             _ => {}
                         }
                     }
