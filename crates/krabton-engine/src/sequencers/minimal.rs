@@ -22,7 +22,7 @@ use super::{SeqState, RATES};
 use crate::midi_fx::{MidiCtx, MidiEvent};
 use crate::params::{ParamSpec, Unit};
 
-const DYNAMICS: [ParamSpec; 4] = [
+pub(crate) const DYNAMICS: [ParamSpec; 4] = [
     ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
@@ -218,7 +218,7 @@ impl Minimal {
 }
 
 /// A steady pseudo-random number for `a` and `b` (0..1).
-fn hash(a: u32, b: u32) -> f32 {
+pub(crate) fn hash(a: u32, b: u32) -> f32 {
     let mut h = a.wrapping_mul(0x9E37_79B9) ^ b.wrapping_mul(0x85EB_CA6B);
     h ^= h >> 15;
     h = h.wrapping_mul(0x2C1B_3C6D);
@@ -226,7 +226,7 @@ fn hash(a: u32, b: u32) -> f32 {
     (h >> 8) as f32 / 16_777_216.0
 }
 
-fn choose(p: &[f32], i: usize, n: usize) -> usize {
+pub(crate) fn choose(p: &[f32], i: usize, n: usize) -> usize {
     (p[i].round().max(0.0) as usize).min(n - 1)
 }
 
@@ -315,14 +315,14 @@ fn figure(i: usize, total: usize) -> Figure {
 impl SeqState {
     /// Degree `d` of the song's key (0 its tonic) in the octave of `base`
     /// (the tonic at or below it), plus `chroma` semitones.
-    fn mdeg(ctx: &MidiCtx, base: f32, d: i32, chroma: i32) -> i32 {
+    pub(crate) fn mdeg(ctx: &MidiCtx, base: f32, d: i32, chroma: i32) -> i32 {
         let n = (ctx.scale.len() as i32).max(1);
         let (b, _) = ctx.scale.locate(base.round() as i32);
         ctx.scale.pitch_at(b - b.rem_euclid(n) + d) + chroma
     }
 
     /// Plays a note now, or later in a block to come.
-    fn mlater(&mut self, ctx: &MidiCtx, at: u64, pitch: i32, vel: f32, len: f64, out: &mut Vec<MidiEvent>) {
+    pub(crate) fn mlater(&mut self, ctx: &MidiCtx, at: u64, pitch: i32, vel: f32, len: f64, out: &mut Vec<MidiEvent>) {
         if at < ctx.now + ctx.len as u64 {
             self.note(ctx, at.max(ctx.now), pitch, vel, len, out);
         } else if self.pending.len() < self.pending.capacity() {

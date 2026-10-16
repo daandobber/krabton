@@ -97,6 +97,11 @@ pub enum MidiFxKind {
     Glass,
     Satie,
     Riley,
+    Reich,
+    Bach,
+    Nancarrow,
+    Debussy,
+    Feldman,
     GuitarChords,
     Drummer,
     DrumMap,
@@ -215,7 +220,7 @@ impl MidiFxKind {
     ];
 
     /// The sequencers' groups, in menu order.
-    pub const SEQUENCER_GROUPS: [&'static str; 8] = ["Classic", "Players", "Rhythm", "Played", "Generative", "Physics & Chaos", "Ambient", "Minimal"];
+    pub const SEQUENCER_GROUPS: [&'static str; 8] = ["Classic", "Players", "Rhythm", "Played", "Generative", "Physics & Chaos", "Ambient", "Composers"];
 
     /// Which group a sequencer belongs to (see `SEQUENCER_GROUPS`).
     pub fn group(self) -> &'static str {
@@ -228,12 +233,12 @@ impl MidiFxKind {
             K::Polymeter | K::Turing | K::Life | K::Drunk | K::Markov | K::Words => "Generative",
             K::Bounce | K::Orbits | K::Pong | K::Rain | K::Chaos | K::Automaton | K::Ant | K::Lorenz => "Physics & Chaos",
             K::Loops | K::Bloom | K::Chimes | K::DriftChords | K::Tintinnabuli | K::Pedal => "Ambient",
-            K::Glass | K::Satie | K::Riley => "Minimal",
+            K::Glass | K::Satie | K::Riley | K::Reich | K::Bach | K::Nancarrow | K::Debussy | K::Feldman => "Composers",
             _ => "MIDI Effects",
         }
     }
 
-    pub const SEQUENCERS: [MidiFxKind; 44] = [
+    pub const SEQUENCERS: [MidiFxKind; 49] = [
         MidiFxKind::Step,
         MidiFxKind::Acid,
         MidiFxKind::DrumGrid,
@@ -262,6 +267,11 @@ impl MidiFxKind {
         MidiFxKind::Glass,
         MidiFxKind::Satie,
         MidiFxKind::Riley,
+        MidiFxKind::Reich,
+        MidiFxKind::Bach,
+        MidiFxKind::Nancarrow,
+        MidiFxKind::Debussy,
+        MidiFxKind::Feldman,
         MidiFxKind::GuitarChords,
         MidiFxKind::Drummer,
         MidiFxKind::DrumMap,
@@ -334,6 +344,11 @@ impl MidiFxKind {
             MidiFxKind::Glass => "Glass",
             MidiFxKind::Satie => "Satie",
             MidiFxKind::Riley => "Riley",
+            MidiFxKind::Reich => "Reich",
+            MidiFxKind::Bach => "Bach",
+            MidiFxKind::Nancarrow => "Nancarrow",
+            MidiFxKind::Debussy => "Debussy",
+            MidiFxKind::Feldman => "Feldman",
             MidiFxKind::GuitarChords => "Guitar Chords",
             MidiFxKind::Drummer => "Drummer",
             MidiFxKind::DrumMap => "Drum Map",
@@ -397,6 +412,11 @@ impl MidiFxKind {
             MidiFxKind::Pedal => "A held drone note that now and then moves to the fifth, fourth or octave",
             MidiFxKind::Glass => "After Philip Glass: a broken chord repeated and repeated over a slow round of chords: three against two, rocking, broken, an additive figure that grows and shrinks, or pulsing chords, the bass held under each",
             MidiFxKind::Satie => "After Erik Satie: a Gymnopédie (a slow waltz, bass on one, a seventh chord on two, a sparse falling melody), a Gnossienne (oom-pah in four, a melody turning with grace notes) or a Sarabande (ninth chords sliding in parallel)",
+            MidiFxKind::Reich => "After Steve Reich: two players on one figure, the second slowly pulling a note ahead and holding there (Phase), a clapped rhythm against itself shifting a step (Shifting Rhythm), or chords pulsing and swelling like breaths (Pulses)",
+            MidiFxKind::Bach => "After J. S. Bach: a Prelude (a broken chord each half bar, voices led smoothly), an Invention (a motif answered an octave down half a bar later, falling in sequence) or a Chorale (four voices, cadences held)",
+            MidiFxKind::Nancarrow => "After Conlon Nancarrow's player-piano studies: one melody in two to four voices at once at tempos in a ratio (3:4, 3:4:5, 4:5:6:7...), timed to arrive at its end together",
+            MidiFxKind::Debussy => "After Claude Debussy: a line with the same chord shape sliding under every note (Planing), whole-tone washes, triplet arabesques, or a pentatonic line over parallel fourths",
+            MidiFxKind::Feldman => "After Morton Feldman: soft chords, few and far apart, in patterns that come back a few times, each time a little changed",
             MidiFxKind::Riley => "After Terry Riley's In C: players each repeat a short figure as long as they like before moving on, never far apart, over a steady pulse; or a Rainbow of modal loops of different lengths turning against each other",
             MidiFxKind::GuitarChords => "Guitar chords the way a guitarist plays them: real chord shapes in the key, strummed down and up in patterns, or picked",
             MidiFxKind::Drummer => "A drummer who plays styles (rock, funk, house, boom bap, bossa nova, jazz...): ghost notes, accents, fills with a crash after, humanized; edit the groove in its grid",
@@ -462,6 +482,11 @@ impl MidiFxKind {
             MidiFxKind::Glass => sequencers::minimal::GLASS,
             MidiFxKind::Satie => sequencers::minimal::SATIE,
             MidiFxKind::Riley => sequencers::minimal::RILEY,
+            MidiFxKind::Reich => sequencers::composers::REICH,
+            MidiFxKind::Bach => sequencers::composers::BACH,
+            MidiFxKind::Nancarrow => sequencers::composers::NANCARROW,
+            MidiFxKind::Debussy => sequencers::composers::DEBUSSY,
+            MidiFxKind::Feldman => sequencers::composers::FELDMAN,
             MidiFxKind::GuitarChords => sequencers::strum::SPECS,
             MidiFxKind::Ukulele => sequencers::strum::UKE_SPECS,
             MidiFxKind::Drummer => sequencers::drummer::SPECS,

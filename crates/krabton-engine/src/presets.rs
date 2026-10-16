@@ -182,6 +182,11 @@ pub fn midi(kind: MidiFxKind) -> &'static [Preset] {
         K::Glass => GLASS,
         K::Satie => SATIE,
         K::Riley => RILEY,
+        K::Reich => REICH,
+        K::Bach => BACH,
+        K::Nancarrow => NANCARROW,
+        K::Debussy => DEBUSSY,
+        K::Feldman => FELDMAN,
         K::GuitarChords => GUITAR_CHORDS,
         K::Ukulele => UKULELE,
         K::Drummer => DRUMMER,
@@ -934,6 +939,41 @@ static RILEY: &[Preset] = &[
     p("Restless", &[("Players", N(3.0)), ("Patience", N(0.15))]),
     p("Rainbow", &[("Style", C("Rainbow")), ("Rate", C("1/16")), ("Pulse", N(0.0)), ("Players", N(3.0))]),
     p("Curved Air", &[("Style", C("Rainbow")), ("Rate", C("1/16")), ("Players", N(5.0)), ("Spread", N(0.8)), ("Patience", N(0.8))]),
+];
+static REICH: &[Preset] = &[
+    p("Phase", &[]),
+    p("Slow Phase", &[("Repeats", N(16.0)), ("Pattern", N(3.0))]),
+    p("Shifting Rhythm", &[("Style", C("Shifting Rhythm")), ("Rate", C("1/8")), ("Repeats", N(4.0))]),
+    p("Pulses", &[("Style", C("Pulses")), ("Rate", C("1/8")), ("Repeats", N(4.0))]),
+];
+static BACH: &[Preset] = &[
+    p("Prelude", &[]),
+    p("Circle Prelude", &[("Harmony", C("Circle"))]),
+    p("Invention", &[("Style", C("Invention"))]),
+    p("Lament Invention", &[("Style", C("Invention")), ("Harmony", C("Lament")), ("Variation", N(5.0))]),
+    p("Chorale", &[("Style", C("Chorale")), ("Gate", N(0.95))]),
+];
+static NANCARROW: &[Preset] = &[
+    p("Canon 3:4:5", &[]),
+    p("Canon 3:4", &[("Ratios", C("3:4"))]),
+    p("Four Voices", &[("Ratios", C("4:5:6:7")), ("Length", N(24.0)), ("Spread", N(0.8))]),
+    p("Irrational", &[("Ratios", C("Irrational")), ("Length", N(20.0))]),
+    p("Drifting Apart", &[("Converge", N(0.0)), ("Ratios", C("2:3"))]),
+    p("Player Piano", &[("Rate", C("1/16")), ("Ratios", C("4:5:6:7")), ("Gate", N(0.5))]),
+];
+static DEBUSSY: &[Preset] = &[
+    p("Planing Ninths", &[]),
+    p("Planing Sevenths", &[("Shape", C("Major Seventh"))]),
+    p("Fourths", &[("Shape", C("Fourths")), ("Motion", N(0.7))]),
+    p("Whole Tone", &[("Style", C("Whole Tone"))]),
+    p("Arabesque", &[("Style", C("Arabesque"))]),
+    p("Pentatonic", &[("Style", C("Pentatonic")), ("Motion", N(0.7))]),
+];
+static FELDMAN: &[Preset] = &[
+    p("Soft Patterns", &[]),
+    p("Rothko Chapel", &[("Density", N(0.2)), ("Cluster", N(4.0)), ("Color", N(0.3)), ("Rate", C("1/2"))]),
+    p("Single Notes", &[("Cluster", N(1.0)), ("Density", N(0.5)), ("Color", N(0.7))]),
+    p("Restless Repeats", &[("Repeat", N(1.0)), ("Density", N(0.6))]),
 ];
 static PEDAL: &[Preset] = &[p("Low Drone", &[("Change", C("Never"))]), p("Organ Pedal", &[("Octave", N(1.0)), ("Fifth", N(1.0))]), p("Moving Bass", &[("Change", C("1 Bar")), ("Moves", N(0.7))])];
 static DRUMMER: &[Preset] = &[
