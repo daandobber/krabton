@@ -171,6 +171,11 @@ impl App {
                 }
                 let dragging_clip = egui::DragAndDrop::payload::<crate::app::SlotDrag>(ui.ctx()).is_some() || egui::DragAndDrop::payload::<crate::app::ArrClipDrag>(ui.ctx()).is_some();
                 let short = room < 470.0;
+                // The Map, in its window.
+                let map_on = self.map_window;
+                if ui.add(egui::Button::new(RichText::new("Map").color(if map_on { TEXT_DARK } else { TEXT })).fill(if map_on { ACCENT } else { PANEL3 })).on_hover_text("The Map: put the tracks where they stand in a room, with a mixer").clicked() {
+                    self.map_window = !map_on;
+                }
                 for (v, label) in [(View::Tape, "Tape"), (View::Rack, "Rack"), (View::Arrangement, if short { "Arr." } else { "Arrangement" }), (View::Session, if short { "Sess." } else { "Session" })] {
                     let on = self.view == v;
                     let tip = match v {
@@ -320,6 +325,10 @@ impl App {
             ui.separator();
             ui.label(RichText::new("Audio").color(TEXT_DIM).small());
             ui.label(RichText::new(&self.audio_desc).small());
+            if ui.button("Map...").on_hover_text("Put the tracks where they stand in a room, with a mixer").clicked() {
+                self.map_window = true;
+                ui.close();
+            }
             if ui.button("Audio & MIDI Settings...   Ctrl+,").on_hover_text("Which device Krabton plays to and records from, and the MIDI inputs").clicked() {
                 self.show_settings = true;
                 ui.close();
@@ -355,6 +364,8 @@ impl App {
 
     pub(crate) fn ui_statusbar(&mut self, ui: &mut Ui) {
         ui.horizontal_centered(|ui| {
+            // Minimized windows wait here.
+            super::windows::dock(ui);
             if let Some((msg, at)) = &self.message {
                 let age = at.elapsed().as_secs_f32();
                 if age < 8.0 {

@@ -733,23 +733,16 @@ impl App {
         let (mut params, mut data, mut children) = (dev.params.clone(), dev.data.clone(), dev.children.clone());
         let mut mv = self.mod_view(ModOwner::Device(dev_id));
         let status = self.status();
-        let mut open = true;
         let mut out = (false, GlitchEdit::default());
         let wid = Id::new(("glitch_window", dev_id));
         let screen = ctx.screen_rect();
-        egui::Window::new(format!("Glitch Sequencer - {track}"))
-            .id(wid)
-            .open(&mut open)
-            .default_size([(screen.width() - 40.0).min(1440.0), (screen.height() - 80.0).min(680.0)])
-            .min_size([600.0, 420.0])
-            .resizable(true)
-            .collapsible(true)
-            .show(ctx, |ui| {
-                let h = ui.available_height().max(420.0);
-                egui::ScrollArea::horizontal().show(ui, |ui| {
-                    out = glitch_panel(ui, wid.with("panel"), dev_id, &mut params, &mut data, &mut children, h, &status, mv.as_mut(), true);
-                });
+        let size = egui::vec2((screen.width() - 40.0).min(1440.0), (screen.height() - 80.0).min(680.0));
+        let (open, _) = super::windows::tool_window(ctx, &format!("glitch {dev_id}"), &format!("Glitch Sequencer - {track}"), size, |ui| {
+            let h = ui.available_height().max(420.0);
+            egui::ScrollArea::horizontal().show(ui, |ui| {
+                out = glitch_panel(ui, wid.with("panel"), dev_id, &mut params, &mut data, &mut children, h, &status, mv.as_mut(), true);
             });
+        });
         self.apply_mod_view(mv);
         let (mut changed, edit) = out;
         changed |= self.apply_glitch_edit(&mut children, &mut data, &edit);

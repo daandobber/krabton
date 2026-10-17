@@ -483,7 +483,6 @@ impl App {
             EffectKind::LensComp => 420.0,
             EffectKind::Grains => 360.0,
             EffectKind::OpenAir => 380.0,
-            EffectKind::Stage => 420.0,
             EffectKind::Beads => 400.0,
             EffectKind::Convolution => 340.0,
             _ => 400.0,
@@ -496,8 +495,6 @@ impl App {
         let on = enabled;
         let menu = PresetMenu { id, list: presets::effect(kind), current: &preset_name, picked: &mut picked };
         let info = if plugin.is_some() { None } else { Some(kind.description()) };
-        let stage_dots = if kind == EffectKind::Stage { self.stage_dots() } else { Vec::new() };
-        let mut stage_act = None;
         let (changed, action) = device_frame_presets(ui, &title, info, Some(&mut enabled), Some(menu), h, |ui| {
             if let (Some(p), Some(st)) = (&plugin, &plugin_status) {
                 ui.vertical(|ui| {
@@ -556,10 +553,7 @@ impl App {
                 crate::ui::beads_view::beads_panel(ui, id, dev_id, &mut params, accent, h, mv.as_mut(), &status, &mut width)
             } else if kind == EffectKind::OpenAir {
                 crate::ui::open_air_view::open_air_panel(ui, id, dev_id, &mut params, accent, h, mv.as_mut(), &status, &mut width)
-            } else if kind == EffectKind::Stage {
-                let (c, a) = crate::ui::stage_view::stage_panel(ui, id, dev_id, &mut params, accent, h, mv.as_mut(), &stage_dots, &mut width);
-                stage_act = Some(a);
-                c
+
             } else if kind == EffectKind::LensEq {
                 crate::ui::lens::eq_panel(ui, id, dev_id, &mut params, accent, h, mv.as_mut(), &status, &mut width)
             } else if kind == EffectKind::LensComp {
@@ -590,19 +584,6 @@ impl App {
         if glitch_edit.window {
             self.glitch_window = Some(dev_id);
         }
-        // A Stage: one room for all of them, and the tracks moved on its map.
-        if kind == EffectKind::Stage && changed {
-            self.share_stage_room(&params);
-        }
-        if let Some(act) = &stage_act {
-            self.apply_stage_map(&act.map);
-            if act.every_track {
-                self.stage_every_track();
-            }
-            if act.window {
-                self.stage_window = true;
-            }
-        }
         let dev = self.chain_mut(sel)?.get_mut(d)?;
         dev.enabled = enabled;
         if changed || slots_changed {
@@ -629,10 +610,6 @@ impl App {
                 dev.data = f();
             }
             dev.preset = pr.name.to_string();
-            if kind == EffectKind::Stage {
-                let room = dev.params.clone();
-                self.share_stage_room(&room);
-            }
         }
         action.map(|a| match a {
             ChainActionKind::Remove => ChainAction::Remove(d),

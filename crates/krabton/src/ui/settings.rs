@@ -36,11 +36,10 @@ impl App {
         if self.audio_in_devices.is_none() {
             self.audio_in_devices = Some(crate::audio::input_device_names());
         }
-        let mut open = true;
         let mut out_pick = None;
         let mut in_pick = None;
         let mut rescan = false;
-        egui::Window::new("Settings").open(&mut open).collapsible(false).resizable(false).default_width(440.0).show(ctx, |ui| {
+        let (open, _) = super::windows::tool_window(ctx, "settings", "Settings", egui::vec2(460.0, 400.0), |ui| {
             ui.label(RichText::new("Audio").strong().color(ACCENT));
             egui::Grid::new("audio_settings").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
                 ui.label("Output");

@@ -962,6 +962,9 @@ pub struct Track {
     /// The Key drawer leaves this track where it is (it plays as written).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub key_fixed: bool,
+    /// Where it stands on the Map (None: not on it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub place: Option<crate::dsp::fx::stage::Place>,
     /// MIDI effects, processed in order before the instrument.
     #[serde(default)]
     pub midi_devices: Vec<MidiDevice>,
@@ -1079,6 +1082,9 @@ pub struct Project {
     /// The four-track tape.
     #[serde(default)]
     pub tape: crate::tape::TapeSettings,
+    /// The Map's room (the tracks on it stand there).
+    #[serde(default)]
+    pub map: crate::dsp::fx::stage::MapRoom,
     /// The key everything melodic plays in right now (the Key drawer), when
     /// it is not the project's own: every note is moved degree by degree
     /// from `scale` into it, live. Drums stay.
@@ -1148,6 +1154,7 @@ impl Project {
             sections: Vec::new(),
             next_id: 1,
             tape: Default::default(),
+            map: Default::default(),
             play_key: None,
             play_key_on_bar: false,
             key_seq: Vec::new(),
@@ -1411,6 +1418,7 @@ impl Project {
             color,
             kind,
             key_fixed: false,
+            place: None,
             midi_devices: Vec::new(),
             instrument,
             devices: Vec::new(),

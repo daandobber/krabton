@@ -50,7 +50,7 @@ impl App {
         self.ui_settings(ctx);
         self.ui_rack(ctx);
         self.ui_glitch_window(ctx);
-        self.ui_stage_window(ctx);
+        self.ui_map_window(ctx);
         if self.show_about {
             let mut open = true;
             egui::Window::new("About Krabton").collapsible(false).resizable(false).open(&mut open).show(ctx, |ui| {
@@ -158,10 +158,9 @@ impl App {
         if !self.show_history {
             return;
         }
-        let mut open = true;
         let mut go: Option<usize> = None;
         let n = self.undo_labels.len();
-        egui::Window::new("History").open(&mut open).default_width(280.0).default_height(360.0).resizable(true).show(ctx, |ui| {
+        let (open, _) = super::windows::tool_window(ctx, "history", "History", vec2(300.0, 380.0), |ui| {
             egui::ScrollArea::vertical().auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
                 if ui.selectable_label(n == 0, "Start").clicked() {
                     go = Some(0);

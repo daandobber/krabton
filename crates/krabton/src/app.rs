@@ -451,8 +451,9 @@ pub struct App {
     pub(crate) auto_arm: bool,
     /// The Glitch Sequencer shown in a window of its own (by device id).
     pub(crate) glitch_window: Option<u64>,
-    /// The Stage's big map, in a window.
-    pub(crate) stage_window: bool,
+    /// The Map, in a window, and the track chosen on it.
+    pub(crate) map_window: bool,
+    pub(crate) map_selected: Option<u64>,
     /// Size of everything asked for by a script (see `run_script`).
     script_zoom: Option<f32>,
     pub(crate) auto_prev: std::collections::HashMap<(usize, krabton_engine::modulation::ModTarget), f32>,
@@ -595,7 +596,8 @@ impl App {
             env_draw: false,
             auto_arm: false,
             glitch_window: None,
-            stage_window: false,
+            map_window: false,
+            map_selected: None,
             script_zoom: None,
             auto_prev: Default::default(),
             auto_last: Default::default(),
@@ -2322,8 +2324,14 @@ impl App {
                 "rackcolumns" => self.prefs.layout.rack_columns = !self.prefs.layout.rack_columns,
                 "devices" => self.detail = DetailTab::Devices,
                 "settings" => self.show_settings = true,
-                "stageall" => self.stage_every_track(),
-                "stagewin" => self.stage_window = true,
+                "mapwin" => self.map_window = true,
+                "mapall" => {
+                    for i in 0..self.project.tracks.len() {
+                        self.set_on_map(i, true);
+                    }
+                }
+                "mapspread" => self.spread_map(),
+                "mapsel" => self.map_selected = self.project.tracks.get(nums.first().copied().unwrap_or(0)).map(|t| t.id),
                 "audioout" => {
                     let names = audio::output_device_names();
                     eprintln!("outputs: {names:?}");

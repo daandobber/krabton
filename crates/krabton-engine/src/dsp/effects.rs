@@ -496,7 +496,7 @@ impl EffectKind {
             EffectKind::Hall => "A big hall: decays up to a minute, separate low decay, modulation, freeze",
             EffectKind::Shimmer => "A hall with a pitch shifter in its loop: every pass an octave (or any interval) higher or lower",
             EffectKind::Spring => "A spring reverb tank: the chirp and boing of amps and dub mixers, with drips",
-            EffectKind::Stage => "Puts the track somewhere in a room it shares with the other tracks that have a Stage: across and how deep, as heard from where the listener sits. Direction, distance, reflections from the walls, floor and ceiling, and the room's tail, all from where it stands; for the mix, on every track",
+            EffectKind::Stage => "A room around the track: where it stands in it and which way it faces, how wide it stays, the room's size, walls and reverb, how much of the room you hear. Direction like a 3D panner, distance, reflections from the walls, floor and ceiling, and the tail. (For all tracks at once: the Map)",
             EffectKind::OpenAir => "Puts the sound outside: among the trees of a forest, on a meadow, between the walls of a canyon, over a lake or in a cave, near or far; with birds, the wind, rain, water or the night around it if you like, quieter while you play",
             EffectKind::PitchDelay => "A delay whose echoes are pitched in semitone steps: each repeat one more step up or down, or all by one interval",
             EffectKind::Grains => "Granular texture processor: grains from an 8-second buffer with random time, size, shape and pitch, regular or random density, freeze, feedback, reverb and tape or lo-fi buffers",

@@ -756,6 +756,10 @@ struct TrackRt {
     id: u64,
     instrument: InstState,
     devices: Vec<(u64, EffectState)>,
+    /// Where the Map puts it (made when it first goes on the Map).
+    placer: Option<Box<crate::dsp::fx::stage::Stage>>,
+    /// It was off the Map: start afresh when it comes back.
+    placer_idle: bool,
     playing: Option<PlayingClip>,
     queued: Option<Queued>,
     overridden: bool,
@@ -814,6 +818,8 @@ impl TrackRt {
             id,
             instrument: InstState::None,
             devices: Vec::new(),
+            placer: None,
+            placer_idle: false,
             playing: None,
             queued: None,
             overridden: false,
@@ -1744,7 +1750,7 @@ impl Engine {
                 self.midi_scratch.extend_from_slice(&src.midi_out);
             }
             let Some(rt) = self.tracks.get_mut(ti) else { continue };
-            let TrackRt { instrument, devices, playing: pc, overridden, offs, events, fx_buf, live, midi_fx, fx_sig, sounding, shifted, signal, bend, l, r, gain_l, gain_r, sends, pre_l, pre_r, post_l, post_r, out_l, out_r, to_master, midi_out, .. } = &mut **rt;
+            let TrackRt { instrument, devices, placer, placer_idle, playing: pc, overridden, offs, events, fx_buf, live, midi_fx, fx_sig, sounding, shifted, signal, bend, l, r, gain_l, gain_r, sends, pre_l, pre_r, post_l, post_r, out_l, out_r, to_master, midi_out, .. } = &mut **rt;
             l[..seg].fill(0.0);
             r[..seg].fill(0.0);
             events.clear();
@@ -2000,6 +2006,19 @@ impl Engine {
                     let params = mods.params(ModOwner::Device(dev.id)).unwrap_or(&dev.params);
                     run_device(st, dev, params, &mut l[..seg], &mut r[..seg], &ctx, status);
                 }
+            }
+            // The Map: where it stands, after its effects, before its fader.
+            match &track.place {
+                Some(place) => {
+                    let st = placer.get_or_insert_with(|| Box::new(crate::dsp::fx::stage::Stage::new(sr)));
+                    if *placer_idle {
+                        *placer_idle = false;
+                        st.clear();
+                    }
+                    let params = crate::dsp::fx::stage::map_params(&project.map, place);
+                    st.process(&params, &mut l[..seg], &mut r[..seg], &ctx);
+                }
+                None => *placer_idle = true,
             }
             signal.level = l[..seg].iter().chain(&r[..seg]).fold(0.0f32, |m, x| m.max(x.abs()));
             post_l[..seg].copy_from_slice(&l[..seg]);
