@@ -7,7 +7,7 @@
 //! tremolo, muted). And the soloists, from other free libraries (most of
 //! them gathered at <https://github.com/sfzinstruments>): a solo cello, four
 //! saxophones, an erhu, an upright bass, guitars, a banjo, a lyre, steel
-//! drums and bagpipes. Each instrument is downloaded the first time it is
+//! drums, bagpipes, an electric bass and three electric pianos. Each instrument is downloaded the first time it is
 //! used and kept as 16-bit frames in one memory-mapped file, as the grand
 //! piano is.
 //!
@@ -108,6 +108,18 @@ pub static STEEL: Source = Source {
     credit: "jSteelDrum by jlearman, a hand-made steel drum from Trinidad, public domain (Unlicense): https://github.com/sfzinstruments/jlearman.SteelDrum",
     short: "jSteelDrum by jlearman (public domain)",
 };
+pub static GROWLY: Source = Source {
+    base: "https://raw.githubusercontent.com/sfzinstruments/karoryfer.growlybass/4f483268fc66b5a6d5781d421c0d11b8d08d3fc6/",
+    folder: "Karoryfer Growlybass",
+    credit: "Growlybass by Karoryfer Lecolds, CC0 1.0: https://github.com/sfzinstruments/karoryfer.growlybass",
+    short: "Karoryfer Growlybass (CC0)",
+};
+pub static EPIANOS: Source = Source {
+    base: "https://raw.githubusercontent.com/sfzinstruments/GregSullivan.E-Pianos/8c3e581acda3594b553948ff0222d4f84a698376/",
+    folder: "Greg Sullivan E-Pianos",
+    credit: "Greg Sullivan's E-Pianos (sampled from a Yamaha CP80, a Hohner Pianet T and a Wurlitzer EP200; http://www.sullivang.net/), mapped by kinwie, CC BY 3.0: https://github.com/sfzinstruments/GregSullivan.E-Pianos",
+    short: "Greg Sullivan E-Pianos (CC BY 3.0)",
+};
 pub static PIPES: Source = Source {
     base: "https://raw.githubusercontent.com/sfzinstruments/karoryfer.squidpipes/b258528c8f49d6389ec2b4ec04a8b10013169dd9/",
     folder: "Karoryfer Squidpipes",
@@ -198,6 +210,10 @@ pub const INSTRUMENTS: &[Def] = &[
     Def { src: &ERHU, name: "Erhu", family: Family::World, mb: 86, arts: &[held("Long", "Programs/02-erhu_long.sfz"), short("Short", "Programs/03-erhu_short.sfz"), held("Sul Tasto", "Programs/05-erhu_sul_tasto.sfz")] },
     Def { src: &STEEL, name: "Steel Drums", family: Family::World, mb: 38, arts: &[short("Steel Drums", "jSteelDrum-noxfade.sfz")] },
     Def { src: &PIPES, name: "Bagpipes", family: Family::World, mb: 16, arts: &[held("Pipes", "Programs/01-squidpipes.sfz").cc(&[(12, 0)])] },
+    Def { src: &GROWLY, name: "Electric Bass", family: Family::Guitars, mb: 188, arts: &[short("Sustain", "growlybass_clean.sfz"), short("Staccato", "growlybass_vicious.sfz")] },
+    Def { src: &EPIANOS, name: "Electric Grand", family: Family::Keys, mb: 11, arts: &[short("Electric Grand", "CP80/CP80.sfz")] },
+    Def { src: &EPIANOS, name: "Reed Piano", family: Family::Keys, mb: 2, arts: &[short("Reed Piano", "Wurlitzer EP200/Wurlitzer EP200.sfz")] },
+    Def { src: &EPIANOS, name: "Pluck Piano", family: Family::Keys, mb: 8, arts: &[short("Pluck Piano", "Pianet T/Pianet T.sfz")] },
 ];
 
 /// The saxophones without their breath and key noises.
@@ -205,10 +221,12 @@ const SAX_CC: &[(u8, u8)] = &[(80, 0)];
 
 impl Def {
     /// How far below where they sound its library maps the recordings
-    /// (semitones): the keys move up by as much, so notes sound as written.
+    /// (semitones): the keys move up by as much, so notes sound as written
+    /// (the bass, mapped an octave above as bass parts are written, moves down).
     pub fn shift(&self) -> i32 {
         match self.name {
             "Solo Cello" | "Lyre" | "Erhu" | "Bagpipes" => 12,
+            "Electric Bass" => -12,
             _ => 0,
         }
     }
@@ -264,7 +282,7 @@ pub static SPECS: &[ParamSpec] = &[
 /// The instruments' names, in the order of `INSTRUMENTS`.
 pub const NAMES: &[&str] = &[
     "Solo Violin", "Violins", "Violas", "Cellos", "Double Bass", "Harp", "Flute", "Piccolo", "Oboe", "Clarinet", "Bassoon", "French Horn", "Trumpet", "Trombone", "Tuba", "Timpani", "Glockenspiel", "Xylophone", "Marimba", "Tubular Bells", "Orchestral Percussion", "Church Organ", "Upright Piano",
-    "Solo Cello", "Upright Bass", "Soprano Sax", "Alto Sax", "Tenor Sax", "Baritone Sax", "Electric Guitar", "Banjo", "Lyre", "Erhu", "Steel Drums", "Bagpipes",
+    "Solo Cello", "Upright Bass", "Soprano Sax", "Alto Sax", "Tenor Sax", "Baritone Sax", "Electric Guitar", "Banjo", "Lyre", "Erhu", "Steel Drums", "Bagpipes", "Electric Bass", "Electric Grand", "Reed Piano", "Pluck Piano",
 ];
 
 /// The orchestra's instruments, and the soloists'.

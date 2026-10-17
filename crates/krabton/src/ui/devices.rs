@@ -1361,8 +1361,12 @@ impl App {
                             ui.label(RichText::new("Instrument").small().color(TEXT_DIM));
                             egui::ComboBox::from_id_salt(("orchestra_preset", track_id)).width(160.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 let mut family = None;
-                                for d in krabton_engine::orchestra::INSTRUMENTS {
-                                    let solo = !std::ptr::eq(d.src, &krabton_engine::orchestra::VSCO);
+                                // The orchestra, then the soloists, each by family.
+                                let solo_of = |d: &krabton_engine::orchestra::Def| !std::ptr::eq(d.src, &krabton_engine::orchestra::VSCO);
+                                let mut list: Vec<&krabton_engine::orchestra::Def> = krabton_engine::orchestra::INSTRUMENTS.iter().collect();
+                                list.sort_by_key(|d| (solo_of(d), d.family as u8));
+                                for d in list {
+                                    let solo = solo_of(d);
                                     if family != Some((solo, d.family)) {
                                         family = Some((solo, d.family));
                                         let head = if solo { format!("Soloists · {:?}", d.family) } else { format!("{:?}", d.family) };
