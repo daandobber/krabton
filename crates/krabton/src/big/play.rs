@@ -361,6 +361,7 @@ pub fn telling_params(inst: &Instrument) -> [Option<usize>; 2] {
         Instrument::Warp { .. } => Some(("Warp 1", "Warp 2")),
         Instrument::Hybrid { .. } => Some(("Cutoff 1", "Reso 1")),
         Instrument::Quartet { .. } => Some(("Cutoff A", "Reso A")),
+        Instrument::Orchestra { .. } => Some(("Dynamics", "Release")),
         _ => None,
     };
     let named = |n: &str| specs.iter().position(|s| s.name == n && smooth(s));

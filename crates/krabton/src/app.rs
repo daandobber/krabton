@@ -140,6 +140,7 @@ pub enum BrowserItem {
     Warp(&'static str),
     Hybrid(&'static str),
     Quartet(&'static str),
+    Orchestra(&'static str),
     /// A Facet preset.
     Facet(&'static str),
     /// A Beads (instrument) preset.
@@ -196,6 +197,7 @@ impl BrowserItem {
             BrowserItem::Warp(p) => format!("Warp: {p}"),
             BrowserItem::Hybrid(p) => format!("Hybrid: {p}"),
             BrowserItem::Quartet(p) => format!("Quartet: {p}"),
+            BrowserItem::Orchestra(p) => format!("Orchestra: {p}"),
             BrowserItem::Facet(p) => format!("Facet: {p}"),
             BrowserItem::Piano(p) => format!("Grand Piano: {p}"),
             BrowserItem::Drums(k) => k.to_string(),
@@ -410,6 +412,8 @@ pub struct App {
     rec_notes: HashMap<(u64, u8), RecNote>,
     /// The grand piano's samples being installed.
     pub piano_install: Option<crate::piano_lib::Install>,
+    /// Orchestra instruments on their way, by instrument.
+    pub orchestra_installs: std::collections::HashMap<usize, crate::orchestra_lib::Install>,
     /// Sampled drum packs being downloaded, and those that are here (by folder).
     pub(crate) drum_installs: std::collections::HashMap<&'static str, crate::drum_lib::Install>,
     pub(crate) packs_here: std::collections::HashSet<&'static str>,
@@ -487,6 +491,7 @@ impl App {
         }
         // The grand piano's samples, if installed (engines made from here on play them).
         krabton_engine::piano::library::set_shared(crate::piano_lib::open_installed());
+        crate::orchestra_lib::open_all();
         let project = krabton_engine::demo::demo_project();
         let snapshot = Arc::new(project.clone());
 
@@ -575,6 +580,7 @@ impl App {
             rec_quantize: true,
             rec_notes: HashMap::new(),
             piano_install: None,
+            orchestra_installs: std::collections::HashMap::new(),
             drum_installs: Default::default(),
             packs_here: krabton_engine::dsp::real_drums::PACKS.iter().filter(|p| krabton_engine::dsp::real_drums::installed(p)).map(|p| p.folder).collect(),
             meters: Vec::new(),
@@ -924,6 +930,11 @@ impl App {
     }
 
     pub fn apply_item(&mut self, item: &BrowserItem, target: DropTarget) {
+        if let BrowserItem::Orchestra(name) = item {
+            if let Some(i) = krabton_engine::orchestra::index_of(name) {
+                self.start_orchestra_install(i);
+            }
+        }
         let target_track = match target {
             DropTarget::Track(t) | DropTarget::Slot { track: t, .. } | DropTarget::ArrLane { track: t, .. } => Some(t),
             DropTarget::Chain(TrackSel::Track(t)) => Some(t),
@@ -1033,7 +1044,7 @@ impl App {
                 }
                 self.toast(format!("Loading {} ...", info.name));
             }
-            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::Harmonica(_) | BrowserItem::Calculator(_) | BrowserItem::Console(_) | BrowserItem::Handheld(_) | BrowserItem::Micro(_) | BrowserItem::Warp(_) | BrowserItem::Hybrid(_) | BrowserItem::Quartet(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) => {
+            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::Harmonica(_) | BrowserItem::Calculator(_) | BrowserItem::Console(_) | BrowserItem::Handheld(_) | BrowserItem::Micro(_) | BrowserItem::Warp(_) | BrowserItem::Hybrid(_) | BrowserItem::Quartet(_) | BrowserItem::Orchestra(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) => {
                 let inst = match item {
                     BrowserItem::Synth(p) => Instrument::synth(p),
                     BrowserItem::Macro(p) => Instrument::macro_osc(p),
@@ -1069,6 +1080,7 @@ impl App {
                     BrowserItem::Warp(p) => Instrument::warp(p),
                     BrowserItem::Hybrid(p) => Instrument::hybrid(p),
                     BrowserItem::Quartet(p) => Instrument::quartet(p),
+                    BrowserItem::Orchestra(p) => Instrument::orchestra(p),
                     BrowserItem::Facet(p) => Instrument::facet(p),
                     BrowserItem::Drums(k) => Instrument::drums(k),
                     _ => Instrument::sampler(None),
@@ -1846,6 +1858,28 @@ impl App {
         }
     }
 
+    /// Starts downloading an Orchestra instrument (unless it is here or on its way).
+    pub(crate) fn start_orchestra_install(&mut self, instrument: usize) {
+        let busy = self.orchestra_installs.get(&instrument).and_then(|s| s.lock().ok().map(|s| !matches!(*s, crate::orchestra_lib::State::Failed(_)))).unwrap_or(false);
+        if !busy && krabton_engine::orchestra::library(instrument).is_none() && instrument < krabton_engine::orchestra::INSTRUMENTS.len() {
+            self.orchestra_installs.insert(instrument, crate::orchestra_lib::start(instrument));
+        }
+    }
+
+    /// An Orchestra instrument arrived: it plays.
+    fn poll_orchestra_installs(&mut self) {
+        let done: Vec<usize> = self.orchestra_installs.iter().filter(|(_, s)| s.lock().map(|s| *s == crate::orchestra_lib::State::Ready).unwrap_or(false)).map(|(k, _)| *k).collect();
+        for i in done {
+            self.orchestra_installs.remove(&i);
+            let name = krabton_engine::orchestra::INSTRUMENTS[i].name;
+            if crate::orchestra_lib::open_one(i) {
+                self.toast(format!("{name} is here: it plays now"));
+            } else {
+                self.toast(format!("{name} was downloaded but could not be opened"));
+            }
+        }
+    }
+
     /// Starts downloading and preparing the grand piano's samples.
     pub fn start_piano_install(&mut self) {
         let busy = self.piano_install.as_ref().and_then(|s| s.lock().ok().map(|s| !matches!(*s, crate::piano_lib::InstallState::Failed(_)))).unwrap_or(false);
@@ -2525,6 +2559,12 @@ impl App {
                     self.apply_item(&BrowserItem::Quartet(p), DropTarget::NewTrack);
                     self.detail = DetailTab::Devices;
                 }
+                "orchestra" => {
+                    let names = krabton_engine::orchestra::NAMES;
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Orchestra(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
                 "facet" => {
                     let names = krabton_engine::dsp::facet::preset_names();
                     let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
@@ -2970,6 +3010,7 @@ impl eframe::App for App {
         }
         self.poll_midi();
         self.poll_piano_install();
+        self.poll_orchestra_installs();
         self.poll_drum_install();
         self.poll_recording();
         self.tape_frame();

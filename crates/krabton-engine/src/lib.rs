@@ -14,6 +14,7 @@ pub mod modular;
 pub mod modulation;
 pub mod params;
 pub mod presets;
+pub mod orchestra;
 pub mod piano;
 pub mod plugin;
 pub mod project;

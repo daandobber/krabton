@@ -1355,6 +1355,49 @@ impl App {
                             param_grid_mod(ui, Id::new(("quartet", track_id)), krabton_engine::dsp::quartet::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
                         });
                     }
+                    Instrument::Orchestra { preset, params } => {
+                        let inst = (params.first().copied().unwrap_or(0.0).round().max(0.0) as usize).min(krabton_engine::orchestra::INSTRUMENTS.len() - 1);
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Instrument").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("orchestra_preset", track_id)).width(160.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                let mut family = None;
+                                for d in krabton_engine::orchestra::INSTRUMENTS {
+                                    if family != Some(d.family) {
+                                        family = Some(d.family);
+                                        ui.label(RichText::new(format!("{:?}", d.family)).small().color(TEXT_DIM));
+                                    }
+                                    let here = krabton_engine::orchestra::library(krabton_engine::orchestra::index_of(d.name).unwrap_or(0)).is_some();
+                                    let label = if here { d.name.to_string() } else { format!("{}  ({} MB)", d.name, d.mb) };
+                                    if ui.selectable_label(preset == d.name, label).clicked() {
+                                        *preset = d.name.to_string();
+                                        *params = krabton_engine::orchestra::preset(d.name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("click an articulation; drag Dynamics (or give it a modulator) to swell; Legato joins held notes").small().color(TEXT_DIM));
+                        });
+                        let lib = if krabton_engine::orchestra::library(inst).is_some() {
+                            super::orchestra_view::LibState::Ready
+                        } else {
+                            match self.orchestra_installs.get(&inst).and_then(|s| s.lock().ok().map(|s| s.clone())) {
+                                None => super::orchestra_view::LibState::Missing,
+                                Some(crate::orchestra_lib::State::Failed(e)) => super::orchestra_view::LibState::Failed(e),
+                                Some(crate::orchestra_lib::State::Downloading { done, total }) => super::orchestra_view::LibState::Installing(format!("Downloading {done} of {total} recordings"), 0.9 * done as f32 / total.max(1) as f32),
+                                Some(crate::orchestra_lib::State::Building { done, total }) => super::orchestra_view::LibState::Installing(format!("Preparing {done} of {total}"), 0.9 + 0.1 * done as f32 / total.max(1) as f32),
+                                Some(crate::orchestra_lib::State::Ready) => super::orchestra_view::LibState::Installing("Opening".into(), 1.0),
+                            }
+                        };
+                        let mut install = false;
+                        ui.horizontal_top(|ui| {
+                            let (_, clicked) = super::orchestra_view::orchestra_screen(ui, Id::new(("orchestra_screen", track_id)), params, &live, h - 48.0, lib);
+                            install = clicked;
+                            ui.add_space(6.0);
+                            param_grid_mod(ui, Id::new(("orchestra", track_id)), krabton_engine::orchestra::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
+                        });
+                        if install {
+                            self.start_orchestra_install(inst);
+                        }
+                    }
                     Instrument::Guitar { preset, params } => {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Preset").small().color(TEXT_DIM));
