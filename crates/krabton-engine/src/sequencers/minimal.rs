@@ -79,18 +79,45 @@ pub const S_BASE: usize = 5;
 pub const S_RUBATO: usize = 6;
 pub const S_PEDAL: usize = 7;
 pub const S_VELOCITY: usize = 8;
+// (these came later: after the keys and the dynamics)
+pub const S_METRE: usize = 15;
+pub const S_INTRO: usize = 16;
+pub const S_PHRASE: usize = 17;
+pub const S_FORM: usize = 18;
+pub const S_VARIATION: usize = 19;
+pub const S_CHANGE: usize = 20;
+pub const S_COLOR: usize = 21;
+pub const S_LEFT: usize = 22;
+pub const S_ACCOMP: usize = 23;
+/// The first of the four chords of a Custom harmony.
+pub const S_CHORD: usize = 24;
+pub const S_CONTOUR: usize = 28;
+pub const S_RANGE: usize = 29;
+pub const S_OCTAVE: usize = 30;
+pub const S_MOTION: usize = 31;
+pub const S_ORNAMENTS: usize = 32;
 
 pub const SATIE_STYLES: &[&str] = &["Gymnopédie", "Gnossienne", "Sarabande"];
-pub const SATIE_HARMONIES: &[&str] = &["Sway", "Circle", "Minor", "Lydian"];
-/// The chords (scale degrees) of each harmony, a bar each (two in a Gnossienne).
-pub const SATIE_ROOTS: [&[i32]; 4] = [&[3, 0], &[0, 5, 1, 4], &[5, 1], &[0, 1]];
+pub const SATIE_HARMONIES: &[&str] = &["Sway", "Circle", "Minor", "Lydian", "Drone", "Falling", "Custom"];
+/// The chords (scale degrees) of each harmony but Custom.
+pub const SATIE_ROOTS: [&[i32]; 6] = [&[3, 0], &[0, 5, 1, 4], &[5, 1], &[0, 1], &[0], &[0, 6, 5, 4]];
+pub const SATIE_CUSTOM: usize = 6;
+pub const SATIE_METRES: &[&str] = &["Style", "3/4", "4/4"];
+pub const SATIE_FORMS: &[&str] = &["Endless", "A", "AB", "AABA", "ABAC", "ABC"];
+/// Which melody each phrase of a form sings (Endless: a new one each time).
+pub const FORM_LETTERS: [&[u8]; 6] = [&[], &[0], &[0, 1], &[0, 0, 1, 0], &[0, 1, 0, 2], &[0, 1, 2]];
+pub const SATIE_CHANGES: &[&str] = &["Style", "1 Bar", "2 Bars", "4 Bars"];
+pub const SATIE_COLORS: &[&str] = &["Style", "Triad", "Seventh", "Ninth", "Sixth"];
+pub const SATIE_LEFT: &[&str] = &["Style", "Waltz", "Oom-pah", "Block", "Broken", "Bass", "Off"];
+pub const CHORD_DEGREES: &[&str] = &["—", "I", "II", "III", "IV", "V", "VI", "VII"];
+pub const SATIE_CONTOURS: &[&str] = &["Falling", "Arch", "Rising", "Wave"];
 
 pub static SATIE: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 5),
     ParamSpec::choice("Style", "Satie", SATIE_STYLES, 0),
-    ParamSpec::choice("Harmony", "Satie", SATIE_HARMONIES, 0),
-    ParamSpec::lin("Melody", "Satie", 0.0, 1.0, 0.7, Unit::Percent),
-    ParamSpec::lin("Wander", "Satie", 0.0, 1.0, 0.35, Unit::Percent),
+    ParamSpec::choice("Harmony", "Harmony", SATIE_HARMONIES, 0),
+    ParamSpec::lin("Melody", "Melody", 0.0, 1.0, 0.7, Unit::Percent),
+    ParamSpec::lin("Wander", "Melody", 0.0, 1.0, 0.35, Unit::Percent),
     ParamSpec::int("Base Note", "Notes", 48.0, 84.0, 69.0, Unit::None),
     ParamSpec::lin("Rubato", "Notes", 0.0, 1.0, 0.25, Unit::Percent),
     ParamSpec::lin("Pedal", "Notes", 0.0, 1.0, 0.6, Unit::Percent),
@@ -101,7 +128,105 @@ pub static SATIE: &[ParamSpec] = &[
     DYNAMICS[1],
     DYNAMICS[2],
     DYNAMICS[3],
+    ParamSpec::choice("Metre", "Satie", SATIE_METRES, 0),
+    ParamSpec::int("Intro", "Satie", 0.0, 16.0, 4.0, Unit::None),
+    ParamSpec::int("Phrase", "Satie", 2.0, 8.0, 4.0, Unit::None),
+    ParamSpec::choice("Form", "Satie", SATIE_FORMS, 0),
+    ParamSpec::int("Variation", "Satie", 0.0, 99.0, 0.0, Unit::None),
+    ParamSpec::choice("Chord Change", "Harmony", SATIE_CHANGES, 0),
+    ParamSpec::choice("Color", "Harmony", SATIE_COLORS, 0),
+    ParamSpec::choice("Left Hand", "Harmony", SATIE_LEFT, 0),
+    ParamSpec::lin("Accomp", "Harmony", 0.0, 1.0, 0.75, Unit::Percent),
+    ParamSpec::choice("Chord 1", "Harmony", CHORD_DEGREES, 1),
+    ParamSpec::choice("Chord 2", "Harmony", CHORD_DEGREES, 6),
+    ParamSpec::choice("Chord 3", "Harmony", CHORD_DEGREES, 2),
+    ParamSpec::choice("Chord 4", "Harmony", CHORD_DEGREES, 5),
+    ParamSpec::choice("Contour", "Melody", SATIE_CONTOURS, 0),
+    ParamSpec::int("Range", "Melody", 3.0, 14.0, 11.0, Unit::None),
+    ParamSpec::int("Octave", "Melody", -1.0, 2.0, 0.0, Unit::None),
+    ParamSpec::lin("Motion", "Melody", 0.0, 1.0, 0.5, Unit::Percent),
+    ParamSpec::lin("Ornaments", "Melody", 0.0, 1.0, 0.3, Unit::Percent),
 ];
+
+/// The chords of Satie's harmony (scale degrees, the tonic 0) and how many:
+/// the harmony's own, or the Custom ones (those not left empty).
+pub fn satie_roots(p: &[f32]) -> ([i32; 7], usize) {
+    let mut out = [0i32; 7];
+    let h = choose(p, S_HARMONY, SATIE_HARMONIES.len());
+    if h == SATIE_CUSTOM {
+        let mut n = 0;
+        for i in 0..4 {
+            let c = p.get(S_CHORD + i).map(|v| v.round().max(0.0) as usize).unwrap_or(0);
+            if c > 0 {
+                out[n] = (c.min(7) - 1) as i32;
+                n += 1;
+            }
+        }
+        if n == 0 {
+            n = 1;
+        }
+        (out, n)
+    } else {
+        let r = SATIE_ROOTS[h];
+        out[..r.len()].copy_from_slice(r);
+        (out, r.len())
+    }
+}
+
+/// Beats in a bar of Satie: the metre chosen, or the style's (a
+/// Gnossienne in four, the others in three).
+pub fn satie_metre(p: &[f32]) -> i64 {
+    match p.get(S_METRE).map(|v| v.round() as i64).unwrap_or(0) {
+        1 => 3,
+        2 => 4,
+        _ if choose(p, S_STYLE, SATIE_STYLES.len()) == 1 => 4,
+        _ => 3,
+    }
+}
+
+/// The left hand Satie plays: 1 Waltz, 2 Oom-pah, 3 Block, 4 Broken, 5
+/// Bass, 6 Off, 7 a Sarabande's sliding chords.
+pub fn satie_left(p: &[f32]) -> usize {
+    match p.get(S_LEFT).map(|v| v.round().max(0.0) as usize).unwrap_or(0).min(SATIE_LEFT.len() - 1) {
+        0 => match choose(p, S_STYLE, SATIE_STYLES.len()) {
+            1 => 2,
+            2 => 7,
+            _ => 1,
+        },
+        l => l,
+    }
+}
+
+/// Rhythms of a bar of melody, (start, length) in twelfths of a beat: in
+/// bars of three, and in bars of four.
+const MELODY_3: [&[(i64, i64)]; 7] = [
+    &[(0, 36)],
+    &[(0, 12), (12, 24)],
+    &[(0, 24), (24, 12)],
+    &[(12, 24)],
+    &[(0, 12), (12, 12), (24, 12)],
+    &[(0, 12), (12, 6), (18, 6), (24, 12)],
+    &[(0, 6), (6, 6), (12, 12), (24, 12)],
+];
+const MELODY_4: [&[(i64, i64)]; 6] = [
+    &[(0, 48)],
+    &[(0, 24), (24, 24)],
+    &[(0, 36), (36, 12)],
+    &[(0, 12), (12, 12), (24, 24)],
+    &[(0, 24), (24, 6), (30, 6), (36, 12)],
+    &[(0, 12), (12, 12), (24, 12), (36, 12)],
+];
+
+/// Where the melody tends at `x` of the way through its phrase: up
+/// (positive) or down.
+fn contour_bias(contour: usize, x: f32) -> f32 {
+    match contour {
+        1 => 0.7 * (std::f32::consts::PI * x).cos(),
+        2 => 0.4,
+        3 => 0.7 * (std::f32::consts::TAU * 1.5 * x).sin(),
+        _ => -0.35,
+    }
+}
 
 // ---------------------------------------------------------------- riley
 
@@ -172,6 +297,10 @@ pub struct Minimal {
     s_bar: i64,
     s_pattern: u8,
     s_recent: u64,
+    /// The phrase's own dice (the same melody each time its letter comes).
+    s_rng: u32,
+    s_letter: u8,
+    s_rest: bool,
     // Riley
     r_ready: bool,
     r_fig: [usize; MAX_PLAYERS],
@@ -197,6 +326,9 @@ impl Default for Minimal {
             s_bar: i64::MIN,
             s_pattern: 0,
             s_recent: 0,
+            s_rng: 1,
+            s_letter: 0,
+            s_rest: true,
             r_ready: false,
             r_fig: [0; MAX_PLAYERS],
             r_pos: [0; MAX_PLAYERS],
@@ -209,6 +341,14 @@ impl Default for Minimal {
 }
 
 impl Minimal {
+    /// The phrase's own dice.
+    fn s_unit(&mut self) -> f32 {
+        self.s_rng ^= self.s_rng << 13;
+        self.s_rng ^= self.s_rng >> 17;
+        self.s_rng ^= self.s_rng << 5;
+        (self.s_rng >> 8) as f32 / 16_777_216.0
+    }
+
     fn unit(&mut self) -> f32 {
         self.rng ^= self.rng << 13;
         self.rng ^= self.rng >> 17;
@@ -463,21 +603,42 @@ impl SeqState {
 
     /// Satie, step `k` (a twelfth of its beat).
     pub(crate) fn satie(&mut self, k: i64, p: &[f32], at: u64, step_frames: f64, out: &mut Vec<MidiEvent>, ctx: &MidiCtx) {
+        let get = |i: usize, or: f32| p.get(i).copied().unwrap_or(or);
         let style = choose(p, S_STYLE, SATIE_STYLES.len());
-        let roots = SATIE_ROOTS[choose(p, S_HARMONY, SATIE_HARMONIES.len())];
+        let (roots, n_roots) = satie_roots(p);
+        let custom = choose(p, S_HARMONY, SATIE_HARMONIES.len()) == SATIE_CUSTOM;
         let base = p[S_BASE];
         let melody = p[S_MELODY].clamp(0.0, 1.0);
         let wander = p[S_WANDER].clamp(0.0, 1.0);
         let rubato = p[S_RUBATO].clamp(0.0, 1.0);
         let pedal = p[S_PEDAL].clamp(0.0, 1.0) as f64;
         let vel = p[S_VELOCITY];
+        let intro = get(S_INTRO, 4.0).round().clamp(0.0, 16.0) as i64;
+        let phrase_len = get(S_PHRASE, 4.0).round().clamp(2.0, 8.0) as i64;
+        let form = FORM_LETTERS[(get(S_FORM, 0.0).round().max(0.0) as usize).min(FORM_LETTERS.len() - 1)];
+        let variation = get(S_VARIATION, 0.0).round().max(0.0) as u32;
+        let left = satie_left(p);
+        let color = (get(S_COLOR, 0.0).round().max(0.0) as usize).min(SATIE_COLORS.len() - 1);
+        let contour = (get(S_CONTOUR, 0.0).round().max(0.0) as usize).min(SATIE_CONTOURS.len() - 1);
+        let range = get(S_RANGE, 11.0).round().clamp(3.0, 14.0) as i32;
+        let octave = get(S_OCTAVE, 0.0).round().clamp(-1.0, 2.0) as i32;
+        let motion = get(S_MOTION, 0.5).clamp(0.0, 1.0);
+        let ornaments = get(S_ORNAMENTS, 0.3).clamp(0.0, 1.0);
+        let accomp = vel * get(S_ACCOMP, 0.75).clamp(0.0, 1.0);
         let beat = 12.0 * step_frames;
-        let beats_in_bar = if style == 1 { 4 } else { 3 };
-        let bar_len = 12 * beats_in_bar as i64;
+        let metre = satie_metre(p);
+        let bar_len = 12 * metre;
         let bar = k.div_euclid(bar_len);
         let t = k.rem_euclid(bar_len);
-        // A Gnossienne's chords last two bars.
-        let chord_i = if style == 1 { bar.div_euclid(2) } else { bar }.rem_euclid(roots.len() as i64) as usize;
+        // How long a chord lasts: a Gnossienne's two bars, the others' one, or as chosen.
+        let per = match (get(S_CHANGE, 0.0).round() as i64, style) {
+            (1, _) => 1,
+            (2, _) => 2,
+            (3, _) => 4,
+            (_, 1) => 2,
+            _ => 1,
+        };
+        let chord_i = bar.div_euclid(per).rem_euclid(n_roots as i64) as usize;
         let minor = ctx.scale.intervals().get(2) == Some(&3);
         // The leading tone in minor (a Gnossienne's raised seventh).
         let lead = |d: i32| if style == 1 && minor && d.rem_euclid(7) == 6 { 1 } else { 0 };
@@ -485,7 +646,7 @@ impl SeqState {
             let m = &mut self.minimal;
             if m.s_bar != bar {
                 m.s_bar = bar;
-                if style == 2 {
+                if style == 2 && !custom {
                     // A Sarabande's chords slide: a step up or down, home at times.
                     let u = m.unit();
                     m.s_root = if m.s_root != 0 && u < 0.3 { 0 } else if u < 0.65 { m.s_root + 1 } else { m.s_root - 1 }.clamp(-3, 4);
@@ -495,156 +656,238 @@ impl SeqState {
             }
         }
         let root = self.minimal.s_root;
-        let accomp = vel * 0.75;
-        match style {
-            // A Sarabande: ninth chords sliding, on one and on three.
+        // The chord's notes over its root, an octave down (the root itself is the bass's).
+        let tones: &[i32] = match color {
+            1 => &[2, 4, 7],
+            2 => &[2, 4, 6],
+            3 => &[2, 4, 6, 8],
+            4 => &[2, 4, 5],
+            _ if style == 1 => &[2, 4, 7],
+            _ => &[2, 4, 6],
+        };
+        let bass = Self::mdeg(ctx, base, root - 14, 0);
+        let chord_note = |ctx: &MidiCtx, r: i32, d: i32| Self::mdeg(ctx, base, r + d - 7, lead(r + d));
+        let b = t / 12;
+        let on_beat = t % 12 == 0;
+        match left {
+            // Waltz: the bass on one, the chord on two, held to the bar's end.
+            1 => {
+                if t == 0 {
+                    self.note(ctx, at, bass, accomp, beat * ((metre - 1) as f64 * 0.9 + 1.1 * pedal), out);
+                } else if t == 12 {
+                    for &d in tones {
+                        self.note(ctx, at, chord_note(ctx, root, d), accomp * 0.75, beat * ((metre - 1) as f64 - 0.4 + 0.35 * pedal), out);
+                    }
+                }
+            }
+            // Oom-pah: the bass on one (and three of four), the chord between.
             2 => {
+                if on_beat {
+                    if b == 0 || (metre == 4 && b == 2) {
+                        self.note(ctx, at, bass, accomp, beat * (0.8 + 0.4 * pedal), out);
+                    } else {
+                        for &d in tones {
+                            self.note(ctx, at, chord_note(ctx, root, d), accomp * 0.8, beat * (0.7 + 0.4 * pedal), out);
+                        }
+                    }
+                }
+            }
+            // Block: everything on one, held.
+            3 => {
+                if t == 0 {
+                    let len = bar_len as f64 * step_frames * (0.6 + 0.4 * pedal);
+                    self.note(ctx, at, bass, accomp, len, out);
+                    for &d in tones {
+                        self.note(ctx, at, chord_note(ctx, root, d), accomp * 0.75, len, out);
+                    }
+                }
+            }
+            // Broken: the bass, then up and down the chord in quavers.
+            4 => {
+                if t % 6 == 0 {
+                    let j = (t / 6) as usize;
+                    let len = 6.0 * step_frames * (1.0 + 4.0 * pedal);
+                    if j == 0 {
+                        self.note(ctx, at, bass, accomp, bar_len as f64 * step_frames * (0.5 + 0.5 * pedal), out);
+                    } else {
+                        let n = tones.len();
+                        let up_down = (j - 1) % (2 * n - 2).max(1);
+                        let i = if up_down < n { up_down } else { 2 * n - 2 - up_down };
+                        self.note(ctx, at, chord_note(ctx, root, tones[i]), accomp * 0.7, len, out);
+                    }
+                }
+            }
+            // Only the bass.
+            5 => {
+                if t == 0 {
+                    self.note(ctx, at, bass, accomp, bar_len as f64 * step_frames * (0.6 + 0.4 * pedal), out);
+                }
+            }
+            6 => {}
+            // A Sarabande: chords from the root up sliding, on one and on three.
+            _ => {
                 if t == 0 || t == 24 {
                     let r = if t == 24 { root + if self.minimal.unit() < 0.5 { 1 } else { -1 } } else { root };
                     let len = if t == 0 { 2.0 } else { 1.0 } * beat * (0.85 + 0.25 * pedal);
-                    for d in [0, 2, 4, 6, 8] {
-                        let pitch = Self::mdeg(ctx, base, r + d - 7, 0);
-                        self.note(ctx, at, pitch, accomp * 0.85, len, out);
+                    let full: &[i32] = match color {
+                        1 => &[0, 2, 4, 7],
+                        2 => &[0, 2, 4, 6],
+                        4 => &[0, 2, 4, 5],
+                        _ => &[0, 2, 4, 6, 8],
+                    };
+                    // Ornaments roll them.
+                    let roll = self.minimal.unit() < ornaments * 0.6;
+                    let gap = 0.018 * ctx.sr as f64;
+                    for (j, &d) in full.iter().enumerate() {
+                        let pitch = chord_note(ctx, r, d);
+                        let when = at + if roll { (j as f64 * gap) as u64 } else { 0 };
+                        self.mlater(ctx, when, pitch, accomp * 0.85, len, out);
                     }
                     if t == 0 {
-                        let pitch = Self::mdeg(ctx, base, r - 14, 0);
-                        self.note(ctx, at, pitch, accomp, 3.0 * beat * (0.7 + 0.3 * pedal), out);
-                    }
-                    // The top line now and then an octave up, a melody of its own.
-                    if self.minimal.unit() < melody * 0.5 {
-                        let pitch = Self::mdeg(ctx, base, r + 8, 0);
-                        self.note(ctx, at, pitch, vel, len, out);
-                    }
-                }
-                self.satie_visual(style, t, chord_i, roots.len(), root, k);
-                return;
-            }
-            // A Gnossienne: oom-pah in four.
-            1 => {
-                if t % 24 == 0 {
-                    let pitch = Self::mdeg(ctx, base, root - 14, 0);
-                    self.note(ctx, at, pitch, accomp, beat * (0.8 + 0.4 * pedal), out);
-                } else if t % 24 == 12 {
-                    for d in [2, 4, 7] {
-                        let pitch = Self::mdeg(ctx, base, root + d - 7, lead(root + d));
-                        self.note(ctx, at, pitch, accomp * 0.8, beat * (0.7 + 0.4 * pedal), out);
-                    }
-                }
-            }
-            // A Gymnopédie: the bass on one, the chord on two, held through three.
-            _ => {
-                if t == 0 {
-                    let pitch = Self::mdeg(ctx, base, root - 14, 0);
-                    self.note(ctx, at, pitch, accomp, beat * (1.8 + 1.1 * pedal), out);
-                } else if t == 12 {
-                    for d in [2, 4, 6] {
-                        let pitch = Self::mdeg(ctx, base, root + d - 7, 0);
-                        self.note(ctx, at, pitch, accomp * 0.75, beat * (1.6 + 0.35 * pedal), out);
+                        self.note(ctx, at, Self::mdeg(ctx, base, r - 14, 0), accomp, 3.0 * beat * (0.7 + 0.3 * pedal), out);
                     }
                 }
             }
         }
-        // The melody: phrases of four bars after four bars of the waltz alone.
-        if bar >= 4 && melody > 0.0 {
-            let phrase = (bar - 4).div_euclid(4);
-            let in_phrase = (bar - 4).rem_euclid(4);
+        // A Sarabande has no tune of its own: its top line, now and then, an octave up.
+        if style == 2 {
+            if (t == 0 || t == 24) && self.minimal.unit() < melody * 0.5 {
+                let len = if t == 0 { 2.0 } else { 1.0 } * beat * (0.85 + 0.25 * pedal);
+                let pitch = Self::mdeg(ctx, base, root + 8 + 7 * octave, 0);
+                self.note(ctx, at, pitch, vel, len, out);
+            }
+            self.satie_visual(p, style, t, chord_i, root, k, bar, intro, phrase_len, form);
+            return;
+        }
+        // The melody: phrases after the intro.
+        let lo = -2 + 7 * octave;
+        let hi = lo + range;
+        if bar >= intro && melody > 0.0 {
+            let phrase = (bar - intro).div_euclid(phrase_len);
+            let in_phrase = (bar - intro).rem_euclid(phrase_len);
             let m = &mut self.minimal;
-            if m.s_phrase != phrase && t == 0 && in_phrase == 0 {
+            if m.s_phrase != phrase && t == 0 {
                 m.s_phrase = phrase;
-                // Some phrases rest; a new one begins up high and falls.
-                if m.unit() > 0.35 + 0.65 * melody {
-                    m.s_pattern = 0xff;
+                if in_phrase == 0 {
+                    // Its letter in the form picks its melody: the same each time it comes.
+                    let letter = if form.is_empty() { phrase as u32 } else { form[phrase.rem_euclid(form.len() as i64) as usize] as u32 };
+                    m.s_letter = letter as u8;
+                    m.s_rng = (hash(variation.wrapping_mul(977).wrapping_add(13), letter) * 4_294_967_000.0) as u32 | 1;
+                    m.s_rest = m.s_unit() > 0.35 + 0.65 * melody;
+                    // Where it starts: high to fall, low to rise, between for the others.
+                    let u = m.s_unit();
+                    m.s_m = match contour {
+                        0 => hi - 2 - (u * 4.0) as i32,
+                        2 => lo + 1 + (u * 3.0) as i32,
+                        1 => lo + range / 4 + (u * 3.0) as i32,
+                        _ => lo + range / 2 - 1 + (u * 3.0) as i32,
+                    }
+                    .clamp(lo, hi);
                 } else {
-                    m.s_pattern = 0;
-                    m.s_m = 3 + (m.unit() * 4.0) as i32;
+                    // Joined mid-phrase: wait for the next.
+                    m.s_rest = true;
                 }
             }
-            if m.s_pattern != 0xff {
-                // The rhythm of this bar, chosen on its first step.
-                let last = in_phrase == 3;
+            if !m.s_rest {
+                let last = in_phrase == phrase_len - 1;
                 if t == 0 {
-                    let u = m.unit();
+                    // The bar's rhythm: as busy as Motion asks.
+                    let bars: &[&[(i64, i64)]] = if metre == 4 { &MELODY_4 } else { &MELODY_3 };
                     m.s_pattern = if last {
                         0
-                    } else if style == 1 {
-                        5 + (u * 2.0) as u8
-                    } else if u < 0.3 {
-                        0
-                    } else if u < 0.55 {
-                        1
-                    } else if u < 0.75 {
-                        2
-                    } else if u < 0.9 {
-                        3
                     } else {
-                        4
+                        let want = 1.0 + 3.0 * motion;
+                        let w: Vec<f32> = bars.iter().map(|b| (-(b.len() as f32 - want).powi(2) / 0.8).exp()).collect();
+                        let total: f32 = w.iter().sum();
+                        let mut u = m.s_unit() * total;
+                        let mut pick = 0;
+                        for (i, wi) in w.iter().enumerate() {
+                            if u < *wi {
+                                pick = i;
+                                break;
+                            }
+                            u -= wi;
+                            pick = i;
+                        }
+                        pick as u8
                     };
                 }
-                // (start, length) in steps.
-                let notes: &[(i64, i64)] = match m.s_pattern {
-                    0 => &[(0, 36)],
-                    1 => &[(0, 12), (12, 24)],
-                    2 => &[(0, 24), (24, 12)],
-                    3 => &[(0, 12), (12, 12), (24, 12)],
-                    4 => &[(12, 24)],
-                    5 => &[(0, 12), (12, 12), (24, 24)],
-                    _ => &[(0, 24), (24, 6), (30, 6), (36, 12)],
-                };
+                let bars: &[&[(i64, i64)]] = if metre == 4 { &MELODY_4 } else { &MELODY_3 };
+                let notes: &[(i64, i64)] = if last { &[(0, 0)] } else { bars[(m.s_pattern as usize).min(bars.len() - 1)] };
                 if let Some(&(_, len)) = notes.iter().find(|n| n.0 == t) {
-                    let m = &mut self.minimal;
-                    let u = m.unit();
-                    // Mostly a step, falling more than rising; a leap now and then.
+                    let len = if len == 0 { bar_len } else { len };
+                    let x = (in_phrase as f32 + t as f32 / bar_len as f32) / phrase_len as f32;
+                    let bias = contour_bias(contour, x);
+                    let u = m.s_unit();
+                    // A step, its way as the contour leans; a leap now and then.
                     let step = if u < 0.12 * wander {
-                        if m.unit() < 0.5 { 3 } else { -4 }
-                    } else if u < 0.55 {
-                        -1
-                    } else if u < 0.8 {
-                        1
-                    } else if u < 0.9 {
-                        -2
+                        if m.s_unit() < 0.5 + 0.4 * bias {
+                            3
+                        } else {
+                            -4
+                        }
                     } else {
-                        2
+                        let size = if m.s_unit() < 0.8 { 1 } else { 2 };
+                        if m.s_unit() < 0.5 - 0.35 * bias {
+                            -size
+                        } else {
+                            size
+                        }
                     };
-                    m.s_m = (m.s_m + step).clamp(-2, 9);
-                    // A phrase ends on the chord.
+                    let mut d = m.s_m + step;
+                    if d > hi {
+                        d = 2 * hi - d;
+                    }
+                    if d < lo {
+                        d = 2 * lo - d;
+                    }
+                    m.s_m = d.clamp(lo, hi);
+                    // A phrase ends on the chord (its nearest note in the range).
                     if last {
-                        let rel = (m.s_m - root).rem_euclid(7);
-                        m.s_m += match rel {
-                            1 => -1,
-                            3 => 1,
-                            5 => -1,
-                            6 => 1,
-                            _ => 0,
-                        };
+                        let in_chord = |x: i32| [0, 2, 4].contains(&(x - root).rem_euclid(7));
+                        let cur = m.s_m;
+                        m.s_m = [0, -1, 1, -2, 2, -3, 3].iter().map(|o| cur + o).find(|&x| x >= lo && x <= hi && in_chord(x)).unwrap_or(cur);
                     }
                     let d = m.s_m;
                     m.s_recent = (m.s_recent << 8) | ((d + 64) as u64 & 0xff);
+                    let ornate = m.s_unit() < if style == 1 { ornaments } else { ornaments * 0.5 } && len >= 12;
                     let late = (m.unit() as f64 * rubato as f64 * 0.15 * beat) as u64;
-                    let ornament = style == 1 && m.unit() < 0.3 && len >= 12;
                     let pitch = Self::mdeg(ctx, base, d, lead(d));
                     let length = len as f64 * step_frames * (0.9 + 0.3 * pedal);
-                    if ornament {
+                    let s = 2.0 * step_frames;
+                    if ornate && style == 1 {
                         // A turn: the note above, the note, the note below, then the note.
                         let up = Self::mdeg(ctx, base, d + 1, lead(d + 1));
                         let down = Self::mdeg(ctx, base, d - 1, lead(d - 1));
-                        let s = 2.0 * step_frames;
                         self.mlater(ctx, at + late, up, vel * 0.8, s * 0.9, out);
                         self.mlater(ctx, at + late + s as u64, pitch, vel * 0.8, s * 0.9, out);
                         self.mlater(ctx, at + late + 2 * s as u64, down, vel * 0.8, s * 0.9, out);
                         self.mlater(ctx, at + late + 3 * s as u64, pitch, vel, length - 3.0 * s, out);
+                    } else if ornate {
+                        // A leaning note from above.
+                        let up = Self::mdeg(ctx, base, d + 1, lead(d + 1));
+                        self.mlater(ctx, at + late, up, vel * 0.85, s * 0.95, out);
+                        self.mlater(ctx, at + late + s as u64, pitch, vel, length - s, out);
                     } else {
                         self.mlater(ctx, at + late, pitch, vel, length, out);
                     }
                 }
             }
         }
-        self.satie_visual(style, t, chord_i, roots.len(), root, k);
+        self.satie_visual(p, style, t, chord_i, root, k, bar, intro, phrase_len, form);
     }
 
-    fn satie_visual(&mut self, style: usize, t: i64, chord_i: usize, chords: usize, root: i32, k: i64) {
-        self.visual[0] = (style as u64 & 0xf) | (t as u64 & 0xff) << 4 | (chord_i as u64 & 0xf) << 12 | (chords as u64 & 0xf) << 16 | ((root + 64) as u64 & 0xff) << 20;
-        self.visual[1] = self.minimal.s_recent;
+    #[allow(clippy::too_many_arguments)]
+    fn satie_visual(&mut self, p: &[f32], style: usize, t: i64, chord_i: usize, root: i32, k: i64, bar: i64, intro: i64, phrase_len: i64, form: &[u8]) {
+        let (roots, n) = satie_roots(p);
+        let m = &self.minimal;
+        let (phrase, in_phrase) = if bar >= intro { ((bar - intro).div_euclid(phrase_len), (bar - intro).rem_euclid(phrase_len)) } else { (-1, bar) };
+        let slot = if phrase < 0 || form.is_empty() { 0 } else { phrase.rem_euclid(form.len() as i64) as u64 };
+        let resting = phrase < 0 || m.s_rest;
+        self.visual[0] = (style as u64 & 0xf) | (t as u64 & 0xff) << 4 | (chord_i as u64 & 0xf) << 12 | (n as u64 & 0xf) << 16 | ((root + 64) as u64 & 0xff) << 20 | (m.s_letter as u64 & 0xff) << 28 | (in_phrase as u64 & 0xf) << 36 | (slot & 0xf) << 40 | (resting as u64) << 44 | ((phrase < 0) as u64) << 45;
+        self.visual[1] = m.s_recent;
         self.visual[2] = k as u64;
+        self.visual[3] = roots[..n].iter().enumerate().fold(0u64, |a, (i, &r)| a | ((r.rem_euclid(7) as u64) << (4 * i)));
     }
 
     // ------------------------------------------------------------ riley
@@ -899,6 +1142,128 @@ mod tests {
         let first = n.iter().filter(|x| x.0.abs() < 0.01 && x.1 >= 45).count();
         assert!(first >= 5, "five notes: {first}");
         assert!(in_key(&n));
+    }
+
+    /// The notes starting in [lo, hi) beats, from lo: (beat, pitch).
+    fn window(n: &[(f64, u8, f64)], lo: f64, hi: f64) -> Vec<(i64, u8)> {
+        let mut v: Vec<(i64, u8)> = n.iter().filter(|x| x.0 >= lo - 1e-6 && x.0 < hi - 1e-6).map(|x| (((x.0 - lo) * 1000.0).round() as i64, x.1)).collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn satie_plays_your_own_chords() {
+        let mut p = defaults(SATIE);
+        p[S_HARMONY] = SATIE_CUSTOM as f32;
+        p[S_CHORD] = 2.0; // II
+        p[S_CHORD + 1] = 5.0; // V
+        p[S_CHORD + 2] = 0.0;
+        p[S_CHORD + 3] = 0.0;
+        let n = notes(MidiFxKind::Satie, &p, 12.0);
+        for (bar, pc) in [(0, 2), (1, 7), (2, 2), (3, 7)] {
+            let low = n.iter().filter(|x| (x.0 - bar as f64 * 3.0).abs() < 1e-3).map(|x| x.1).min();
+            assert_eq!(low.map(|v| v % 12), Some(pc), "bar {bar}");
+        }
+        let (roots, len) = satie_roots(&p);
+        assert_eq!(&roots[..len], &[1, 4]);
+        // Two bars a chord.
+        p[S_CHANGE] = 2.0;
+        let n = notes(MidiFxKind::Satie, &p, 12.0);
+        let low = |bar: usize| n.iter().filter(|x| (x.0 - bar as f64 * 3.0).abs() < 1e-3).map(|x| x.1 % 12).min();
+        assert_eq!([low(0), low(1), low(2), low(3)], [Some(2), Some(2), Some(7), Some(7)]);
+    }
+
+    #[test]
+    fn a_satie_form_brings_its_melodies_back() {
+        let mut p = defaults(SATIE);
+        p[S_FORM] = 3.0; // AABA
+        p[S_INTRO] = 0.0;
+        p[S_MELODY] = 1.0;
+        p[S_RUBATO] = 0.0;
+        let n = notes(MidiFxKind::Satie, &p, 48.0);
+        let phrase = |i: usize| window(&n, i as f64 * 12.0, i as f64 * 12.0 + 12.0);
+        assert!(phrase(0).iter().any(|x| x.1 > 64), "a melody");
+        assert_eq!(phrase(0), phrase(1));
+        assert_eq!(phrase(0), phrase(3));
+        assert_ne!(phrase(0), phrase(2));
+        // The same variation, the same piece; another, another.
+        assert_eq!(n, notes(MidiFxKind::Satie, &p, 48.0));
+        p[S_VARIATION] = 7.0;
+        assert_ne!(window(&n, 0.0, 12.0), window(&notes(MidiFxKind::Satie, &p, 12.0), 0.0, 12.0));
+    }
+
+    #[test]
+    fn satie_intro_metre_and_left_hand() {
+        let mut p = defaults(SATIE);
+        p[S_MELODY] = 1.0;
+        p[S_INTRO] = 0.0;
+        let n = notes(MidiFxKind::Satie, &p, 6.0);
+        assert!(n.iter().any(|x| x.1 > 64 && x.0 < 3.0), "no intro: the melody at once");
+        // A Gymnopédie in four.
+        p[S_METRE] = 2.0;
+        let n = notes(MidiFxKind::Satie, &p, 16.0);
+        for bar in 0..4 {
+            assert!(n.iter().any(|x| (x.0 - bar as f64 * 4.0).abs() < 1e-3 && x.1 < 50), "bass in bar {bar}");
+        }
+        assert!(!n.iter().any(|x| (x.0 - 3.0).abs() < 1e-3 && x.1 < 50));
+        // Block: bass and chord together on one, nothing else from the left hand.
+        let mut p = defaults(SATIE);
+        p[S_LEFT] = 3.0;
+        let n = notes(MidiFxKind::Satie, &p, 12.0);
+        assert_eq!(n.iter().filter(|x| x.0.abs() < 1e-3).count(), 4);
+        assert!(n.iter().all(|x| (x.0 - x.0.round()).abs() < 1e-3 && (x.0.round() as i64) % 3 == 0));
+        // Off: four bars of intro without a sound.
+        p[S_LEFT] = 6.0;
+        assert!(notes(MidiFxKind::Satie, &p, 12.0).is_empty());
+        // Broken: a note on every quaver.
+        p[S_LEFT] = 4.0;
+        let n = notes(MidiFxKind::Satie, &p, 12.0);
+        assert_eq!(n.len(), 24);
+    }
+
+    #[test]
+    fn satie_melody_keeps_to_its_range_and_moves_as_asked() {
+        let mut p = defaults(SATIE);
+        p[S_MELODY] = 1.0;
+        p[S_INTRO] = 0.0;
+        p[S_OCTAVE] = 1.0;
+        p[S_RANGE] = 5.0;
+        p[S_LEFT] = 6.0;
+        let n = notes(MidiFxKind::Satie, &p, 96.0);
+        // A4 to F5 (and a leaning note above F5: G5).
+        let tune: Vec<u8> = n.iter().map(|x| x.1).collect();
+        assert!(!tune.is_empty());
+        assert!(tune.iter().all(|&v| (69..=79).contains(&v)), "{tune:?}");
+        // Motion: busier.
+        let count = |motion: f32| {
+            let mut q = defaults(SATIE);
+            q[S_MELODY] = 1.0;
+            q[S_INTRO] = 0.0;
+            q[S_ORNAMENTS] = 0.0;
+            q[S_MOTION] = motion;
+            q[S_LEFT] = 6.0;
+            notes(MidiFxKind::Satie, &q, 96.0).len()
+        };
+        assert!(count(1.0) > count(0.0) + 20, "{} {}", count(1.0), count(0.0));
+        // Rising phrases end higher than they begin; falling ones lower.
+        let climb = |contour: f32| {
+            let mut q = defaults(SATIE);
+            q[S_MELODY] = 1.0;
+            q[S_INTRO] = 0.0;
+            q[S_ORNAMENTS] = 0.0;
+            q[S_CONTOUR] = contour;
+            q[S_LEFT] = 6.0;
+            let n = notes(MidiFxKind::Satie, &q, 240.0);
+            let mut sum = 0i32;
+            for ph in 0..20 {
+                let tune: Vec<i32> = n.iter().filter(|x| x.0 >= ph as f64 * 12.0 && x.0 < ph as f64 * 12.0 + 12.0).map(|x| x.1 as i32).collect();
+                if tune.len() >= 2 {
+                    sum += tune[tune.len() - 1] - tune[0];
+                }
+            }
+            sum
+        };
+        assert!(climb(2.0) > climb(0.0) + 20, "{} {}", climb(2.0), climb(0.0));
     }
 
     #[test]

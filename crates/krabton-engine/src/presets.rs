@@ -187,6 +187,14 @@ pub fn midi(kind: MidiFxKind) -> &'static [Preset] {
         K::Nancarrow => NANCARROW,
         K::Debussy => DEBUSSY,
         K::Feldman => FELDMAN,
+        K::Mozart => MOZART,
+        K::Chopin => CHOPIN,
+        K::Ravel => RAVEL,
+        K::Bartok => BARTOK,
+        K::Messiaen => MESSIAEN,
+        K::Ligeti => LIGETI,
+        K::Cage => CAGE,
+        K::Einaudi => EINAUDI,
         K::GuitarChords => GUITAR_CHORDS,
         K::Ukulele => UKULELE,
         K::Drummer => DRUMMER,
@@ -932,6 +940,14 @@ static SATIE: &[Preset] = &[
     p("Sarabande", &[("Style", C("Sarabande")), ("Pedal", N(0.8))]),
     p("Lydian Waltz", &[("Harmony", C("Lydian")), ("Wander", N(0.5))]),
     p("Quiet Waltz", &[("Melody", N(0.4)), ("Velocity", N(0.4)), ("Pedal", N(0.9))]),
+    p("Gymnopédie AABA", &[("Form", C("AABA")), ("Melody", N(1.0)), ("Variation", N(3.0))]),
+    p("Broken Lullaby", &[("Left Hand", C("Broken")), ("Color", C("Sixth")), ("Contour", C("Arch")), ("Pedal", N(0.8)), ("Form", C("AB"))]),
+    p("Your Own Chords", &[("Harmony", C("Custom")), ("Chord 1", C("II")), ("Chord 2", C("V")), ("Chord 3", C("I")), ("Chord 4", C("VI")), ("Form", C("ABAC"))]),
+    p("Ornate Gnossienne", &[("Style", C("Gnossienne")), ("Harmony", C("Minor")), ("Ornaments", N(0.8)), ("Motion", N(0.7)), ("Rubato", N(0.5))]),
+    p("Rising Waltz", &[("Contour", C("Rising")), ("Range", N(9.0)), ("Phrase", N(2.0)), ("Intro", N(2.0))]),
+    p("Bare Line", &[("Left Hand", C("Bass")), ("Melody", N(1.0)), ("Motion", N(0.3)), ("Intro", N(1.0))]),
+    p("Drone Waltz", &[("Harmony", C("Drone")), ("Color", C("Ninth")), ("Contour", C("Wave")), ("Octave", N(1.0))]),
+    p("Slow Chords", &[("Chord Change", C("4 Bars")), ("Left Hand", C("Block")), ("Harmony", C("Circle")), ("Motion", N(0.2))]),
 ];
 static RILEY: &[Preset] = &[
     p("In C", &[]),
@@ -974,6 +990,64 @@ static FELDMAN: &[Preset] = &[
     p("Rothko Chapel", &[("Density", N(0.2)), ("Cluster", N(4.0)), ("Color", N(0.3)), ("Rate", C("1/2"))]),
     p("Single Notes", &[("Cluster", N(1.0)), ("Density", N(0.5)), ("Color", N(0.7))]),
     p("Restless Repeats", &[("Repeat", N(1.0)), ("Density", N(0.6))]),
+];
+static MOZART: &[Preset] = &[
+    p("Dice Minuet", &[]),
+    p("Same Throw", &[("Reroll", N(0.0)), ("Dice", N(7.0))]),
+    p("Sonata", &[("Style", C("Sonata"))]),
+    p("Sonata Facile", &[("Style", C("Sonata")), ("Reroll", N(0.0)), ("Dice", N(3.0)), ("Gate", N(0.7))]),
+    p("Alla Turca", &[("Style", C("Alla Turca")), ("Gate", N(0.6))]),
+];
+static CHOPIN: &[Preset] = &[
+    p("Nocturne", &[]),
+    p("Nocturne, Ornate", &[("Ornaments", N(0.9)), ("Rubato", N(0.7))]),
+    p("Waltz", &[("Style", C("Waltz")), ("Rate", C("1/8")), ("Harmony", C("Simple"))]),
+    p("Prelude", &[("Style", C("Prelude")), ("Pedal", N(0.4)), ("Velocity", N(0.5))]),
+    p("Circle Nocturne", &[("Harmony", C("Circle")), ("Rubato", N(0.3))]),
+];
+static RAVEL: &[Preset] = &[
+    p("Boléro", &[]),
+    p("Short Boléro", &[("Length", N(32.0))]),
+    p("Long Boléro", &[("Length", N(128.0)), ("Theme", N(3.0))]),
+    p("Chord Rhythm", &[("Rhythm", C("Chord")), ("Theme", N(5.0))]),
+    p("Tune Only", &[("Rhythm", C("Off")), ("Bass", N(0.0)), ("Layers", N(3.0))]),
+];
+static BARTOK: &[Preset] = &[
+    p("Bulgarian 7/8", &[]),
+    p("Bulgarian 9/8", &[("Metre", C("2+2+2+3")), ("Variation", N(4.0))]),
+    p("Dance 3+2+2", &[("Metre", C("3+2+2")), ("Variation", N(9.0))]),
+    p("Five", &[("Metre", C("2+3")), ("Mode", C("In Key"))]),
+    p("Night Music", &[("Style", C("Night Music")), ("Velocity", N(0.6))]),
+    p("Mirror", &[("Style", C("Mirror")), ("Base Note", N(66.0))]),
+];
+static MESSIAEN: &[Preset] = &[
+    p("Modes", &[]),
+    p("Louange", &[("Density", N(0.1)), ("Mode", C("Mode 6"))]),
+    p("Blackbird", &[("Style", C("Birdsong")), ("Bird", C("Blackbird"))]),
+    p("Song Thrush", &[("Style", C("Birdsong")), ("Bird", C("Thrush")), ("Density", N(0.6))]),
+    p("Nightingale", &[("Style", C("Birdsong")), ("Bird", C("Nightingale"))]),
+    p("Rhythmic Characters", &[("Style", C("Rhythms")), ("Mode", C("Mode 3"))]),
+];
+static LIGETI: &[Preset] = &[
+    p("Metronomes", &[]),
+    p("Sixteen Metronomes", &[("Voices", N(16.0)), ("Spread", N(0.9)), ("Gate", N(0.2))]),
+    p("Continuum", &[("Style", C("Continuum")), ("Rate", C("1/32")), ("Voices", N(8.0))]),
+    p("Slow Continuum", &[("Style", C("Continuum")), ("Change", N(0.2))]),
+    p("Musica Ricercata", &[("Style", C("Ricercata")), ("Gate", N(0.6))]),
+];
+static CAGE: &[Preset] = &[
+    p("Music of Changes", &[]),
+    p("More Silence", &[("Silence", N(0.7)), ("Coins", N(12.0))]),
+    p("Restless Chart", &[("Change", N(1.0)), ("Silence", N(0.2)), ("Coins", N(31.0))]),
+    p("Sonatas and Interludes", &[("Style", C("Prepared")), ("Velocity", N(0.8))]),
+    p("4'33\"", &[("Style", C("4'33\""))]),
+];
+static EINAUDI: &[Preset] = &[
+    p("Nuvole", &[]),
+    p("Minor Arpeggio", &[("Chords", C("i VI III VII")), ("Melody", N(0.8))]),
+    p("Pop Chords", &[("Chords", C("I V vi IV")), ("Pedal", N(0.6))]),
+    p("Experience", &[("Style", C("Build")), ("Chords", C("i VI III VII"))]),
+    p("Build in Major", &[("Style", C("Build")), ("Chords", C("I V vi IV"))]),
 ];
 static PEDAL: &[Preset] = &[p("Low Drone", &[("Change", C("Never"))]), p("Organ Pedal", &[("Octave", N(1.0)), ("Fifth", N(1.0))]), p("Moving Bass", &[("Change", C("1 Bar")), ("Moves", N(0.7))])];
 static DRUMMER: &[Preset] = &[

@@ -18,6 +18,7 @@
 pub mod ambient;
 pub mod minimal;
 pub mod composers;
+pub mod masters;
 pub mod strum;
 pub mod drummer;
 pub mod more;
@@ -319,6 +320,7 @@ pub struct SeqState {
     pub(crate) ambient: Box<ambient::Ambient>,
     pub(crate) minimal: Box<minimal::Minimal>,
     pub(crate) composers: Box<composers::Composers>,
+    pub(crate) masters: Box<masters::Masters>,
     pub(crate) drum: drummer::DrummerState,
     pub(crate) map: drum_map::DrumMapState,
     pub(crate) marbles: Box<marbles::MarblesState>,
@@ -362,6 +364,7 @@ impl SeqState {
             ambient: Box::default(),
             minimal: Box::default(),
             composers: Box::default(),
+            masters: Box::default(),
             drum: drummer::DrummerState::default(),
             map: drum_map::DrumMapState::default(),
             marbles: Box::default(),
@@ -547,6 +550,14 @@ impl SeqState {
                     K::Nancarrow => rate_beats(p[0]) / composers::NANCARROW_TICKS,
                     K::Debussy => rate_beats(p[0]) / composers::DEBUSSY_TICKS,
                     K::Feldman => rate_beats(p[0]) / composers::FELDMAN_TICKS,
+                    K::Mozart => rate_beats(p[0]),
+                    K::Chopin => rate_beats(p[0]) / masters::CHOPIN_TICKS,
+                    K::Ravel => rate_beats(p[0]) / masters::RAVEL_TICKS,
+                    K::Bartok => rate_beats(p[0]) / masters::BARTOK_TICKS,
+                    K::Messiaen => rate_beats(p[0]) / masters::MESSIAEN_TICKS,
+                    K::Ligeti => rate_beats(p[0]),
+                    K::Cage => rate_beats(p[0]),
+                    K::Einaudi => rate_beats(p[0]) / masters::EINAUDI_TICKS,
                     _ => 0.25,
                 };
                 let beat0 = ctx.beat;
@@ -594,6 +605,14 @@ impl SeqState {
                             K::Nancarrow => self.nancarrow(k, p, at, step_frames, out, ctx),
                             K::Debussy => self.debussy(k, p, at, step_frames, out, ctx),
                             K::Feldman => self.feldman(k, p, at, step_frames, out, ctx),
+                            K::Mozart => self.mozart(k, p, at, step_frames, out, ctx),
+                            K::Chopin => self.chopin(k, p, at, step_frames, out, ctx),
+                            K::Ravel => self.ravel(k, p, at, step_frames, out, ctx),
+                            K::Bartok => self.bartok(k, p, at, step_frames, out, ctx),
+                            K::Messiaen => self.messiaen(k, p, at, step_frames, out, ctx),
+                            K::Ligeti => self.ligeti(k, p, at, step_frames, out, ctx),
+                            K::Cage => self.cage(k, p, at, step_frames, out, ctx),
+                            K::Einaudi => self.einaudi(k, p, at, step_frames, out, ctx),
                             _ => {}
                         }
                     }

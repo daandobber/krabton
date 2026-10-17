@@ -99,32 +99,54 @@ pub(crate) fn glass(ui: &mut Ui, params: &[f32], live: Live, accent: Color32, he
 
 // ---------------------------------------------------------------- satie
 
-/// The bar (three beats, four for a Gnossienne) with what each beat plays
-/// and where it is now; the chord; the melody's last notes on a staff.
-pub(crate) fn satie(ui: &mut Ui, params: &[f32], live: Live, accent: Color32, height: f32) -> bool {
+/// The bar with what the left hand plays on each beat and where it is now;
+/// the chords (click one for the next, right-click for the one before: the
+/// harmony becomes your own); the melody's last notes on a staff; the form,
+/// its phrases as letters (click to change it).
+pub(crate) fn satie(ui: &mut Ui, id: egui::Id, params: &mut [f32], live: Live, accent: Color32, height: f32) -> bool {
     let w = 260.0;
     let (rect, _) = ui.allocate_exact_size(vec2(w, height), Sense::hover());
     let p = ui.painter().clone();
     rect_fill(&p, rect, 3.0, KNOB);
     let vis = live.on();
+    let mut changed = false;
     let style = choice(params, mn::S_STYLE, mn::SATIE_STYLES.len());
-    let beats = if style == 1 { 4 } else { 3 };
-    let (t, root, recent) = match vis {
-        Some(v) => (((v[0] >> 4) & 0xff) as f32, ((v[0] >> 20) & 0xff) as i32 - 64, v[1]),
-        None => (-1.0, mn::SATIE_ROOTS[choice(params, mn::S_HARMONY, mn::SATIE_HARMONIES.len())][0], 0),
+    let beats = mn::satie_metre(params) as usize;
+    let left = mn::satie_left(params);
+    let (roots, n) = mn::satie_roots(params);
+    let custom = choice(params, mn::S_HARMONY, mn::SATIE_HARMONIES.len()) == mn::SATIE_CUSTOM;
+    let sliding = style == 2 && !custom;
+    let (t, cur, root, letter, in_phrase, slot, resting, intro, recent) = match vis {
+        Some(v) => (
+            ((v[0] >> 4) & 0xff) as f32,
+            ((v[0] >> 12) & 0xf) as usize,
+            ((v[0] >> 20) & 0xff) as i32 - 64,
+            ((v[0] >> 28) & 0xff) as u8,
+            ((v[0] >> 36) & 0xf) as i64,
+            ((v[0] >> 40) & 0xf) as usize,
+            (v[0] >> 44) & 1 == 1,
+            (v[0] >> 45) & 1 == 1,
+            v[1],
+        ),
+        None => (-1.0, usize::MAX, roots[0], 0, 0, usize::MAX, true, true, 0),
     };
     // The bar.
-    let bar = Rect::from_min_size(pos2(rect.left() + 8.0, rect.top() + 8.0), vec2(w - 16.0, 30.0));
+    let bar = Rect::from_min_size(pos2(rect.left() + 8.0, rect.top() + 6.0), vec2(w - 16.0, 22.0));
     let bw = bar.width() / beats as f32;
     for b in 0..beats {
         let r = Rect::from_min_size(pos2(bar.left() + b as f32 * bw, bar.top()), vec2(bw - 3.0, bar.height()));
         let now = t >= 0.0 && (t / 12.0).floor() as usize == b;
         rect_fill(&p, r, 3.0, if now { mix(PANEL3, accent, 0.5) } else { PANEL3 });
-        let label = match (style, b) {
-            (2, 0) => "chord",
-            (2, 2) => "slide",
-            (_, 0) | (1, 2) => "bass",
-            (_, 1) | (1, 3) => "chord",
+        let label = match (left, b) {
+            (1, 0) | (2, 0) | (5, 0) => "bass",
+            (1, 1) => "chord",
+            (2, 2) if beats == 4 => "bass",
+            (2, _) => "chord",
+            (3, 0) => "all",
+            (4, 0) => "bass ~",
+            (4, _) => "~",
+            (7, 0) => "chord",
+            (7, 2) => "slide",
             _ => "·",
         };
         text(&p, r.center(), Align2::CENTER_CENTER, label, small(), if now { TEXT } else { TEXT_DIM });
@@ -133,17 +155,71 @@ pub(crate) fn satie(ui: &mut Ui, params: &[f32], live: Live, accent: Color32, he
         let x = bar.left() + t / (12.0 * beats as f32) * bar.width();
         p.line_segment([pos2(x, bar.top() - 2.0), pos2(x, bar.bottom() + 2.0)], Stroke::new(1.5_f32, accent));
     }
-    // The chord now.
-    let name = if style == 2 { format!("{}9", chord(&live, root)) } else { format!("{}7", chord(&live, root)) };
-    text(&p, pos2(rect.right() - 10.0, bar.bottom() + 14.0), Align2::RIGHT_CENTER, name, small(), TEXT);
+    // The chords: the harmony's, or your own four (an empty one is left out).
+    let color = choice(params, mn::S_COLOR, mn::SATIE_COLORS.len());
+    let suffix = match (color, style) {
+        (1, _) | (0, 1) => "",
+        (3, _) | (0, 2) => "9",
+        (4, _) => "6",
+        _ => "7",
+    };
+    let row = Rect::from_min_size(pos2(rect.left() + 8.0, bar.bottom() + 5.0), vec2(w - 16.0, 22.0));
+    let slots = if custom { 4 } else if sliding { 1 } else { n };
+    let cw = row.width() / slots as f32;
+    let mut used = 0;
+    for i in 0..slots {
+        let r = Rect::from_min_size(pos2(row.left() + i as f32 * cw, row.top()), vec2(cw - 3.0, row.height()));
+        let degree = if custom { params[mn::S_CHORD + i].round().max(0.0) as usize } else { 0 };
+        let (label, on) = if sliding {
+            (format!("{}{suffix} sliding", chord(&live, root)), vis.is_some())
+        } else if custom {
+            if degree == 0 {
+                ("—".to_string(), false)
+            } else {
+                let on = vis.is_some() && cur == used;
+                used += 1;
+                (format!("{}{suffix}", chord(&live, degree as i32 - 1)), on)
+            }
+        } else {
+            (format!("{}{suffix}", chord(&live, roots[i])), vis.is_some() && cur == i)
+        };
+        let resp = ui.interact(r, id.with(("satie_chord", i)), Sense::click());
+        let hover = resp.hovered();
+        rect_fill(&p, r, 3.0, if on { accent } else if hover { mix(PANEL3, accent, 0.25) } else { PANEL3 });
+        text(&p, r.center(), Align2::CENTER_CENTER, label, small(), if on { TEXT_DARK } else { TEXT });
+        let step = if resp.clicked() {
+            1
+        } else if resp.secondary_clicked() {
+            -1
+        } else {
+            0
+        };
+        if step != 0 {
+            if !custom {
+                // Your own from here: the harmony's chords to start from.
+                let chords: Vec<i32> = if sliding { vec![root.rem_euclid(7)] } else { roots[..n].to_vec() };
+                for j in 0..4 {
+                    params[mn::S_CHORD + j] = chords.get(j).map(|&r| (r.rem_euclid(7) + 1) as f32).unwrap_or(0.0);
+                }
+                params[mn::S_HARMONY] = mn::SATIE_CUSTOM as f32;
+            }
+            let v = &mut params[mn::S_CHORD + i.min(3)];
+            // Round the empty one too: —, I, II ... VII.
+            *v = ((v.round() as i32 + step).rem_euclid(8)) as f32;
+            changed = true;
+        }
+        resp.on_hover_text("Click: the next chord, right-click: the one before. The harmony becomes your own (Custom), four chords at most; an empty one (—) is left out");
+    }
     // The melody's last notes, newest on the right.
-    let staff = Rect::from_min_max(pos2(rect.left() + 10.0, bar.bottom() + 26.0), pos2(rect.right() - 10.0, rect.bottom() - 20.0));
+    let staff = Rect::from_min_max(pos2(rect.left() + 10.0, row.bottom() + 10.0), pos2(rect.right() - 10.0, rect.bottom() - 26.0));
     for l in 0..5 {
         let y = staff.top() + l as f32 * staff.height() / 4.0;
         p.line_segment([pos2(staff.left(), y), pos2(staff.right(), y)], Stroke::new(1.0_f32, LINE_SOFT));
     }
     let notes: Vec<i32> = (0..8).rev().map(|i| ((recent >> (8 * i)) & 0xff) as i32).filter(|&d| d > 0).map(|d| d - 64).collect();
-    let y_of = |d: i32| staff.bottom() - (d + 3) as f32 * staff.height() / 14.0;
+    let octave = params[mn::S_OCTAVE].round() as i32;
+    let lo = -3 + 7 * octave;
+    let y_of = |d: i32| staff.bottom() - ((d - lo) as f32 * staff.height() / 16.0).clamp(0.0, staff.height());
     let dx = staff.width() / 9.0;
     let pts: Vec<egui::Pos2> = notes.iter().enumerate().map(|(i, &d)| pos2(staff.left() + (i as f32 + 1.0) * dx, y_of(d))).collect();
     if pts.len() > 1 {
@@ -153,11 +229,50 @@ pub(crate) fn satie(ui: &mut Ui, params: &[f32], live: Live, accent: Color32, he
         let newest = i + 1 == pts.len();
         p.add(Shape::ellipse_filled(*q, vec2(4.5, 3.5), if newest { accent } else { accent.gamma_multiply(0.55) }));
     }
-    text(&p, pos2(rect.left() + 8.0, rect.bottom() - 4.0), Align2::LEFT_BOTTOM, mn::SATIE_STYLES[style], small(), TEXT_DIM);
+    // The form: its phrases as letters, the one now lit.
+    let form_i = choice(params, mn::S_FORM, mn::SATIE_FORMS.len());
+    let letters = mn::FORM_LETTERS[form_i];
+    let foot = Rect::from_min_max(pos2(rect.left() + 8.0, rect.bottom() - 20.0), pos2(rect.left() + 128.0, rect.bottom() - 4.0));
+    let resp = ui.interact(foot, id.with("satie_form"), Sense::click());
+    if style == 2 {
+        text(&p, foot.left_center(), Align2::LEFT_CENTER, "Sarabande", small(), TEXT_DIM);
+    } else if letters.is_empty() {
+        let what = if intro { "intro".to_string() } else { format!("endless · {}", (b'A' + (letter % 26)) as char) };
+        text(&p, foot.left_center(), Align2::LEFT_CENTER, what, small(), if resp.hovered() { TEXT } else { TEXT_DIM });
+    } else {
+        let lw = 16.0;
+        for (j, &l) in letters.iter().enumerate() {
+            let r = Rect::from_min_size(pos2(foot.left() + j as f32 * (lw + 2.0), foot.top()), vec2(lw, foot.height()));
+            let on = vis.is_some() && !intro && slot == j;
+            rect_fill(&p, r, 2.0, if on { accent } else if resp.hovered() { mix(PANEL3, accent, 0.25) } else { PANEL3 });
+            text(&p, r.center(), Align2::CENTER_CENTER, (b'A' + l) as char, small(), if on { TEXT_DARK } else { TEXT });
+        }
+        if intro && vis.is_some() {
+            text(&p, pos2(foot.left() + letters.len() as f32 * (lw + 2.0) + 4.0, foot.center().y), Align2::LEFT_CENTER, "intro", small(), TEXT_DIM);
+        }
+    }
+    if resp.clicked() || resp.secondary_clicked() {
+        let step = if resp.clicked() { 1 } else { -1 };
+        params[mn::S_FORM] = ((form_i as i32 + step).rem_euclid(mn::SATIE_FORMS.len() as i32)) as f32;
+        changed = true;
+    }
+    resp.on_hover_text("The form: which melody each phrase sings (the same letter, the same melody). Click for the next form, right-click for the one before");
+    // Where it is in the phrase.
+    let phrase_len = params[mn::S_PHRASE].round().clamp(2.0, 8.0) as i64;
+    let status = if vis.is_none() {
+        mn::SATIE_STYLES[style].to_string()
+    } else if intro {
+        format!("bar {}", in_phrase + 1)
+    } else if resting {
+        format!("rests {}/{phrase_len}", in_phrase + 1)
+    } else {
+        format!("phrase {}/{phrase_len}", in_phrase + 1)
+    };
+    text(&p, pos2(rect.right() - 8.0, rect.bottom() - 4.0), Align2::RIGHT_BOTTOM, status, small(), TEXT_DIM);
     if vis.is_some() {
         ui.ctx().request_repaint();
     }
-    false
+    changed
 }
 
 // ---------------------------------------------------------------- riley

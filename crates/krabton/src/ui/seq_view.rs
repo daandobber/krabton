@@ -58,13 +58,21 @@ pub(crate) fn editor(ui: &mut Ui, id: Id, kind: MidiFxKind, params: &mut [f32], 
         MidiFxKind::Tintinnabuli => super::ambient_view::tintinnabuli(ui, id, params, live, accent, height),
         MidiFxKind::Pedal => super::ambient_view::pedal(ui, id, params, live, accent, height),
         MidiFxKind::Glass => super::minimal_view::glass(ui, params, live, accent, height),
-        MidiFxKind::Satie => super::minimal_view::satie(ui, params, live, accent, height),
+        MidiFxKind::Satie => super::minimal_view::satie(ui, id, params, live, accent, height),
         MidiFxKind::Riley => super::minimal_view::riley(ui, params, live, accent, height),
         MidiFxKind::Reich => super::composers_view::reich(ui, params, live, accent, height),
         MidiFxKind::Bach => super::composers_view::bach(ui, params, live, accent, height),
         MidiFxKind::Nancarrow => super::composers_view::nancarrow(ui, params, live, accent, height),
         MidiFxKind::Debussy => super::composers_view::debussy(ui, params, live, accent, height),
         MidiFxKind::Feldman => super::composers_view::feldman(ui, live, accent, height),
+        MidiFxKind::Mozart => super::masters_view::mozart(ui, params, live, accent, height),
+        MidiFxKind::Chopin => super::masters_view::chopin(ui, params, live, accent, height),
+        MidiFxKind::Ravel => super::masters_view::ravel(ui, params, live, accent, height),
+        MidiFxKind::Bartok => super::masters_view::bartok(ui, params, live, accent, height),
+        MidiFxKind::Messiaen => super::masters_view::messiaen(ui, params, live, accent, height),
+        MidiFxKind::Ligeti => super::masters_view::ligeti(ui, params, live, accent, height),
+        MidiFxKind::Cage => super::masters_view::cage(ui, params, live, accent, height),
+        MidiFxKind::Einaudi => super::masters_view::einaudi(ui, params, live, accent, height),
         MidiFxKind::GuitarChords | MidiFxKind::Ukulele => super::chords_view::guitar_chords(ui, id, kind, params, data, live, accent, height),
         MidiFxKind::Drummer => super::drummer_view::drummer(ui, id, params, data, live, accent, height),
         MidiFxKind::DrumMap => super::rhythm_view::drum_map(ui, id, params, live, accent, height),
@@ -663,6 +671,24 @@ mod tests {
             let mut data = kind.default_data();
             drive(kind, &mut p, &mut data, &mut 0, &[vec![(pos2(40.0, 40.0), None)]]);
         }
+    }
+
+    #[test]
+    fn satie_chords_click_into_your_own() {
+        use krabton_engine::sequencers::minimal as mn;
+        let mut p = defaults(mn::SATIE);
+        let mut data = Vec::new();
+        // The first chord (Sway: IV, I): click it on to V.
+        let at = pos2(40.0, 44.0);
+        drive(MidiFxKind::Satie, &mut p, &mut data, &mut 0, &[vec![(at, Some(true))], vec![(at, Some(false))]]);
+        assert_eq!(p[mn::S_HARMONY], mn::SATIE_CUSTOM as f32);
+        assert_eq!(p[mn::S_CHORD], 5.0);
+        assert_eq!(p[mn::S_CHORD + 1], 1.0);
+        assert_eq!(p[mn::S_CHORD + 2], 0.0);
+        // The form: click for the next.
+        let at = pos2(20.0, 190.0 - 12.0);
+        drive(MidiFxKind::Satie, &mut p, &mut data, &mut 0, &[vec![(at, Some(true))], vec![(at, Some(false))]]);
+        assert_eq!(p[mn::S_FORM], 1.0);
     }
 
     #[test]
