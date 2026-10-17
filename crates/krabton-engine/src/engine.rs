@@ -36,6 +36,7 @@ use crate::dsp::handheld::HandheldState;
 use crate::dsp::micro::MicroState;
 use crate::dsp::warp::WarpState;
 use crate::dsp::hybrid::HybridState;
+use crate::dsp::oidos::OidosState;
 use crate::dsp::quartet::QuartetState;
 use crate::orchestra::OrchestraState;
 use crate::piano::{library::PianoLibrary, PianoState};
@@ -459,6 +460,7 @@ enum InstState {
     Micro(Box<MicroState>),
     Warp(Box<WarpState>),
     Hybrid(Box<HybridState>),
+    Oidos(Box<OidosState>),
     Quartet(Box<QuartetState>),
     Orchestra(Box<OrchestraState>),
     Facet(Box<FacetState>),
@@ -492,6 +494,7 @@ impl InstState {
             InstState::Micro(s) => s.pitch_bend = semis,
             InstState::Warp(s) => s.pitch_bend = semis,
             InstState::Hybrid(s) => s.pitch_bend = semis,
+            InstState::Oidos(s) => s.pitch_bend = semis,
             InstState::Quartet(s) => s.pitch_bend = semis,
             InstState::Orchestra(s) => s.pitch_bend = semis,
             InstState::Facet(s) => s.pitch_bend = semis,
@@ -541,6 +544,7 @@ impl InstState {
             Some(Instrument::Micro { .. }) => InstState::Micro(Box::new(MicroState::new(sr))),
             Some(Instrument::Warp { .. }) => InstState::Warp(Box::new(WarpState::new(sr))),
             Some(Instrument::Hybrid { .. }) => InstState::Hybrid(Box::new(HybridState::new(sr))),
+            Some(Instrument::Oidos { .. }) => InstState::Oidos(Box::new(OidosState::new(sr))),
             Some(Instrument::Quartet { .. }) => InstState::Quartet(Box::new(QuartetState::new(sr))),
             Some(Instrument::Orchestra { .. }) => InstState::Orchestra(Box::new(OrchestraState::new(sr))),
             Some(Instrument::Facet { .. }) => InstState::Facet(Box::new(FacetState::new(sr))),
@@ -602,6 +606,7 @@ impl InstState {
                 | (InstState::Micro(_), Some(Instrument::Micro { .. }))
                 | (InstState::Warp(_), Some(Instrument::Warp { .. }))
                 | (InstState::Hybrid(_), Some(Instrument::Hybrid { .. }))
+                | (InstState::Oidos(_), Some(Instrument::Oidos { .. }))
                 | (InstState::Quartet(_), Some(Instrument::Quartet { .. }))
                 | (InstState::Orchestra(_), Some(Instrument::Orchestra { .. }))
                 | (InstState::Facet(_), Some(Instrument::Facet { .. }))
@@ -648,6 +653,7 @@ impl InstState {
             (InstState::Micro(s), Instrument::Micro { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Warp(s), Instrument::Warp { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Hybrid(s), Instrument::Hybrid { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Oidos(s), Instrument::Oidos { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Quartet(s), Instrument::Quartet { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Orchestra(s), Instrument::Orchestra { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Facet(s), Instrument::Facet { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
@@ -693,6 +699,7 @@ impl InstState {
             (InstState::Micro(s), Instrument::Micro { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Warp(s), Instrument::Warp { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Hybrid(s), Instrument::Hybrid { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Oidos(s), Instrument::Oidos { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Quartet(s), Instrument::Quartet { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Orchestra(s), Instrument::Orchestra { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Facet(s), Instrument::Facet { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
@@ -739,6 +746,7 @@ impl InstState {
             InstState::Micro(s) => s.all_off(),
             InstState::Warp(s) => s.all_off(),
             InstState::Hybrid(s) => s.all_off(),
+            InstState::Oidos(s) => s.all_off(),
             InstState::Quartet(s) => s.all_off(),
             InstState::Orchestra(s) => s.all_off(),
             InstState::Facet(s) => s.all_off(),
@@ -775,6 +783,7 @@ impl InstState {
             InstState::Micro(s) => s.visual(out),
             InstState::Warp(s) => s.visual(out),
             InstState::Hybrid(s) => s.visual(out),
+            InstState::Oidos(s) => s.visual(out),
             InstState::Quartet(s) => s.visual(out),
             InstState::Orchestra(s) => s.visual(out),
             InstState::Facet(s) => s.visual(out),
@@ -821,6 +830,7 @@ impl InstState {
             (InstState::Micro(s), Instrument::Micro { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Warp(s), Instrument::Warp { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Hybrid(s), Instrument::Hybrid { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Oidos(s), Instrument::Oidos { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Quartet(s), Instrument::Quartet { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Orchestra(s), Instrument::Orchestra { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Facet(s), Instrument::Facet { params, .. }) => s.render(ov.unwrap_or(params), l, r),

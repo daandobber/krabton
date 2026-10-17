@@ -32,6 +32,7 @@ pub mod reed_view;
 pub mod chip_view;
 pub mod warp_view;
 pub mod orchestra_view;
+pub mod oidos_view;
 pub mod open_air_view;
 pub mod pedal_view;
 pub mod piano_roll;

@@ -40,6 +40,7 @@ impl App {
                         | Instrument::Micro { .. }
                         | Instrument::Warp { .. }
                         | Instrument::Hybrid { .. }
+                        | Instrument::Oidos { .. }
                         | Instrument::Quartet { .. }
                         | Instrument::Guitar { .. }
                         | Instrument::Monk { .. }
@@ -126,6 +127,9 @@ impl App {
                         }
                         Instrument::Hybrid { .. } => {
                             crate::ui::warp_view::hybrid_screen(ui, id, p, &live, h);
+                        }
+                        Instrument::Oidos { .. } => {
+                            crate::ui::oidos_view::oidos_screen(ui, id, p, &live, h);
                         }
                         Instrument::Quartet { .. } => {
                             crate::ui::warp_view::quartet_screen(ui, id, p, &live, h);

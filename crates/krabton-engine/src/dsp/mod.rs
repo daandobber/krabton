@@ -53,6 +53,7 @@ pub mod handheld;
 pub mod micro;
 pub mod warp;
 pub mod hybrid;
+pub mod oidos;
 pub mod quartet;
 pub mod peaks;
 pub mod peaks_tables;

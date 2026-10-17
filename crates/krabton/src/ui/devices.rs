@@ -1404,6 +1404,25 @@ impl App {
                             self.start_orchestra_install(inst);
                         }
                     }
+                    Instrument::Oidos { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("oidos_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in krabton_engine::dsp::oidos::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = krabton_engine::dsp::oidos::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("click the partials for the next seed (right-click: back); drag sideways for Overtones, up and down for Harmonicity").small().color(TEXT_DIM));
+                        });
+                        ui.horizontal_top(|ui| {
+                            super::oidos_view::oidos_screen(ui, Id::new(("oidos_screen", track_id)), params, &live, h - 48.0);
+                            ui.add_space(6.0);
+                            param_grid_mod(ui, Id::new(("oidos", track_id)), krabton_engine::dsp::oidos::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
+                        });
+                    }
                     Instrument::Guitar { preset, params } => {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Preset").small().color(TEXT_DIM));

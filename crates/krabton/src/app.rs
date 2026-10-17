@@ -139,6 +139,7 @@ pub enum BrowserItem {
     Micro(&'static str),
     Warp(&'static str),
     Hybrid(&'static str),
+    Oidos(&'static str),
     Quartet(&'static str),
     Orchestra(&'static str),
     /// A Facet preset.
@@ -196,6 +197,7 @@ impl BrowserItem {
             BrowserItem::Micro(p) => format!("Micro: {p}"),
             BrowserItem::Warp(p) => format!("Warp: {p}"),
             BrowserItem::Hybrid(p) => format!("Hybrid: {p}"),
+            BrowserItem::Oidos(p) => format!("Oidos: {p}"),
             BrowserItem::Quartet(p) => format!("Quartet: {p}"),
             BrowserItem::Orchestra(p) => format!("{}: {p}", if krabton_engine::orchestra::SOLOIST_NAMES.contains(p) { "Soloists" } else { "Orchestra" }),
             BrowserItem::Facet(p) => format!("Facet: {p}"),
@@ -1044,7 +1046,7 @@ impl App {
                 }
                 self.toast(format!("Loading {} ...", info.name));
             }
-            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::Harmonica(_) | BrowserItem::Calculator(_) | BrowserItem::Console(_) | BrowserItem::Handheld(_) | BrowserItem::Micro(_) | BrowserItem::Warp(_) | BrowserItem::Hybrid(_) | BrowserItem::Quartet(_) | BrowserItem::Orchestra(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) => {
+            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::Harmonica(_) | BrowserItem::Calculator(_) | BrowserItem::Console(_) | BrowserItem::Handheld(_) | BrowserItem::Micro(_) | BrowserItem::Warp(_) | BrowserItem::Hybrid(_) | BrowserItem::Quartet(_) | BrowserItem::Oidos(_) | BrowserItem::Orchestra(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) => {
                 let inst = match item {
                     BrowserItem::Synth(p) => Instrument::synth(p),
                     BrowserItem::Macro(p) => Instrument::macro_osc(p),
@@ -1079,6 +1081,7 @@ impl App {
                     BrowserItem::Micro(p) => Instrument::micro(p),
                     BrowserItem::Warp(p) => Instrument::warp(p),
                     BrowserItem::Hybrid(p) => Instrument::hybrid(p),
+                    BrowserItem::Oidos(p) => Instrument::oidos(p),
                     BrowserItem::Quartet(p) => Instrument::quartet(p),
                     BrowserItem::Orchestra(p) => Instrument::orchestra(p),
                     BrowserItem::Facet(p) => Instrument::facet(p),
@@ -2563,6 +2566,12 @@ impl App {
                     let names = krabton_engine::orchestra::NAMES;
                     let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
                     self.apply_item(&BrowserItem::Orchestra(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "oidos" => {
+                    let names = krabton_engine::dsp::oidos::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Oidos(p), DropTarget::NewTrack);
                     self.detail = DetailTab::Devices;
                 }
                 "facet" => {
