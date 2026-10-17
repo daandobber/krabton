@@ -577,10 +577,10 @@ mod tests {
     fn kicks_sit_at_their_pitch() {
         let k = run(DrumVoice::M808Kick, 0.5);
         let f = pitch(&k, 0.1, 0.4);
-        assert!((50.0..62.0).contains(&f), "808 kick at {f} Hz");
+        assert!((50.0..62.0).contains(&f), "Boom kick at {f} Hz");
         let k = run(DrumVoice::Cr78Kick, 0.3);
         let f = pitch(&k, 0.05, 0.25);
-        assert!((60.0..72.0).contains(&f), "CR-78 kick at {f} Hz");
+        assert!((60.0..72.0).contains(&f), "Velvet kick at {f} Hz");
     }
 
     #[test]

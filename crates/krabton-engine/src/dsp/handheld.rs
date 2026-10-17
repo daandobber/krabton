@@ -1,4 +1,5 @@
-//! Game Boy: the sound of the DMG's chip, made from how it works. Two
+//! Handheld: the sound of the 8-bit handheld of 1989, made from how its chip
+//! works. Two
 //! pulse channels (four duties, sixteen volume steps; the first with the
 //! sweep that slides its pitch), the wave channel (32 four-bit samples from
 //! fifteen tables, at full, half or a quarter volume) and noise (a 15-bit or
@@ -7,8 +8,8 @@
 //! right or both, as the chip pans; pitches from 11-bit registers, so low
 //! notes stop at 64 Hz (pulses) and 32 Hz (wave); the hardware envelope
 //! steps 64 times a second; vibrato and arpeggios move on the frame
-//! (59.7 a second). The output's capacitor as on the original DMG or the
-//! Pocket and Color, then a treble knob.
+//! (59.7 a second). The output's capacitor as on the first model or the
+//! later ones, then a treble knob.
 
 use super::chip::{self, Frames, HighPass, Keys, LowPass, ARP, LAYER, SPLIT};
 use crate::params::{ParamSpec, Unit};
@@ -54,7 +55,7 @@ pub const PANS: &[&str] = &["Both", "Left", "Right"];
 pub const WAVE_LEVELS: &[&str] = &["Off", "25%", "50%", "100%"];
 pub const WAVES: &[&str] = &["Sine", "Triangle", "Saw", "Square", "Pulse 25", "Pulse 12", "Organ", "Soft Bass", "Hollow", "Bell", "Buzz", "Vocal", "Steps", "Half Sine", "Grit"];
 pub const WIDTHS: &[&str] = &["15-bit", "7-bit"];
-pub const MODELS: &[&str] = &["DMG", "Pocket / Color", "Raw"];
+pub const MODELS: &[&str] = &["First", "Later", "Raw"];
 
 pub static SPECS: &[ParamSpec] = &[
     ParamSpec::choice("Mode", "Play", chip::MODES, 0),
@@ -278,7 +279,7 @@ struct Chip {
     lp: [LowPass; 2],
 }
 
-pub struct GameBoyState {
+pub struct HandheldState {
     sr: f32,
     chips: [Chip; 8],
     keys: Keys,
@@ -303,7 +304,7 @@ fn noise_hz(shift: u8, ratio: u8) -> f32 {
     524_288.0 / r / 2f32.powi(shift as i32 + 1)
 }
 
-impl GameBoyState {
+impl HandheldState {
     pub fn new(sr: f32) -> Self {
         let mut rates = Vec::new();
         for s in 0..14u8 {
@@ -596,7 +597,7 @@ mod tests {
 
     const SR: f32 = 48000.0;
 
-    fn run(st: &mut GameBoyState, p: &[f32], secs: f32) -> (Vec<f32>, Vec<f32>) {
+    fn run(st: &mut HandheldState, p: &[f32], secs: f32) -> (Vec<f32>, Vec<f32>) {
         let n = (secs * SR) as usize;
         let (mut ol, mut or) = (Vec::with_capacity(n), Vec::with_capacity(n));
         while ol.len() < n {
@@ -623,7 +624,7 @@ mod tests {
             let mut p = preset(name);
             p[MODEL] = 2.0;
             p[WAVEFORM] = 0.0;
-            let mut st = GameBoyState::new(SR);
+            let mut st = HandheldState::new(SR);
             st.note_on(&p, note, 1.0);
             let (l, _) = run(&mut st, &p, 0.5);
             let f = crossings(&l[SR as usize / 4..]) as f32 * 4.0;
@@ -635,7 +636,7 @@ mod tests {
     fn panned_channels_stay_on_their_side() {
         let mut p = preset("Square Lead");
         p[P1_PAN] = 1.0;
-        let mut st = GameBoyState::new(SR);
+        let mut st = HandheldState::new(SR);
         st.note_on(&p, 60, 1.0);
         let (l, r) = run(&mut st, &p, 0.3);
         assert!(rms(&l) > 0.02 && rms(&r) < 1e-4, "{} {}", rms(&l), rms(&r));
@@ -645,7 +646,7 @@ mod tests {
     fn every_preset_sounds_and_stays_sane() {
         for name in preset_names() {
             let p = preset(name);
-            let mut st = GameBoyState::new(SR);
+            let mut st = HandheldState::new(SR);
             for n in [60, 64, 67] {
                 st.note_on(&p, n, 0.9);
             }
@@ -663,7 +664,7 @@ mod tests {
     #[test]
     fn the_seven_bit_noise_is_a_tone() {
         let p = preset("Noise Tone");
-        let mut st = GameBoyState::new(SR);
+        let mut st = HandheldState::new(SR);
         st.note_on(&p, 57, 1.0);
         let (l, _) = run(&mut st, &p, 0.4);
         // A loop of 127 steps: the signal repeats.

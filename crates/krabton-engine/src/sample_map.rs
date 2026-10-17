@@ -610,7 +610,7 @@ fn drum_role(stem: &str) -> Option<&'static str> {
 /// A drum kit from sample files: each file goes to the pad its name says
 /// (kick, snare, hat, ...), the rest fill the pads still free.
 pub fn drum_kit_from(files: &[PathBuf]) -> (Vec<DrumPad>, Vec<String>) {
-    let mut pads = crate::dsp::drums::kit("Classic 909");
+    let mut pads = crate::dsp::drums::kit("Classic Punch");
     let mut audio: Vec<PathBuf> = files.iter().filter(|p| is_audio(p)).cloned().collect();
     audio.sort();
     let mut failed = Vec::new();

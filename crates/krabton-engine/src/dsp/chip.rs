@@ -3,7 +3,7 @@
 //! channels sound it (as many chips as Voices). Split: the notes are spread
 //! over the channels, one note a channel, as a real tune on one chip.
 //! Arpeggio: the held notes take turns, a frame or a few each, on one chip,
-//! the chord as the C64 and the NES played it. Pitch, volume and the
+//! the chord as the old computers and consoles played it. Pitch, volume and the
 //! arpeggio move only on frames (50 or 60 a second), as the music drivers
 //! of those machines moved them.
 

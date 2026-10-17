@@ -224,13 +224,13 @@ impl DrumVoice {
         ("Acoustic", &Self::ACOUSTIC),
         ("Retro", &Self::RETRO),
         ("Classic", &Self::CLASSIC),
-        ("808", &Self::M808),
-        ("909", &Self::M909),
-        ("606", &Self::M606),
+        ("Boom", &Self::M808),
+        ("Punch", &Self::M909),
+        ("Tiny", &Self::M606),
         ("FM", &Self::FM),
-        ("CR-78", &Self::CR78),
+        ("Velvet", &Self::CR78),
         ("Electronic", &Self::ELECTRO),
-        ("Mutable", &Self::MUTABLE),
+        ("Model", &Self::MUTABLE),
         ("Shakers", &Self::SHAKERS),
     ];
 
@@ -273,41 +273,41 @@ impl DrumVoice {
             DrumVoice::SynthSnare => "Synth Snare",
             DrumVoice::MetalHat => "Metal Hat",
             DrumVoice::RingHat => "Ring Hat",
-            DrumVoice::M808Kick => "808 Kick",
-            DrumVoice::M808Snare => "808 Snare",
-            DrumVoice::M808Tom => "808 Tom",
-            DrumVoice::M808Conga => "808 Conga",
-            DrumVoice::M808Rim => "808 Rim",
-            DrumVoice::M808Clap => "808 Clap",
-            DrumVoice::M808Claves => "808 Claves",
-            DrumVoice::M808Maracas => "808 Maracas",
-            DrumVoice::M808Cowbell => "808 Cowbell",
-            DrumVoice::M808Cymbal => "808 Cymbal",
-            DrumVoice::M808ClosedHat => "808 Closed Hat",
-            DrumVoice::M808OpenHat => "808 Open Hat",
-            DrumVoice::M909Kick => "909 Kick",
-            DrumVoice::M909Snare => "909 Snare",
-            DrumVoice::M909Tom => "909 Tom",
-            DrumVoice::M909Rim => "909 Rim",
-            DrumVoice::M909Clap => "909 Clap",
-            DrumVoice::M909ClosedHat => "909 Closed Hat",
-            DrumVoice::M909OpenHat => "909 Open Hat",
-            DrumVoice::Cr78Kick => "CR-78 Kick",
-            DrumVoice::Cr78Snare => "CR-78 Snare",
-            DrumVoice::Cr78Hat => "CR-78 Hat",
-            DrumVoice::Cr78Cymbal => "CR-78 Cymbal",
-            DrumVoice::Cr78Bongo => "CR-78 Bongo",
-            DrumVoice::Cr78Guiro => "CR-78 Guiro",
-            DrumVoice::Cr78Tambourine => "CR-78 Tambourine",
-            DrumVoice::Cr78Metal => "CR-78 Metal",
+            DrumVoice::M808Kick => "Boom Kick",
+            DrumVoice::M808Snare => "Boom Snare",
+            DrumVoice::M808Tom => "Boom Tom",
+            DrumVoice::M808Conga => "Boom Conga",
+            DrumVoice::M808Rim => "Boom Rim",
+            DrumVoice::M808Clap => "Boom Clap",
+            DrumVoice::M808Claves => "Boom Claves",
+            DrumVoice::M808Maracas => "Boom Maracas",
+            DrumVoice::M808Cowbell => "Boom Cowbell",
+            DrumVoice::M808Cymbal => "Boom Cymbal",
+            DrumVoice::M808ClosedHat => "Boom Closed Hat",
+            DrumVoice::M808OpenHat => "Boom Open Hat",
+            DrumVoice::M909Kick => "Punch Kick",
+            DrumVoice::M909Snare => "Punch Snare",
+            DrumVoice::M909Tom => "Punch Tom",
+            DrumVoice::M909Rim => "Punch Rim",
+            DrumVoice::M909Clap => "Punch Clap",
+            DrumVoice::M909ClosedHat => "Punch Closed Hat",
+            DrumVoice::M909OpenHat => "Punch Open Hat",
+            DrumVoice::Cr78Kick => "Velvet Kick",
+            DrumVoice::Cr78Snare => "Velvet Snare",
+            DrumVoice::Cr78Hat => "Velvet Hat",
+            DrumVoice::Cr78Cymbal => "Velvet Cymbal",
+            DrumVoice::Cr78Bongo => "Velvet Bongo",
+            DrumVoice::Cr78Guiro => "Velvet Guiro",
+            DrumVoice::Cr78Tambourine => "Velvet Tambourine",
+            DrumVoice::Cr78Metal => "Velvet Metal",
             DrumVoice::ElectroTom => "Electro Tom",
-            DrumVoice::M606Kick => "606 Kick",
-            DrumVoice::M606Snare => "606 Snare",
-            DrumVoice::M606LowTom => "606 Low Tom",
-            DrumVoice::M606HighTom => "606 High Tom",
-            DrumVoice::M606ClosedHat => "606 Closed Hat",
-            DrumVoice::M606OpenHat => "606 Open Hat",
-            DrumVoice::M606Cymbal => "606 Cymbal",
+            DrumVoice::M606Kick => "Tiny Kick",
+            DrumVoice::M606Snare => "Tiny Snare",
+            DrumVoice::M606LowTom => "Tiny Low Tom",
+            DrumVoice::M606HighTom => "Tiny High Tom",
+            DrumVoice::M606ClosedHat => "Tiny Closed Hat",
+            DrumVoice::M606OpenHat => "Tiny Open Hat",
+            DrumVoice::M606Cymbal => "Tiny Cymbal",
             DrumVoice::FmKick => "FM Kick",
             DrumVoice::FmSnare => "FM Snare",
             DrumVoice::FmTom => "FM Tom",
@@ -554,16 +554,16 @@ pub enum DrumEngine {
     FmDrums,
 }
 
-static G606: [(&str, &[DrumVoice]); 1] = [("606", &DrumVoice::M606)];
+static G606: [(&str, &[DrumVoice]); 1] = [("Tiny", &DrumVoice::M606)];
 static GFM: [(&str, &[DrumVoice]); 1] = [("FM", &DrumVoice::FM)];
-static G808: [(&str, &[DrumVoice]); 1] = [("808", &DrumVoice::M808)];
-static G909: [(&str, &[DrumVoice]); 1] = [("909", &DrumVoice::M909)];
-static GCR78: [(&str, &[DrumVoice]); 1] = [("CR-78", &DrumVoice::CR78)];
-static GMUTABLE: [(&str, &[DrumVoice]); 1] = [("Mutable", &DrumVoice::MUTABLE)];
+static G808: [(&str, &[DrumVoice]); 1] = [("Boom", &DrumVoice::M808)];
+static G909: [(&str, &[DrumVoice]); 1] = [("Punch", &DrumVoice::M909)];
+static GCR78: [(&str, &[DrumVoice]); 1] = [("Velvet", &DrumVoice::CR78)];
+static GMUTABLE: [(&str, &[DrumVoice]); 1] = [("Model", &DrumVoice::MUTABLE)];
 static GSHAKERS: [(&str, &[DrumVoice]); 1] = [("Shakers", &DrumVoice::SHAKERS)];
 static GACOUSTIC: [(&str, &[DrumVoice]); 2] = [("Acoustic", &DrumVoice::ACOUSTIC), ("Percussion", &DrumVoice::KIT_PERC)];
 static REAL_PERC: [DrumVoice; 8] = [DrumVoice::Tambourine, DrumVoice::Cowbell, DrumVoice::Clap, DrumVoice::Maraca, DrumVoice::Cr78Bongo, DrumVoice::M808Conga, DrumVoice::M808Claves, DrumVoice::M808Tom];
-static GMACHINES: [(&str, &[DrumVoice]); 3] = [("808", &DrumVoice::M808), ("Acoustic", &DrumVoice::ACOUSTIC), ("Percussion", &REAL_PERC)];
+static GMACHINES: [(&str, &[DrumVoice]); 3] = [("Boom", &DrumVoice::M808), ("Acoustic", &DrumVoice::ACOUSTIC), ("Percussion", &REAL_PERC)];
 static GRETRO: [(&str, &[DrumVoice]); 1] = [("Retro", &DrumVoice::RETRO)];
 static GREAL: [(&str, &[DrumVoice]); 2] = [("Acoustic", &DrumVoice::ACOUSTIC), ("Percussion", &REAL_PERC)];
 
@@ -575,12 +575,12 @@ impl DrumEngine {
     pub fn name(self) -> &'static str {
         match self {
             DrumEngine::Rack => "Drum Rack",
-            DrumEngine::M808 => "808",
-            DrumEngine::M909 => "909",
-            DrumEngine::Cr78 => "CR-78",
-            DrumEngine::Mutable => "Mutable Drums",
+            DrumEngine::M808 => "Boom",
+            DrumEngine::M909 => "Punch",
+            DrumEngine::Cr78 => "Velvet",
+            DrumEngine::Mutable => "Model Drums",
             DrumEngine::Shakers => "Shakers",
-            DrumEngine::M606 => "606",
+            DrumEngine::M606 => "Tiny",
             DrumEngine::FmDrums => "FM Drums",
             DrumEngine::Acoustic => "Acoustic Drums",
             DrumEngine::RealDrums => "Real Drums",
@@ -592,14 +592,14 @@ impl DrumEngine {
     pub fn description(self) -> &'static str {
         match self {
             DrumEngine::Rack => "A rack of pads: every drum voice of Krabton, and samples (drop them on the pads, or make a kit from a folder)",
-            DrumEngine::M808 => "The 808, rebuilt from its circuits: bridged-T kick, toms and congas, snare, clap, six-square hats, cymbal and cowbell",
-            DrumEngine::M909 => "The 909, rebuilt from its circuits: swept kick with its attack, snare with snappy, toms, rim, clap and hats",
-            DrumEngine::Cr78 => "The CR-78, rebuilt from its circuits: soft kick and snare, gated-noise hats and cymbal, bongo, guiro, tambourine and metal",
-            DrumEngine::Mutable => "The drum models of Mutable Instruments Plaits: analog and synthetic kicks and snares, metallic and ring-modulated hats",
+            DrumEngine::M808 => "The analog drum machine of 1980, rebuilt from its circuits: bridged-T kick, toms and congas, snare, clap, six-square hats, cymbal and cowbell",
+            DrumEngine::M909 => "The drum machine of 1983, analog with sampled cymbals, rebuilt from its circuits: swept kick with its attack, snare with snappy, toms, rim, clap and hats",
+            DrumEngine::Cr78 => "The preset rhythm machine of 1978, rebuilt from its circuits: soft kick and snare, gated-noise hats and cymbal, bongo, guiro, tambourine and metal",
+            DrumEngine::Mutable => "The drum models of Plaits: analog and synthetic kicks and snares, metallic and ring-modulated hats",
             DrumEngine::Shakers => "Perry Cook's PhISEM shakers: maraca, cabasa, tambourine, sleigh bells, bamboo, cans, rocks and more",
-            DrumEngine::M606 => "The 606, rebuilt from its circuits: tight kick, snare, two toms, six-square hats and cymbal; the acid house drummer",
+            DrumEngine::M606 => "The little drum machine of 1981, rebuilt from its circuits: tight kick, snare, two toms, six-square hats and cymbal; the acid house drummer",
             DrumEngine::FmDrums => "Two-operator FM drums: kick, snare, tom, hat, bell, zap, perc and noise, with an FM knob on every pad",
-            DrumEngine::SampledMachines => "Drum machines and electronic kits, recorded: the 707 and the 808 (free sample sets from the nineties), an electro kit, a club kit and a glitch kit (Sonic Pi's samples); downloaded on first use",
+            DrumEngine::SampledMachines => "Drum machines and electronic kits, recorded: a digital and an analog machine of the eighties (free sample sets from the nineties), an electro kit, a club kit and a glitch kit (Sonic Pi's samples); downloaded on first use",
             DrumEngine::Retro => "More drum machines: a seventies rhythm box (bongos, claves, guiro), the hexagonal electronic kit with its sweeping toms, the crunchy 8-bit digital eighties, a pocket rhythm machine",
             DrumEngine::RealDrums => "Recorded drums: acoustic kits from rusty rock, classic rock, metal and a big room to garage, seventies, a jazz club, brushes and dry; hand and body percussion and tabla. With velocity layers and round robins (free samples, each kit downloaded on first use; until then Krabton's own drums stand in)",
             DrumEngine::Acoustic => "A real drum kit, modelled: kick, snare with its wires, side stick, three toms, hi-hat (closed, pedal, open), ride and its bell, crashes; every hit a little different, harder hits brighter",
@@ -626,32 +626,55 @@ impl DrumEngine {
 
     pub fn kits(self) -> &'static [&'static str] {
         match self {
-            DrumEngine::M808 => &["808 Classic", "808 Boom", "808 Electro", "808 Latin"],
-            DrumEngine::M909 => &["909 Classic", "909 House", "909 Techno", "909 Toms"],
-            DrumEngine::Cr78 => &["CR-78 Classic", "CR-78 Disco", "CR-78 Bossa"],
-            DrumEngine::Mutable => &["Mutable Analog", "Mutable Synthetic", "Mutable Industrial"],
+            DrumEngine::M808 => &["Boom Classic", "Boom Deep", "Boom Electro", "Boom Latin"],
+            DrumEngine::M909 => &["Punch Classic", "Punch House", "Punch Techno", "Punch Toms"],
+            DrumEngine::Cr78 => &["Velvet Classic", "Velvet Disco", "Velvet Bossa"],
+            DrumEngine::Mutable => &["Model Analog", "Model Synthetic", "Model Industrial"],
             DrumEngine::Shakers => &[],
-            DrumEngine::M606 => &["606 Classic", "606 Acid House"],
+            DrumEngine::M606 => &["Tiny Classic", "Tiny Acid House"],
             DrumEngine::FmDrums => &["FM Kit", "FM Industrial", "FM Glitch"],
             DrumEngine::Acoustic => &["Studio Kit", "Rock Kit", "Jazz Kit", "Funk Kit", "Vintage Kit", "Brush Kit"],
             DrumEngine::RealDrums => &["Real Kit", "Rusty Kit", "Classic Rock Kit", "Naked Kit", "Metal Kit", "Room Kit", "Garage Kit", "70s Kit", "Jazz Club Kit", "Lounge Kit", "Dry Kit", "Real Percussion", "Body Percussion", "Tabla"],
-            DrumEngine::SampledMachines => &["707 Samples", "808 Samples", "Electro Kit", "Club Kit", "Glitch Kit"],
+            DrumEngine::SampledMachines => &["Digital Machine", "Analog Machine", "Electro Kit", "Club Kit", "Glitch Kit"],
             DrumEngine::Retro => &["Rhythm Box", "Hexagon", "Digital 80s", "Pocket Rhythm"],
-            DrumEngine::Rack => &["Classic 808", "Classic 909", "Classic Lo-Fi", "Hybrid", "Electro", "606 Electro", "Shaker Kit", "Hand Percussion", "Found Sounds"],
+            DrumEngine::Rack => &["Classic Boom", "Classic Punch", "Classic Lo-Fi", "Hybrid", "Electro", "Tiny Electro", "Shaker Kit", "Hand Percussion", "Found Sounds"],
         }
     }
 }
 
-/// Kit names from before the engines existed.
-fn current_name(name: &str) -> &str {
+/// Kit names from before: before the engines existed, and the names of
+/// the machines they imitate, which are their makers' (old projects keep
+/// loading).
+pub fn current_name(name: &str) -> &str {
     match name {
-        "808" => "808 Classic",
-        "909" => "909 Classic",
-        "CR-78" => "CR-78 Classic",
+        "808" => "Boom Classic",
+        "909" => "Punch Classic",
+        "CR-78" => "Velvet Classic",
         "Shakers" => "Shaker Kit",
-        "808 Krab" => "Classic 808",
-        "909 Krab" => "Classic 909",
+        "808 Krab" => "Classic Boom",
+        "909 Krab" => "Classic Punch",
         "Lo-Fi Krab" => "Classic Lo-Fi",
+        "808 Classic" => "Boom Classic",
+        "808 Boom" => "Boom Deep",
+        "808 Electro" => "Boom Electro",
+        "808 Latin" => "Boom Latin",
+        "909 Classic" => "Punch Classic",
+        "909 House" => "Punch House",
+        "909 Techno" => "Punch Techno",
+        "909 Toms" => "Punch Toms",
+        "CR-78 Classic" => "Velvet Classic",
+        "CR-78 Disco" => "Velvet Disco",
+        "CR-78 Bossa" => "Velvet Bossa",
+        "Mutable Analog" => "Model Analog",
+        "Mutable Synthetic" => "Model Synthetic",
+        "Mutable Industrial" => "Model Industrial",
+        "606 Classic" => "Tiny Classic",
+        "606 Acid House" => "Tiny Acid House",
+        "707 Samples" => "Digital Machine",
+        "808 Samples" => "Analog Machine",
+        "Classic 808" => "Classic Boom",
+        "Classic 909" => "Classic Punch",
+        "606 Electro" => "Tiny Electro",
         n => n,
     }
 }
@@ -885,7 +908,7 @@ pub fn kit(name: &str) -> Vec<DrumPad> {
             pad("Cymbal", PkCymbal, 49, |p| p.level_db = -9.0),
         ],
         // ---------------------------------------------------------- 808
-        "808 Classic" => vec![
+        "Boom Classic" => vec![
             pad("Kick", M808Kick, 36, |_| {}),
             pad("Rim", M808Rim, 37, |_| {}),
             pad("Snare", M808Snare, 38, |_| {}),
@@ -895,7 +918,7 @@ pub fn kit(name: &str) -> Vec<DrumPad> {
             pad("Open Hat", M808OpenHat, 46, hat),
             pad("Cowbell", M808Cowbell, 56, |_| {}),
         ],
-        "808 Boom" => vec![
+        "Boom Deep" => vec![
             pad("Kick", M808Kick, 36, |p| {
                 p.decay = 3.0;
                 p.tune = -2.0;
@@ -912,7 +935,7 @@ pub fn kit(name: &str) -> Vec<DrumPad> {
             pad("Open Hat", M808OpenHat, 46, hat),
             pad("Cymbal", M808Cymbal, 49, |_| {}),
         ],
-        "808 Electro" => vec![
+        "Boom Electro" => vec![
             pad("Kick", M808Kick, 36, |p| {
                 p.decay = 0.5;
                 p.tone = 0.8;
@@ -936,7 +959,7 @@ pub fn kit(name: &str) -> Vec<DrumPad> {
             pad("Conga", M808Conga, 63, |_| {}),
             pad("Claves", M808Claves, 75, |_| {}),
         ],
-        "808 Latin" => vec![
+        "Boom Latin" => vec![
             pad("Kick", M808Kick, 36, |_| {}),
             pad("Rim", M808Rim, 37, |_| {}),
             pad("Tom", M808Tom, 45, |p| p.tune = 3.0),
@@ -948,7 +971,7 @@ pub fn kit(name: &str) -> Vec<DrumPad> {
         ],
         // ---------------------------------------------------------- 909
         // ---------------------------------------------------------- 606
-        "606 Classic" => vec![
+        "Tiny Classic" => vec![
             pad("Kick", M606Kick, 36, |_| {}),
             pad("Snare", M606Snare, 38, |_| {}),
             pad("Closed Hat", M606ClosedHat, 42, hat),
@@ -962,7 +985,7 @@ pub fn kit(name: &str) -> Vec<DrumPad> {
                 p.decay = 1.5;
             }),
         ],
-        "606 Acid House" => vec![
+        "Tiny Acid House" => vec![
             pad("Kick", M606Kick, 36, |p| {
                 p.decay = 1.8;
                 p.tune = -2.0;
@@ -980,7 +1003,7 @@ pub fn kit(name: &str) -> Vec<DrumPad> {
             pad("Cymbal", M606Cymbal, 49, |p| p.decay = 0.6),
             pad("High Tom", M606HighTom, 50, |_| {}),
         ],
-        "606 Electro" => vec![
+        "Tiny Electro" => vec![
             pad("Kick", M606Kick, 36, |p| {
                 p.decay = 0.6;
                 p.tone = 0.9;
@@ -1072,7 +1095,7 @@ pub fn kit(name: &str) -> Vec<DrumPad> {
                 p.decay = 0.5;
             }),
         ],
-        "909 Classic" => vec![
+        "Punch Classic" => vec![
             pad("Kick", M909Kick, 36, |_| {}),
             pad("Rim", M909Rim, 37, |_| {}),
             pad("Snare", M909Snare, 38, |_| {}),
@@ -1082,7 +1105,7 @@ pub fn kit(name: &str) -> Vec<DrumPad> {
             pad("Open Hat", M909OpenHat, 46, hat),
             pad("High Tom", M909Tom, 50, |p| p.tune = 7.0),
         ],
-        "909 House" => vec![
+        "Punch House" => vec![
             pad("Kick", M909Kick, 36, |p| {
                 p.a = 0.4;
                 p.decay = 1.2;
@@ -1098,7 +1121,7 @@ pub fn kit(name: &str) -> Vec<DrumPad> {
             }),
             pad("High Tom", M909Tom, 50, |p| p.tune = 7.0),
         ],
-        "909 Techno" => vec![
+        "Punch Techno" => vec![
             pad("Kick", M909Kick, 36, |p| {
                 p.tune = -2.0;
                 p.decay = 1.6;
@@ -1126,7 +1149,7 @@ pub fn kit(name: &str) -> Vec<DrumPad> {
             }),
             pad("Mid Tom", M909Tom, 47, |p| p.tune = 2.0),
         ],
-        "909 Toms" => vec![
+        "Punch Toms" => vec![
             pad("Kick", M909Kick, 36, |_| {}),
             pad("Snare", M909Snare, 38, |_| {}),
             pad("Floor Tom", M909Tom, 41, |p| p.tune = -7.0),
@@ -1137,7 +1160,7 @@ pub fn kit(name: &str) -> Vec<DrumPad> {
             pad("High Tom", M909Tom, 50, |p| p.tune = 9.0),
         ],
         // ---------------------------------------------------------- CR-78
-        "CR-78 Classic" => vec![
+        "Velvet Classic" => vec![
             pad("Kick", Cr78Kick, 36, |_| {}),
             pad("Snare", Cr78Snare, 38, |_| {}),
             pad("Hat", Cr78Hat, 42, hat),
@@ -1150,7 +1173,7 @@ pub fn kit(name: &str) -> Vec<DrumPad> {
             pad("Metal", Cr78Metal, 56, |_| {}),
             pad("Guiro", Cr78Guiro, 73, |_| {}),
         ],
-        "CR-78 Disco" => vec![
+        "Velvet Disco" => vec![
             pad("Kick", Cr78Kick, 36, |p| {
                 p.decay = 1.5;
                 p.tone = 0.3;
@@ -1169,7 +1192,7 @@ pub fn kit(name: &str) -> Vec<DrumPad> {
             pad("Metal", Cr78Metal, 56, |_| {}),
             pad("Bongo", Cr78Bongo, 60, |_| {}),
         ],
-        "CR-78 Bossa" => vec![
+        "Velvet Bossa" => vec![
             pad("Kick", Cr78Kick, 36, |p| p.decay = 0.8),
             pad("Rim", Cr78Snare, 38, |p| {
                 p.tune = 7.0;
@@ -1184,7 +1207,7 @@ pub fn kit(name: &str) -> Vec<DrumPad> {
             pad("Guiro", Cr78Guiro, 73, |_| {}),
         ],
         // ---------------------------------------------------------- Mutable
-        "Mutable Analog" => vec![
+        "Model Analog" => vec![
             pad("Kick", AnalogKick, 36, |p| {
                 p.tone = 0.45;
                 p.a = 0.35;
@@ -1225,7 +1248,7 @@ pub fn kit(name: &str) -> Vec<DrumPad> {
                 p.a = 0.0;
             }),
         ],
-        "Mutable Synthetic" => vec![
+        "Model Synthetic" => vec![
             pad("Kick", SynthKick, 36, |p| {
                 p.a = 0.3;
                 p.b = 0.5;
@@ -1266,7 +1289,7 @@ pub fn kit(name: &str) -> Vec<DrumPad> {
                 p.a = 0.0;
             }),
         ],
-        "Mutable Industrial" => vec![
+        "Model Industrial" => vec![
             pad("Kick", SynthKick, 36, |p| {
                 p.a = 0.95;
                 p.b = 0.8;
@@ -1374,22 +1397,22 @@ fn classic_kit(name: &str) -> Vec<DrumPad> {
             pad.choke = 1;
         }
         match (name, pad.voice) {
-            ("Classic 808", DrumVoice::Kick) => {
+            ("Classic Boom", DrumVoice::Kick) => {
                 pad.decay = 1.8;
                 pad.tone = 0.15;
             }
-            ("Classic 808", DrumVoice::Snare) => pad.tone = 0.35,
-            ("Classic 808", DrumVoice::ClosedHat | DrumVoice::OpenHat) => pad.tone = 0.4,
-            ("Classic 909", DrumVoice::Kick) => {
+            ("Classic Boom", DrumVoice::Snare) => pad.tone = 0.35,
+            ("Classic Boom", DrumVoice::ClosedHat | DrumVoice::OpenHat) => pad.tone = 0.4,
+            ("Classic Punch", DrumVoice::Kick) => {
                 pad.decay = 0.8;
                 pad.tune = 2.0;
                 pad.tone = 0.65;
             }
-            ("Classic 909", DrumVoice::Snare) => {
+            ("Classic Punch", DrumVoice::Snare) => {
                 pad.tone = 0.75;
                 pad.tune = 1.0;
             }
-            ("Classic 909", DrumVoice::ClosedHat | DrumVoice::OpenHat) => pad.tone = 0.8,
+            ("Classic Punch", DrumVoice::ClosedHat | DrumVoice::OpenHat) => pad.tone = 0.8,
             ("Classic Lo-Fi", _) => {
                 pad.tune -= 3.0;
                 pad.tone = (pad.tone - 0.25).max(0.0);
@@ -2066,13 +2089,13 @@ mod tests {
         }
         // Old names still load.
         assert_eq!(engine_of("909 Krab"), DrumEngine::Rack);
-        assert_eq!(kit("909 Krab"), kit("Classic 909"));
+        assert_eq!(kit("909 Krab"), kit("Classic Punch"));
         assert_eq!(engine_of("808"), DrumEngine::M808);
     }
 
     #[test]
     fn a_choke_group_cuts_its_other_pads() {
-        let pads = kit("Mutable Analog");
+        let pads = kit("Model Analog");
         let open = pads.iter().position(|p| p.name == "Open Hat").unwrap();
         let closed = pads.iter().position(|p| p.name == "Closed Hat").unwrap();
         let mut d = DrumState::new();
@@ -2128,7 +2151,7 @@ mod tests {
 
     #[test]
     fn every_pad_makes_sound_and_ends() {
-        let pads = kit("Classic 909");
+        let pads = kit("Classic Punch");
         let mut d = DrumState::new();
         for pad in &pads {
             d.note_on(&pads, pad.note, 1.0, 48000.0);

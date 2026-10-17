@@ -129,15 +129,15 @@ pub static SPECS: &[ParamSpec] = &[
 pub fn preset_names() -> &'static [&'static str] {
     &[
         "Init",
-        "Moog Bass",
+        "Ladder Bass",
         "Sub Bass",
         "Squelch Bass",
         "Wobble Bass",
-        "Juno Pad",
-        "Juno Strings",
+        "Chorus Pad",
+        "Chorus Strings",
         "Warm Pad",
         "Sweep Pad",
-        "Prophet Brass",
+        "Poly Brass",
         "Rave Stab",
         "Unison Saws",
         "Poly Keys",
@@ -167,15 +167,15 @@ pub fn preset(name: &str) -> Vec<f32> {
     let mono = (VOICES, 1.0);
     let on = 1.0;
     match name {
-        "Moog Bass" => set(&[mono, (OCTAVE1, o16), (OCTAVE2, o16), (MIX2, 0.8), (DETUNE2, 6.0), (SUB, 0.4), (CUTOFF, 260.0), (RESONANCE, 0.35), (DRIVE, 0.45), (ENV_AMOUNT, 0.45), (F_DECAY, 0.35), (F_SUSTAIN, 0.15), (SUSTAIN, 1.0), (RELEASE, 0.08), (GLIDE, 0.03), (SPREAD, 0.0), (VOLUME, 5.0)]),
+        "Ladder Bass" => set(&[mono, (OCTAVE1, o16), (OCTAVE2, o16), (MIX2, 0.8), (DETUNE2, 6.0), (SUB, 0.4), (CUTOFF, 260.0), (RESONANCE, 0.35), (DRIVE, 0.45), (ENV_AMOUNT, 0.45), (F_DECAY, 0.35), (F_SUSTAIN, 0.15), (SUSTAIN, 1.0), (RELEASE, 0.08), (GLIDE, 0.03), (SPREAD, 0.0), (VOLUME, 5.0)]),
         "Sub Bass" => set(&[mono, (WAVE1, tri), (OCTAVE1, o16), (SUB, 0.6), (CUTOFF, 500.0), (RESONANCE, 0.0), (ENV_AMOUNT, 0.1), (SUSTAIN, 1.0), (RELEASE, 0.06), (SPREAD, 0.0), (VINTAGE, 0.15), (VOLUME, 6.0)]),
         "Squelch Bass" => set(&[mono, (OCTAVE1, o16), (CUTOFF, 320.0), (RESONANCE, 0.78), (DRIVE, 0.5), (ENV_AMOUNT, 0.55), (F_DECAY, 0.22), (F_SUSTAIN, 0.0), (FLT_VELOCITY, 0.5), (SUSTAIN, 0.9), (RELEASE, 0.05), (GLIDE, 0.06), (SPREAD, 0.0), (VOLUME, 5.0)]),
         "Wobble Bass" => set(&[mono, (OCTAVE1, o16), (WAVE2, pulse), (OCTAVE2, o16), (MIX2, 0.7), (SUB, 0.5), (CUTOFF, 280.0), (RESONANCE, 0.5), (DRIVE, 0.6), (ENV_AMOUNT, 0.1), (LFO_WAVE, 1.0), (LFO_RATE, 3.0), (LFO_FILTER, 0.6), (SUSTAIN, 1.0), (RELEASE, 0.1), (SPREAD, 0.0), (VOLUME, 5.0)]),
-        "Juno Pad" => set(&[(WAVE1, pulse), (LFO_RATE, 0.6), (LFO_PWM, 0.6), (SUB, 0.35), (CUTOFF, 2200.0), (RESONANCE, 0.15), (ENV_AMOUNT, 0.1), (ATTACK, 0.6), (DECAY, 2.0), (SUSTAIN, 0.9), (RELEASE, 1.5), (CHORUS, 1.0), (VOLUME, -4.0)]),
-        "Juno Strings" => set(&[(CUTOFF, 3800.0), (RESONANCE, 0.1), (ENV_AMOUNT, 0.0), (ATTACK, 0.35), (SUSTAIN, 1.0), (RELEASE, 1.2), (CHORUS, 2.0), (VELOCITY, 0.3)]),
+        "Chorus Pad" => set(&[(WAVE1, pulse), (LFO_RATE, 0.6), (LFO_PWM, 0.6), (SUB, 0.35), (CUTOFF, 2200.0), (RESONANCE, 0.15), (ENV_AMOUNT, 0.1), (ATTACK, 0.6), (DECAY, 2.0), (SUSTAIN, 0.9), (RELEASE, 1.5), (CHORUS, 1.0), (VOLUME, -4.0)]),
+        "Chorus Strings" => set(&[(CUTOFF, 3800.0), (RESONANCE, 0.1), (ENV_AMOUNT, 0.0), (ATTACK, 0.35), (SUSTAIN, 1.0), (RELEASE, 1.2), (CHORUS, 2.0), (VELOCITY, 0.3)]),
         "Warm Pad" => set(&[(WAVE1, tri), (MIX2, 0.8), (DETUNE2, 9.0), (CUTOFF, 1400.0), (ENV_AMOUNT, 0.15), (F_ATTACK, 1.2), (F_DECAY, 3.0), (ATTACK, 0.8), (SUSTAIN, 1.0), (RELEASE, 2.5), (VINTAGE, 0.6), (CHORUS, 1.0)]),
         "Sweep Pad" => set(&[(MIX2, 0.9), (DETUNE2, 12.0), (UNISON, 2.0), (VOICES, 6.0), (CUTOFF, 450.0), (RESONANCE, 0.45), (ENV_AMOUNT, 0.0), (LFO_WAVE, 1.0), (LFO_RATE, 0.12), (LFO_FILTER, 0.55), (ATTACK, 1.0), (SUSTAIN, 1.0), (RELEASE, 2.0), (CHORUS, 1.0), (SPREAD, 0.8)]),
-        "Prophet Brass" => set(&[(MIX2, 0.9), (DETUNE2, 8.0), (CUTOFF, 700.0), (RESONANCE, 0.15), (ENV_AMOUNT, 0.45), (F_ATTACK, 0.08), (F_DECAY, 0.6), (F_SUSTAIN, 0.45), (FLT_VELOCITY, 0.4), (ATTACK, 0.04), (SUSTAIN, 0.9), (RELEASE, 0.3), (VELOCITY, 0.4)]),
+        "Poly Brass" => set(&[(MIX2, 0.9), (DETUNE2, 8.0), (CUTOFF, 700.0), (RESONANCE, 0.15), (ENV_AMOUNT, 0.45), (F_ATTACK, 0.08), (F_DECAY, 0.6), (F_SUSTAIN, 0.45), (FLT_VELOCITY, 0.4), (ATTACK, 0.04), (SUSTAIN, 0.9), (RELEASE, 0.3), (VELOCITY, 0.4)]),
         "Rave Stab" => set(&[(UNISON, 3.0), (UNI_DETUNE, 22.0), (VOICES, 5.0), (CUTOFF, 1800.0), (RESONANCE, 0.25), (ENV_AMOUNT, 0.4), (F_DECAY, 0.25), (F_SUSTAIN, 0.0), (DECAY, 0.5), (SUSTAIN, 0.0), (RELEASE, 0.25), (CHORUS, 2.0), (SPREAD, 0.9)]),
         "Unison Saws" => set(&[(UNISON, 4.0), (UNI_DETUNE, 25.0), (VOICES, 4.0), (CUTOFF, 5000.0), (ENV_AMOUNT, 0.1), (ATTACK, 0.02), (SUSTAIN, 1.0), (RELEASE, 0.6), (CHORUS, 2.0), (SPREAD, 1.0)]),
         "Poly Keys" => set(&[(WAVE2, pulse), (MIX2, 0.6), (PW2, 0.35), (CUTOFF, 1100.0), (ENV_AMOUNT, 0.4), (F_DECAY, 0.7), (F_SUSTAIN, 0.2), (DECAY, 1.2), (SUSTAIN, 0.5), (RELEASE, 0.4), (VELOCITY, 0.7), (FLT_VELOCITY, 0.5)]),
@@ -1256,7 +1256,7 @@ mod tests {
     #[test]
     #[ignore]
     fn report_cpu() {
-        for name in ["Init", "Unison Saws", "Juno Pad"] {
+        for name in ["Init", "Unison Saws", "Chorus Pad"] {
             let p = preset(name);
             let mut st = AnalogState::new(48000.0);
             for k in 0..8 {

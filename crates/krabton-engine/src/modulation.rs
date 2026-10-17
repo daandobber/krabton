@@ -262,10 +262,10 @@ pub fn instrument_specs(i: &Instrument) -> Option<&'static [ParamSpec]> {
         Instrument::PanFlute { .. } => Some(crate::dsp::pan_flute::SPECS),
         Instrument::Melodica { .. } => Some(crate::dsp::melodica::SPECS),
         Instrument::Harmonica { .. } => Some(crate::dsp::harmonica::SPECS),
-        Instrument::VlTone { .. } => Some(crate::dsp::vl1::SPECS),
-        Instrument::Nes { .. } => Some(crate::dsp::nes::SPECS),
-        Instrument::GameBoy { .. } => Some(crate::dsp::gameboy::SPECS),
-        Instrument::Sid { .. } => Some(crate::dsp::sid::SPECS),
+        Instrument::Calculator { .. } => Some(crate::dsp::calculator::SPECS),
+        Instrument::Console { .. } => Some(crate::dsp::console::SPECS),
+        Instrument::Handheld { .. } => Some(crate::dsp::handheld::SPECS),
+        Instrument::Micro { .. } => Some(crate::dsp::micro::SPECS),
         Instrument::Facet { params, .. } => Some(crate::dsp::facet::specs_for(crate::dsp::facet::engine_of(params))),
         _ => None,
     }
@@ -273,7 +273,7 @@ pub fn instrument_specs(i: &Instrument) -> Option<&'static [ParamSpec]> {
 
 pub fn instrument_params(i: &Instrument) -> Option<&[f32]> {
     match i {
-        Instrument::Synth { params, .. } | Instrument::Sampler { params, .. } | Instrument::Fm { params, .. } | Instrument::Macro { params, .. } | Instrument::Braids { params, .. } | Instrument::Elements { params, .. } | Instrument::Analog { params, .. } | Instrument::Shakers { params, .. } | Instrument::Modular { params, .. } | Instrument::Voice { params, .. } | Instrument::Mallets { params, .. } | Instrument::Strings { params, .. } | Instrument::Winds { params, .. } | Instrument::Organ { params, .. } | Instrument::Rings { params, .. } | Instrument::Monk { params, .. } | Instrument::Piano { params, .. } | Instrument::Bassline { params, .. } | Instrument::Mono101 { params, .. } | Instrument::Drone { params, .. } | Instrument::Waves { params, .. } | Instrument::Guitar { params, .. } | Instrument::WindChimes { params, .. } | Instrument::Birds { params, .. } | Instrument::Nature { params, .. } | Instrument::PanFlute { params, .. } | Instrument::Melodica { params, .. } | Instrument::Harmonica { params, .. } | Instrument::VlTone { params, .. } | Instrument::Nes { params, .. } | Instrument::GameBoy { params, .. } | Instrument::Sid { params, .. } | Instrument::Facet { params, .. } | Instrument::BeadsSynth { params, .. } => Some(params),
+        Instrument::Synth { params, .. } | Instrument::Sampler { params, .. } | Instrument::Fm { params, .. } | Instrument::Macro { params, .. } | Instrument::Braids { params, .. } | Instrument::Elements { params, .. } | Instrument::Analog { params, .. } | Instrument::Shakers { params, .. } | Instrument::Modular { params, .. } | Instrument::Voice { params, .. } | Instrument::Mallets { params, .. } | Instrument::Strings { params, .. } | Instrument::Winds { params, .. } | Instrument::Organ { params, .. } | Instrument::Rings { params, .. } | Instrument::Monk { params, .. } | Instrument::Piano { params, .. } | Instrument::Bassline { params, .. } | Instrument::Mono101 { params, .. } | Instrument::Drone { params, .. } | Instrument::Waves { params, .. } | Instrument::Guitar { params, .. } | Instrument::WindChimes { params, .. } | Instrument::Birds { params, .. } | Instrument::Nature { params, .. } | Instrument::PanFlute { params, .. } | Instrument::Melodica { params, .. } | Instrument::Harmonica { params, .. } | Instrument::Calculator { params, .. } | Instrument::Console { params, .. } | Instrument::Handheld { params, .. } | Instrument::Micro { params, .. } | Instrument::Facet { params, .. } | Instrument::BeadsSynth { params, .. } => Some(params),
         _ => None,
     }
 }
@@ -281,7 +281,7 @@ pub fn instrument_params(i: &Instrument) -> Option<&[f32]> {
 /// [`instrument_params`], to change them.
 pub fn instrument_params_mut(i: &mut Instrument) -> Option<&mut Vec<f32>> {
     match i {
-        Instrument::Synth { params, .. } | Instrument::Sampler { params, .. } | Instrument::Fm { params, .. } | Instrument::Macro { params, .. } | Instrument::Braids { params, .. } | Instrument::Elements { params, .. } | Instrument::Analog { params, .. } | Instrument::Shakers { params, .. } | Instrument::Modular { params, .. } | Instrument::Voice { params, .. } | Instrument::Mallets { params, .. } | Instrument::Strings { params, .. } | Instrument::Winds { params, .. } | Instrument::Organ { params, .. } | Instrument::Rings { params, .. } | Instrument::Monk { params, .. } | Instrument::Piano { params, .. } | Instrument::Bassline { params, .. } | Instrument::Mono101 { params, .. } | Instrument::Drone { params, .. } | Instrument::Waves { params, .. } | Instrument::Guitar { params, .. } | Instrument::WindChimes { params, .. } | Instrument::Birds { params, .. } | Instrument::Nature { params, .. } | Instrument::PanFlute { params, .. } | Instrument::Melodica { params, .. } | Instrument::Harmonica { params, .. } | Instrument::VlTone { params, .. } | Instrument::Nes { params, .. } | Instrument::GameBoy { params, .. } | Instrument::Sid { params, .. } | Instrument::Facet { params, .. } | Instrument::BeadsSynth { params, .. } => Some(params),
+        Instrument::Synth { params, .. } | Instrument::Sampler { params, .. } | Instrument::Fm { params, .. } | Instrument::Macro { params, .. } | Instrument::Braids { params, .. } | Instrument::Elements { params, .. } | Instrument::Analog { params, .. } | Instrument::Shakers { params, .. } | Instrument::Modular { params, .. } | Instrument::Voice { params, .. } | Instrument::Mallets { params, .. } | Instrument::Strings { params, .. } | Instrument::Winds { params, .. } | Instrument::Organ { params, .. } | Instrument::Rings { params, .. } | Instrument::Monk { params, .. } | Instrument::Piano { params, .. } | Instrument::Bassline { params, .. } | Instrument::Mono101 { params, .. } | Instrument::Drone { params, .. } | Instrument::Waves { params, .. } | Instrument::Guitar { params, .. } | Instrument::WindChimes { params, .. } | Instrument::Birds { params, .. } | Instrument::Nature { params, .. } | Instrument::PanFlute { params, .. } | Instrument::Melodica { params, .. } | Instrument::Harmonica { params, .. } | Instrument::Calculator { params, .. } | Instrument::Console { params, .. } | Instrument::Handheld { params, .. } | Instrument::Micro { params, .. } | Instrument::Facet { params, .. } | Instrument::BeadsSynth { params, .. } => Some(params),
         _ => None,
     }
 }

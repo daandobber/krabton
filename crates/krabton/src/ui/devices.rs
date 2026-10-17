@@ -1222,80 +1222,80 @@ impl App {
                             param_grid_mod(ui, Id::new(("harmonica", track_id)), krabton_engine::dsp::harmonica::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
                         });
                     }
-                    Instrument::VlTone { preset, params } => {
+                    Instrument::Calculator { preset, params } => {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Preset").small().color(TEXT_DIM));
-                            egui::ComboBox::from_id_salt(("vltone_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
-                                for name in krabton_engine::dsp::vl1::preset_names() {
+                            egui::ComboBox::from_id_salt(("calculator_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in krabton_engine::dsp::calculator::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
                                         *preset = name.to_string();
-                                        *params = krabton_engine::dsp::vl1::preset(name);
+                                        *params = krabton_engine::dsp::calculator::preset(name);
                                     }
                                 }
                             });
                             ui.label(RichText::new("click a digit for the next (right-click: back): sound, attack, decay, sustain level and time, release, vibrato, tremolo; click the rhythm to change it").small().color(TEXT_DIM));
                         });
                         ui.horizontal_top(|ui| {
-                            super::chip_view::vl1_screen(ui, Id::new(("vltone_screen", track_id)), params, &live, h - 48.0);
+                            super::chip_view::calculator_screen(ui, Id::new(("calculator_screen", track_id)), params, &live, h - 48.0);
                             ui.add_space(6.0);
-                            param_grid_mod(ui, Id::new(("vltone", track_id)), krabton_engine::dsp::vl1::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
+                            param_grid_mod(ui, Id::new(("calculator", track_id)), krabton_engine::dsp::calculator::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
                         });
                     }
-                    Instrument::Nes { preset, params } => {
+                    Instrument::Console { preset, params } => {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Preset").small().color(TEXT_DIM));
-                            egui::ComboBox::from_id_salt(("nes_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
-                                for name in krabton_engine::dsp::nes::preset_names() {
+                            egui::ComboBox::from_id_salt(("console_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in krabton_engine::dsp::console::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
                                         *preset = name.to_string();
-                                        *params = krabton_engine::dsp::nes::preset(name);
+                                        *params = krabton_engine::dsp::console::preset(name);
                                     }
                                 }
                             });
                             ui.label(RichText::new("click a wave for the next duty, drag a level; Layer: a chip for every note, Split: a channel for every note, Arpeggio: the chord in turns").small().color(TEXT_DIM));
                         });
                         ui.horizontal_top(|ui| {
-                            super::chip_view::chip_screen(ui, Id::new(("nes_screen", track_id)), super::chip_view::Chip::Nes, params, &live, h - 48.0);
+                            super::chip_view::chip_screen(ui, Id::new(("console_screen", track_id)), super::chip_view::Chip::Console, params, &live, h - 48.0);
                             ui.add_space(6.0);
-                            param_grid_mod(ui, Id::new(("nes", track_id)), krabton_engine::dsp::nes::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
+                            param_grid_mod(ui, Id::new(("console", track_id)), krabton_engine::dsp::console::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
                         });
                     }
-                    Instrument::GameBoy { preset, params } => {
+                    Instrument::Handheld { preset, params } => {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Preset").small().color(TEXT_DIM));
-                            egui::ComboBox::from_id_salt(("gameboy_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
-                                for name in krabton_engine::dsp::gameboy::preset_names() {
+                            egui::ComboBox::from_id_salt(("handheld_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in krabton_engine::dsp::handheld::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
                                         *preset = name.to_string();
-                                        *params = krabton_engine::dsp::gameboy::preset(name);
+                                        *params = krabton_engine::dsp::handheld::preset(name);
                                     }
                                 }
                             });
                             ui.label(RichText::new("click a wave for the next duty or table, drag a level; Layer: a chip for every note, Split: a channel for every note, Arpeggio: the chord in turns").small().color(TEXT_DIM));
                         });
                         ui.horizontal_top(|ui| {
-                            super::chip_view::chip_screen(ui, Id::new(("gameboy_screen", track_id)), super::chip_view::Chip::GameBoy, params, &live, h - 48.0);
+                            super::chip_view::chip_screen(ui, Id::new(("handheld_screen", track_id)), super::chip_view::Chip::Handheld, params, &live, h - 48.0);
                             ui.add_space(6.0);
-                            param_grid_mod(ui, Id::new(("gameboy", track_id)), krabton_engine::dsp::gameboy::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
+                            param_grid_mod(ui, Id::new(("handheld", track_id)), krabton_engine::dsp::handheld::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
                         });
                     }
-                    Instrument::Sid { preset, params } => {
+                    Instrument::Micro { preset, params } => {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Preset").small().color(TEXT_DIM));
-                            egui::ComboBox::from_id_salt(("sid_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
-                                for name in krabton_engine::dsp::sid::preset_names() {
+                            egui::ComboBox::from_id_salt(("micro_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in krabton_engine::dsp::micro::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
                                         *preset = name.to_string();
-                                        *params = krabton_engine::dsp::sid::preset(name);
+                                        *params = krabton_engine::dsp::micro::preset(name);
                                     }
                                 }
                             });
                             ui.label(RichText::new("click a wave for the next one, drag the filter for cutoff and resonance, click it for its mode; Layer: a chip for every note, Split: a voice for every note, Arpeggio: the chord in turns").small().color(TEXT_DIM));
                         });
                         ui.horizontal_top(|ui| {
-                            super::chip_view::chip_screen(ui, Id::new(("sid_screen", track_id)), super::chip_view::Chip::Sid, params, &live, h - 48.0);
+                            super::chip_view::chip_screen(ui, Id::new(("micro_screen", track_id)), super::chip_view::Chip::Micro, params, &live, h - 48.0);
                             ui.add_space(6.0);
-                            param_grid_mod(ui, Id::new(("sid", track_id)), krabton_engine::dsp::sid::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
+                            param_grid_mod(ui, Id::new(("micro", track_id)), krabton_engine::dsp::micro::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
                         });
                     }
                     Instrument::Guitar { preset, params } => {

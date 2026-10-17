@@ -1,12 +1,12 @@
-//! NES: the 2A03, the sound of the Nintendo Entertainment System (and the
-//! Famicom), made from how the chip works. Two pulse channels (duty 12.5,
+//! Console: the sound chip of the 8-bit home console of 1983 (the 2A03),
+//! made from how the chip works. Two pulse channels (duty 12.5,
 //! 25, 50 or 75 per cent, sixteen volume steps, the hardware sweep that
 //! bends the pitch up or down), the triangle (32 steps, no volume at all:
 //! on or off) and noise (a 15-bit shift register, long or the short metallic
 //! loop, sixteen pitches). Pitches come from 11-bit timers on the 1.79 MHz
 //! clock, so high notes are a little out, as on the real thing; the four
 //! are mixed as the chip's resistors mix them and filtered as the console
-//! does. Volume, vibrato and arpeggios move sixty times a second, as the
+//! does (the western model thin, the Japanese one full). Volume, vibrato and arpeggios move sixty times a second, as the
 //! game's music driver moved them. Played in layers, split over the
 //! channels, or as an arpeggio (see `chip`).
 
@@ -44,7 +44,7 @@ pub const CONSOLE: usize = 27;
 pub const VOLUME: usize = 28;
 
 pub const DUTIES: &[&str] = &["12.5%", "25%", "50%", "75%"];
-pub const CONSOLES: &[&str] = &["NES", "Famicom", "Raw"];
+pub const OUTPUTS: &[&str] = &["Thin", "Full", "Raw"];
 
 pub static SPECS: &[ParamSpec] = &[
     ParamSpec::choice("Mode", "Play", chip::MODES, 0),
@@ -74,7 +74,7 @@ pub static SPECS: &[ParamSpec] = &[
     ParamSpec::lin("Vib Rate", "Play", 1.0, 15.0, 6.0, Unit::Hz),
     ParamSpec::lin("Vib Delay", "Play", 0.0, 1.0, 0.2, Unit::Sec),
     ParamSpec::int("Arp Speed", "Play", 1.0, 8.0, 2.0, Unit::None),
-    ParamSpec::choice("Console", "Output", CONSOLES, 0),
+    ParamSpec::choice("Filter", "Output", OUTPUTS, 0),
     ParamSpec::lin("Volume", "Output", 0.0, 1.0, 0.8, Unit::Percent),
 ];
 
@@ -161,7 +161,7 @@ struct Chip {
     lp: LowPass,
 }
 
-pub struct NesState {
+pub struct ConsoleState {
     sr: f32,
     chips: [Chip; 8],
     keys: Keys,
@@ -186,7 +186,7 @@ fn level(p: &[f32], c: usize) -> f32 {
     }
 }
 
-impl NesState {
+impl ConsoleState {
     pub fn new(sr: f32) -> Self {
         let mut chips = [Chip::default(); 8];
         for c in chips.iter_mut() {
@@ -458,7 +458,7 @@ mod tests {
 
     const SR: f32 = 48000.0;
 
-    fn run(st: &mut NesState, p: &[f32], secs: f32) -> Vec<f32> {
+    fn run(st: &mut ConsoleState, p: &[f32], secs: f32) -> Vec<f32> {
         let n = (secs * SR) as usize;
         let mut out = Vec::with_capacity(n);
         while out.len() < n {
@@ -482,7 +482,7 @@ mod tests {
     fn a_pulse_plays_its_note() {
         let mut p = preset("Lead");
         p[CONSOLE] = 2.0;
-        let mut st = NesState::new(SR);
+        let mut st = ConsoleState::new(SR);
         st.note_on(&p, 69, 1.0);
         let out = run(&mut st, &p, 0.5);
         let f = crossings(&out[SR as usize / 4..]) as f32 * 4.0;
@@ -493,7 +493,7 @@ mod tests {
     fn every_preset_sounds_and_stays_sane() {
         for name in preset_names() {
             let p = preset(name);
-            let mut st = NesState::new(SR);
+            let mut st = ConsoleState::new(SR);
             st.note_on(&p, 60, 1.0);
             st.note_on(&p, 64, 0.8);
             st.note_on(&p, 67, 0.8);
@@ -515,7 +515,7 @@ mod tests {
         p[P1_SWEEP] = 1.0;
         p[P1_SHIFT] = 4.0;
         p[SUSTAIN] = 15.0;
-        let mut st = NesState::new(SR);
+        let mut st = ConsoleState::new(SR);
         st.note_on(&p, 72, 1.0);
         let out = run(&mut st, &p, 0.6);
         let early = crossings(&out[..4800]);
@@ -527,7 +527,7 @@ mod tests {
     #[test]
     fn split_gives_each_note_a_channel() {
         let p = preset("Chord Split");
-        let mut st = NesState::new(SR);
+        let mut st = ConsoleState::new(SR);
         st.note_on(&p, 60, 1.0);
         st.note_on(&p, 64, 1.0);
         st.note_on(&p, 67, 1.0);
@@ -538,7 +538,7 @@ mod tests {
     #[test]
     fn the_arpeggio_walks_the_chord() {
         let p = preset("Arpeggio");
-        let mut st = NesState::new(SR);
+        let mut st = ConsoleState::new(SR);
         st.note_on(&p, 60, 1.0);
         st.note_on(&p, 64, 1.0);
         st.note_on(&p, 67, 1.0);
@@ -554,10 +554,10 @@ mod tests {
     fn the_triangle_has_no_volume() {
         let mut p = preset("Triangle Bass");
         p[CONSOLE] = 2.0;
-        let mut st = NesState::new(SR);
+        let mut st = ConsoleState::new(SR);
         st.note_on(&p, 45, 0.2);
         let soft = rms(&run(&mut st, &p, 0.3)[4800..]);
-        let mut st = NesState::new(SR);
+        let mut st = ConsoleState::new(SR);
         st.note_on(&p, 45, 1.0);
         let hard = rms(&run(&mut st, &p, 0.3)[4800..]);
         assert!((soft - hard).abs() < 0.02 * hard, "{soft} {hard}");

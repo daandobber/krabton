@@ -354,10 +354,10 @@ pub fn telling_params(inst: &Instrument) -> [Option<usize>; 2] {
         Instrument::PanFlute { .. } => Some(("Breath", "Tone")),
         Instrument::Melodica { .. } => Some(("Breath", "Tone")),
         Instrument::Harmonica { .. } => Some(("Hands", "Bends")),
-        Instrument::VlTone { .. } => Some(("Tune", "Rhythm Level")),
-        Instrument::Nes { .. } => Some(("Vibrato", "Vib Rate")),
-        Instrument::GameBoy { .. } => Some(("Treble", "Vibrato")),
-        Instrument::Sid { .. } => Some(("Cutoff", "PWM")),
+        Instrument::Calculator { .. } => Some(("Tune", "Rhythm Level")),
+        Instrument::Console { .. } => Some(("Vibrato", "Vib Rate")),
+        Instrument::Handheld { .. } => Some(("Treble", "Vibrato")),
+        Instrument::Micro { .. } => Some(("Cutoff", "PWM")),
         _ => None,
     };
     let named = |n: &str| specs.iter().position(|s| s.name == n && smooth(s));

@@ -1,13 +1,13 @@
-//! SID: the Commodore 64's chip (the 6581 and the later 8580), made from
-//! how it works. Three voices, each a 24-bit phase accumulator on the
+//! Micro: the sound chip of the best-selling home computer of the eighties
+//! (the early chip and the later one), made from how it works. Three voices, each a 24-bit phase accumulator on the
 //! 0.985 MHz clock (so its pitches are its own), with triangle, saw, pulse
 //! (any width) and noise (the 23-bit register clocked sixteen times a
 //! cycle), or two or three at once; hard sync and ring modulation from the
 //! voice before; its envelope, the counter that climbs and falls in 256
 //! steps at sixteen rates, curving down as the chip curves it. Then the
 //! multimode filter (low, band and high, together or alone) that each
-//! voice is routed through or not, its cutoff in eleven bits (the 6581's
-//! darker and dirtier curve, or the 8580's straight one), resonance in
+//! voice is routed through or not, its cutoff in eleven bits (the early
+//! chip's darker and dirtier curve, or the later one's straight one), resonance in
 //! sixteen steps, and the master volume. The vibrato, the pulse width
 //! sweep and the arpeggio move 50 times a second, a PAL frame. Played in
 //! layers, split over the three voices, or as an arpeggio (see `chip`).
@@ -51,7 +51,7 @@ pub const fn voice_param(v: usize, k: usize) -> usize {
 
 pub const WAVES: &[&str] = &["Off", "Triangle", "Saw", "Pulse", "Noise", "Tri+Saw", "Tri+Pulse", "Saw+Pulse", "Tri+Saw+Pulse"];
 pub const FILTERS: &[&str] = &["Off", "Low", "Band", "High", "Notch", "Low+Band", "Band+High", "All"];
-pub const MODELS: &[&str] = &["6581", "8580"];
+pub const MODELS: &[&str] = &["Early", "Late"];
 
 macro_rules! voice_specs {
     ($g:literal, $w:literal, $wave:expr, $a:expr, $d:expr, $s:expr, $r:expr, $f:literal) => {
@@ -98,7 +98,7 @@ pub static SPECS: &[ParamSpec] = &[
 ];
 
 pub fn preset_names() -> &'static [&'static str] {
-    &["Pulse Lead", "Saw Bass", "Sync Lead", "Ring Bell", "Arpeggio", "Chord Split", "PWM Strings", "Filter Sweep", "Acid", "Noise Drum", "Wobble", "Fat Three", "8580 Pad", "Hubbard Bass"]
+    &["Pulse Lead", "Saw Bass", "Sync Lead", "Ring Bell", "Arpeggio", "Chord Split", "PWM Strings", "Filter Sweep", "Acid", "Noise Drum", "Wobble", "Fat Three", "Clean Pad", "Driving Bass"]
 }
 
 pub fn preset(name: &str) -> Vec<f32> {
@@ -116,8 +116,8 @@ pub fn preset(name: &str) -> Vec<f32> {
         "Noise Drum" => &[(v(0, V_WAVE), 4.0), (v(0, V_DECAY), 6.0), (v(0, V_SUSTAIN), 0.0), (v(0, V_RELEASE), 6.0), (v(0, V_TUNE), 24.0), (CUTOFF, 1800.0), (RESONANCE, 2.0)],
         "Wobble" => &[(v(0, V_WAVE), 7.0), (v(0, V_PW), 0.6), (PWM, 0.3), (PWM_RATE, 3.0), (CUTOFF, 900.0), (RESONANCE, 10.0), (v(0, V_TUNE), -12.0)],
         "Fat Three" => &[(v(0, V_WAVE), 2.0), (v(1, V_WAVE), 2.0), (v(2, V_WAVE), 3.0), (v(2, V_TUNE), -12.0), (CUTOFF, 1500.0), (RESONANCE, 4.0)],
-        "8580 Pad" => &[(MODEL, 1.0), (v(0, V_WAVE), 6.0), (v(0, V_ATTACK), 9.0), (v(0, V_RELEASE), 10.0), (v(0, V_SUSTAIN), 13.0), (v(1, V_WAVE), 5.0), (v(1, V_ATTACK), 9.0), (v(1, V_RELEASE), 10.0), (v(1, V_SUSTAIN), 13.0), (CUTOFF, 1000.0), (PWM, 0.2), (VIBRATO, 8.0)],
-        "Hubbard Bass" => &[(v(0, V_WAVE), 3.0), (v(0, V_PW), 0.25), (v(0, V_DECAY), 7.0), (v(0, V_SUSTAIN), 8.0), (v(0, V_RELEASE), 2.0), (v(0, V_TUNE), -12.0), (PWM, 0.2), (PWM_RATE, 1.5), (FILTER_MODE, 0.0)],
+        "Clean Pad" => &[(MODEL, 1.0), (v(0, V_WAVE), 6.0), (v(0, V_ATTACK), 9.0), (v(0, V_RELEASE), 10.0), (v(0, V_SUSTAIN), 13.0), (v(1, V_WAVE), 5.0), (v(1, V_ATTACK), 9.0), (v(1, V_RELEASE), 10.0), (v(1, V_SUSTAIN), 13.0), (CUTOFF, 1000.0), (PWM, 0.2), (VIBRATO, 8.0)],
+        "Driving Bass" => &[(v(0, V_WAVE), 3.0), (v(0, V_PW), 0.25), (v(0, V_DECAY), 7.0), (v(0, V_SUSTAIN), 8.0), (v(0, V_RELEASE), 2.0), (v(0, V_TUNE), -12.0), (PWM, 0.2), (PWM_RATE, 1.5), (FILTER_MODE, 0.0)],
         // "Pulse Lead"
         _ => &[(VIBRATO, 18.0), (PWM, 0.1)],
     };
@@ -269,7 +269,7 @@ impl Default for Chip {
     }
 }
 
-pub struct SidState {
+pub struct MicroState {
     sr: f32,
     chips: [Chip; 8],
     keys: Keys,
@@ -285,7 +285,7 @@ fn wave_of(p: &[f32], v: usize) -> u8 {
     [0, 1, 2, 4, 8, 3, 5, 6, 7][w]
 }
 
-/// The cutoff register as Hz: the 6581's curve or the 8580's line.
+/// The cutoff register as Hz: the early chip's curve or the later one's line.
 pub fn cutoff_hz(reg: f32, model: usize) -> f32 {
     let x = (reg / 2047.0).clamp(0.0, 1.0);
     if model == 0 {
@@ -295,7 +295,7 @@ pub fn cutoff_hz(reg: f32, model: usize) -> f32 {
     }
 }
 
-impl SidState {
+impl MicroState {
     pub fn new(sr: f32) -> Self {
         Self { sr, chips: [Chip::default(); 8], keys: Keys::default(), frames: Frames::default(), pending: false, pitch_bend: 0.0 }
     }
@@ -536,7 +536,7 @@ impl SidState {
                     let g = (std::f32::consts::PI * fc / sr).tan();
                     let a1 = 1.0 / (1.0 + g * (g + k_res));
                     let (a2, a3) = (g * a1, g * g * a1);
-                    // The 6581 grits up when driven.
+                    // The early chip grits up when driven.
                     let v0 = if model == 0 { (filt * 0.8).tanh() / 0.8 } else { filt };
                     let f = &mut chip.svf;
                     let v3 = v0 - f.ic2;
@@ -576,7 +576,7 @@ mod tests {
 
     const SR: f32 = 48000.0;
 
-    fn run(st: &mut SidState, p: &[f32], secs: f32) -> Vec<f32> {
+    fn run(st: &mut MicroState, p: &[f32], secs: f32) -> Vec<f32> {
         let n = (secs * SR) as usize;
         let mut out = Vec::with_capacity(n);
         while out.len() < n {
@@ -608,7 +608,7 @@ mod tests {
         p[VIBRATO] = 0.0;
         p[PWM] = 0.0;
         p[FILTER_MODE] = 0.0;
-        let mut st = SidState::new(SR);
+        let mut st = MicroState::new(SR);
         st.note_on(&p, 69, 1.0);
         let out = run(&mut st, &p, 0.5);
         let f = crossings(&out[SR as usize / 4..]) as f32 * 4.0;
@@ -618,7 +618,7 @@ mod tests {
     #[test]
     fn the_attack_is_as_fast_as_the_chip() {
         let p = preset("Pulse Lead");
-        let mut st = SidState::new(SR);
+        let mut st = MicroState::new(SR);
         st.note_on(&p, 60, 1.0);
         // Attack 0: 2 ms to the top.
         run(&mut st, &p, 0.003);
@@ -638,11 +638,11 @@ mod tests {
         p[RESONANCE] = 0.0;
         p[voice_param(0, V_SUSTAIN)] = 15.0;
         p[CUTOFF] = 150.0;
-        let mut st = SidState::new(SR);
+        let mut st = MicroState::new(SR);
         st.note_on(&p, 48, 1.0);
         let dark = roughness(&run(&mut st, &p, 0.3)[4800..]);
         p[FILTER_MODE] = 0.0;
-        let mut st = SidState::new(SR);
+        let mut st = MicroState::new(SR);
         st.note_on(&p, 48, 1.0);
         let bright = roughness(&run(&mut st, &p, 0.3)[4800..]);
         assert!(dark < bright * 0.5, "{dark} {bright}");
@@ -651,12 +651,12 @@ mod tests {
     #[test]
     fn sync_and_ring_change_the_sound() {
         let base = preset("Ring Bell");
-        let mut st = SidState::new(SR);
+        let mut st = MicroState::new(SR);
         st.note_on(&base, 60, 1.0);
         let rung = run(&mut st, &base, 0.2);
         let mut plain = base.clone();
         plain[voice_param(0, V_RING)] = 0.0;
-        let mut st = SidState::new(SR);
+        let mut st = MicroState::new(SR);
         st.note_on(&plain, 60, 1.0);
         let not = run(&mut st, &plain, 0.2);
         let diff: f32 = rung.iter().zip(&not).map(|(a, b)| (a - b).abs()).sum();
@@ -667,7 +667,7 @@ mod tests {
     fn every_preset_sounds_and_stays_sane() {
         for name in preset_names() {
             let p = preset(name);
-            let mut st = SidState::new(SR);
+            let mut st = MicroState::new(SR);
             for n in [48, 52, 55] {
                 st.note_on(&p, n, 0.9);
             }
@@ -685,7 +685,7 @@ mod tests {
     #[test]
     fn the_arpeggio_walks_the_chord_on_frames() {
         let p = preset("Arpeggio");
-        let mut st = SidState::new(SR);
+        let mut st = MicroState::new(SR);
         for n in [60, 63, 67] {
             st.note_on(&p, n, 1.0);
         }

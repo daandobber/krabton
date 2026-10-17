@@ -1,10 +1,10 @@
-//! VL-Tone: the little Casio VL-1 of 1981, the calculator with a keyboard.
+//! Calculator: the little calculator with a keyboard of 1981.
 //! Ported from the VL1 emulator (<https://github.com/linuxmao-org/VL1-emulator>),
 //! Copyright (C) 2006 PolyValens, Copyright (C) 2019 Jean Pierre Cimalando,
 //! SPDX-License-Identifier: CC0-1.0 or MIT. Its ten sounds (narrow pulse tables
 //! read sixteen times oversampled; the Electro ones jump an octave on the
-//! rhythm's clock), its stepped envelope (fifteen levels, from Casio's own
-//! tables), the RC network that shapes each pulse, vibrato and tremolo,
+//! rhythm's clock), its stepped envelope (fifteen levels, from the maker's
+//! own tables), the RC network that shapes each pulse, vibrato and tremolo,
 //! and its rhythm box: a blip, the same blip twice as fast, and stepped
 //! noise, in March, Waltz, 4 Beat, Swing, Rock 1 and 2, Bossa Nova, Samba,
 //! Rhumba and Beguine, on the song's tempo or its own.
@@ -52,12 +52,12 @@ pub static SPECS: &[ParamSpec] = &[
 ];
 
 pub fn preset_names() -> &'static [&'static str] {
-    &["Piano", "Fantasy", "Violin", "Flute", "Guitar", "English Horn", "Electro 1", "Electro 2", "Electro 3", "Da Da Da", "Bossa Calculator", "Rock Box", "Vibrato Organ", "Toy Strings"]
+    &["Piano", "Fantasy", "Violin", "Flute", "Guitar", "English Horn", "Electro 1", "Electro 2", "Electro 3", "Toy March", "Bossa Calculator", "Rock Box", "Vibrato Organ", "Toy Strings"]
 }
 
 pub fn preset(name: &str) -> Vec<f32> {
     let mut p = crate::params::defaults(SPECS);
-    // The VL-1's own programs: sound, A, D, Sl, St, R, V, T (from its tables).
+    // The original's own programs: sound, A, D, Sl, St, R, V, T (from its tables).
     let set: &[(usize, f32)] = match name {
         "Fantasy" => &[(SOUND, 1.0), (ATTACK, 0.0), (DECAY, 0.0), (SUSTAIN_LEVEL, 9.0), (SUSTAIN_TIME, 9.0), (RELEASE, 6.0), (VIBRATO, 3.0)],
         "Violin" => &[(SOUND, 2.0), (ATTACK, 3.0), (DECAY, 0.0), (SUSTAIN_LEVEL, 9.0), (SUSTAIN_TIME, 9.0), (RELEASE, 1.0), (VIBRATO, 3.0)],
@@ -68,12 +68,12 @@ pub fn preset(name: &str) -> Vec<f32> {
         "Electro 2" => &[(SOUND, 8.0), (SUSTAIN_LEVEL, 9.0), (SUSTAIN_TIME, 9.0), (RELEASE, 2.0)],
         "Electro 3" => &[(SOUND, 9.0), (SUSTAIN_LEVEL, 9.0), (SUSTAIN_TIME, 9.0), (RELEASE, 2.0)],
         // Trio's: a short piano over the March.
-        "Da Da Da" => &[(SOUND, 0.0), (DECAY, 3.0), (SUSTAIN_LEVEL, 2.0), (SUSTAIN_TIME, 2.0), (RELEASE, 1.0), (RHYTHM, 1.0), (RHYTHM_LEVEL, 0.8)],
+        "Toy March" => &[(SOUND, 0.0), (DECAY, 3.0), (SUSTAIN_LEVEL, 2.0), (SUSTAIN_TIME, 2.0), (RELEASE, 1.0), (RHYTHM, 1.0), (RHYTHM_LEVEL, 0.8)],
         "Bossa Calculator" => &[(SOUND, 3.0), (ATTACK, 1.0), (SUSTAIN_LEVEL, 7.0), (SUSTAIN_TIME, 6.0), (RELEASE, 3.0), (VIBRATO, 2.0), (RHYTHM, 7.0), (RHYTHM_LEVEL, 0.6)],
         "Rock Box" => &[(SOUND, 7.0), (SUSTAIN_LEVEL, 8.0), (SUSTAIN_TIME, 9.0), (RELEASE, 1.0), (RHYTHM, 5.0), (RHYTHM_LEVEL, 0.7)],
         "Vibrato Organ" => &[(SOUND, 1.0), (ATTACK, 1.0), (SUSTAIN_LEVEL, 9.0), (SUSTAIN_TIME, 9.0), (RELEASE, 3.0), (VIBRATO, 5.0), (TREMOLO, 4.0), (VOICES, 4.0)],
         "Toy Strings" => &[(SOUND, 2.0), (ATTACK, 5.0), (SUSTAIN_LEVEL, 9.0), (SUSTAIN_TIME, 9.0), (RELEASE, 5.0), (VIBRATO, 4.0), (VOICES, 6.0), (OCTAVE, 0.0)],
-        // "Piano": the VL-1's first program.
+        // "Piano": the original's first program.
         _ => &[(SOUND, 0.0), (ATTACK, 0.0), (DECAY, 4.0), (SUSTAIN_LEVEL, 5.0), (SUSTAIN_TIME, 3.0), (RELEASE, 2.0)],
     };
     for &(i, v) in set {
@@ -145,7 +145,7 @@ fn make_wave(sound: usize) -> ([f32; WAVE_LEN], f32) {
 
 // ------------------------------------------------------------ the envelope
 
-/// Casio's tables: level from, level to, time units (12 ms each).
+/// The maker's tables: level from, level to, time units (12 ms each).
 const ATTACK_T: [(f32, f32, f32); 10] = [(15.0, 15.0, 0.0), (11.0, 15.0, 1.0), (7.0, 15.0, 4.0), (5.0, 15.0, 7.0), (4.0, 15.0, 10.0), (4.0, 15.0, 13.0), (3.0, 15.0, 16.0), (3.0, 15.0, 19.0), (3.0, 15.0, 22.0), (3.0, 15.0, 25.0)];
 const DECAY_T: [f32; 10] = [0.0, 9.0, 18.0, 27.0, 39.0, 48.0, 58.0, 67.0, 78.0, 87.0];
 const SUSTAIN_LEVEL_T: [f32; 10] = [1.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 13.0, 14.0, 15.0];
@@ -331,7 +331,7 @@ fn lfsr(r: &mut u16) -> f32 {
     }
 }
 
-pub struct Vl1State {
+pub struct CalculatorState {
     sr: f32,
     voices: [Voice; 8],
     waves: Vec<([f32; WAVE_LEN], f32)>,
@@ -357,7 +357,7 @@ pub struct Vl1State {
     pub pitch_bend: f32,
 }
 
-impl Vl1State {
+impl CalculatorState {
     pub fn new(sr: f32) -> Self {
         let waves = (0..SOUNDS.len()).map(make_wave).collect();
         // The blip: a 780 Hz square, its level a step down every two periods.
@@ -641,7 +641,7 @@ mod tests {
     use super::*;
 
     fn play(p: &[f32], note: u8, secs: f32) -> Vec<f32> {
-        let mut s = Vl1State::new(48000.0);
+        let mut s = CalculatorState::new(48000.0);
         s.playing = true;
         s.note_on(p, note, 0.9);
         let n = (secs * 48000.0) as usize;
@@ -692,7 +692,7 @@ mod tests {
     #[test]
     fn the_envelope_steps_and_lets_go() {
         let p = preset("Piano");
-        let mut s = Vl1State::new(48000.0);
+        let mut s = CalculatorState::new(48000.0);
         s.note_on(&p, 60, 1.0);
         let mut levels = Vec::new();
         for _ in 0..200 {
@@ -728,9 +728,9 @@ mod tests {
 
     #[test]
     fn the_rhythm_plays_on_the_song() {
-        let mut p = preset("Da Da Da");
+        let mut p = preset("Toy March");
         p[VOLUME] = 1.0;
-        let mut s = Vl1State::new(48000.0);
+        let mut s = CalculatorState::new(48000.0);
         s.playing = true;
         s.bpm = 120.0;
         let mut hits = 0;

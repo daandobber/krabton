@@ -1,24 +1,24 @@
-//! Screens for the old machines: the VL-Tone (its display showing the
-//! eight digits of its program, as the VL-1 showed them, each one clicked
-//! up or down; the sound and the rhythm; its little keys) and the sound
-//! chips: a lane for every channel of the NES, the Game Boy and the SID,
-//! its wave drawn as the chip makes it (pulses of their duty, the stepped
-//! triangle, the wave table, the SID's waves and their mixes, noise),
-//! lit while it sounds, with its level in the chip's own steps; the SID's
-//! filter beneath. Click a wave for the next one (right-click: back), drag
-//! a level, drag the SID's filter for cutoff and resonance.
+//! Screens for the old machines: the Calculator (its display showing the
+//! eight digits of its program, as the original showed them, each one
+//! clicked up or down; the sound and the rhythm; its little keys) and the
+//! sound chips: a lane for every channel of the Console, the Handheld and
+//! the Micro, its wave drawn as the chip makes it (pulses of their duty,
+//! the stepped triangle, the wave table, the Micro's waves and their mixes,
+//! noise), lit while it sounds, with its level in the chip's own steps; the
+//! Micro's filter beneath. Click a wave for the next one (right-click:
+//! back), drag a level, drag the Micro's filter for cutoff and resonance.
 
 use super::inst_screen::{caption, InstLive};
 use crate::theme::*;
 use crate::widgets::*;
 use egui::{pos2, vec2, Align2, Color32, FontId, Id, Painter, Pos2, Rect, Sense, Shape, Stroke, Ui};
-use krabton_engine::dsp::{chip, gameboy, nes, sid, vl1};
+use krabton_engine::dsp::{chip, handheld, console, micro, calculator};
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) enum Chip {
-    Nes,
-    GameBoy,
-    Sid,
+    Console,
+    Handheld,
+    Micro,
 }
 
 struct Palette {
@@ -31,11 +31,11 @@ struct Palette {
 fn palette(c: Chip) -> Palette {
     match c {
         // The grey box and its red.
-        Chip::Nes => Palette { bg: Color32::from_rgb(0x16, 0x16, 0x18), line: Color32::from_rgb(0x2c, 0x2c, 0x30), bright: Color32::from_rgb(0xe4, 0x3a, 0x2a), dim: Color32::from_rgb(0x70, 0x70, 0x76) },
+        Chip::Console => Palette { bg: Color32::from_rgb(0x16, 0x16, 0x18), line: Color32::from_rgb(0x2c, 0x2c, 0x30), bright: Color32::from_rgb(0xe4, 0x3a, 0x2a), dim: Color32::from_rgb(0x70, 0x70, 0x76) },
         // The green screen's four shades.
-        Chip::GameBoy => Palette { bg: Color32::from_rgb(0x0f, 0x38, 0x0f), line: Color32::from_rgb(0x30, 0x62, 0x30), bright: Color32::from_rgb(0x9b, 0xbc, 0x0f), dim: Color32::from_rgb(0x8b, 0xac, 0x0f).gamma_multiply(0.55) },
+        Chip::Handheld => Palette { bg: Color32::from_rgb(0x0f, 0x38, 0x0f), line: Color32::from_rgb(0x30, 0x62, 0x30), bright: Color32::from_rgb(0x9b, 0xbc, 0x0f), dim: Color32::from_rgb(0x8b, 0xac, 0x0f).gamma_multiply(0.55) },
         // Blue on blue.
-        Chip::Sid => Palette { bg: Color32::from_rgb(0x35, 0x28, 0x79), line: Color32::from_rgb(0x4a, 0x3d, 0x96), bright: Color32::from_rgb(0xb3, 0xa8, 0xff), dim: Color32::from_rgb(0x6c, 0x5e, 0xb5) },
+        Chip::Micro => Palette { bg: Color32::from_rgb(0x35, 0x28, 0x79), line: Color32::from_rgb(0x4a, 0x3d, 0x96), bright: Color32::from_rgb(0xb3, 0xa8, 0xff), dim: Color32::from_rgb(0x6c, 0x5e, 0xb5) },
     }
 }
 
@@ -59,7 +59,7 @@ enum Wave {
     Triangle,
     Noise,
     Table(usize),
-    Sid(usize, f32),
+    Micro(usize, f32),
 }
 
 fn noise_at(k: usize, t: f32) -> f32 {
@@ -68,7 +68,7 @@ fn noise_at(k: usize, t: f32) -> f32 {
 }
 
 fn wave_points(w: Wave, n: usize, t: f32) -> Vec<f32> {
-    let table = if let Wave::Table(i) = w { Some(gameboy::wave_table(i)) } else { None };
+    let table = if let Wave::Table(i) = w { Some(handheld::wave_table(i)) } else { None };
     (0..n)
         .map(|k| {
             let ph = (k as f32 / n as f32 * 2.0).fract();
@@ -81,7 +81,7 @@ fn wave_points(w: Wave, n: usize, t: f32) -> Vec<f32> {
                 }
                 Wave::Noise => noise_at(k, t),
                 Wave::Table(_) => table.map(|tb| tb[(ph * 32.0) as usize & 31] as f32 / 15.0).unwrap_or(0.0),
-                Wave::Sid(choice, pw) => {
+                Wave::Micro(choice, pw) => {
                     let tri = if ph < 0.5 { ph * 2.0 } else { 2.0 - ph * 2.0 };
                     let pulse = (ph >= pw) as u8 as f32;
                     let q = |x: f32| (x * 4095.0) as u32;
@@ -153,35 +153,35 @@ fn lanes(which: Chip, p: &[f32], live: &InstLive) -> Vec<Lane> {
     let duty = |i: usize| [0.125, 0.25, 0.5, 0.75][get(p, i).round().clamp(0.0, 3.0) as usize];
     let lvl = |i: usize, max: f32| (get(p, i) / max).clamp(0.0, 1.0);
     match which {
-        Chip::Nes => vec![
-            Lane { name: "Pulse 1", wave: Wave::Pulse(duty(nes::P1_DUTY)), level: Some((nes::P1_LEVEL, 15)), set_to: lvl(nes::P1_LEVEL, 15.0), shape: Some((nes::P1_DUTY, 4)) },
-            Lane { name: "Pulse 2", wave: Wave::Pulse(duty(nes::P2_DUTY)), level: Some((nes::P2_LEVEL, 15)), set_to: lvl(nes::P2_LEVEL, 15.0), shape: Some((nes::P2_DUTY, 4)) },
-            Lane { name: "Triangle", wave: Wave::Triangle, level: Some((nes::TRI_ON, 1)), set_to: lvl(nes::TRI_ON, 1.0), shape: None },
-            Lane { name: if get(p, nes::NOISE_SHORT) >= 0.5 { "Noise ~" } else { "Noise" }, wave: Wave::Noise, level: Some((nes::NOISE_LEVEL, 15)), set_to: lvl(nes::NOISE_LEVEL, 15.0), shape: Some((nes::NOISE_SHORT, 2)) },
+        Chip::Console => vec![
+            Lane { name: "Pulse 1", wave: Wave::Pulse(duty(console::P1_DUTY)), level: Some((console::P1_LEVEL, 15)), set_to: lvl(console::P1_LEVEL, 15.0), shape: Some((console::P1_DUTY, 4)) },
+            Lane { name: "Pulse 2", wave: Wave::Pulse(duty(console::P2_DUTY)), level: Some((console::P2_LEVEL, 15)), set_to: lvl(console::P2_LEVEL, 15.0), shape: Some((console::P2_DUTY, 4)) },
+            Lane { name: "Triangle", wave: Wave::Triangle, level: Some((console::TRI_ON, 1)), set_to: lvl(console::TRI_ON, 1.0), shape: None },
+            Lane { name: if get(p, console::NOISE_SHORT) >= 0.5 { "Noise ~" } else { "Noise" }, wave: Wave::Noise, level: Some((console::NOISE_LEVEL, 15)), set_to: lvl(console::NOISE_LEVEL, 15.0), shape: Some((console::NOISE_SHORT, 2)) },
         ],
-        Chip::GameBoy => vec![
-            Lane { name: "Pulse 1", wave: Wave::Pulse(duty(gameboy::P1_DUTY)), level: Some((gameboy::P1_LEVEL, 15)), set_to: lvl(gameboy::P1_LEVEL, 15.0), shape: Some((gameboy::P1_DUTY, 4)) },
-            Lane { name: "Pulse 2", wave: Wave::Pulse(duty(gameboy::P2_DUTY)), level: Some((gameboy::P2_LEVEL, 15)), set_to: lvl(gameboy::P2_LEVEL, 15.0), shape: Some((gameboy::P2_DUTY, 4)) },
+        Chip::Handheld => vec![
+            Lane { name: "Pulse 1", wave: Wave::Pulse(duty(handheld::P1_DUTY)), level: Some((handheld::P1_LEVEL, 15)), set_to: lvl(handheld::P1_LEVEL, 15.0), shape: Some((handheld::P1_DUTY, 4)) },
+            Lane { name: "Pulse 2", wave: Wave::Pulse(duty(handheld::P2_DUTY)), level: Some((handheld::P2_LEVEL, 15)), set_to: lvl(handheld::P2_LEVEL, 15.0), shape: Some((handheld::P2_DUTY, 4)) },
             Lane {
                 name: "Wave",
-                wave: Wave::Table(get(p, gameboy::WAVEFORM).round().clamp(0.0, (gameboy::WAVES.len() - 1) as f32) as usize),
-                level: Some((gameboy::WAVE_LEVEL, 3)),
-                set_to: lvl(gameboy::WAVE_LEVEL, 3.0),
-                shape: Some((gameboy::WAVEFORM, gameboy::WAVES.len())),
+                wave: Wave::Table(get(p, handheld::WAVEFORM).round().clamp(0.0, (handheld::WAVES.len() - 1) as f32) as usize),
+                level: Some((handheld::WAVE_LEVEL, 3)),
+                set_to: lvl(handheld::WAVE_LEVEL, 3.0),
+                shape: Some((handheld::WAVEFORM, handheld::WAVES.len())),
             },
-            Lane { name: if get(p, gameboy::NOISE_WIDTH) >= 0.5 { "Noise 7" } else { "Noise" }, wave: Wave::Noise, level: Some((gameboy::NOISE_LEVEL, 15)), set_to: lvl(gameboy::NOISE_LEVEL, 15.0), shape: Some((gameboy::NOISE_WIDTH, 2)) },
+            Lane { name: if get(p, handheld::NOISE_WIDTH) >= 0.5 { "Noise 7" } else { "Noise" }, wave: Wave::Noise, level: Some((handheld::NOISE_LEVEL, 15)), set_to: lvl(handheld::NOISE_LEVEL, 15.0), shape: Some((handheld::NOISE_WIDTH, 2)) },
         ],
-        Chip::Sid => (0..3)
+        Chip::Micro => (0..3)
             .map(|v| {
-                let choice = get(p, sid::voice_param(v, sid::V_WAVE)).round().clamp(0.0, 8.0) as usize;
+                let choice = get(p, micro::voice_param(v, micro::V_WAVE)).round().clamp(0.0, 8.0) as usize;
                 // While it sounds, the width the sweep has moved it to.
-                let pw = if live.vals[v * 4] > 0.0 && live.vals[v * 4 + 2] > 0.0 { live.vals[v * 4 + 2] } else { get(p, sid::voice_param(v, sid::V_PW)) };
+                let pw = if live.vals[v * 4] > 0.0 && live.vals[v * 4 + 2] > 0.0 { live.vals[v * 4 + 2] } else { get(p, micro::voice_param(v, micro::V_PW)) };
                 Lane {
                     name: ["Voice 1", "Voice 2", "Voice 3"][v],
-                    wave: Wave::Sid(choice, pw),
+                    wave: Wave::Micro(choice, pw),
                     level: None,
                     set_to: if choice > 0 { 1.0 } else { 0.0 },
-                    shape: Some((sid::voice_param(v, sid::V_WAVE), sid::WAVES.len())),
+                    shape: Some((micro::voice_param(v, micro::V_WAVE), micro::WAVES.len())),
                 }
             })
             .collect(),
@@ -199,9 +199,9 @@ pub(crate) fn chip_screen(ui: &mut Ui, id: Id, which: Chip, p: &mut [f32], live:
     let t = ui.input(|i| i.time) as f32;
     let mut changed = false;
     let (title, mode_i) = match which {
-        Chip::Nes => ("NES  2A03", nes::MODE),
-        Chip::GameBoy => ("GAME BOY  DMG", gameboy::MODE),
-        Chip::Sid => (if get(p, sid::MODEL) >= 0.5 { "SID  8580" } else { "SID  6581" }, sid::MODE),
+        Chip::Console => ("CONSOLE", console::MODE),
+        Chip::Handheld => ("HANDHELD", handheld::MODE),
+        Chip::Micro => (if get(p, micro::MODEL) >= 0.5 { "MICRO  LATE" } else { "MICRO  EARLY" }, micro::MODE),
     };
     caption(&painter, rect.left_top() + vec2(10.0, 6.0), Align2::LEFT_TOP, title, pal.bright);
     let mode = chip::mode_of(get(p, mode_i));
@@ -213,7 +213,7 @@ pub(crate) fn chip_screen(ui: &mut Ui, id: Id, which: Chip, p: &mut [f32], live:
         changed |= set(p, mode_i, ((mode + 1) % chip::MODES.len()) as f32);
     }
     let ls = lanes(which, p, live);
-    let rows = ls.len() + usize::from(which == Chip::Sid);
+    let rows = ls.len() + usize::from(which == Chip::Micro);
     let top = rect.top() + 24.0;
     let lane_h = ((rect.bottom() - 6.0 - top) / rows as f32).max(12.0);
     for (i, lane) in ls.iter().enumerate() {
@@ -242,8 +242,8 @@ pub(crate) fn chip_screen(ui: &mut Ui, id: Id, which: Chip, p: &mut [f32], live:
                 changed |= set(p, pi, ((cur + n - 1) % n) as f32);
             }
             let name = match which {
-                Chip::GameBoy if pi == gameboy::WAVEFORM => Some(gameboy::WAVES[cur]),
-                Chip::Sid => Some(sid::WAVES[cur]),
+                Chip::Handheld if pi == handheld::WAVEFORM => Some(handheld::WAVES[cur]),
+                Chip::Micro => Some(micro::WAVES[cur]),
                 _ => None,
             };
             // Its name under the lane's, where there is room.
@@ -264,7 +264,7 @@ pub(crate) fn chip_screen(ui: &mut Ui, id: Id, which: Chip, p: &mut [f32], live:
             None => draw_level(&painter, lr, 15, lane.set_to, level, &pal),
         }
     }
-    if which == Chip::Sid {
+    if which == Chip::Micro {
         let r = Rect::from_min_size(pos2(rect.left() + 8.0, top + 3.0 * lane_h), vec2(w - 16.0, lane_h - 4.0));
         changed |= sid_filter(ui, id.with("filter"), &painter, r, p, live, &pal);
     }
@@ -278,29 +278,29 @@ pub(crate) fn chip_screen(ui: &mut Ui, id: Id, which: Chip, p: &mut [f32], live:
 fn sid_filter(ui: &mut Ui, id: Id, painter: &Painter, r: Rect, p: &mut [f32], live: &InstLive, pal: &Palette) -> bool {
     let mut changed = false;
     painter.rect_filled(r, 3.0, pal.line.gamma_multiply(0.45));
-    let mode = get(p, sid::FILTER_MODE).round().clamp(0.0, 7.0) as usize;
-    painter.text(r.left_top() + vec2(6.0, 3.0), Align2::LEFT_TOP, format!("FILTER\n{}", sid::FILTERS[mode].to_uppercase()), FontId::monospace(9.5), pal.dim);
+    let mode = get(p, micro::FILTER_MODE).round().clamp(0.0, 7.0) as usize;
+    painter.text(r.left_top() + vec2(6.0, 3.0), Align2::LEFT_TOP, format!("FILTER\n{}", micro::FILTERS[mode].to_uppercase()), FontId::monospace(9.5), pal.dim);
     let area = Rect::from_min_max(pos2(r.left() + 70.0, r.top() + 3.0), pos2(r.right() - 6.0, r.bottom() - 3.0));
     let resp = ui.interact(area, id, Sense::click_and_drag());
     if resp.dragged() {
         let d = resp.drag_delta();
-        changed |= set(p, sid::CUTOFF, (get(p, sid::CUTOFF) + d.x * 2047.0 / area.width()).round().clamp(0.0, 2047.0));
-        let res = (get(p, sid::RESONANCE) - d.y * 0.15).clamp(0.0, 15.0);
-        changed |= set(p, sid::RESONANCE, res);
+        changed |= set(p, micro::CUTOFF, (get(p, micro::CUTOFF) + d.x * 2047.0 / area.width()).round().clamp(0.0, 2047.0));
+        let res = (get(p, micro::RESONANCE) - d.y * 0.15).clamp(0.0, 15.0);
+        changed |= set(p, micro::RESONANCE, res);
     }
     if resp.drag_stopped() {
-        let res = get(p, sid::RESONANCE).round();
-        changed |= set(p, sid::RESONANCE, res);
+        let res = get(p, micro::RESONANCE).round();
+        changed |= set(p, micro::RESONANCE, res);
     }
     if resp.clicked() {
-        changed |= set(p, sid::FILTER_MODE, ((mode + 1) % sid::FILTERS.len()) as f32);
+        changed |= set(p, micro::FILTER_MODE, ((mode + 1) % micro::FILTERS.len()) as f32);
     }
-    let model = get(p, sid::MODEL).round() as usize;
+    let model = get(p, micro::MODEL).round() as usize;
     // The cutoff where the envelope has it now.
     let env = live.vals[0].clamp(0.0, 1.0);
-    let reg = (get(p, sid::CUTOFF) + get(p, sid::ENV_CUTOFF) * 2047.0 * env).clamp(0.0, 2047.0);
-    let fc = sid::cutoff_hz(reg, model);
-    let q = 0.707 * 2f32.powf(get(p, sid::RESONANCE).round() / 15.0 * if model == 0 { 1.6 } else { 2.0 });
+    let reg = (get(p, micro::CUTOFF) + get(p, micro::ENV_CUTOFF) * 2047.0 * env).clamp(0.0, 2047.0);
+    let fc = micro::cutoff_hz(reg, model);
+    let q = 0.707 * 2f32.powf(get(p, micro::RESONANCE).round() / 15.0 * if model == 0 { 1.6 } else { 2.0 });
     let bits = [0u8, 1, 2, 4, 5, 3, 6, 7][mode];
     let n = 80;
     let pts: Vec<Pos2> = (0..n)
@@ -334,18 +334,18 @@ fn sid_filter(ui: &mut Ui, id: Id, painter: &Painter, r: Rect, p: &mut [f32], li
     changed
 }
 
-// ---------------------------------------------------------------- VL-Tone
+// ---------------------------------------------------------------- Calculator
 
 const LCD: Color32 = Color32::from_rgb(0x9c, 0xa8, 0x8e);
 const LCD_INK: Color32 = Color32::from_rgb(0x22, 0x26, 0x20);
 const LCD_GHOST: Color32 = Color32::from_rgb(0x8d, 0x99, 0x80);
 const BODY: Color32 = Color32::from_rgb(0x2a, 0x2b, 0x2f);
 
-/// The VL-Tone: its display with the program's eight digits (sound,
+/// The Calculator: its display with the program's eight digits (sound,
 /// attack, decay, sustain level, sustain time, release, vibrato, tremolo),
 /// the sound and the rhythm, and its keys.
-pub(crate) fn vl1_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, height: f32) -> bool {
-    use vl1::*;
+pub(crate) fn calculator_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, height: f32) -> bool {
+    use calculator::*;
     let w = 330.0;
     let (rect, _) = ui.allocate_exact_size(vec2(w, height), Sense::hover());
     let painter = ui.painter_at(rect);
@@ -353,7 +353,7 @@ pub(crate) fn vl1_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, he
     rect_line(&painter, rect, 8.0, 1.0, Color32::from_rgb(0x44, 0x46, 0x4c));
     let mut changed = false;
     let accent = accent_now();
-    caption(&painter, rect.left_top() + vec2(12.0, 7.0), Align2::LEFT_TOP, "VL-Tone", Color32::from_rgb(0xc8, 0xc8, 0xcc));
+    caption(&painter, rect.left_top() + vec2(12.0, 7.0), Align2::LEFT_TOP, "Calculator", Color32::from_rgb(0xc8, 0xc8, 0xcc));
     // The display.
     let lcd_h = (height * 0.42).clamp(44.0, 90.0);
     let lcd = Rect::from_min_size(pos2(rect.left() + 12.0, rect.top() + 24.0), vec2(w - 24.0, lcd_h));
@@ -397,7 +397,7 @@ pub(crate) fn vl1_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, he
         let c = pos2(rr.left() + 8.0, rr.center().y + 1.0);
         painter.circle_filled(c, if hit >= 1.5 { 3.0 } else { 4.5 }, accent);
     }
-    // The keys: G to B, two and a half octaves, as on the VL-1.
+    // The keys: G to B, two and a half octaves, as on the original.
     let kt = below + 22.0;
     let kr = Rect::from_min_max(pos2(rect.left() + 12.0, kt), pos2(rect.right() - 12.0, rect.bottom() - 10.0));
     if kr.height() > 8.0 {
@@ -454,16 +454,16 @@ mod tests {
 
     #[test]
     fn the_old_machines_draw() {
-        for name in vl1::preset_names() {
+        for name in calculator::preset_names() {
             show(|ui, live| {
-                let mut p = vl1::preset(name);
-                vl1_screen(ui, Id::new("v"), &mut p, live, 200.0);
+                let mut p = calculator::preset(name);
+                calculator_screen(ui, Id::new("v"), &mut p, live, 200.0);
             });
         }
         for (which, names, make) in [
-            (Chip::Nes, nes::preset_names(), nes::preset as fn(&str) -> Vec<f32>),
-            (Chip::GameBoy, gameboy::preset_names(), gameboy::preset),
-            (Chip::Sid, sid::preset_names(), sid::preset),
+            (Chip::Console, console::preset_names(), console::preset as fn(&str) -> Vec<f32>),
+            (Chip::Handheld, handheld::preset_names(), handheld::preset),
+            (Chip::Micro, micro::preset_names(), micro::preset),
         ] {
             for name in names {
                 show(|ui, live| {
@@ -476,8 +476,8 @@ mod tests {
 
     #[test]
     fn the_sid_waves_mix_as_the_chip_does() {
-        let saw = wave_points(Wave::Sid(2, 0.5), 64, 0.0);
-        let mixed = wave_points(Wave::Sid(7, 0.5), 64, 0.0);
+        let saw = wave_points(Wave::Micro(2, 0.5), 64, 0.0);
+        let mixed = wave_points(Wave::Micro(7, 0.5), 64, 0.0);
         // Saw and pulse: only where the pulse is high, and never above the saw.
         assert!(mixed.iter().zip(&saw).all(|(m, s)| *m <= *s + 1e-6));
         assert!(mixed[..16].iter().all(|m| *m == 0.0));
