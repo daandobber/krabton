@@ -546,7 +546,7 @@ mod tests {
     /// passed; then a moment more, so one too many is seen too.
     fn recv_until(sock: &UdpSocket, addr: &str, count: usize) -> Vec<(OscMessage, SocketAddr)> {
         let mut out = Vec::new();
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let deadline = Instant::now() + Duration::from_secs(5);
         let seen = |out: &Vec<(OscMessage, SocketAddr)>| out.iter().filter(|(m, _)| m.addr == addr).count();
         while Instant::now() < deadline && seen(&out) < count {
             out.extend(recv(sock));
@@ -556,10 +556,21 @@ mod tests {
         out
     }
 
+    /// Keeps reading until a message at each of `addrs` came in (they can
+    /// come in separate packets, late on a busy machine), or five seconds passed.
+    fn recv_all(sock: &UdpSocket, addrs: &[&str]) -> Vec<(OscMessage, SocketAddr)> {
+        let mut out: Vec<(OscMessage, SocketAddr)> = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline && !addrs.iter().all(|a| out.iter().any(|(m, _)| m.addr == *a)) {
+            out.extend(recv(sock));
+        }
+        out
+    }
+
     /// Polls until `done` holds for what came in (a busy machine can be slow
-    /// to deliver), or two seconds passed.
+    /// to deliver), or five seconds passed.
     fn poll_until(m: &mut Monome, done: impl Fn(&[Event]) -> bool) -> Vec<Event> {
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let deadline = Instant::now() + Duration::from_secs(5);
         let mut events = Vec::new();
         loop {
             events.extend(m.poll());
@@ -581,7 +592,7 @@ mod tests {
 
         let mut m = Monome::with_serialosc_port(serialosc.local_addr().unwrap().port()).unwrap();
         m.discover();
-        let asks = recv(&serialosc);
+        let asks = recv_all(&serialosc, &["/serialosc/list"]);
         let list = asks.iter().find(|(msg, _)| msg.addr == "/serialosc/list").expect("list request");
         assert_eq!(list.0.str(0), Some("127.0.0.1"));
         let client = SocketAddr::from(([127, 0, 0, 1], list.0.int(1).unwrap() as u16));
@@ -595,7 +606,7 @@ mod tests {
         assert_eq!(m.grid_id(), Some("m1000042"));
 
         // The grid is told where to send and which prefix to use.
-        let setup = recv(&grid);
+        let setup = recv_all(&grid, &["/sys/port", "/sys/host", "/sys/prefix"]);
         let addrs: Vec<&str> = setup.iter().map(|(msg, _)| msg.addr.as_str()).collect();
         assert!(addrs.contains(&"/sys/port") && addrs.contains(&"/sys/host") && addrs.contains(&"/sys/prefix"));
 
