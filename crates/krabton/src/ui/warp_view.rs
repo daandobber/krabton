@@ -1,4 +1,4 @@
-//! Screens for Warp and Hybrid. Warp's is its envelopes: a tab for each of
+//! Screens for Warp, Hybrid and Quartet. Warp's is its envelopes: a tab for each of
 //! the five, its eight steps drawn in time (a slow step long, a fast one
 //! short), each point dragged up and down for its level and sideways for
 //! its rate; right-click a point to hold on it while the key is down (S),
@@ -6,13 +6,15 @@
 //! them the two lines' waves, bent as far as they are now (click one for the
 //! next wave). Hybrid's: its two oscillators' waves (click for the next
 //! engine) and its filters' curves (drag for the first's cutoff and
-//! resonance, click for its kind).
+//! resonance, click for its kind). Quartet's: its four oscillators, each
+//! its mode (click for the next, right-click back) and its wave (the same),
+//! lit as loud as it plays; the matrix slots in use; the envelopes moving.
 
 use super::inst_screen::{caption, InstLive, SCREEN_BG};
 use crate::theme::*;
 use crate::widgets::*;
 use egui::{pos2, vec2, Align2, Color32, FontId, Id, Painter, Pos2, Rect, Sense, Shape, Stroke, Ui};
-use krabton_engine::dsp::{hybrid, warp};
+use krabton_engine::dsp::{hybrid, quartet, warp};
 
 const DIM: Color32 = Color32::from_rgb(0x4a, 0x4e, 0x58);
 const FAINT: Color32 = Color32::from_rgb(0x1e, 0x21, 0x28);
@@ -285,6 +287,99 @@ pub(crate) fn hybrid_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive,
     changed
 }
 
+pub(crate) fn quartet_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, height: f32) -> bool {
+    use quartet::*;
+    let w = 470.0;
+    let (rect, _) = ui.allocate_exact_size(vec2(w, height), Sense::hover());
+    let painter = frame(ui, rect);
+    let accent = accent_now();
+    let mut changed = false;
+    caption(&painter, rect.left_top() + vec2(10.0, 6.0), Align2::LEFT_TOP, "Quartet", accent);
+    let playing = live.vals[7] > 0.0;
+    let top = rect.top() + 22.0;
+    let lane_h = ((rect.height() - 28.0) / 4.0).max(16.0);
+    let lanes_w = 300.0;
+    for o in 0..4 {
+        let r = Rect::from_min_size(pos2(rect.left() + 8.0, top + o as f32 * lane_h), vec2(lanes_w, lane_h - 4.0));
+        painter.rect_filled(r, 3.0, FAINT);
+        let mode = get(p, osc_param(o, O_MODE)).round().clamp(0.0, (MODES.len() - 1) as f32) as usize;
+        let n = waves_of(mode).max(1);
+        let wave = get(p, osc_param(o, O_WAVE)).round().max(0.0) as usize % n;
+        let param = if playing { live.vals[12 + o] } else { get(p, osc_param(o, O_PARAM)) };
+        let level = if playing { live.vals[8 + o] } else { get(p, osc_param(o, O_LEVEL)) };
+        let on = mode != 0 && level > 0.0;
+        // The mode: click for the next.
+        let mr = Rect::from_min_size(r.min, vec2(92.0, r.height()));
+        let resp = ui.interact(mr, id.with(("mode", o)), Sense::click());
+        painter.text(mr.left_top() + vec2(5.0, 3.0), Align2::LEFT_TOP, format!("{} {}", o + 1, MODES[mode].to_uppercase()), FontId::monospace(9.0), if resp.hovered() { TEXT } else if on { accent } else { DIM });
+        if mode != 0 {
+            painter.text(mr.left_bottom() + vec2(5.0, -3.0), Align2::LEFT_BOTTOM, wave_name(mode, wave), FontId::proportional(10.0), TEXT_DIM);
+        }
+        if resp.clicked() {
+            changed |= set(p, osc_param(o, O_MODE), ((mode + 1) % MODES.len()) as f32);
+        } else if resp.secondary_clicked() {
+            changed |= set(p, osc_param(o, O_MODE), ((mode + MODES.len() - 1) % MODES.len()) as f32);
+        }
+        // The wave: click for the next.
+        let wr = Rect::from_min_max(pos2(mr.right() + 4.0, r.top() + 4.0), pos2(r.right() - 34.0, r.bottom() - 4.0));
+        if mode != 0 {
+            draw_wave(&painter, wr, |x| preview(mode, wave, param, (x * 2.0).fract()), if on { accent } else { DIM });
+            let resp = ui.interact(wr, id.with(("wave", o)), Sense::click());
+            if resp.clicked() {
+                changed |= set(p, osc_param(o, O_WAVE), ((wave + 1) % n) as f32);
+            } else if resp.secondary_clicked() {
+                changed |= set(p, osc_param(o, O_WAVE), ((wave + n - 1) % n) as f32);
+            }
+            if resp.hovered() {
+                painter.rect_stroke(wr.expand(2.0), 2.0, Stroke::new(1.0_f32, DIM), egui::StrokeKind::Outside);
+            }
+        }
+        // Its level, and which filter it goes to.
+        let lr = Rect::from_min_max(pos2(r.right() - 28.0, r.top() + 4.0), pos2(r.right() - 22.0, r.bottom() - 4.0));
+        painter.rect_filled(lr, 1.0, Color32::from_rgb(0x2a, 0x2d, 0x35));
+        let lv = (level / 1.2).clamp(0.0, 1.0);
+        painter.rect_filled(Rect::from_min_max(pos2(lr.left(), lr.bottom() - lv * lr.height()), lr.max), 1.0, if on { accent } else { DIM });
+        let bus = get(p, osc_param(o, O_BUS));
+        painter.text(pos2(r.right() - 4.0, r.center().y), Align2::RIGHT_CENTER, if bus < 0.34 { "A" } else if bus > 0.66 { "B" } else { "AB" }, FontId::monospace(8.5), TEXT_DIM);
+    }
+    // The matrix slots in use.
+    let mx = rect.left() + lanes_w + 18.0;
+    painter.text(pos2(mx, top), Align2::LEFT_TOP, "MATRIX", FontId::monospace(9.0), TEXT_DIM);
+    let mut y = top + 13.0;
+    let mut any = false;
+    for s in 0..SLOTS {
+        let src = get(p, slot_param(s, 0)).round().clamp(0.0, (SOURCES.len() - 1) as f32) as usize;
+        let dest = get(p, slot_param(s, 1)).round().clamp(0.0, (DESTS.len() - 1) as f32) as usize;
+        let amt = get(p, slot_param(s, 2));
+        if src == 0 || dest == 0 || amt == 0.0 {
+            continue;
+        }
+        any = true;
+        if y < rect.bottom() - 46.0 {
+            painter.text(pos2(mx, y), Align2::LEFT_TOP, format!("{} > {} {:+.0}%", SOURCES[src], DESTS[dest], amt * 100.0), FontId::proportional(10.0), TEXT);
+            y += 13.0;
+        }
+    }
+    if !any {
+        painter.text(pos2(mx, y), Align2::LEFT_TOP, "nothing yet: set a Source,
+a Dest and an Amount", FontId::proportional(10.0), DIM);
+    }
+    // The envelopes, as they move.
+    let er = Rect::from_min_max(pos2(mx, rect.bottom() - 34.0), pos2(rect.right() - 10.0, rect.bottom() - 8.0));
+    let bw = er.width() / ENVS as f32;
+    for e in 0..ENVS {
+        let b = Rect::from_min_size(pos2(er.left() + e as f32 * bw + 2.0, er.top()), vec2(bw - 4.0, er.height() - 10.0));
+        painter.rect_filled(b, 1.0, FAINT);
+        let lv = if playing { live.vals[1 + e].clamp(0.0, 1.0) } else { 0.0 };
+        painter.rect_filled(Rect::from_min_max(pos2(b.left(), b.bottom() - lv * b.height()), b.max), 1.0, if e == 0 { accent } else { YELLOW.gamma_multiply(0.8) });
+        painter.text(pos2(b.center().x, er.bottom()), Align2::CENTER_BOTTOM, if e == 0 { "A".to_string() } else { (e + 1).to_string() }, FontId::monospace(8.0), TEXT_DIM);
+    }
+    if playing {
+        ui.ctx().request_repaint();
+    }
+    changed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -318,6 +413,12 @@ mod tests {
             show(|ui, live| {
                 let mut p = hybrid::preset(name);
                 hybrid_screen(ui, Id::new("h"), &mut p, live, 200.0);
+            });
+        }
+        for name in quartet::preset_names() {
+            show(|ui, live| {
+                let mut p = quartet::preset(name);
+                quartet_screen(ui, Id::new("q"), &mut p, live, 200.0);
             });
         }
     }

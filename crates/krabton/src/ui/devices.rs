@@ -1336,6 +1336,25 @@ impl App {
                             param_grid_mod(ui, Id::new(("hybrid", track_id)), krabton_engine::dsp::hybrid::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
                         });
                     }
+                    Instrument::Quartet { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("quartet_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in krabton_engine::dsp::quartet::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = krabton_engine::dsp::quartet::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("click an oscillator for its next mode, its wave for the next wave (right-click: back); the Matrix knobs send LFOs, envelopes, velocity, key and chance anywhere").small().color(TEXT_DIM));
+                        });
+                        ui.horizontal_top(|ui| {
+                            super::warp_view::quartet_screen(ui, Id::new(("quartet_screen", track_id)), params, &live, h - 48.0);
+                            ui.add_space(6.0);
+                            param_grid_mod(ui, Id::new(("quartet", track_id)), krabton_engine::dsp::quartet::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
+                        });
+                    }
                     Instrument::Guitar { preset, params } => {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Preset").small().color(TEXT_DIM));

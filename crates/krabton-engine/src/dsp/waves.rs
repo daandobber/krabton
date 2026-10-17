@@ -253,6 +253,32 @@ pub fn wave(index: usize) -> &'static [f32] {
     &raw_waves()[i * WAVE_LEN..(i + 1) * WAVE_LEN]
 }
 
+/// One of the waves (morphing into the next by `mix`), band-limited for a
+/// cycle read at `f` Hz: for other instruments that play these waves.
+pub struct TableRead {
+    seg: Seg,
+    tables: &'static [f32],
+}
+
+impl TableRead {
+    pub fn new(wave: usize, mix: f32, f: f32, sr: f32) -> Self {
+        let (a, mix) = if wave >= WAVE_COUNT - 1 { (WAVE_COUNT - 2, 1.0) } else { (wave, mix.clamp(0.0, 1.0)) };
+        let band = (0.5 * (sr - 18000.0)).min(20000.0).max(0.25 * sr);
+        Self { seg: Seg::new(a, mix, f.max(0.1), band, sr), tables: mip_tables() }
+    }
+
+    /// At phase `ph` (0 to 1).
+    #[inline]
+    pub fn read(&self, ph: f32) -> f32 {
+        self.seg.read(self.tables, ph.clamp(0.0, 1.0))
+    }
+}
+
+/// Builds the tables now (they take a moment), so a first note need not.
+pub fn warm() {
+    let _ = mip_tables();
+}
+
 /// The band-limited tables of every wave, built once.
 fn mip_tables() -> &'static [f32] {
     static MIPS: OnceLock<Vec<f32>> = OnceLock::new();

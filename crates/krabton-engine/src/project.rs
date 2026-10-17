@@ -698,6 +698,8 @@ pub enum Instrument {
     Warp { preset: String, params: Vec<f32> },
     /// Hybrid: two oscillators of nine kinds through two filters of eight (see `dsp::hybrid`).
     Hybrid { preset: String, params: Vec<f32> },
+    /// Quartet: four oscillators of eleven kinds, two filters, five envelopes, three LFOs, a matrix (see `dsp::quartet`).
+    Quartet { preset: String, params: Vec<f32> },
     /// One synth, six engines, four knobs (see `dsp::facet`).
     Facet { preset: String, params: Vec<f32> },
     /// Beads: the wavetable synth of Mutable Instruments Beads, played with keys, with its grains.
@@ -846,6 +848,10 @@ impl Instrument {
         Instrument::Hybrid { preset: preset.to_string(), params: crate::dsp::hybrid::preset(preset) }
     }
 
+    pub fn quartet(preset: &str) -> Self {
+        Instrument::Quartet { preset: preset.to_string(), params: crate::dsp::quartet::preset(preset) }
+    }
+
     pub fn facet(preset: &str) -> Self {
         Instrument::Facet { preset: preset.to_string(), params: crate::dsp::facet::preset(preset) }
     }
@@ -893,6 +899,7 @@ impl Instrument {
             Instrument::Micro { .. } => "Micro",
             Instrument::Warp { .. } => "Warp",
             Instrument::Hybrid { .. } => "Hybrid",
+            Instrument::Quartet { .. } => "Quartet",
             Instrument::Facet { .. } => "Facet",
         }
     }
@@ -906,7 +913,7 @@ impl Instrument {
             Instrument::Sampler { sample, .. } => sample.as_ref().map(|s| s.name.clone()).unwrap_or_else(|| "Empty".into()),
             Instrument::Plugin(p) => p.name.clone(),
             Instrument::Fm { voice, .. } => Dx7Voice::from_slice(voice).map(|v| v.name()).unwrap_or_else(|| "FM".into()),
-            Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Modular { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } | Instrument::Monk { preset, .. } | Instrument::Piano { preset, .. } | Instrument::Bassline { preset, .. } | Instrument::Mono101 { preset, .. } | Instrument::Drone { preset, .. } | Instrument::Waves { preset, .. } | Instrument::Guitar { preset, .. } | Instrument::WindChimes { preset, .. } | Instrument::Birds { preset, .. } | Instrument::Nature { preset, .. } | Instrument::PanFlute { preset, .. } | Instrument::Melodica { preset, .. } | Instrument::Harmonica { preset, .. } | Instrument::Calculator { preset, .. } | Instrument::Console { preset, .. } | Instrument::Handheld { preset, .. } | Instrument::Micro { preset, .. } | Instrument::Warp { preset, .. } | Instrument::Hybrid { preset, .. } | Instrument::Facet { preset, .. } | Instrument::BeadsSynth { preset, .. } => preset.clone(),
+            Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Modular { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } | Instrument::Monk { preset, .. } | Instrument::Piano { preset, .. } | Instrument::Bassline { preset, .. } | Instrument::Mono101 { preset, .. } | Instrument::Drone { preset, .. } | Instrument::Waves { preset, .. } | Instrument::Guitar { preset, .. } | Instrument::WindChimes { preset, .. } | Instrument::Birds { preset, .. } | Instrument::Nature { preset, .. } | Instrument::PanFlute { preset, .. } | Instrument::Melodica { preset, .. } | Instrument::Harmonica { preset, .. } | Instrument::Calculator { preset, .. } | Instrument::Console { preset, .. } | Instrument::Handheld { preset, .. } | Instrument::Micro { preset, .. } | Instrument::Warp { preset, .. } | Instrument::Hybrid { preset, .. } | Instrument::Quartet { preset, .. } | Instrument::Facet { preset, .. } | Instrument::BeadsSynth { preset, .. } => preset.clone(),
         }
     }
 
@@ -1745,6 +1752,7 @@ impl Project {
                 Some(Instrument::Micro { params, .. }) => params::fix_len(params, crate::dsp::micro::SPECS),
                 Some(Instrument::Warp { params, .. }) => params::fix_len(params, crate::dsp::warp::SPECS),
                 Some(Instrument::Hybrid { params, .. }) => params::fix_len(params, crate::dsp::hybrid::SPECS),
+                Some(Instrument::Quartet { params, .. }) => params::fix_len(params, crate::dsp::quartet::SPECS),
                 Some(Instrument::Facet { params, .. }) => params::fix_len(params, crate::dsp::facet::SPECS),
                 // Shakers became an instrument; their kits are the Drum Rack's.
                 Some(Instrument::Drums { engine, .. }) if *engine == drums::DrumEngine::Shakers => *engine = drums::DrumEngine::Rack,
