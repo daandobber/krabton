@@ -321,7 +321,7 @@ pub fn stick_velocity(mag: f32) -> f32 {
 }
 
 fn smooth(spec: &ParamSpec) -> bool {
-    matches!(spec.kind, ParamKind::Linear | ParamKind::Log)
+    matches!(spec.kind, ParamKind::Linear | ParamKind::Log) && spec.shown()
 }
 
 /// The two knobs of an instrument a stick moves best (X, Y): its filter and
@@ -358,6 +358,8 @@ pub fn telling_params(inst: &Instrument) -> [Option<usize>; 2] {
         Instrument::Console { .. } => Some(("Vibrato", "Vib Rate")),
         Instrument::Handheld { .. } => Some(("Treble", "Vibrato")),
         Instrument::Micro { .. } => Some(("Cutoff", "PWM")),
+        Instrument::Warp { .. } => Some(("Warp 1", "Warp 2")),
+        Instrument::Hybrid { .. } => Some(("Cutoff 1", "Reso 1")),
         _ => None,
     };
     let named = |n: &str| specs.iter().position(|s| s.name == n && smooth(s));

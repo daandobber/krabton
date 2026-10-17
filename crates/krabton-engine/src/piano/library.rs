@@ -75,7 +75,7 @@ pub const OFFSETS: [[u16; 30]; 16] = [
 
 /// The folder the library lives in once installed.
 pub const FOLDER: &str = "Salamander Grand Piano";
-pub const CREDIT: &str = "Salamander Grand Piano V3 by Alexander Holm, CC BY 3.0";
+pub const CREDIT: &str = "Salamander Grand Piano V3 by Alexander Holm (Yamaha C5), CC BY 3.0";
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Entry {

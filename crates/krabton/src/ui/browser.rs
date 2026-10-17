@@ -351,7 +351,7 @@ pub(crate) fn instrument_hint(name: &str) -> Option<&'static str> {
     devices().into_iter().find(|d| d.name == name).map(|d| d.hint)
 }
 
-fn devices() -> [Dev; 33] {
+fn devices() -> [Dev; 35] {
     [
         Dev {
             name: "Analog",
@@ -421,6 +421,8 @@ fn devices() -> [Dev; 33] {
         Dev { name: "Console", hint: "The sound chip of the 8-bit home console of 1983: two pulse channels (four duties, the sweep that bends the pitch), the triangle that has no volume, and noise (long, or the short metallic loop), in sixteen volume steps on 11-bit timers, mixed and filtered as the console does. Layered, split over the channels, or as an arpeggio sixty frames a second", presets: krabton_engine::dsp::console::preset_names(), make: BrowserItem::Console, kind: None },
         Dev { name: "Handheld", hint: "The sound of the 8-bit handheld of 1989: two pulses (one with the sweep), the wave channel with fifteen tables, and noise that buzzes into a tone in 7-bit mode; each left, right or both, the envelope stepping 64 times a second, the output of the first model or the later ones. Layered, split over the channels, or arpeggiated", presets: krabton_engine::dsp::handheld::preset_names(), make: BrowserItem::Handheld, kind: None },
         Dev { name: "Micro", hint: "The sound chip of the best-selling home computer of the eighties, the early chip or the later one: three voices of triangle, saw, pulse and noise (or two or three at once), hard sync and ring modulation, the envelope with its sixteen rates, and the multimode filter with resonance. Pulse width sweeps, vibrato and chord arpeggios move fifty times a second. Layered, split over the voices, or arpeggiated", presets: krabton_engine::dsp::micro::preset_names(), make: BrowserItem::Micro, kind: None },
+        Dev { name: "Warp", hint: "Phase distortion, as the digital synths of the mid eighties made their sound: a cosine read at a bent pace, from a sine to a saw, square, pulse, a doubled sine, a saw pulse or three resonant waves, two waves taking turns. Two lines (one, the other, one and its detuned copy, or both, the second ringed or made noisy), each with its own eight-step envelopes for the bend and the amp, and one for the pitch, drawn and dragged on its screen; vibrato and a chorus", presets: krabton_engine::dsp::warp::preset_names(), make: BrowserItem::Warp, kind: None },
+        Dev { name: "Hybrid", hint: "Two oscillators that can each be something else (phase distortion, a saw that leans into a triangle, a square of any width, a folding triangle, a sine with feedback, vector phaseshaping, VOSIM formants, Walsh functions or a plucked string), the second synced, ringed or phase-modulated by the first, noise; through two filters that can each be something else (a growling ladder, low, band, high, notch, a comb, vowels, a phaser), in series or side by side, a drive before them; two envelopes and an LFO", presets: krabton_engine::dsp::hybrid::preset_names(), make: BrowserItem::Hybrid, kind: None },
         Dev { name: "Beads", hint: "The wavetable synth of Mutable Instruments Beads, played with keys: twelve banks of waves (sines, drawbars, voices, metal, FM and more), and grains of them seeded while you hold a key (or always, or with the song's clock), each randomized in wave, size, shape and pitch, with Beads' reverb and its tape and lo-fi qualities", presets: krabton_engine::dsp::beads_synth::preset_names(), make: BrowserItem::BeadsSynth, kind: None },
     ]
 }
@@ -1579,8 +1581,8 @@ mod tests {
     #[test]
     fn presets_get_a_kind_of_sound() {
         assert_eq!(sound_type("Init"), None);
-        assert_eq!(sound_type("Ladder Bass"), Some("Bass"));
-        assert_eq!(sound_type("Chorus Strings"), Some("Strings"));
+        assert_eq!(sound_type("Moog Bass"), Some("Bass"));
+        assert_eq!(sound_type("Juno Strings"), Some("Strings"));
         assert_eq!(sound_type("Saw Swarm"), Some("Pad"));
         assert_eq!(sound_type("Steel Drum"), Some("Mallets & Bells"));
         assert_eq!(sound_type("Kick"), Some("Drums"));

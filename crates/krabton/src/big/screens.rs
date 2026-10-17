@@ -38,6 +38,8 @@ impl App {
                         | Instrument::Console { .. }
                         | Instrument::Handheld { .. }
                         | Instrument::Micro { .. }
+                        | Instrument::Warp { .. }
+                        | Instrument::Hybrid { .. }
                         | Instrument::Guitar { .. }
                         | Instrument::Monk { .. }
                         | Instrument::Rings { .. }
@@ -117,6 +119,12 @@ impl App {
                         }
                         Instrument::Micro { .. } => {
                             crate::ui::chip_view::chip_screen(ui, id, crate::ui::chip_view::Chip::Micro, p, &live, h);
+                        }
+                        Instrument::Warp { .. } => {
+                            crate::ui::warp_view::warp_screen(ui, id, p, &live, h);
+                        }
+                        Instrument::Hybrid { .. } => {
+                            crate::ui::warp_view::hybrid_screen(ui, id, p, &live, h);
                         }
                         Instrument::Guitar { .. } => {
                             es::guitar_screen(ui, id, p, &live, h);

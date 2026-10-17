@@ -51,6 +51,8 @@ pub mod chip;
 pub mod console;
 pub mod handheld;
 pub mod micro;
+pub mod warp;
+pub mod hybrid;
 pub mod tides;
 
 use std::f32::consts::PI;

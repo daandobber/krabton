@@ -69,7 +69,7 @@ pub(crate) fn param_grid_screens(
     mut draw: impl FnMut(&mut Ui, &str, Rect, &mut [f32]) -> bool,
 ) -> bool {
     let mut groups: Vec<(&str, Vec<usize>)> = Vec::new();
-    for (i, s) in specs.iter().enumerate() {
+    for (i, s) in specs.iter().enumerate().filter(|(_, s)| s.shown()) {
         match groups.iter_mut().find(|g| g.0 == s.group) {
             Some(g) => g.1.push(i),
             None => groups.push((s.group, vec![i])),
@@ -1296,6 +1296,44 @@ impl App {
                             super::chip_view::chip_screen(ui, Id::new(("micro_screen", track_id)), super::chip_view::Chip::Micro, params, &live, h - 48.0);
                             ui.add_space(6.0);
                             param_grid_mod(ui, Id::new(("micro", track_id)), krabton_engine::dsp::micro::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
+                        });
+                    }
+                    Instrument::Warp { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("warp_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in krabton_engine::dsp::warp::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = krabton_engine::dsp::warp::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("the envelopes: pick one above, drag a point up or down for its level and sideways for its rate, right-click it to hold there (S), double-click it to end there (E); click a wave for the next").small().color(TEXT_DIM));
+                        });
+                        ui.horizontal_top(|ui| {
+                            super::warp_view::warp_screen(ui, Id::new(("warp_screen", track_id)), params, &live, h - 48.0);
+                            ui.add_space(6.0);
+                            param_grid_mod(ui, Id::new(("warp", track_id)), krabton_engine::dsp::warp::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
+                        });
+                    }
+                    Instrument::Hybrid { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("hybrid_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in krabton_engine::dsp::hybrid::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = krabton_engine::dsp::hybrid::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("click an oscillator for its next engine, the filter for its next kind; drag the filter for cutoff and resonance").small().color(TEXT_DIM));
+                        });
+                        ui.horizontal_top(|ui| {
+                            super::warp_view::hybrid_screen(ui, Id::new(("hybrid_screen", track_id)), params, &live, h - 48.0);
+                            ui.add_space(6.0);
+                            param_grid_mod(ui, Id::new(("hybrid", track_id)), krabton_engine::dsp::hybrid::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
                         });
                     }
                     Instrument::Guitar { preset, params } => {

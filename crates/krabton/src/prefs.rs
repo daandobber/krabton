@@ -150,11 +150,11 @@ mod tests {
     #[test]
     fn collections_toggle_and_survive_a_round_trip() {
         let mut p = Prefs::default();
-        p.toggle_collection("inst/Analog/Ladder Bass", "Ladder Bass", 0);
-        p.toggle_collection("inst/Analog/Ladder Bass", "Ladder Bass", 3);
-        assert_eq!(p.collections("inst/Analog/Ladder Bass"), 0b1001);
-        p.toggle_collection("inst/Analog/Ladder Bass", "Ladder Bass", 0);
-        assert_eq!(p.collections("inst/Analog/Ladder Bass"), 0b1000);
+        p.toggle_collection("inst/Analog/Moog Bass", "Moog Bass", 0);
+        p.toggle_collection("inst/Analog/Moog Bass", "Moog Bass", 3);
+        assert_eq!(p.collections("inst/Analog/Moog Bass"), 0b1001);
+        p.toggle_collection("inst/Analog/Moog Bass", "Moog Bass", 0);
+        assert_eq!(p.collections("inst/Analog/Moog Bass"), 0b1000);
         p.grid_rotation = 180;
         let back: Prefs = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
         assert_eq!(back.grid_rotation, 180);
@@ -162,7 +162,7 @@ mod tests {
         // Unknown and missing fields are fine.
         let old: Prefs = serde_json::from_str(r#"{"grid_rotation": 90, "something": 1}"#).unwrap();
         assert_eq!(old.grid_rotation, 90);
-        p.toggle_collection("inst/Analog/Ladder Bass", "Ladder Bass", 3);
+        p.toggle_collection("inst/Analog/Moog Bass", "Moog Bass", 3);
         assert!(p.tagged.is_empty());
     }
 }

@@ -34,6 +34,8 @@ use crate::dsp::calculator::CalculatorState;
 use crate::dsp::console::ConsoleState;
 use crate::dsp::handheld::HandheldState;
 use crate::dsp::micro::MicroState;
+use crate::dsp::warp::WarpState;
+use crate::dsp::hybrid::HybridState;
 use crate::piano::{library::PianoLibrary, PianoState};
 use crate::dsp::rings_synth::RingsState;
 use crate::dsp::braids_synth::BraidsSynthState;
@@ -453,6 +455,8 @@ enum InstState {
     Console(Box<ConsoleState>),
     Handheld(Box<HandheldState>),
     Micro(Box<MicroState>),
+    Warp(Box<WarpState>),
+    Hybrid(Box<HybridState>),
     Facet(Box<FacetState>),
     Plugin { instance: u64, proc: Option<Box<dyn AudioProcessor>>, pending: Vec<PluginEvent> },
 }
@@ -482,6 +486,8 @@ impl InstState {
             InstState::Console(s) => s.pitch_bend = semis,
             InstState::Handheld(s) => s.pitch_bend = semis,
             InstState::Micro(s) => s.pitch_bend = semis,
+            InstState::Warp(s) => s.pitch_bend = semis,
+            InstState::Hybrid(s) => s.pitch_bend = semis,
             InstState::Facet(s) => s.pitch_bend = semis,
             InstState::Voice(s) => s.pitch_bend = semis,
             InstState::Monk(s) => s.pitch_bend = semis,
@@ -527,6 +533,8 @@ impl InstState {
             Some(Instrument::Console { .. }) => InstState::Console(Box::new(ConsoleState::new(sr))),
             Some(Instrument::Handheld { .. }) => InstState::Handheld(Box::new(HandheldState::new(sr))),
             Some(Instrument::Micro { .. }) => InstState::Micro(Box::new(MicroState::new(sr))),
+            Some(Instrument::Warp { .. }) => InstState::Warp(Box::new(WarpState::new(sr))),
+            Some(Instrument::Hybrid { .. }) => InstState::Hybrid(Box::new(HybridState::new(sr))),
             Some(Instrument::Facet { .. }) => InstState::Facet(Box::new(FacetState::new(sr))),
         }
     }
@@ -584,6 +592,8 @@ impl InstState {
                 | (InstState::Console(_), Some(Instrument::Console { .. }))
                 | (InstState::Handheld(_), Some(Instrument::Handheld { .. }))
                 | (InstState::Micro(_), Some(Instrument::Micro { .. }))
+                | (InstState::Warp(_), Some(Instrument::Warp { .. }))
+                | (InstState::Hybrid(_), Some(Instrument::Hybrid { .. }))
                 | (InstState::Facet(_), Some(Instrument::Facet { .. }))
         ) || matches!((self, i), (InstState::Plugin { instance, .. }, Some(Instrument::Plugin(p))) if *instance == p.instance)
     }
@@ -626,6 +636,8 @@ impl InstState {
             (InstState::Console(s), Instrument::Console { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Handheld(s), Instrument::Handheld { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Micro(s), Instrument::Micro { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Warp(s), Instrument::Warp { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Hybrid(s), Instrument::Hybrid { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Facet(s), Instrument::Facet { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             _ => {}
         }
@@ -667,6 +679,8 @@ impl InstState {
             (InstState::Console(s), Instrument::Console { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Handheld(s), Instrument::Handheld { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Micro(s), Instrument::Micro { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Warp(s), Instrument::Warp { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Hybrid(s), Instrument::Hybrid { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Facet(s), Instrument::Facet { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             _ => {}
         }
@@ -709,6 +723,8 @@ impl InstState {
             InstState::Console(s) => s.all_off(),
             InstState::Handheld(s) => s.all_off(),
             InstState::Micro(s) => s.all_off(),
+            InstState::Warp(s) => s.all_off(),
+            InstState::Hybrid(s) => s.all_off(),
             InstState::Facet(s) => s.all_off(),
             InstState::None => {}
         }
@@ -741,6 +757,8 @@ impl InstState {
             InstState::Console(s) => s.visual(out),
             InstState::Handheld(s) => s.visual(out),
             InstState::Micro(s) => s.visual(out),
+            InstState::Warp(s) => s.visual(out),
+            InstState::Hybrid(s) => s.visual(out),
             InstState::Facet(s) => s.visual(out),
             _ => return false,
         }
@@ -783,6 +801,8 @@ impl InstState {
             (InstState::Console(s), Instrument::Console { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Handheld(s), Instrument::Handheld { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Micro(s), Instrument::Micro { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Warp(s), Instrument::Warp { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Hybrid(s), Instrument::Hybrid { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Facet(s), Instrument::Facet { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Plugin { proc, pending, .. }, Instrument::Plugin(_)) => {
                 if let Some(p) = proc {
@@ -3367,7 +3387,7 @@ mod tests {
     fn analog_plays_clips_and_can_be_modulated() {
         use crate::modulation::{ModKind, ModOwner, ModTarget};
         let mut p = crate::demo::demo_project();
-        p.tracks[1].instrument = Some(Instrument::analog("Ladder Bass"));
+        p.tracks[1].instrument = Some(Instrument::analog("Moog Bass"));
         let lfo = p.make_modulator(ModKind::Lfo);
         let lid = lfo.id;
         p.modulators.push(lfo);

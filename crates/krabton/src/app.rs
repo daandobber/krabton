@@ -137,6 +137,8 @@ pub enum BrowserItem {
     Console(&'static str),
     Handheld(&'static str),
     Micro(&'static str),
+    Warp(&'static str),
+    Hybrid(&'static str),
     /// A Facet preset.
     Facet(&'static str),
     /// A Beads (instrument) preset.
@@ -190,6 +192,8 @@ impl BrowserItem {
             BrowserItem::Console(p) => format!("Console: {p}"),
             BrowserItem::Handheld(p) => format!("Handheld: {p}"),
             BrowserItem::Micro(p) => format!("Micro: {p}"),
+            BrowserItem::Warp(p) => format!("Warp: {p}"),
+            BrowserItem::Hybrid(p) => format!("Hybrid: {p}"),
             BrowserItem::Facet(p) => format!("Facet: {p}"),
             BrowserItem::Piano(p) => format!("Grand Piano: {p}"),
             BrowserItem::Drums(k) => k.to_string(),
@@ -935,8 +939,8 @@ impl App {
                         use krabton_engine::midi_fx::MidiFxKind as K;
                         // A fitting instrument for each sequencer.
                         let inst = match kind {
-                            K::Euclid | K::DrumGrid | K::DrumMap | K::Marbles | K::Chance | K::Bits => Instrument::drums("Punch Classic"),
-                            K::Percussion => Instrument::drums("Boom Latin"),
+                            K::Euclid | K::DrumGrid | K::DrumMap | K::Marbles | K::Chance | K::Bits => Instrument::drums("909 Classic"),
+                            K::Percussion => Instrument::drums("808 Latin"),
                             K::Drummer => Instrument::drums("Studio Kit"),
                             K::Acid => Instrument::synth("Acid"),
                             K::Progression => Instrument::synth("Soft Pad"),
@@ -1027,7 +1031,7 @@ impl App {
                 }
                 self.toast(format!("Loading {} ...", info.name));
             }
-            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::Harmonica(_) | BrowserItem::Calculator(_) | BrowserItem::Console(_) | BrowserItem::Handheld(_) | BrowserItem::Micro(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) => {
+            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::Harmonica(_) | BrowserItem::Calculator(_) | BrowserItem::Console(_) | BrowserItem::Handheld(_) | BrowserItem::Micro(_) | BrowserItem::Warp(_) | BrowserItem::Hybrid(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) => {
                 let inst = match item {
                     BrowserItem::Synth(p) => Instrument::synth(p),
                     BrowserItem::Macro(p) => Instrument::macro_osc(p),
@@ -1060,6 +1064,8 @@ impl App {
                     BrowserItem::Console(p) => Instrument::console(p),
                     BrowserItem::Handheld(p) => Instrument::handheld(p),
                     BrowserItem::Micro(p) => Instrument::micro(p),
+                    BrowserItem::Warp(p) => Instrument::warp(p),
+                    BrowserItem::Hybrid(p) => Instrument::hybrid(p),
                     BrowserItem::Facet(p) => Instrument::facet(p),
                     BrowserItem::Drums(k) => Instrument::drums(k),
                     _ => Instrument::sampler(None),
@@ -2496,6 +2502,18 @@ impl App {
                     let names = krabton_engine::dsp::micro::preset_names();
                     let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
                     self.apply_item(&BrowserItem::Micro(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "warp" => {
+                    let names = krabton_engine::dsp::warp::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Warp(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "hybrid" => {
+                    let names = krabton_engine::dsp::hybrid::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Hybrid(p), DropTarget::NewTrack);
                     self.detail = DetailTab::Devices;
                 }
                 "facet" => {

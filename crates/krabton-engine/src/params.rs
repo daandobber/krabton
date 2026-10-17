@@ -37,7 +37,16 @@ pub struct ParamSpec {
     pub unit: Unit,
 }
 
+/// The group of the parameters an instrument edits on its screen only
+/// (the steps of an envelope): no knobs, no automation lanes for them.
+pub const SCREEN_ONLY: &str = "~";
+
 impl ParamSpec {
+    /// Whether it gets a knob (see [`SCREEN_ONLY`]).
+    pub fn shown(&self) -> bool {
+        self.group != SCREEN_ONLY
+    }
+
     pub const fn lin(name: &'static str, group: &'static str, min: f32, max: f32, default: f32, unit: Unit) -> Self {
         Self { name, group, min, max, default, kind: ParamKind::Linear, unit }
     }

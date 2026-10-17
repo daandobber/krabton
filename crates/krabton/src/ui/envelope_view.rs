@@ -58,17 +58,17 @@ impl App {
         }
         if let Some(specs) = tr.instrument.as_ref().and_then(instrument_specs) {
             let name = tr.instrument.as_ref().map(|i| i.kind_name()).unwrap_or("Instrument");
-            for (k, s) in specs.iter().enumerate() {
+            for (k, s) in specs.iter().enumerate().filter(|(_, s)| s.shown()) {
                 out.push(EnvTarget { group: name.into(), name: s.name.into(), target: ModTarget::Param { owner: ModOwner::Instrument(tr.id), param: k as u16 }, spec: Some(s) });
             }
         }
         for d in &tr.midi_devices {
-            for (k, s) in d.kind.specs().iter().enumerate() {
+            for (k, s) in d.kind.specs().iter().enumerate().filter(|(_, s)| s.shown()) {
                 out.push(EnvTarget { group: d.kind.name().into(), name: s.name.into(), target: ModTarget::Param { owner: ModOwner::MidiDevice(d.id), param: k as u16 }, spec: Some(s) });
             }
         }
         for d in &tr.devices {
-            for (k, s) in d.kind.specs().iter().enumerate() {
+            for (k, s) in d.kind.specs().iter().enumerate().filter(|(_, s)| s.shown()) {
                 out.push(EnvTarget { group: d.name().into(), name: s.name.into(), target: ModTarget::Param { owner: ModOwner::Device(d.id), param: k as u16 }, spec: Some(s) });
             }
         }

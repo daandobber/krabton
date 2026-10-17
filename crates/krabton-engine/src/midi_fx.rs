@@ -418,7 +418,7 @@ impl MidiFxKind {
         match self {
             MidiFxKind::Polymeter => "Kria-style step sequencer: every lane has its own loop length",
             MidiFxKind::Step => "Classic 16-step sequencer: note, velocity, length and ratchets per step",
-            MidiFxKind::Acid => "Acid bass line with accent, slide and tie",
+            MidiFxKind::Acid => "TB-303 style bass line with accent, slide and tie",
             MidiFxKind::DrumGrid => "x0x drum machine grid: 8 lanes, 16 steps, accents and swing",
             MidiFxKind::Progression => "A chord progression in the project key, with rhythms",
             MidiFxKind::Euclid => "Four euclidean rhythm rings, great for drums",

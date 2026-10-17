@@ -1603,7 +1603,7 @@ pub(crate) fn piano_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, 
         rect_fill(&painter, r, 2.0, if *on { accent_now() } else { DIM.gamma_multiply(dim) });
     }
     let painter = ui.painter_at(rect);
-    caption(&painter, rect.left_top() + vec2(8.0, 6.0), Align2::LEFT_TOP, "grand piano · salamander", WHITE.gamma_multiply(dim));
+    caption(&painter, rect.left_top() + vec2(8.0, 6.0), Align2::LEFT_TOP, "grand piano · yamaha c5", WHITE.gamma_multiply(dim));
     match lib {
         PianoLib::Ready => {
             if pedal {
@@ -1626,7 +1626,7 @@ pub(crate) fn piano_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, 
             painter.text(pos2(b.center().x, b.bottom() + 10.0), Align2::CENTER_CENTER, note, small(), if matches!(lib, PianoLib::Failed(_)) { RED } else { TEXT_DIM });
             painter.text(pos2(b.center().x, b.bottom() + 24.0), Align2::CENTER_CENTER, "Salamander Grand Piano by Alexander Holm, CC BY 3.0", small(), TEXT_DIM);
             install = resp.clicked();
-            resp.on_hover_text("Downloads the Salamander Grand Piano (a grand in 16 velocity layers) and prepares it for Krabton");
+            resp.on_hover_text("Downloads the Salamander Grand Piano (a Yamaha C5 in 16 velocity layers) and prepares it for Krabton");
         }
         PianoLib::Installing(what, frac) => {
             let bar = Rect::from_center_size(pos2(rect.center().x, rect.center().y - 6.0), vec2(220.0, 8.0));

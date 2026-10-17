@@ -154,14 +154,14 @@ fn all_bits() -> u8 {
 /// The shortest note `tidy_notes` leaves when it shortens one.
 pub const MIN_TIDY_LENGTH: f64 = 1.0 / 32.0;
 
-/// Presets that were named after the instruments they imitate, which are
-/// their makers' names, and what they are called now.
+/// Presets that were renamed, and what they are called now (Analog's had
+/// other names in 0.11.1 only).
 fn renamed_preset(name: &str) -> Option<&'static str> {
     Some(match name {
-        "Moog Bass" => "Ladder Bass",
-        "Juno Pad" => "Chorus Pad",
-        "Juno Strings" => "Chorus Strings",
-        "Prophet Brass" => "Poly Brass",
+        "Ladder Bass" => "Moog Bass",
+        "Chorus Pad" => "Juno Pad",
+        "Chorus Strings" => "Juno Strings",
+        "Poly Brass" => "Prophet Brass",
         "Da Da Da" => "Toy March",
         "8580 Pad" => "Clean Pad",
         "Hubbard Bass" => "Driving Bass",
@@ -694,6 +694,10 @@ pub enum Instrument {
     /// Micro: a home computer's three voices, ring, sync and the multimode filter.
     #[serde(alias = "Sid")]
     Micro { preset: String, params: Vec<f32> },
+    /// Warp: phase distortion, two lines, eight-step envelopes (see `dsp::warp`).
+    Warp { preset: String, params: Vec<f32> },
+    /// Hybrid: two oscillators of nine kinds through two filters of eight (see `dsp::hybrid`).
+    Hybrid { preset: String, params: Vec<f32> },
     /// One synth, six engines, four knobs (see `dsp::facet`).
     Facet { preset: String, params: Vec<f32> },
     /// Beads: the wavetable synth of Mutable Instruments Beads, played with keys, with its grains.
@@ -834,6 +838,14 @@ impl Instrument {
         Instrument::Micro { preset: preset.to_string(), params: crate::dsp::micro::preset(preset) }
     }
 
+    pub fn warp(preset: &str) -> Self {
+        Instrument::Warp { preset: preset.to_string(), params: crate::dsp::warp::preset(preset) }
+    }
+
+    pub fn hybrid(preset: &str) -> Self {
+        Instrument::Hybrid { preset: preset.to_string(), params: crate::dsp::hybrid::preset(preset) }
+    }
+
     pub fn facet(preset: &str) -> Self {
         Instrument::Facet { preset: preset.to_string(), params: crate::dsp::facet::preset(preset) }
     }
@@ -879,6 +891,8 @@ impl Instrument {
             Instrument::Console { .. } => "Console",
             Instrument::Handheld { .. } => "Handheld",
             Instrument::Micro { .. } => "Micro",
+            Instrument::Warp { .. } => "Warp",
+            Instrument::Hybrid { .. } => "Hybrid",
             Instrument::Facet { .. } => "Facet",
         }
     }
@@ -892,7 +906,7 @@ impl Instrument {
             Instrument::Sampler { sample, .. } => sample.as_ref().map(|s| s.name.clone()).unwrap_or_else(|| "Empty".into()),
             Instrument::Plugin(p) => p.name.clone(),
             Instrument::Fm { voice, .. } => Dx7Voice::from_slice(voice).map(|v| v.name()).unwrap_or_else(|| "FM".into()),
-            Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Modular { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } | Instrument::Monk { preset, .. } | Instrument::Piano { preset, .. } | Instrument::Bassline { preset, .. } | Instrument::Mono101 { preset, .. } | Instrument::Drone { preset, .. } | Instrument::Waves { preset, .. } | Instrument::Guitar { preset, .. } | Instrument::WindChimes { preset, .. } | Instrument::Birds { preset, .. } | Instrument::Nature { preset, .. } | Instrument::PanFlute { preset, .. } | Instrument::Melodica { preset, .. } | Instrument::Harmonica { preset, .. } | Instrument::Calculator { preset, .. } | Instrument::Console { preset, .. } | Instrument::Handheld { preset, .. } | Instrument::Micro { preset, .. } | Instrument::Facet { preset, .. } | Instrument::BeadsSynth { preset, .. } => preset.clone(),
+            Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Modular { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } | Instrument::Monk { preset, .. } | Instrument::Piano { preset, .. } | Instrument::Bassline { preset, .. } | Instrument::Mono101 { preset, .. } | Instrument::Drone { preset, .. } | Instrument::Waves { preset, .. } | Instrument::Guitar { preset, .. } | Instrument::WindChimes { preset, .. } | Instrument::Birds { preset, .. } | Instrument::Nature { preset, .. } | Instrument::PanFlute { preset, .. } | Instrument::Melodica { preset, .. } | Instrument::Harmonica { preset, .. } | Instrument::Calculator { preset, .. } | Instrument::Console { preset, .. } | Instrument::Handheld { preset, .. } | Instrument::Micro { preset, .. } | Instrument::Warp { preset, .. } | Instrument::Hybrid { preset, .. } | Instrument::Facet { preset, .. } | Instrument::BeadsSynth { preset, .. } => preset.clone(),
         }
     }
 
@@ -1683,7 +1697,7 @@ impl Project {
                 params::fix_len(&mut d.params, d.kind.specs());
                 max_id = max_id.max(d.id + 1);
             }
-            // Names that were the makers' are Krabton's own now.
+            // Names that changed.
             match &mut t.instrument {
                 Some(Instrument::Drums { kit, .. }) => *kit = drums::current_name(kit).to_string(),
                 Some(Instrument::Analog { preset, .. } | Instrument::Calculator { preset, .. } | Instrument::Micro { preset, .. }) => {
@@ -1729,6 +1743,8 @@ impl Project {
                 Some(Instrument::Console { params, .. }) => params::fix_len(params, crate::dsp::console::SPECS),
                 Some(Instrument::Handheld { params, .. }) => params::fix_len(params, crate::dsp::handheld::SPECS),
                 Some(Instrument::Micro { params, .. }) => params::fix_len(params, crate::dsp::micro::SPECS),
+                Some(Instrument::Warp { params, .. }) => params::fix_len(params, crate::dsp::warp::SPECS),
+                Some(Instrument::Hybrid { params, .. }) => params::fix_len(params, crate::dsp::hybrid::SPECS),
                 Some(Instrument::Facet { params, .. }) => params::fix_len(params, crate::dsp::facet::SPECS),
                 // Shakers became an instrument; their kits are the Drum Rack's.
                 Some(Instrument::Drums { engine, .. }) if *engine == drums::DrumEngine::Shakers => *engine = drums::DrumEngine::Rack,
@@ -2029,26 +2045,26 @@ mod tests {
     }
 
     #[test]
-    fn names_that_were_the_makers_load_as_krabtons_own() {
+    fn renamed_instruments_and_presets_still_load() {
         let mut p = Project::blank();
         let a = p.add_midi_track(Some(Instrument::calculator("Piano")));
-        let b = p.add_midi_track(Some(Instrument::analog("Ladder Bass")));
-        let c = p.add_midi_track(Some(Instrument::drums("Boom Classic")));
+        let b = p.add_midi_track(Some(Instrument::analog("Moog Bass")));
+        let c = p.add_midi_track(Some(Instrument::drums("808 Classic")));
         let d = p.add_midi_track(Some(Instrument::micro("Clean Pad")));
-        // As 0.11.0 and before wrote them.
+        // As 0.11.0 (the synths) and 0.11.1 (Analog's presets, the kits) wrote them.
         let json = serde_json::to_string(&p)
             .unwrap()
             .replace("\"Calculator\"", "\"VlTone\"")
             .replace("\"Micro\"", "\"Sid\"")
-            .replace("\"Ladder Bass\"", "\"Moog Bass\"")
-            .replace("\"Boom Classic\"", "\"808 Classic\"")
+            .replace("\"Moog Bass\"", "\"Ladder Bass\"")
+            .replace("\"808 Classic\"", "\"Boom Classic\"")
             .replace("\"Clean Pad\"", "\"8580 Pad\"");
-        assert!(json.contains("VlTone") && json.contains("Moog Bass") && json.contains("808 Classic"));
+        assert!(json.contains("VlTone") && json.contains("Ladder Bass") && json.contains("Boom Classic"));
         let mut back: Project = serde_json::from_str(&json).unwrap();
         back.sanitize();
         assert!(matches!(&back.tracks[a].instrument, Some(Instrument::Calculator { .. })));
-        assert!(matches!(&back.tracks[b].instrument, Some(Instrument::Analog { preset, .. }) if preset == "Ladder Bass"));
-        assert!(matches!(&back.tracks[c].instrument, Some(Instrument::Drums { kit, engine, .. }) if kit == "Boom Classic" && *engine == drums::DrumEngine::M808));
+        assert!(matches!(&back.tracks[b].instrument, Some(Instrument::Analog { preset, .. }) if preset == "Moog Bass"));
+        assert!(matches!(&back.tracks[c].instrument, Some(Instrument::Drums { kit, engine, .. }) if kit == "808 Classic" && *engine == drums::DrumEngine::M808));
         assert!(matches!(&back.tracks[d].instrument, Some(Instrument::Micro { preset, .. }) if preset == "Clean Pad"));
     }
 

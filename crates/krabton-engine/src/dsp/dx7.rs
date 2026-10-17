@@ -593,7 +593,7 @@ pub fn factory_bank() -> Vec<Dx7Voice> {
             transpose: 24,
         },
         VoiceDef {
-            name: "FUNK CLAV",
+            name: "CLAVINET",
             alg: 3,
             fb: 6,
             ops: [

@@ -214,7 +214,7 @@ impl App {
         if has_preset {
             rows.push(Row::Preset);
         }
-        rows.extend((0..specs.len()).map(Row::Param));
+        rows.extend((0..specs.len()).filter(|&i| specs[i].shown()).map(Row::Param));
         let mut row_i = self.big.dev.row.min(rows.len().saturating_sub(1));
 
         // Buttons.
