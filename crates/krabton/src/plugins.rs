@@ -163,6 +163,13 @@ impl PluginManager {
         }
     }
 
+    /// Drops every instance (and forgets which failed), so that `sync`
+    /// makes them again: for a new engine.
+    pub fn forget(&mut self) {
+        self.instances.clear();
+        self.failed.clear();
+    }
+
     /// Writes every plugin's current state into the project, so it gets
     /// saved (or copied, when duplicating a track).
     pub fn store_states(&self, project: &mut Project) {

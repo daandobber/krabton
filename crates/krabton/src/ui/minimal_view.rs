@@ -237,7 +237,7 @@ pub(crate) fn satie(ui: &mut Ui, id: egui::Id, params: &mut [f32], live: Live, a
     if style == 2 {
         text(&p, foot.left_center(), Align2::LEFT_CENTER, "Sarabande", small(), TEXT_DIM);
     } else if letters.is_empty() {
-        let what = if intro { "intro".to_string() } else { format!("endless · {}", (b'A' + (letter % 26)) as char) };
+        let what = if vis.is_none() { "endless".to_string() } else if intro { "intro".to_string() } else { format!("endless · {}", (b'A' + (letter % 26)) as char) };
         text(&p, foot.left_center(), Align2::LEFT_CENTER, what, small(), if resp.hovered() { TEXT } else { TEXT_DIM });
     } else {
         let lw = 16.0;

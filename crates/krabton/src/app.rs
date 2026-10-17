@@ -350,9 +350,14 @@ pub struct App {
     pub dirty: bool,
     pub engine: EngineHandle,
     _audio: AudioOutput,
+    /// Where the engine is, for the output to play (and to move to another).
+    engine_slot: audio::EngineSlot,
     pub audio_desc: String,
     /// Output devices for the Options menu (read when it first opens).
     pub audio_devices: Option<Vec<String>>,
+    pub audio_in_devices: Option<Vec<String>>,
+    /// The settings window (audio and MIDI devices).
+    pub show_settings: bool,
     pub midi: Midi,
     pending: Vec<Command>,
 
@@ -472,23 +477,28 @@ impl App {
         let start_big = prefs.big_picture;
         // KRABTON_AUDIO_DEVICE (a device name) wins over the one picked in Options.
         let preferred = std::env::var("KRABTON_AUDIO_DEVICE").ok().or_else(|| prefs.audio_output.clone());
+        let engine_slot = audio::new_slot();
         let opened = if std::env::var_os("KRABTON_NO_AUDIO").is_some() {
             Err("disabled by KRABTON_NO_AUDIO".to_string())
         } else {
-            audio::open_output(preferred.as_deref(), |sr| Engine::new(sr, snapshot.clone()))
+            audio::open_output(preferred.as_deref(), &engine_slot, None)
         };
-        let (audio_out, engine, audio_desc) = match opened {
-            Ok((out, handle)) => {
+        let (audio_out, rate, audio_desc) = match opened {
+            Ok((out, rate)) => {
                 let d = out.description();
-                (out, handle, d)
+                (out, rate, d)
             }
             Err(e) => {
                 eprintln!("No audio output: {e}\n{}", audio::no_audio_hint());
-                let (engine, handle) = Engine::new(48000.0, snapshot.clone());
-                let short = if std::env::var_os("KRABTON_NO_AUDIO").is_some() { format!("No audio: {e}") } else { "No audio output (see Options > Audio output)".to_string() };
-                (audio::start_null(engine), handle, short)
+                let short = if std::env::var_os("KRABTON_NO_AUDIO").is_some() { format!("No audio: {e}") } else { "No audio output (see Options > Settings)".to_string() };
+                (audio::start_null(engine_slot.clone(), 48000), 48000, short)
             }
         };
+        // The engine at the output's rate, into the slot it plays from.
+        let (eng, engine) = Engine::new(rate as f32, snapshot.clone());
+        if let Ok(mut g) = engine_slot.lock() {
+            *g = Some(eng);
+        }
 
         let mut midi = Midi::new();
         midi.auto_connect();
@@ -515,8 +525,11 @@ impl App {
             dirty: false,
             engine,
             _audio: audio_out,
+            engine_slot,
             audio_desc,
             audio_devices: None,
+            audio_in_devices: None,
+            show_settings: false,
             midi,
             pending: Vec::new(),
             view: View::Session,
@@ -1395,6 +1408,86 @@ impl App {
         (pitch, ids)
     }
 
+    /// Plays through another output device (None: the system default), at
+    /// once, and remembers it. The engine moves along as it is when the
+    /// device can run at its sample rate; else a new one takes over at the
+    /// device's rate, with the set, the transport, plugins and input.
+    pub(crate) fn switch_audio_output(&mut self, name: Option<String>) {
+        self.prefs.audio_output = name.clone();
+        self.prefs.save();
+        if std::env::var_os("KRABTON_NO_AUDIO").is_some() {
+            self.toast("Audio is off here (KRABTON_NO_AUDIO)");
+            return;
+        }
+        let rate = self.engine.status.sample_rate.load().round() as u32;
+        // The old output stops first; the engine waits in its slot.
+        self._audio = AudioOutput::Off;
+        let (out, new_rate) = match audio::open_output(name.as_deref(), &self.engine_slot, Some(rate)) {
+            Ok(ok) => ok,
+            Err(e) => {
+                self.toast(format!("No audio output: {e}"));
+                (audio::start_null(self.engine_slot.clone(), rate), rate)
+            }
+        };
+        if new_rate != rate {
+            self.rebuild_engine(new_rate);
+        }
+        self.audio_desc = out.description();
+        self._audio = out;
+        let wanted = name.as_deref().is_none_or(|n| self.audio_desc.starts_with(n));
+        self.toast(if wanted { format!("Audio output: {}", self.audio_desc) } else { format!("Could not open it; playing to {}", self.audio_desc) });
+    }
+
+    /// Records from another input device (None: the system default),
+    /// reopened as soon as a track listens to it.
+    pub(crate) fn switch_audio_input(&mut self, name: Option<String>) {
+        self.prefs.audio_input = name;
+        self.prefs.save();
+        let was_open = self.input_dev.take().is_some();
+        self.input_error = None;
+        self.cmd(Command::SetInput(None));
+        if !was_open {
+            self.toast("Audio input saved: it opens when a track listens to its input");
+        }
+    }
+
+    /// A new engine at `rate` in place of the running one: the set, the
+    /// transport, plugins (from their current state) and the input go over.
+    fn rebuild_engine(&mut self, rate: u32) {
+        let playing = self.engine.status.playing.load(Ordering::Relaxed);
+        let pos = self.engine.status.song_pos.load();
+        // The session clips that play, to launch again.
+        let launched: Vec<(u64, usize)> = self
+            .project
+            .tracks
+            .iter()
+            .enumerate()
+            .filter_map(|(i, t)| {
+                let s = self.engine.status.tracks.get(i)?.playing_slot.load(Ordering::Relaxed);
+                (s >= 0).then_some((t.id, s as usize))
+            })
+            .collect();
+        self.plugins.store_states(&mut self.project);
+        let snapshot = Arc::new(self.project.clone());
+        let (eng, handle) = Engine::new(rate as f32, snapshot.clone());
+        let old = self.engine_slot.lock().ok().and_then(|mut g| g.replace(eng));
+        // The old engine (and the plugins' processors in it) goes here, off the audio thread.
+        drop(old);
+        self.engine = handle;
+        self.last_sent = snapshot;
+        self.plugins.forget();
+        self.sync_plugins();
+        self.input_dev = None;
+        self.input_error = None;
+        if playing {
+            self.cmd(Command::SetPosition(pos));
+            self.cmd(Command::Play);
+        }
+        for (track, slot) in launched {
+            self.cmd(Command::LaunchClip { track, slot });
+        }
+    }
+
     /// Creates/drops plugin instances to match the project and runs their
     /// main-thread housekeeping.
     fn sync_plugins(&mut self) {
@@ -1827,6 +1920,7 @@ impl App {
                 Key::B if m.alt => self.browser.visible = !self.browser.visible,
                 Key::L if m.alt => self.toggle_detail(),
                 Key::H => self.show_history = !self.show_history,
+                Key::Comma => self.show_settings = !self.show_settings,
                 Key::F => {
                     self.browser.visible = true;
                     self.browser.focus_search = true;
@@ -2224,6 +2318,14 @@ impl App {
                 "glitchwin" => self.glitch_window = self.project.all_devices().find(|d| d.kind == krabton_engine::dsp::effects::EffectKind::Glitch).map(|d| d.id),
                 "rackcolumns" => self.prefs.layout.rack_columns = !self.prefs.layout.rack_columns,
                 "devices" => self.detail = DetailTab::Devices,
+                "settings" => self.show_settings = true,
+                "audioout" => {
+                    let names = audio::output_device_names();
+                    eprintln!("outputs: {names:?}");
+                    let pick = nums.first().and_then(|&i| names.get(i).cloned());
+                    self.switch_audio_output(pick);
+                    eprintln!("now: {}", self.audio_desc);
+                }
                 "grid" => self.detail = DetailTab::Grid,
                 "press" => {
                     // Keyboard input for this window only, e.g. press=ctrl+c, press=shift+up.

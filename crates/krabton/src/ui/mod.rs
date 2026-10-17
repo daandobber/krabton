@@ -42,6 +42,7 @@ pub mod scope;
 pub mod seq_more_view;
 pub mod seq_view;
 pub mod session;
+pub mod settings;
 pub mod transport;
 
 use crate::app::{App, ArrClipDrag, BrowserItem, ClipSel, SlotDrag, View};

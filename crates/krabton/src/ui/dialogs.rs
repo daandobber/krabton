@@ -47,6 +47,7 @@ impl App {
         self.ui_export(ctx);
         self.ui_scale_dialog(ctx);
         self.ui_history(ctx);
+        self.ui_settings(ctx);
         self.ui_rack(ctx);
         self.ui_glitch_window(ctx);
         if self.show_about {

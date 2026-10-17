@@ -153,11 +153,54 @@ fn preset_menu(ui: &mut Ui, menu: PresetMenu) {
 }
 
 /// Device frame with a title bar. Returns the body's inner response.
-fn device_frame<R>(ui: &mut Ui, title: &str, enabled: Option<&mut bool>, height: f32, body: impl FnOnce(&mut Ui) -> R) -> (R, Option<ChainActionKind>) {
-    device_frame_presets(ui, title, enabled, None, height, body)
+fn device_frame<R>(ui: &mut Ui, title: &str, info: Option<&str>, enabled: Option<&mut bool>, height: f32, body: impl FnOnce(&mut Ui) -> R) -> (R, Option<ChainActionKind>) {
+    device_frame_presets(ui, title, info, enabled, None, height, body)
 }
 
-fn device_frame_presets<R>(ui: &mut Ui, title: &str, enabled: Option<&mut bool>, presets: Option<PresetMenu>, height: f32, body: impl FnOnce(&mut Ui) -> R) -> (R, Option<ChainActionKind>) {
+/// A small "i" by a device's name: what the device is, on hover, or kept
+/// open by a click (until a click elsewhere, Escape, or the "i" again).
+pub(crate) fn info_button(ui: &mut Ui, text: &str) -> egui::Response {
+    let (r, resp) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::click());
+    let key = resp.id.with("info_open");
+    let mut open = ui.data(|d| d.get_temp::<bool>(key).unwrap_or(false));
+    let c = if open || resp.hovered() { accent_now() } else { TEXT_DIM };
+    let p = ui.painter();
+    p.circle_stroke(r.center(), 6.5, Stroke::new(1.2_f32, c));
+    p.text(r.center() + vec2(0.0, 0.5), Align2::CENTER_CENTER, "i", egui::FontId::proportional(11.0), c);
+    let resp = if open {
+        resp
+    } else {
+        resp.on_hover_ui(|ui| {
+            ui.set_max_width(360.0);
+            ui.label(text);
+        })
+    };
+    let was_open = open;
+    if resp.clicked() {
+        open = !open;
+    }
+    if was_open && open {
+        let shown = egui::Area::new(key.with("area")).fixed_pos(r.left_bottom() + vec2(0.0, 4.0)).order(egui::Order::Foreground).constrain(true).show(ui.ctx(), |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_max_width(380.0);
+                ui.label(RichText::new(text).color(TEXT));
+            });
+        });
+        let inside = ui.input(|i| i.pointer.interact_pos()).is_some_and(|p| shown.response.rect.contains(p) || r.contains(p));
+        let pressed_outside = ui.input(|i| i.pointer.any_pressed()) && !inside;
+        if pressed_outside || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            open = false;
+        }
+    } else if open {
+        // Opened just now: shown from the next frame on.
+        ui.ctx().request_repaint();
+    }
+    ui.data_mut(|d| d.insert_temp(key, open));
+    resp
+}
+
+#[allow(clippy::too_many_arguments)]
+fn device_frame_presets<R>(ui: &mut Ui, title: &str, info: Option<&str>, enabled: Option<&mut bool>, presets: Option<PresetMenu>, height: f32, body: impl FnOnce(&mut Ui) -> R) -> (R, Option<ChainActionKind>) {
     let mut action = None;
     let r = egui::Frame::new()
         .fill(PANEL2)
@@ -203,6 +246,9 @@ fn device_frame_presets<R>(ui: &mut Ui, title: &str, enabled: Option<&mut bool>,
                             ui.close();
                         }
                     });
+                    if let Some(info) = info {
+                        let _ = info_button(ui, info);
+                    }
                     ui.add_space(10.0);
                     // Buttons sit next to the title so the panel keeps its natural width.
                     if ui.small_button("<").on_hover_text("Move left").clicked() {
@@ -448,7 +494,8 @@ impl App {
         let mut stomp = false;
         let on = enabled;
         let menu = PresetMenu { id, list: presets::effect(kind), current: &preset_name, picked: &mut picked };
-        let (changed, action) = device_frame_presets(ui, &title, Some(&mut enabled), Some(menu), h, |ui| {
+        let info = if plugin.is_some() { None } else { Some(kind.description()) };
+        let (changed, action) = device_frame_presets(ui, &title, info, Some(&mut enabled), Some(menu), h, |ui| {
             if let (Some(p), Some(st)) = (&plugin, &plugin_status) {
                 ui.vertical(|ui| {
                     ui.set_min_width(240.0);
@@ -589,21 +636,21 @@ impl App {
             let live = super::seq_view::Live { vis, playing: self.is_playing(), scale: self.project.scale, kit };
             let accent = if enabled { accent_now() } else { TEXT_DIM };
             let lane = &mut self.grid.poly_lane;
-            device_frame_presets(ui, dev.kind.name(), Some(&mut enabled), Some(menu), h, |ui| {
-                ui.label(RichText::new(format!("Sequencer · {}", dev.kind.description())).small().color(shade(accent_now(), 0.8)));
+            let info = format!("Sequencer · {}", dev.kind.description());
+            device_frame_presets(ui, dev.kind.name(), Some(&info), Some(&mut enabled), Some(menu), h, |ui| {
                 ui.horizontal_top(|ui| {
-                    let a = super::seq_view::editor(ui, id.with("editor"), dev.kind, &mut params, &mut data, live, lane, accent, h - 44.0);
+                    let a = super::seq_view::editor(ui, id.with("editor"), dev.kind, &mut params, &mut data, live, lane, accent, h - 32.0);
                     ui.add_space(6.0);
-                    let b = param_grid_mod(ui, id, dev.kind.specs(), &mut params, accent, h - 40.0, mv.as_mut());
+                    let b = param_grid_mod(ui, id, dev.kind.specs(), &mut params, accent, h - 28.0, mv.as_mut());
                     a | b
                 })
                 .inner
             })
         } else {
             let accent = if enabled { accent_now() } else { TEXT_DIM };
-            device_frame_presets(ui, dev.kind.name(), Some(&mut enabled), Some(menu), h, |ui| {
-                ui.label(RichText::new("MIDI effect").small().color(shade(accent_now(), 0.8)));
-                param_grid_mod(ui, id, dev.kind.specs(), &mut params, accent, h - 40.0, mv.as_mut())
+            let info = format!("MIDI effect · {}", dev.kind.description());
+            device_frame_presets(ui, dev.kind.name(), Some(&info), Some(&mut enabled), Some(menu), h, |ui| {
+                param_grid_mod(ui, id, dev.kind.specs(), &mut params, accent, h - 28.0, mv.as_mut())
             })
         };
         self.apply_mod_view(mv);
@@ -844,7 +891,12 @@ impl App {
         // Every track's instrument reports its sound for its screen.
         let status = self.status();
         let live = super::inst_screen::InstLive::read(&status, i);
-        let (_, action) = device_frame(ui, title, None, h, |ui| {
+        let info = match &inst {
+            Instrument::Drums { engine, .. } => Some(engine.description()),
+            Instrument::Plugin(_) => None,
+            _ => super::browser::instrument_hint(title),
+        };
+        let (_, action) = device_frame(ui, title, info, None, h, |ui| {
             ui.horizontal_top(|ui| {
                 ui.vertical(|ui| match &mut new_inst {
                     Instrument::Fm { voice, op_mask, bank, params } => {
@@ -2307,5 +2359,40 @@ fn draw_waveform(ui: &mut Ui, r: Rect, sample: Option<&SampleRef>, start: f32) {
     if start >= 0.0 {
         let sx = r.left() + start * r.width();
         p.line_segment([pos2(sx, r.top()), pos2(sx, r.bottom())], Stroke::new(1.5_f32, Color32::WHITE));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::info_button;
+    use egui::{Event, Modifiers, PointerButton, Pos2, RawInput, Rect};
+
+    #[test]
+    fn the_info_button_opens_on_a_click_and_closes_on_one_elsewhere() {
+        let ctx = egui::Context::default();
+        let mut at = Rect::NOTHING;
+        let mut states = Vec::new();
+        let on = Pos2::new(-1.0, -1.0);
+        let away = Pos2::new(500.0, 400.0);
+        let frames = [None, Some((on, true)), Some((on, false)), None, Some((away, true)), Some((away, false)), None];
+        for f in frames {
+            let mut input = RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0))), ..Default::default() };
+            if let Some((p, pressed)) = f {
+                let pos = if p.x < 0.0 { at.center() } else { p };
+                input.events.push(Event::PointerMoved(pos));
+                input.events.push(Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
+            }
+            let mut open = false;
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    at = Rect::from_min_size(ui.cursor().min, egui::vec2(16.0, 16.0));
+                    let resp = info_button(ui, "What it is");
+                    open = ui.data(|d| d.get_temp::<bool>(resp.id.with("info_open")).unwrap_or(false));
+                });
+            });
+            states.push(open);
+        }
+        // Closed, opened by the click, still open, closed by a press elsewhere.
+        assert_eq!(states, vec![false, false, true, true, false, false, false]);
     }
 }

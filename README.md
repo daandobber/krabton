@@ -343,6 +343,10 @@ For sound on Linux see [Building](#building) below: Krabton talks to PulseAudio/
 
 **Audio clips**: drop WAV files on audio tracks. They are beat-locked in Re-Pitch mode, so they follow the project tempo. The original tempo is guessed automatically. Right-click a clip and *Export Audio* to save just that clip (as it plays: its loop, offset and gain) as WAV or MP3.
 
+**Settings** (*Options > Audio & MIDI Settings*, Ctrl+,): the audio output Krabton plays to and the input it records from, each the system default or a device by name, switched at once while it plays (when the new device runs at another sample rate, a new engine takes over with the set, the transport, the clips that play, plugins and the input); and the MIDI inputs. They are remembered.
+
+**What a device is**: the little *i* next to every device's name says it, on hover, or stays open when clicked (until a click elsewhere).
+
 **Files**: projects are saved as readable JSON (`.krab`). *Export Audio* renders the arrangement or a scene to a 24-bit WAV or a 320 kbit/s MP3 faster than real time. MP3 files are made with LAME or ffmpeg when one of them is installed (Krabton cannot include an MP3 encoder under its license); WAV always works.
 
 ## Building
@@ -364,10 +368,10 @@ Platform notes:
   - Fedora: `sudo dnf install alsa-lib-devel pulseaudio-libs libxkbcommon-devel mesa-libGL-devel`
   - A monome grid on a serial port needs permission to open it: `sudo usermod -aG uucp $USER` on Arch (`dialout` on Debian/Ubuntu and Fedora), then log out and in
 
-**No sound on Linux?** The status bar (bottom right) shows where Krabton plays: `PulseAudio / PipeWire` when it reached the sound server, an ALSA device name otherwise, or that it found nothing (*Options > Audio output* then says why).
+**No sound on Linux?** The status bar (bottom right) shows where Krabton plays: `PulseAudio / PipeWire` when it reached the sound server, an ALSA device name otherwise, or that it found nothing (*Options > Audio & MIDI Settings* then says why).
 - Krabton needs the PulseAudio client library (`libpulse`) and a running server: PulseAudio, or PipeWire with `pipewire-pulse` (check with `pactl info`)
 - Without them it opens ALSA's `default` device, which only reaches the sound server through its ALSA plugin (`pipewire-alsa` or `pulseaudio-alsa`); otherwise ALSA tries the sound card itself, which the server already holds
-- Pick a device in *Options > Audio output* (takes effect after a restart), or start with `KRABTON_AUDIO_DEVICE=pipewire cargo run --release`
+- Pick a device in *Options > Audio & MIDI Settings* (it switches at once), or start with `KRABTON_AUDIO_DEVICE=pipewire cargo run --release`
 
 Run the engine tests (no audio device or GUI needed):
 
@@ -398,6 +402,7 @@ The [Release workflow](.github/workflows/release.yml) builds them on GitHub for 
 | Enter | Launch the selected scene (with the browser focused: load the selected item) |
 | Ctrl+F | Search in the browser (Down goes from the search field to the results) |
 | Ctrl+Alt+B | Show or hide the browser |
+| Ctrl+, | Audio & MIDI settings |
 | Ctrl+H | Undo history |
 | Ctrl +, Ctrl -, Ctrl 0 | Make everything bigger, smaller, or normal size |
 | Arrow keys, Enter, 1-7, 0 in the browser | Browse, open and close folders, load; put the selected item in a collection, take it out of all of them |
@@ -473,7 +478,7 @@ cargo run -p krabton-clap --example fx_probe -- /usr/lib/clap/lsp-plugins.clap
 ## Debugging helpers
 
 - `KRABTON_NO_AUDIO=1` runs the engine on a silent real-time thread instead of the audio device.
-- `KRABTON_AUDIO_DEVICE=name` plays on that output device (as listed in *Options > Audio output*); if it does not open, Krabton falls back to the default and the others.
+- `KRABTON_AUDIO_DEVICE=name` plays on that output device (as listed in *Options > Audio & MIDI Settings*); if it does not open, Krabton falls back to the default and the others.
 - `KRABTON_SCRIPT="30:scene=1;60:arrangement;90:devices;120:convert=0,0"` runs UI actions at the given frame numbers (see `run_script` in `app.rs`). Handy for screenshots and manual testing.
 - `KRABTON_SERIALOSC_PORT=12102` talks to a serialosc on another port, for example a simulated one.
 - Test windows (`KRABTON_TEST_WINDOW`, or a custom serialosc port) never open grids on serial ports, so they cannot take over a real grid; `KRABTON_SERIAL_GRID=1` allows it. `cargo run -p krabton-monome --example serial_probe` lists the serial ports that look like grids and asks them for their id and size, without lighting anything.

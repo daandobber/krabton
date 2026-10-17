@@ -346,6 +346,11 @@ pub(crate) fn instrument_catalog() -> Vec<(&'static str, &'static str, &'static 
     devices().into_iter().map(|d| (d.name, d.hint, d.presets, d.make)).collect()
 }
 
+/// What an instrument is, by its name (as the browser says it).
+pub(crate) fn instrument_hint(name: &str) -> Option<&'static str> {
+    devices().into_iter().find(|d| d.name == name).map(|d| d.hint)
+}
+
 fn devices() -> [Dev; 29] {
     [
         Dev {

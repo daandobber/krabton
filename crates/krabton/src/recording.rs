@@ -223,7 +223,7 @@ impl App {
             return;
         }
         let sr = self.engine.status.sample_rate.load() as u32;
-        match audio::start_input(sr) {
+        match audio::start_input(sr, self.prefs.audio_input.as_deref()) {
             Ok((dev, ring)) => {
                 self.toast(format!("Audio input: {} ({} channels)", dev.name, dev.channels));
                 self.cmd(Command::SetInput(Some(ring)));
