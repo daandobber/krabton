@@ -30,6 +30,10 @@ use crate::dsp::facet::FacetState;
 use crate::dsp::pan_flute::PanFluteState;
 use crate::dsp::melodica::MelodicaState;
 use crate::dsp::harmonica::HarmonicaState;
+use crate::dsp::vl1::Vl1State;
+use crate::dsp::nes::NesState;
+use crate::dsp::gameboy::GameBoyState;
+use crate::dsp::sid::SidState;
 use crate::piano::{library::PianoLibrary, PianoState};
 use crate::dsp::rings_synth::RingsState;
 use crate::dsp::braids_synth::BraidsSynthState;
@@ -445,6 +449,10 @@ enum InstState {
     PanFlute(Box<PanFluteState>),
     Melodica(Box<MelodicaState>),
     Harmonica(Box<HarmonicaState>),
+    VlTone(Box<Vl1State>),
+    Nes(Box<NesState>),
+    GameBoy(Box<GameBoyState>),
+    Sid(Box<SidState>),
     Facet(Box<FacetState>),
     Plugin { instance: u64, proc: Option<Box<dyn AudioProcessor>>, pending: Vec<PluginEvent> },
 }
@@ -470,6 +478,10 @@ impl InstState {
             InstState::PanFlute(s) => s.pitch_bend = semis,
             InstState::Melodica(s) => s.pitch_bend = semis,
             InstState::Harmonica(s) => s.pitch_bend = semis,
+            InstState::VlTone(s) => s.pitch_bend = semis,
+            InstState::Nes(s) => s.pitch_bend = semis,
+            InstState::GameBoy(s) => s.pitch_bend = semis,
+            InstState::Sid(s) => s.pitch_bend = semis,
             InstState::Facet(s) => s.pitch_bend = semis,
             InstState::Voice(s) => s.pitch_bend = semis,
             InstState::Monk(s) => s.pitch_bend = semis,
@@ -511,6 +523,10 @@ impl InstState {
             Some(Instrument::PanFlute { .. }) => InstState::PanFlute(Box::new(PanFluteState::new(sr))),
             Some(Instrument::Melodica { .. }) => InstState::Melodica(Box::new(MelodicaState::new(sr))),
             Some(Instrument::Harmonica { .. }) => InstState::Harmonica(Box::new(HarmonicaState::new(sr))),
+            Some(Instrument::VlTone { .. }) => InstState::VlTone(Box::new(Vl1State::new(sr))),
+            Some(Instrument::Nes { .. }) => InstState::Nes(Box::new(NesState::new(sr))),
+            Some(Instrument::GameBoy { .. }) => InstState::GameBoy(Box::new(GameBoyState::new(sr))),
+            Some(Instrument::Sid { .. }) => InstState::Sid(Box::new(SidState::new(sr))),
             Some(Instrument::Facet { .. }) => InstState::Facet(Box::new(FacetState::new(sr))),
         }
     }
@@ -564,6 +580,10 @@ impl InstState {
                 | (InstState::PanFlute(_), Some(Instrument::PanFlute { .. }))
                 | (InstState::Melodica(_), Some(Instrument::Melodica { .. }))
                 | (InstState::Harmonica(_), Some(Instrument::Harmonica { .. }))
+                | (InstState::VlTone(_), Some(Instrument::VlTone { .. }))
+                | (InstState::Nes(_), Some(Instrument::Nes { .. }))
+                | (InstState::GameBoy(_), Some(Instrument::GameBoy { .. }))
+                | (InstState::Sid(_), Some(Instrument::Sid { .. }))
                 | (InstState::Facet(_), Some(Instrument::Facet { .. }))
         ) || matches!((self, i), (InstState::Plugin { instance, .. }, Some(Instrument::Plugin(p))) if *instance == p.instance)
     }
@@ -602,6 +622,10 @@ impl InstState {
             (InstState::PanFlute(s), Instrument::PanFlute { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Melodica(s), Instrument::Melodica { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Harmonica(s), Instrument::Harmonica { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::VlTone(s), Instrument::VlTone { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Nes(s), Instrument::Nes { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::GameBoy(s), Instrument::GameBoy { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Sid(s), Instrument::Sid { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Facet(s), Instrument::Facet { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             _ => {}
         }
@@ -639,6 +663,10 @@ impl InstState {
             (InstState::PanFlute(s), Instrument::PanFlute { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Melodica(s), Instrument::Melodica { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Harmonica(s), Instrument::Harmonica { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::VlTone(s), Instrument::VlTone { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Nes(s), Instrument::Nes { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::GameBoy(s), Instrument::GameBoy { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Sid(s), Instrument::Sid { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Facet(s), Instrument::Facet { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             _ => {}
         }
@@ -677,6 +705,10 @@ impl InstState {
             InstState::PanFlute(s) => s.all_off(),
             InstState::Melodica(s) => s.all_off(),
             InstState::Harmonica(s) => s.all_off(),
+            InstState::VlTone(s) => s.all_off(),
+            InstState::Nes(s) => s.all_off(),
+            InstState::GameBoy(s) => s.all_off(),
+            InstState::Sid(s) => s.all_off(),
             InstState::Facet(s) => s.all_off(),
             InstState::None => {}
         }
@@ -705,6 +737,10 @@ impl InstState {
             InstState::PanFlute(s) => s.visual(out),
             InstState::Melodica(s) => s.visual(out),
             InstState::Harmonica(s) => s.visual(out),
+            InstState::VlTone(s) => s.visual(out),
+            InstState::Nes(s) => s.visual(out),
+            InstState::GameBoy(s) => s.visual(out),
+            InstState::Sid(s) => s.visual(out),
             InstState::Facet(s) => s.visual(out),
             _ => return false,
         }
@@ -743,6 +779,10 @@ impl InstState {
             (InstState::PanFlute(s), Instrument::PanFlute { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Melodica(s), Instrument::Melodica { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Harmonica(s), Instrument::Harmonica { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::VlTone(s), Instrument::VlTone { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Nes(s), Instrument::Nes { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::GameBoy(s), Instrument::GameBoy { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Sid(s), Instrument::Sid { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Facet(s), Instrument::Facet { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Plugin { proc, pending, .. }, Instrument::Plugin(_)) => {
                 if let Some(p) = proc {
@@ -1926,6 +1966,12 @@ impl Engine {
                     // The pipes of a pan flute, a harp's key: the song's key now.
                     InstState::PanFlute(s) => s.key = key_new.filter(|_| !track.key_fixed).unwrap_or(project.scale).mask(),
                     InstState::Harmonica(s) => s.song_key = key_new.filter(|_| !track.key_fixed).unwrap_or(project.scale),
+                    InstState::VlTone(s) => {
+                        // Its rhythm box keeps the song's time.
+                        s.playing = ctx.playing;
+                        s.beat = ctx.beat;
+                        s.bpm = ctx.bpm;
+                    }
                     _ => {}
                 }
                 // The Key drawer moves what it plays into its key (not drums).

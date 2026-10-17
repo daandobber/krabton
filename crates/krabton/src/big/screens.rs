@@ -34,6 +34,10 @@ impl App {
                         | Instrument::PanFlute { .. }
                         | Instrument::Melodica { .. }
                         | Instrument::Harmonica { .. }
+                        | Instrument::VlTone { .. }
+                        | Instrument::Nes { .. }
+                        | Instrument::GameBoy { .. }
+                        | Instrument::Sid { .. }
                         | Instrument::Guitar { .. }
                         | Instrument::Monk { .. }
                         | Instrument::Rings { .. }
@@ -101,6 +105,18 @@ impl App {
                         }
                         Instrument::Harmonica { .. } => {
                             crate::ui::reed_view::harmonica_screen(ui, id, p, &live, h);
+                        }
+                        Instrument::VlTone { .. } => {
+                            crate::ui::chip_view::vl1_screen(ui, id, p, &live, h);
+                        }
+                        Instrument::Nes { .. } => {
+                            crate::ui::chip_view::chip_screen(ui, id, crate::ui::chip_view::Chip::Nes, p, &live, h);
+                        }
+                        Instrument::GameBoy { .. } => {
+                            crate::ui::chip_view::chip_screen(ui, id, crate::ui::chip_view::Chip::GameBoy, p, &live, h);
+                        }
+                        Instrument::Sid { .. } => {
+                            crate::ui::chip_view::chip_screen(ui, id, crate::ui::chip_view::Chip::Sid, p, &live, h);
                         }
                         Instrument::Guitar { .. } => {
                             es::guitar_screen(ui, id, p, &live, h);

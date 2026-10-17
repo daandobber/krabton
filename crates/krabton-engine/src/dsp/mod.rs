@@ -46,6 +46,11 @@ pub mod pan_flute;
 pub mod free_reed;
 pub mod harmonica;
 pub mod melodica;
+pub mod vl1;
+pub mod chip;
+pub mod nes;
+pub mod gameboy;
+pub mod sid;
 pub mod tides;
 
 use std::f32::consts::PI;
