@@ -2610,7 +2610,7 @@ impl App {
                 }
                 "map" => self.mod_learn = self.project.modulators.last().map(|m| m.id),
                 "selmod" => self.sel_mod = nums.first().and_then(|&i| self.project.modulators.get(i)).map(|m| m.id),
-                "routeinst" | "routedev" | "routemidi" | "routevol" | "routemod" => {
+                "routeinst" | "routedev" | "routemidi" | "routevol" | "routemod" | "routemap" => {
                     use krabton_engine::modulation::{ModOwner, ModTarget};
                     let src = self.project.modulators.last().map(|m| m.id);
                     let t = match self.sel_track {
@@ -2623,6 +2623,7 @@ impl App {
                         ("routedev", Some(t)) => t.devices.get(n(0)).map(|d| ModTarget::Param { owner: ModOwner::Device(d.id), param: n(1) as u16 }),
                         ("routemidi", Some(t)) => t.midi_devices.get(n(0)).map(|d| ModTarget::Param { owner: ModOwner::MidiDevice(d.id), param: n(1) as u16 }),
                         ("routevol", _) => self.project.tracks.get(n(0)).map(|t| ModTarget::Volume(t.id)),
+                        ("routemap", _) => self.project.tracks.get(n(0)).map(|t| ModTarget::Param { owner: ModOwner::Map(t.id), param: n(1) as u16 }),
                         ("routemod", _) => self.project.modulators.get(n(0)).map(|m| ModTarget::Param { owner: ModOwner::Modulator(m.id), param: n(1) as u16 }),
                         _ => None,
                     };

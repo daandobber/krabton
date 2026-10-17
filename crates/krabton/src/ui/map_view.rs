@@ -2,30 +2,36 @@
 //! name tag where it stands with a fan the way it faces, the listener's head
 //! where it sits. Drag a track to move it, the dot on its fan to turn it,
 //! the head to move the listener; right-click a track for more. Beside it
-//! the chosen track's place and the tracks to put on the map; below a
-//! mixer. Above it the room: none at first (only where they stand), as
-//! much of it as you like.
+//! the chosen track's place, as knobs that modulators and envelopes can
+//! move (a track walks round, and the map shows it walking); below a mixer.
+//! Above it the room: none at first (only where they stand), as much of it
+//! as you like.
 
 use super::windows::tool_window;
 use crate::app::App;
 use crate::theme::*;
 use crate::widgets::*;
 use egui::{pos2, vec2, Align2, Color32, Context, FontId, Id, Pos2, Rect, RichText, Sense, Shape, Stroke, Ui, UiBuilder};
-use krabton_engine::dsp::fx::stage::{self as st, MapRoom, Place};
+use krabton_engine::dsp::fx::stage::{self as st, MapRoom, Place, PLACE_SPECS};
+use krabton_engine::modulation::{ModOwner, ModTarget};
 
-const WALL: Color32 = Color32::from_rgb(0x3a, 0x22, 0x16);
-const WALL_EDGE: Color32 = Color32::from_rgb(0x5c, 0x38, 0x24);
-const FLOOR_A: Color32 = Color32::from_rgb(0x9a, 0x55, 0x2e);
-const FLOOR_B: Color32 = Color32::from_rgb(0x8e, 0x4d, 0x29);
-const CHALK: Color32 = Color32::from_rgba_premultiplied(0xc8, 0xc0, 0xb8, 0x70);
+const WALL: Color32 = Color32::from_rgb(0x1e, 0x1e, 0x22);
+const WALL_EDGE: Color32 = Color32::from_rgb(0x46, 0x46, 0x4c);
+const FLOOR: Color32 = Color32::from_rgb(0x34, 0x34, 0x39);
+const FLOOR_LINE: Color32 = Color32::from_rgba_premultiplied(0x10, 0x10, 0x12, 0x50);
+const CHALK: Color32 = Color32::from_rgba_premultiplied(0x9a, 0x9a, 0xa2, 0x60);
+const DOT: Color32 = Color32::from_rgb(0xc4, 0xc4, 0xca);
+const TAG: Color32 = Color32::from_rgb(0x26, 0x26, 0x2b);
 
 /// A track on the map.
 #[derive(Clone)]
 pub(crate) struct Dot {
     pub track: u64,
     pub name: String,
-    pub color: Color32,
+    /// Where it was put.
     pub place: Place,
+    /// Where it is now, when modulators or envelopes move it.
+    pub live: Option<Place>,
     /// How loud it plays now (0 to 1).
     pub level: f32,
 }
@@ -35,7 +41,8 @@ pub(crate) struct Dot {
 pub(crate) struct MapEdit {
     pub moved: Option<(u64, f32, f32)>,
     pub turned: Option<(u64, f32)>,
-    pub listener: Option<f32>,
+    /// The listener moved: across, depth.
+    pub listener: Option<(f32, f32)>,
     pub select: Option<u64>,
     pub face_listener: Option<u64>,
     pub remove: Option<u64>,
@@ -50,7 +57,7 @@ enum Grab {
 }
 
 /// A Stage's parameters for the room and a place in it.
-fn params(room: &MapRoom, place: &Place) -> [f32; 15] {
+fn params(room: &MapRoom, place: &Place) -> [f32; 16] {
     st::map_params(room, place)
 }
 
@@ -60,6 +67,7 @@ const HANDLE: f32 = 30.0;
 /// The map in `rect`.
 pub(crate) fn map(ui: &mut Ui, rect: Rect, id: Id, room: &MapRoom, dots: &[Dot], selected: Option<u64>) -> MapEdit {
     let mut edit = MapEdit::default();
+    let accent = accent_now();
     let resp = ui.interact(rect, id.with("map"), Sense::click_and_drag());
     let base = params(room, &Place::default());
     let (w, d, _) = st::room(&base);
@@ -69,28 +77,24 @@ pub(crate) fn map(ui: &mut Ui, rect: Rect, id: Id, room: &MapRoom, dots: &[Dot],
     let to_screen = |x: f32, y: f32| pos2(floor.center().x + x * scale, floor.top() + y * scale);
     let from_screen = |p: Pos2| ((p.x - floor.center().x) / scale, (p.y - floor.top()) / scale);
     let painter = ui.painter_at(rect);
-    rect_fill(&painter, rect, 3.0, Color32::from_rgb(0x12, 0x0c, 0x0a));
-    painter.rect_filled(floor.expand(9.0), 5.0, WALL);
-    painter.rect_stroke(floor.expand(9.0), 5.0, Stroke::new(1.5_f32, WALL_EDGE), egui::StrokeKind::Inside);
-    let boards = ((w / 0.6).round() as usize).clamp(8, 60);
-    let bw = floor.width() / boards as f32;
-    for i in 0..boards {
-        let r = Rect::from_min_size(pos2(floor.left() + i as f32 * bw, floor.top()), vec2(bw, floor.height()));
-        painter.rect_filled(r, 0.0, if i % 2 == 0 { FLOOR_A } else { FLOOR_B });
-    }
+    rect_fill(&painter, rect, 3.0, Color32::from_rgb(0x14, 0x14, 0x17));
+    painter.rect_filled(floor.expand(8.0), 5.0, WALL);
+    painter.rect_stroke(floor.expand(8.0), 5.0, Stroke::new(1.0_f32, WALL_EDGE), egui::StrokeKind::Inside);
+    painter.rect_filled(floor, 1.0, FLOOR);
     let on_floor = ui.painter_at(floor);
-    let grid = Stroke::new(0.5_f32, Color32::from_rgba_premultiplied(0x20, 0x10, 0x08, 0x40));
-    let mut g = 2.0;
+    // A metre a line, two a darker one.
+    let mut g = 1.0;
     while g < w.max(d) {
-        for s in [-1.0, 1.0] {
-            let x = floor.center().x + s * g * scale;
-            on_floor.line_segment([pos2(x, floor.top()), pos2(x, floor.bottom())], grid);
+        let s = Stroke::new(if (g as i32) % 2 == 0 { 0.8_f32 } else { 0.4 }, FLOOR_LINE);
+        for sx in [-1.0, 1.0] {
+            let x = floor.center().x + sx * g * scale;
+            on_floor.line_segment([pos2(x, floor.top()), pos2(x, floor.bottom())], s);
         }
         let y = floor.top() + g * scale;
-        on_floor.line_segment([pos2(floor.left(), y), pos2(floor.right(), y)], grid);
-        g += 2.0;
+        on_floor.line_segment([pos2(floor.left(), y), pos2(floor.right(), y)], s);
+        g += 1.0;
     }
-    // The stage's chalk arcs, opening towards the listener.
+    // The stage's arcs, opening towards the listener.
     let front = to_screen(0.0, 0.3);
     for k in 1..=3 {
         let radius = k as f32 * 0.15 * d * scale;
@@ -104,12 +108,12 @@ pub(crate) fn map(ui: &mut Ui, rect: Rect, id: Id, room: &MapRoom, dots: &[Dot],
     let ((_, _), (lx, ly)) = st::places(&base);
     let head = to_screen(lx, ly);
     for (dx, dy) in [(-9.0, 4.0), (9.0, 4.0), (0.0, -6.0)] {
-        painter.circle(head + vec2(dx, dy), 12.0, Color32::from_rgba_premultiplied(0xe8, 0xe4, 0xe0, 0x50), Stroke::new(1.0_f32, Color32::from_gray(230)));
+        painter.circle(head + vec2(dx, dy), 12.0, Color32::from_rgba_premultiplied(0x50, 0x50, 0x56, 0x90), Stroke::new(1.0_f32, Color32::from_gray(190)));
     }
-    painter.circle_filled(head, 5.0, Color32::from_gray(40));
-    painter.add(Shape::convex_polygon(vec![head + vec2(0.0, -15.0), head + vec2(-4.0, -9.0), head + vec2(4.0, -9.0)], Color32::from_gray(40), Stroke::NONE));
+    painter.circle_filled(head, 5.0, Color32::from_gray(230));
+    painter.add(Shape::convex_polygon(vec![head + vec2(0.0, -15.0), head + vec2(-4.0, -9.0), head + vec2(4.0, -9.0)], Color32::from_gray(230), Stroke::NONE));
 
-    // Where each one is now on the screen, its tag, and its handle.
+    // Where each one is on the screen (where it was put; it may be walking).
     let tag_font = FontId::proportional(11.5);
     let spot = |pl: &Place| {
         let mut p = base;
@@ -173,8 +177,7 @@ pub(crate) fn map(ui: &mut Ui, rect: Rect, id: Id, room: &MapRoom, dots: &[Dot],
             }
             Grab::Turn(t) => {
                 if let Some(dt) = dots.iter().find(|d| d.track == t) {
-                    let q = spot(&dt.place);
-                    let v = at - q;
+                    let v = at - spot(&dt.place);
                     if v.length() > 4.0 {
                         let deg = v.x.atan2(v.y).to_degrees();
                         edit.turned = Some((t, (deg / 5.0).round() * 5.0));
@@ -182,8 +185,10 @@ pub(crate) fn map(ui: &mut Ui, rect: Rect, id: Id, room: &MapRoom, dots: &[Dot],
                 }
             }
             Grab::Listener => {
-                let (_, y) = from_screen(at);
-                edit.listener = Some((((y - 0.3) / (d - 0.6)).clamp(0.05, 1.0) * 100.0).round() / 100.0);
+                let (x, y) = from_screen(at);
+                let across = (x / (w * 0.5 - 0.4)).clamp(-1.0, 1.0);
+                let depth = ((y - 0.3) / (d - 0.6)).clamp(0.05, 1.0);
+                edit.listener = Some(((across * 100.0).round() / 100.0, (depth * 100.0).round() / 100.0));
             }
         }
     }
@@ -222,11 +227,9 @@ pub(crate) fn map(ui: &mut Ui, rect: Rect, id: Id, room: &MapRoom, dots: &[Dot],
     // The tracks: the way they face as a fan, a ring, a glow as they play, the tag.
     let hover = resp.hover_pos();
     let mut hovered: Option<usize> = None;
-    let order: Vec<usize> = {
-        let mut o: Vec<usize> = (0..dots.len()).collect();
-        o.sort_by_key(|&i| Some(dots[i].track) == selected);
-        o
-    };
+    let mut order: Vec<usize> = (0..dots.len()).collect();
+    order.sort_by_key(|&i| Some(dots[i].track) == selected);
+    let mut walking = false;
     for &i in &order {
         let dt = &dots[i];
         let mut pl = dt.place;
@@ -241,33 +244,43 @@ pub(crate) fn map(ui: &mut Ui, rect: Rect, id: Id, room: &MapRoom, dots: &[Dot],
                 pl.facing = f;
             }
         }
-        let q = spot(&pl);
         let sel = Some(dt.track) == selected;
+        let tint = if sel { accent } else { DOT };
+        let q_base = spot(&pl);
+        // Walking: drawn where it is now, a faint ring where it was put.
+        let (q, now) = match dt.live {
+            Some(live) if (live.across - pl.across).abs() > 0.005 || (live.depth - pl.depth).abs() > 0.005 || (live.facing - pl.facing).abs() > 0.5 => {
+                walking = true;
+                painter.circle_stroke(q_base, 6.0, Stroke::new(1.0_f32, tint.gamma_multiply(0.45)));
+                let q_now = spot(&live);
+                painter.line_segment([q_base, q_now], Stroke::new(0.8_f32, tint.gamma_multiply(0.3)));
+                (q_now, live)
+            }
+            _ => (q_base, pl),
+        };
         // The fan: narrow for a beam, wide for all round.
-        let spread = (170.0 - 120.0 * pl.beam.clamp(0.0, 1.0)).to_radians() * 0.5;
-        let a0 = pl.facing.to_radians();
+        let spread = (170.0 - 120.0 * now.beam.clamp(0.0, 1.0)).to_radians() * 0.5;
+        let a0 = now.facing.to_radians();
         let reach = if sel { HANDLE + 6.0 } else { 22.0 };
         let mut fan = vec![q];
         for k in 0..=12 {
             let a = a0 - spread + 2.0 * spread * k as f32 / 12.0;
             fan.push(q + vec2(a.sin(), a.cos()) * reach);
         }
-        painter.add(Shape::convex_polygon(fan, dt.color.gamma_multiply(if sel { 0.35 } else { 0.18 }), Stroke::NONE));
+        painter.add(Shape::convex_polygon(fan, tint.gamma_multiply(if sel { 0.3 } else { 0.12 }), Stroke::NONE));
         if dt.level > 0.01 {
-            painter.circle_filled(q, 8.0 + 10.0 * dt.level.min(1.0), dt.color.gamma_multiply(0.25 * dt.level.min(1.0)));
+            painter.circle_filled(q, 8.0 + 10.0 * dt.level.min(1.0), Color32::WHITE.gamma_multiply(0.12 * dt.level.min(1.0)));
         }
-        painter.circle(q, if sel { 8.0 } else { 6.5 }, dt.color, Stroke::new(if sel { 2.5_f32 } else { 1.5 }, if sel { Color32::WHITE } else { Color32::from_gray(25) }));
+        painter.circle(q, if sel { 8.0 } else { 6.5 }, tint, Stroke::new(1.5_f32, Color32::from_gray(20)));
         if sel {
-            let h = handle_of(q, pl.facing);
-            painter.line_segment([q, h], Stroke::new(1.5_f32, Color32::WHITE));
-            painter.circle(h, 6.0, dt.color, Stroke::new(2.0_f32, Color32::WHITE));
+            let h = handle_of(q_base, pl.facing);
+            painter.line_segment([q_base, h], Stroke::new(1.5_f32, accent));
+            painter.circle(h, 6.0, Color32::from_gray(20), Stroke::new(2.0_f32, accent));
         }
-        let galley = painter.layout_no_wrap(dt.name.clone(), tag_font.clone(), Color32::WHITE);
+        let galley = painter.layout_no_wrap(dt.name.clone(), tag_font.clone(), if sel { TEXT_DARK } else { Color32::from_gray(220) });
         let tag = Rect::from_center_size(q + vec2(0.0, -19.0), galley.size() + vec2(10.0, 4.0));
-        painter.rect_filled(tag, 3.0, if sel { dt.color } else { dt.color.gamma_multiply(0.85) });
-        if sel {
-            painter.rect_stroke(tag, 3.0, Stroke::new(1.0_f32, Color32::WHITE), egui::StrokeKind::Outside);
-        }
+        painter.rect_filled(tag, 3.0, if sel { accent } else { TAG });
+        painter.rect_stroke(tag, 3.0, Stroke::new(1.0_f32, if sel { accent } else { WALL_EDGE }), egui::StrokeKind::Inside);
         painter.galley(tag.min + vec2(5.0, 2.0), galley, Color32::WHITE);
         if hover.is_some_and(|h| h.distance(q) < 14.0 || tag.contains(h)) {
             hovered = Some(i);
@@ -279,13 +292,13 @@ pub(crate) fn map(ui: &mut Ui, rect: Rect, id: Id, room: &MapRoom, dots: &[Dot],
     if grabbed.is_none() {
         if let Some(i) = hovered {
             let dt = &dots[i];
-            let p = params(room, &dt.place);
+            let p = params(room, &dt.live.unwrap_or(dt.place));
             resp.clone().on_hover_text(format!("{}: {:.1} m from the listener. Drag to move it, the dot on its fan to turn it, right-click for more", dt.name, st::distance(&p)));
         } else if hover.is_some_and(|h| h.distance(head) < 24.0) {
-            resp.clone().on_hover_text("The listener: drag up or down");
+            resp.clone().on_hover_text("The listener: drag it anywhere in the room");
         }
     }
-    if grabbed.is_some() || dots.iter().any(|dt| dt.level > 0.01) {
+    if grabbed.is_some() || walking || dots.iter().any(|dt| dt.level > 0.01) {
         ui.ctx().request_repaint();
     }
     edit
@@ -301,7 +314,15 @@ fn first_place(room: &MapRoom, pan: f32, nth: usize) -> Place {
 }
 
 impl App {
+    /// Whether modulators or envelopes move track `id` on the map.
+    fn map_moved_by_something(&self, ti: usize, id: u64) -> bool {
+        let owner = ModOwner::Map(id);
+        let is = |t: ModTarget| matches!(t, ModTarget::Param { owner: o, .. } if o == owner);
+        self.project.mod_routes.iter().any(|r| is(r.target)) || self.project.tracks.get(ti).is_some_and(|t| t.automation.iter().any(|e| is(e.target)) || t.slots.iter().flatten().chain(t.arrangement.iter().map(|a| &a.clip)).any(|c| c.envelopes.iter().any(|e| is(e.target))))
+    }
+
     fn map_dots(&self) -> Vec<Dot> {
+        let status = self.status();
         self.project
             .tracks
             .iter()
@@ -309,7 +330,11 @@ impl App {
             .filter_map(|(i, t)| {
                 let place = t.place?;
                 let level = self.meters.get(i).map(|m| m.0.max(m.1)).unwrap_or(0.0);
-                Some(Dot { track: t.id, name: t.name.clone(), color: rgb(t.color), place, level })
+                let live = self.map_moved_by_something(i, t.id).then(|| status.tracks.get(i).map(|ts| {
+                    let v: Vec<f32> = ts.map_live.iter().map(|a| a.load()).collect();
+                    Place::from_params(&v)
+                })).flatten();
+                Some(Dot { track: t.id, name: t.name.clone(), place, live, level })
             })
             .collect()
     }
@@ -358,9 +383,10 @@ impl App {
         }
         for (j, &i) in drums.iter().enumerate() {
             let mut pl = self.project.tracks[i].place.unwrap_or_default();
-            pl.across = 0.12 * j as f32;
+            pl.across = st::across_for(&base, 0.0) + 0.12 * j as f32;
             pl.depth = 0.24;
-            pl.facing = 0.0;
+            let ((sx, sy), _) = st::places(&params(&room, &pl));
+            pl.facing = (st::facing_towards((sx, sy), listener) / 5.0).round() * 5.0;
             self.project.tracks[i].place = Some(pl);
         }
     }
@@ -407,22 +433,19 @@ impl App {
         ui.add_space(4.0);
         let full = ui.available_rect_before_wrap();
         let mixer_h = 168.0f32.min(full.height() * 0.4);
-        let side_w = 230.0f32.min(full.width() * 0.3);
+        let side_w = 250.0f32.min(full.width() * 0.32);
         let map_rect = Rect::from_min_max(full.min, pos2(full.right() - side_w - 8.0, full.bottom() - mixer_h - 8.0));
         let side = Rect::from_min_max(pos2(map_rect.right() + 8.0, full.top()), pos2(full.right(), map_rect.bottom()));
         let mixer = Rect::from_min_max(pos2(full.left(), map_rect.bottom() + 8.0), full.max);
         ui.allocate_rect(full, Sense::hover());
 
-        // The map.
         let dots = self.map_dots();
         let selected = self.map_selected.filter(|s| dots.iter().any(|d| d.track == *s));
         let edit = map(ui, map_rect, Id::new("map_window"), &room, &dots, selected);
         self.apply_map_edit(&edit);
 
-        // The chosen one, and which tracks are on the map.
         let mut side_ui = ui.new_child(UiBuilder::new().max_rect(side.shrink(2.0)));
         self.map_side(&mut side_ui);
-        // The mixer.
         let mut mix_ui = ui.new_child(UiBuilder::new().max_rect(mixer));
         self.map_mixer(&mut mix_ui, mixer.height());
     }
@@ -430,6 +453,10 @@ impl App {
     fn apply_map_edit(&mut self, edit: &MapEdit) {
         if let Some(t) = edit.select {
             self.map_selected = Some(t);
+        }
+        if let Some((x, y)) = edit.listener {
+            self.project.map.listener_x = x;
+            self.project.map.listener = y;
         }
         let ((_, _), listener) = st::places(&params(&self.project.map, &Place::default()));
         for t in self.project.tracks.iter_mut() {
@@ -446,13 +473,9 @@ impl App {
                 }
             }
             if edit.face_listener == Some(t.id) {
-                let p = params(&self.project.map, pl);
-                let ((sx, sy), _) = st::places(&p);
+                let ((sx, sy), _) = st::places(&params(&self.project.map, pl));
                 pl.facing = (st::facing_towards((sx, sy), listener) / 5.0).round() * 5.0;
             }
-        }
-        if let Some(l) = edit.listener {
-            self.project.map.listener = l;
         }
         if let Some(t) = edit.remove {
             if let Some(i) = self.project.tracks.iter().position(|x| x.id == t) {
@@ -461,37 +484,27 @@ impl App {
         }
     }
 
-    /// The chosen track's place, and the tracks to tick onto the map.
+    /// The chosen track's place (knobs that modulators and envelopes can
+    /// move), and the tracks to tick onto the map.
     fn map_side(&mut self, ui: &mut Ui) {
         let sel = self.map_selected.and_then(|id| self.project.tracks.iter().position(|t| t.id == id && t.place.is_some()));
         egui::Frame::new().fill(PANEL2).corner_radius(4.0).inner_margin(8).show(ui, |ui| {
             ui.set_width(ui.available_width());
             match sel {
                 Some(i) => {
+                    let id = self.project.tracks[i].id;
                     let name = self.project.tracks[i].name.clone();
-                    let color = rgb(self.project.tracks[i].color);
-                    ui.label(RichText::new(name).strong().color(color));
-                    let mut pl = self.project.tracks[i].place.unwrap_or_default();
-                    let before = pl;
-                    let p = params(&self.project.map, &pl);
-                    ui.label(RichText::new(format!("{:.1} m from the listener", st::distance(&p))).small().color(TEXT_DIM));
-                    egui::Grid::new("map_place").num_columns(2).spacing([6.0, 4.0]).show(ui, |ui| {
-                        ui.label(RichText::new("Across").small());
-                        ui.add(egui::Slider::new(&mut pl.across, -1.0..=1.0).show_value(false));
-                        ui.end_row();
-                        ui.label(RichText::new("Depth").small());
-                        ui.add(egui::Slider::new(&mut pl.depth, 0.0..=1.0).show_value(false));
-                        ui.end_row();
-                        ui.label(RichText::new("Width").small()).on_hover_text("How much of its own stereo it keeps");
-                        ui.add(egui::Slider::new(&mut pl.width, 0.0..=1.0).show_value(false));
-                        ui.end_row();
-                        ui.label(RichText::new("Facing").small()).on_hover_text("Which way it sounds: turned away it is quieter and duller");
-                        ui.add(egui::Slider::new(&mut pl.facing, -180.0..=180.0).suffix("°").max_decimals(0));
-                        ui.end_row();
-                        ui.label(RichText::new("Beam").small()).on_hover_text("All round (0) to only where it faces");
-                        ui.add(egui::Slider::new(&mut pl.beam, 0.0..=1.0).show_value(false));
-                        ui.end_row();
+                    let place = self.project.tracks[i].place.unwrap_or_default();
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(name).strong().color(TEXT));
+                        let p = params(&self.project.map, &place);
+                        ui.label(RichText::new(format!("{:.1} m away", st::distance(&p))).small().color(TEXT_DIM));
                     });
+                    let mut values = place.to_params();
+                    let mut mv = self.mod_view(ModOwner::Map(id));
+                    let changed = super::devices::param_grid_mod(ui, Id::new(("map_place", id)), PLACE_SPECS, &mut values, accent_now(), 150.0, mv.as_mut());
+                    self.apply_mod_view(mv);
+                    let mut pl = Place::from_params(&values);
                     ui.horizontal(|ui| {
                         if ui.small_button("Face the listener").clicked() {
                             let ((sx, sy), l) = st::places(&params(&self.project.map, &pl));
@@ -501,7 +514,8 @@ impl App {
                             self.set_on_map(i, false);
                         }
                     });
-                    if pl != before {
+                    ui.label(RichText::new("Drop a modulator (Mod tab) on a knob to make it walk round").small().color(TEXT_DIM));
+                    if changed || pl != place {
                         if let Some(t) = self.project.tracks.get_mut(i) {
                             if t.place.is_some() {
                                 t.place = Some(pl);
@@ -533,20 +547,16 @@ impl App {
         });
         egui::ScrollArea::vertical().id_salt("map_tracks").show(ui, |ui| {
             for i in 0..self.project.tracks.len() {
-                let (name, color, mut on) = {
+                let (name, mut on) = {
                     let t = &self.project.tracks[i];
-                    (t.name.clone(), rgb(t.color), t.place.is_some())
+                    (t.name.clone(), t.place.is_some())
                 };
-                ui.horizontal(|ui| {
-                    let (r, _) = ui.allocate_exact_size(vec2(8.0, 14.0), Sense::hover());
-                    rect_fill(ui.painter(), r, 2.0, color);
-                    if ui.checkbox(&mut on, name).changed() {
-                        self.set_on_map(i, on);
-                        if on {
-                            self.map_selected = Some(self.project.tracks[i].id);
-                        }
+                if ui.checkbox(&mut on, name).changed() {
+                    self.set_on_map(i, on);
+                    if on {
+                        self.map_selected = Some(self.project.tracks[i].id);
                     }
-                });
+                }
             }
         });
     }
@@ -560,14 +570,13 @@ impl App {
                     let level = self.meters.get(i).copied().unwrap_or((0.0, 0.0));
                     let selected = self.map_selected == Some(self.project.tracks[i].id);
                     let t = &mut self.project.tracks[i];
-                    let color = rgb(t.color);
                     let mut put = None;
                     let mut pick = false;
                     egui::Frame::new().fill(if selected { PANEL3 } else { PANEL2 }).corner_radius(4.0).inner_margin(4).show(ui, |ui| {
                         ui.set_width(72.0);
                         ui.set_height(h - 12.0);
                         ui.vertical_centered(|ui| {
-                            let name = ui.add(egui::Label::new(RichText::new(&t.name).small().color(color)).truncate().sense(Sense::click()));
+                            let name = ui.add(egui::Label::new(RichText::new(&t.name).small().color(if selected { accent_now() } else { TEXT })).truncate().sense(Sense::click()));
                             if name.clicked() {
                                 pick = true;
                             }
@@ -585,7 +594,7 @@ impl App {
                                     let db = 20.0 * v.max(1e-6).log10();
                                     let frac = ((db + 60.0) / 66.0).clamp(0.0, 1.0);
                                     let col = Rect::from_min_max(pos2(m.left() + k as f32 * 4.0, m.bottom() - frac * m.height()), pos2(m.left() + k as f32 * 4.0 + 3.0, m.bottom()));
-                                    rect_fill(ui.painter(), col, 1.0, if db > -3.0 { REC } else { PLAY });
+                                    rect_fill(ui.painter(), col, 1.0, if db > -3.0 { REC } else { Color32::from_gray(190) });
                                 }
                             });
                             ui.label(RichText::new(format!("{:+.1}", t.mixer.volume_db)).small().color(TEXT_DIM));
@@ -644,24 +653,31 @@ mod tests {
         edits
     }
 
-    /// Where a place is on the 600 x 600 test map.
-    fn screen_of(pl: &Place) -> Pos2 {
+    /// Where a place (or with `listener` the listener) is on the 600 x 600 test map.
+    fn screen_of(pl: &Place, listener: bool) -> Pos2 {
         let room = MapRoom::default();
         let p = params(&room, pl);
         let (w, d, _) = st::room(&p);
         let scale = ((600.0 - 44.0) / w).min((600.0 - 40.0) / d);
         let top = 300.0 - d * scale / 2.0;
-        let ((sx, sy), _) = st::places(&p);
-        pos2(300.0 + sx * scale, top + sy * scale)
+        let ((sx, sy), (lx, ly)) = st::places(&p);
+        if listener {
+            pos2(300.0 + lx * scale, top + ly * scale)
+        } else {
+            pos2(300.0 + sx * scale, top + sy * scale)
+        }
+    }
+
+    fn dot(track: u64) -> Dot {
+        Dot { track, name: "Bass".into(), place: Place::default(), live: None, level: 0.0 }
     }
 
     #[test]
     fn dragging_a_track_moves_it_from_where_it_was_taken() {
-        let dot = Dot { track: 7, name: "Bass".into(), color: Color32::RED, place: Place::default(), level: 0.0 };
         // Taken by its tag (above the dot): it moves by as much as the mouse, no jump.
-        let at = screen_of(&dot.place) + vec2(0.0, -19.0);
+        let at = screen_of(&Place::default(), false) + vec2(0.0, -19.0);
         let to = at + vec2(120.0, 60.0);
-        let edits = drive(&[dot.clone()], None, &[(at, Some(true)), (at + vec2(10.0, 5.0), None), (to, None), (to, Some(false))]);
+        let edits = drive(&[dot(7)], None, &[(at, Some(true)), (at + vec2(10.0, 5.0), None), (to, None), (to, Some(false))]);
         assert!(edits.iter().any(|e| e.select == Some(7)));
         let moved = edits.iter().filter_map(|e| e.moved).last().expect("moved");
         assert_eq!(moved.0, 7);
@@ -670,14 +686,22 @@ mod tests {
 
     #[test]
     fn the_handle_turns_the_selected_track() {
-        let dot = Dot { track: 3, name: "Keys".into(), color: Color32::BLUE, place: Place::default(), level: 0.0 };
-        let q = screen_of(&dot.place);
+        let q = screen_of(&Place::default(), false);
         // Facing 0: the handle straight below it; dragged to its right side: facing 90.
         let h = q + vec2(0.0, HANDLE);
         let to = q + vec2(HANDLE, 0.0);
-        let edits = drive(&[dot], Some(3), &[(h, Some(true)), (h + vec2(6.0, -4.0), None), (to, None), (to, Some(false))]);
+        let edits = drive(&[dot(3)], Some(3), &[(h, Some(true)), (h + vec2(6.0, -4.0), None), (to, None), (to, Some(false))]);
         let turned = edits.iter().filter_map(|e| e.turned).last().expect("turned");
         assert_eq!(turned, (3, 90.0));
+    }
+
+    #[test]
+    fn the_listener_moves_anywhere() {
+        let head = screen_of(&Place::default(), true);
+        let to = head + vec2(-90.0, -40.0);
+        let edits = drive(&[], None, &[(head, Some(true)), (head + vec2(-8.0, -4.0), None), (to, None), (to, Some(false))]);
+        let (x, y) = edits.iter().filter_map(|e| e.listener).last().expect("listener");
+        assert!(x < -0.2 && y < 0.6, "{x} {y}");
     }
 
     #[test]

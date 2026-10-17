@@ -207,6 +207,8 @@ pub enum ModOwner {
     Device(u64),
     MidiDevice(u64),
     Modulator(u64),
+    /// Where a track (by id) stands on the Map.
+    Map(u64),
 }
 
 /// Where a route goes.
@@ -333,6 +335,8 @@ impl Project {
             ModOwner::Device(d) => self.all_devices().find(|x| x.id == d).map(|x| x.kind.specs()),
             ModOwner::MidiDevice(d) => self.tracks.iter().flat_map(|t| &t.midi_devices).find(|x| x.id == d).map(|x| x.kind.specs()),
             ModOwner::Modulator(m) => self.modulators.iter().find(|x| x.id == m).map(|x| x.kind.specs()),
+            // (kept while the track is off the map: back on, it moves again)
+            ModOwner::Map(t) => self.tracks.iter().any(|tr| tr.id == t).then_some(crate::dsp::fx::stage::PLACE_SPECS),
         }
     }
 
@@ -368,6 +372,7 @@ impl Project {
                         format!("{} {kind}", t.map(|t| t.name.as_str()).unwrap_or(""))
                     }
                     ModOwner::Modulator(m) => self.modulators.iter().find(|x| x.id == m).map(|x| x.name.clone()).unwrap_or_default(),
+                    ModOwner::Map(t) => format!("{} on the Map", track_name(t).unwrap_or_default()),
                 };
                 (where_, pname)
             }
@@ -446,6 +451,7 @@ enum Path {
     MasterDevice(usize),
     MidiDevice(usize, usize),
     Modulator(usize),
+    Map(usize),
 }
 
 struct Slot {
@@ -701,7 +707,12 @@ impl ModRuntime {
 
         // Parameter sets start from the project values...
         for slot in self.slots.iter_mut() {
+            let place;
             let base: &[f32] = match slot.path {
+                Path::Map(t) => {
+                    place = p.tracks.get(t).and_then(|t| t.place).map(|pl| pl.to_params()).unwrap_or_default();
+                    &place
+                }
                 Path::Instrument(t) => p.tracks.get(t).and_then(|t| t.instrument.as_ref()).and_then(instrument_params).unwrap_or(&[]),
                 Path::TrackDevice(t, d) => p.tracks.get(t).and_then(|t| t.devices.get(d)).map(|d| &d.params[..]).unwrap_or(&[]),
                 Path::ReturnDevice(r, d) => p.returns.get(r).and_then(|r| r.devices.get(d)).map(|d| &d.params[..]).unwrap_or(&[]),
@@ -827,6 +838,11 @@ fn resolve(p: &Project, owner: ModOwner) -> Option<(Path, &'static [ParamSpec])>
         ModOwner::Modulator(id) => {
             let i = p.modulators.iter().take(MAX_MODS).position(|m| m.id == id)?;
             Some((Path::Modulator(i), p.modulators[i].kind.specs()))
+        }
+        ModOwner::Map(id) => {
+            let t = p.track_index(id)?;
+            p.tracks[t].place?;
+            Some((Path::Map(t), crate::dsp::fx::stage::PLACE_SPECS))
         }
     }
 }

@@ -72,6 +72,12 @@ impl App {
                 out.push(EnvTarget { group: d.name().into(), name: s.name.into(), target: ModTarget::Param { owner: ModOwner::Device(d.id), param: k as u16 }, spec: Some(s) });
             }
         }
+        // Where it stands on the Map (it walks round).
+        if tr.place.is_some() {
+            for (k, s) in krabton_engine::dsp::fx::stage::PLACE_SPECS.iter().enumerate() {
+                out.push(EnvTarget { group: "Map".into(), name: s.name.into(), target: ModTarget::Param { owner: ModOwner::Map(tr.id), param: k as u16 }, spec: Some(s) });
+            }
+        }
         out
     }
 
@@ -95,6 +101,10 @@ impl App {
                         (d.kind.specs(), &d.params)
                     }
                     ModOwner::Modulator(_) => return None,
+                    ModOwner::Map(_) => {
+                        let v = tr.place?.to_params();
+                        return Some(krabton_engine::dsp::fx::stage::PLACE_SPECS.get(k)?.to_norm(*v.get(k)?));
+                    }
                 };
                 Some(specs.get(k)?.to_norm(*values.get(k)?))
             }

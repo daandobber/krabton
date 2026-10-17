@@ -124,6 +124,8 @@ pub struct TrackStatus {
     pub inst_scope: crate::scope::ScopeBuffer,
     pub inst_held: [AtomicU64; 2],
     pub inst_vals: Vec<AtomicF32>,
+    /// Where it stands on the Map now (modulated): across, depth, width, facing, beam.
+    pub map_live: [AtomicF32; 5],
 }
 
 impl TrackStatus {
@@ -141,6 +143,7 @@ impl TrackStatus {
             inst_scope: crate::scope::ScopeBuffer::new(INST_SCOPE_LEN, false),
             inst_held: [AtomicU64::new(0), AtomicU64::new(0)],
             inst_vals: (0..INST_VALS).map(|_| AtomicF32::new(0.0)).collect(),
+            map_live: std::array::from_fn(|_| AtomicF32::new(0.0)),
         }
     }
 
@@ -2015,7 +2018,14 @@ impl Engine {
                         *placer_idle = false;
                         st.clear();
                     }
-                    let params = crate::dsp::fx::stage::map_params(&project.map, place);
+                    // Modulated (a track walking round), and where it is now for the map.
+                    let place = mods.params(ModOwner::Map(track.id)).map(crate::dsp::fx::stage::Place::from_params).unwrap_or(*place);
+                    if let Some(ts) = status.tracks.get(ti) {
+                        for (a, v) in ts.map_live.iter().zip(place.to_params()) {
+                            a.store(v);
+                        }
+                    }
+                    let params = crate::dsp::fx::stage::map_params(&project.map, &place);
                     st.process(&params, &mut l[..seg], &mut r[..seg], &ctx);
                 }
                 None => *placer_idle = true,

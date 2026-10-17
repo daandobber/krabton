@@ -35,6 +35,7 @@ pub const LEVEL: usize = 11;
 pub const FACING: usize = 12;
 pub const BEAM: usize = 13;
 pub const ROOM_AMOUNT: usize = 14;
+pub const LISTENER_X: usize = 15;
 pub const EARS_NAMES: &[&str] = &["Speakers", "Headphones"];
 
 pub static SPECS: &[ParamSpec] = &[
@@ -53,6 +54,16 @@ pub static SPECS: &[ParamSpec] = &[
     ParamSpec::lin("Facing", "Place", -180.0, 180.0, 0.0, Unit::None),
     ParamSpec::lin("Beam", "Place", 0.0, 1.0, 0.4, Unit::Percent),
     ParamSpec::lin("Room", "Room", 0.0, 1.0, 0.7, Unit::Percent),
+    ParamSpec::lin("Listener X", "Room", -1.0, 1.0, 0.0, Unit::Pan),
+];
+
+/// A place on the Map as parameters (to modulate, automate).
+pub static PLACE_SPECS: &[ParamSpec] = &[
+    ParamSpec::lin("Across", "Place", -1.0, 1.0, 0.0, Unit::Pan),
+    ParamSpec::lin("Depth", "Place", 0.0, 1.0, 0.3, Unit::Percent),
+    ParamSpec::lin("Width", "Place", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Facing", "Place", -180.0, 180.0, 0.0, Unit::None),
+    ParamSpec::lin("Beam", "Place", 0.0, 1.0, 0.4, Unit::Percent),
 ];
 
 const C: f32 = 343.0;
@@ -80,16 +91,17 @@ pub fn places(p: &[f32]) -> ((f32, f32), (f32, f32)) {
     let sx = p[ACROSS].clamp(-1.0, 1.0) * (w * 0.5 - 0.4);
     let sy = 0.3 + p[DEPTH].clamp(0.0, 1.0) * (d - 0.6);
     let ly = 0.3 + p[LISTENER].clamp(0.0, 1.0) * (d - 0.6);
-    ((sx, sy), (0.0, ly))
+    let lx = p.get(LISTENER_X).copied().unwrap_or(0.0).clamp(-1.0, 1.0) * (w * 0.5 - 0.4);
+    ((sx, sy), (lx, ly))
 }
 
 /// How far from the listener a sound keeps its level as it comes in (m):
-/// the middle of the stage, a third into the room. Nearer is louder.
+/// straight ahead of it, a third into the room. Nearer is louder.
 pub fn reference(p: &[f32]) -> f32 {
     let (_, d, _) = room(p);
-    let ((_, _), (lx, ly)) = places(p);
+    let ((_, _), (_, ly)) = places(p);
     let sy = 0.3 + 0.3 * (d - 0.6);
-    ((lx * lx) + (sy - ly).powi(2) + (SOURCE_HEIGHT - EAR_HEIGHT).powi(2)).sqrt().max(1.0)
+    ((sy - ly).powi(2) + (SOURCE_HEIGHT - EAR_HEIGHT).powi(2)).sqrt().max(1.0)
 }
 
 /// How far the source is from the listener (m).
@@ -133,9 +145,9 @@ pub fn direction(p: &[f32]) -> f32 {
 /// be heard from `pan` (-1 left to 1 right), as near as the room allows.
 pub fn across_for(p: &[f32], pan: f32) -> f32 {
     let (w, d, _) = room(p);
-    let ((_, _), (_, ly)) = places(p);
+    let ((_, _), (lx, ly)) = places(p);
     let ahead = (ly - (0.3 + 0.3 * (d - 0.6))).max(0.5);
-    let x = ahead * (pan.clamp(-1.0, 1.0) * FULL_SIDE).to_radians().tan();
+    let x = lx + ahead * (pan.clamp(-1.0, 1.0) * FULL_SIDE).to_radians().tan();
     (x / (w * 0.5 - 0.4)).clamp(-1.0, 1.0)
 }
 
@@ -424,6 +436,8 @@ pub struct MapRoom {
     pub walls: f32,
     pub reverb: f32,
     pub listener: f32,
+    /// Where the listener sits across the room (-1 left wall to 1 right).
+    pub listener_x: f32,
     pub falloff: f32,
     pub air: f32,
     pub delay: bool,
@@ -432,7 +446,7 @@ pub struct MapRoom {
 
 impl Default for MapRoom {
     fn default() -> Self {
-        Self { room: 0.0, size: 16.0, walls: 0.45, reverb: 0.35, listener: 0.6, falloff: 0.7, air: 0.5, delay: false, headphones: false }
+        Self { room: 0.0, size: 16.0, walls: 0.45, reverb: 0.35, listener: 0.6, listener_x: 0.0, falloff: 0.7, air: 0.5, delay: false, headphones: false }
     }
 }
 
@@ -454,9 +468,22 @@ impl Default for Place {
     }
 }
 
+impl Place {
+    /// As parameters (see `PLACE_SPECS`).
+    pub fn to_params(&self) -> [f32; 5] {
+        [self.across, self.depth, self.width, self.facing, self.beam]
+    }
+
+    pub fn from_params(p: &[f32]) -> Self {
+        let g = |i: usize, or: f32| p.get(i).copied().unwrap_or(or);
+        let d = Self::default();
+        Self { across: g(0, d.across), depth: g(1, d.depth), width: g(2, d.width), facing: g(3, d.facing), beam: g(4, d.beam) }
+    }
+}
+
 /// A Stage's parameters for a track on the Map.
-pub fn map_params(room: &MapRoom, place: &Place) -> [f32; 15] {
-    let mut p = [0.0f32; 15];
+pub fn map_params(room: &MapRoom, place: &Place) -> [f32; 16] {
+    let mut p = [0.0f32; 16];
     for (v, s) in p.iter_mut().zip(SPECS) {
         *v = s.default;
     }
@@ -469,6 +496,7 @@ pub fn map_params(room: &MapRoom, place: &Place) -> [f32; 15] {
     p[WALLS] = room.walls;
     p[TAIL] = room.reverb;
     p[LISTENER] = room.listener;
+    p[LISTENER_X] = room.listener_x;
     p[FALLOFF] = room.falloff;
     p[AIR] = room.air;
     p[FLIGHT] = if room.delay { 1.0 } else { 0.0 };
