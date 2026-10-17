@@ -1,4 +1,4 @@
-//! The Orchestra's screen: the instrument and its articulations (click one),
+//! The Orchestra's (and the Soloists') screen: the instrument and its articulations (click one),
 //! the Dynamics fader (drag it, or move it from a modulator: the sound
 //! swells through its recorded layers), the keys the articulation plays with
 //! the notes held lit, and, until the instrument is on this computer, its
@@ -110,7 +110,7 @@ pub(crate) fn orchestra_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLi
             let (a, b) = range.unwrap_or((0, 0));
             let held = if def.arts[art].held { "held notes loop; Legato joins them" } else { "short notes play out" };
             painter.text(info.left_top(), Align2::LEFT_TOP, format!("{}  ·  {} to {}  ·  {}", def.arts[art].label, krabton_engine::note_name(a), krabton_engine::note_name(b), held), FontId::proportional(11.0), TEXT);
-            painter.text(info.left_bottom(), Align2::LEFT_BOTTOM, "VS Chamber Orchestra 2 (CC0)", FontId::proportional(9.5), TEXT_DIM);
+            painter.text(info.left_bottom(), Align2::LEFT_BOTTOM, def.src.short, FontId::proportional(9.5), TEXT_DIM);
         }
         LibState::Missing => {
             let r = Rect::from_min_size(info.left_top(), vec2(230.0, 26.0));

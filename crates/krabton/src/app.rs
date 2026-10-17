@@ -197,7 +197,7 @@ impl BrowserItem {
             BrowserItem::Warp(p) => format!("Warp: {p}"),
             BrowserItem::Hybrid(p) => format!("Hybrid: {p}"),
             BrowserItem::Quartet(p) => format!("Quartet: {p}"),
-            BrowserItem::Orchestra(p) => format!("Orchestra: {p}"),
+            BrowserItem::Orchestra(p) => format!("{}: {p}", if krabton_engine::orchestra::SOLOIST_NAMES.contains(p) { "Soloists" } else { "Orchestra" }),
             BrowserItem::Facet(p) => format!("Facet: {p}"),
             BrowserItem::Piano(p) => format!("Grand Piano: {p}"),
             BrowserItem::Drums(k) => k.to_string(),

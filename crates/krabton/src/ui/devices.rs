@@ -1362,9 +1362,11 @@ impl App {
                             egui::ComboBox::from_id_salt(("orchestra_preset", track_id)).width(160.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 let mut family = None;
                                 for d in krabton_engine::orchestra::INSTRUMENTS {
-                                    if family != Some(d.family) {
-                                        family = Some(d.family);
-                                        ui.label(RichText::new(format!("{:?}", d.family)).small().color(TEXT_DIM));
+                                    let solo = !std::ptr::eq(d.src, &krabton_engine::orchestra::VSCO);
+                                    if family != Some((solo, d.family)) {
+                                        family = Some((solo, d.family));
+                                        let head = if solo { format!("Soloists · {:?}", d.family) } else { format!("{:?}", d.family) };
+                                        ui.label(RichText::new(head).small().color(TEXT_DIM));
                                     }
                                     let here = krabton_engine::orchestra::library(krabton_engine::orchestra::index_of(d.name).unwrap_or(0)).is_some();
                                     let label = if here { d.name.to_string() } else { format!("{}  ({} MB)", d.name, d.mb) };

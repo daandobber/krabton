@@ -906,7 +906,7 @@ impl Instrument {
             Instrument::Warp { .. } => "Warp",
             Instrument::Hybrid { .. } => "Hybrid",
             Instrument::Quartet { .. } => "Quartet",
-            Instrument::Orchestra { .. } => "Orchestra",
+            Instrument::Orchestra { params, .. } => crate::orchestra::device_name(params),
             Instrument::Facet { .. } => "Facet",
         }
     }
