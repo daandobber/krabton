@@ -97,6 +97,7 @@ pub fn effect(kind: EffectKind) -> &'static [Preset] {
         E::Shimmer => SHIMMER,
         E::Spring => SPRING,
         E::OpenAir => OPEN_AIR,
+        E::Stage => STAGE,
         E::PitchDelay => PITCH_DELAY,
         E::Grains => GRAINS,
         E::Overdrive => OVERDRIVE,
@@ -515,6 +516,15 @@ static SPRING: &[Preset] = &[
     p("Clean Spring", &[("Drip", N(0.1)), ("Drive", N(0.0)), ("Tone", N(6000.0))]),
 ];
 
+static STAGE: &[Preset] = &[
+    p("Studio", &[]),
+    p("Small Room", &[("Room m", N(6.0)), ("Walls", N(0.6)), ("Reverb", N(0.4)), ("Listener", N(0.7))]),
+    p("Club", &[("Room m", N(14.0)), ("Walls", N(0.35)), ("Reverb", N(0.55))]),
+    p("Concert Hall", &[("Room m", N(32.0)), ("Walls", N(0.25)), ("Reverb", N(0.65)), ("Listener", N(0.75))]),
+    p("Cathedral", &[("Room m", N(56.0)), ("Walls", N(0.05)), ("Reverb", N(0.8)), ("Air", N(0.7))]),
+    p("Dry Booth", &[("Room m", N(4.0)), ("Walls", N(1.0)), ("Reverb", N(0.15))]),
+    p("Headphones", &[("Ears", C("Headphones"))]),
+];
 static OPEN_AIR: &[Preset] = &[
     p("Forest Morning", &[("Place", C("Forest")), ("Ambience", C("Birds"))]),
     p("Canyon Echo", &[("Place", C("Canyon")), ("Distance", N(0.6))]),

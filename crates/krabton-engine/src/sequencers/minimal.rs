@@ -29,6 +29,32 @@ pub(crate) const DYNAMICS: [ParamSpec; 4] = [
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
 ];
 
+/// How much of its own harmony a composer's sequencer plays (see
+/// `chord_root`): 0 % stays on the home chord, 100 % its own progression,
+/// 200 % a passing chord into every next one.
+pub(crate) const CHORD_AMOUNT: ParamSpec = ParamSpec::lin("Chords", "Harmony", 0.0, 2.0, 1.0, Unit::Percent);
+
+/// The chord a sequencer plays at the `idx`th chord of its progression:
+/// its own (`own`) at `amount` 1. Below 1 more and more of them stay on the
+/// home chord (the song's key, or the chord the Key drawer moved it to),
+/// all of them at 0, so a song moved by the Key drawer moves as one. Above
+/// 1, in a chord's second half (`late`), more and more often a passing
+/// chord leading into the next one (a fifth above it).
+pub fn chord_root(amount: f32, idx: i64, own: i32, next: i32, late: bool) -> i32 {
+    let i = idx as u32;
+    if amount < 1.0 {
+        if own.rem_euclid(7) == 0 || hash(0xC40D, i) < amount {
+            own
+        } else {
+            0
+        }
+    } else if late && hash(0xC40E, i) < amount - 1.0 && (next + 4).rem_euclid(7) != own.rem_euclid(7) {
+        next + 4
+    } else {
+        own
+    }
+}
+
 // ---------------------------------------------------------------- glass
 
 pub const G_FIGURE: usize = 1;
@@ -41,6 +67,8 @@ pub const G_OCTAVES: usize = 7;
 pub const G_GATE: usize = 8;
 pub const G_VELOCITY: usize = 9;
 pub const G_ACCENT: usize = 10;
+/// (came later: after the keys and the dynamics)
+pub const G_CHORD_AMOUNT: usize = 17;
 
 pub const FIGURES: &[&str] = &["Three Over Two", "Rocking", "Broken", "Additive", "Pulse"];
 pub const GLASS_CHORDS: &[&str] = &["1 6 3 7", "1 7 6 5", "1 6", "1 4 1 5", "1 5 6 4", "Circle"];
@@ -67,6 +95,7 @@ pub static GLASS: &[ParamSpec] = &[
     DYNAMICS[1],
     DYNAMICS[2],
     DYNAMICS[3],
+    CHORD_AMOUNT,
 ];
 
 // ---------------------------------------------------------------- satie
@@ -96,6 +125,7 @@ pub const S_RANGE: usize = 29;
 pub const S_OCTAVE: usize = 30;
 pub const S_MOTION: usize = 31;
 pub const S_ORNAMENTS: usize = 32;
+pub const S_CHORD_AMOUNT: usize = 33;
 
 pub const SATIE_STYLES: &[&str] = &["Gymnopédie", "Gnossienne", "Sarabande"];
 pub const SATIE_HARMONIES: &[&str] = &["Sway", "Circle", "Minor", "Lydian", "Drone", "Falling", "Custom"];
@@ -146,6 +176,7 @@ pub static SATIE: &[ParamSpec] = &[
     ParamSpec::int("Octave", "Melody", -1.0, 2.0, 0.0, Unit::None),
     ParamSpec::lin("Motion", "Melody", 0.0, 1.0, 0.5, Unit::Percent),
     ParamSpec::lin("Ornaments", "Melody", 0.0, 1.0, 0.3, Unit::Percent),
+    CHORD_AMOUNT,
 ];
 
 /// The chords of Satie's harmony (scale degrees, the tonic 0) and how many:
@@ -239,6 +270,7 @@ pub const R_BASE: usize = 6;
 pub const R_SPREAD: usize = 7;
 pub const R_GATE: usize = 8;
 pub const R_VELOCITY: usize = 9;
+pub const R_CHORD_AMOUNT: usize = 16;
 
 pub const RILEY_STYLES: &[&str] = &["In C", "Rainbow"];
 pub const MAX_PLAYERS: usize = 5;
@@ -262,6 +294,7 @@ pub static RILEY: &[ParamSpec] = &[
     DYNAMICS[1],
     DYNAMICS[2],
     DYNAMICS[3],
+    CHORD_AMOUNT,
 ];
 
 /// How finely each counts its steps: Glass in sixths of its pulse (three
@@ -373,10 +406,13 @@ pub(crate) fn choose(p: &[f32], i: usize, n: usize) -> usize {
 /// Riley's figure `i` of `total`: its harmony turns through the piece, from
 /// the tonic triad, through a sharpened fourth and a flattened seventh,
 /// back home.
-fn figure(i: usize, total: usize) -> Figure {
+fn figure(i: usize, total: usize, amount: f32) -> Figure {
+    // Chords: fewer figures leave home; more go round the harmony faster.
     let f = i as f32 / total.max(1) as f32;
+    let f = if amount > 1.0 { (f * amount).fract() } else { f };
+    let home = amount < 1.0 && hash(i as u32 * 3 + 5, 77) >= amount;
     // The notes of this part of the piece (degree, semitones off the scale).
-    let field: &[(i8, i8)] = if f < 0.3 {
+    let field: &[(i8, i8)] = if home || f < 0.3 {
         &[(0, 0), (2, 0), (4, 0), (1, 0), (2, 0), (4, 0)]
     } else if f < 0.55 {
         &[(3, 1), (4, 0), (2, 0), (0, 0), (3, 1), (5, 0)]
@@ -492,7 +528,29 @@ impl SeqState {
             m.g_add = 0;
         }
         m.g_chord %= roots.len();
-        let root = roots[m.g_chord];
+        let amount = p.get(G_CHORD_AMOUNT).copied().unwrap_or(1.0);
+        let own = roots[m.g_chord];
+        let next = roots[(m.g_chord + 1) % roots.len()];
+        let half = ADDITIVE.len() / 2;
+        let len_now = match figure {
+            2 => 6,
+            3 => ADDITIVE[m.g_add % ADDITIVE.len()],
+            _ => 4,
+        };
+        // The chord's second half (a passing chord there, with Chords above 100 %).
+        let late = match figure {
+            3 => m.g_add >= half,
+            _ if repeats >= 2 => m.g_rep >= repeats / 2,
+            _ => m.g_note >= len_now / 2,
+        };
+        let late_start = match figure {
+            3 => m.g_add == half && m.g_rep == 0 && m.g_note == 0,
+            _ if repeats >= 2 => m.g_rep == repeats / 2 && m.g_note == 0,
+            _ => m.g_note == len_now / 2,
+        };
+        let idx = m.g_chord as i64;
+        let root = chord_root(amount, idx, own, next, late);
+        let passing = chord_root(amount, idx, own, next, true);
         let tones: &[i32] = if p[G_SEVENTHS] >= 0.5 { &[0, 2, 4, 6] } else { &[0, 2, 4] };
         // The chord's notes up the octaves, and the top root.
         let mut arp = [0i32; 16];
@@ -528,11 +586,18 @@ impl SeqState {
         let first = i == 0;
         let chord_start = first && m.g_rep == 0 && (figure != 3 || m.g_add == 0);
         let v = vel * if first { 1.0 + 0.3 * accent } else { 1.0 - 0.1 * accent };
-        // The bass, held under the whole chord.
+        // The bass, held under the whole chord (or its first half, a passing chord after).
         if chord_start && p[G_BASS] >= 0.5 {
+            let first_half = if figure == 3 { ADDITIVE[..half].iter().sum::<u32>() * 2 } else if repeats >= 2 { fig_len * (repeats / 2) } else { fig_len / 2 };
             let span = if figure == 3 { ADDITIVE.iter().sum::<u32>() * 2 } else { fig_len * repeats };
+            let span = if passing != chord_root(amount, idx, own, next, false) { first_half } else { span };
             let pitch = Self::mdeg(ctx, base, root - 14, 0);
             self.note(ctx, at, pitch, vel * 0.9, span as f64 * pulse * 0.98, out);
+        }
+        if late_start && !chord_start && p[G_BASS] >= 0.5 && passing != chord_root(amount, idx, own, next, false) {
+            let rest = if figure == 3 { ADDITIVE[half..].iter().sum::<u32>() * 2 } else if repeats >= 2 { fig_len * (repeats - repeats / 2) } else { fig_len - fig_len / 2 };
+            let pitch = Self::mdeg(ctx, base, root - 14, 0);
+            self.note(ctx, at, pitch, vel * 0.85, rest as f64 * pulse * 0.98, out);
         }
         match figure {
             // Rocking under the triplets: low, middle, high, middle.
@@ -625,6 +690,7 @@ impl SeqState {
         let motion = get(S_MOTION, 0.5).clamp(0.0, 1.0);
         let ornaments = get(S_ORNAMENTS, 0.3).clamp(0.0, 1.0);
         let accomp = vel * get(S_ACCOMP, 0.75).clamp(0.0, 1.0);
+        let chords = get(S_CHORD_AMOUNT, 1.0).clamp(0.0, 2.0);
         let beat = 12.0 * step_frames;
         let metre = satie_metre(p);
         let bar_len = 12 * metre;
@@ -647,15 +713,19 @@ impl SeqState {
             if m.s_bar != bar {
                 m.s_bar = bar;
                 if style == 2 && !custom {
-                    // A Sarabande's chords slide: a step up or down, home at times.
+                    // A Sarabande's chords slide: a step up or down, home at times
+                    // (and more often home with fewer Chords).
                     let u = m.unit();
-                    m.s_root = if m.s_root != 0 && u < 0.3 { 0 } else if u < 0.65 { m.s_root + 1 } else { m.s_root - 1 }.clamp(-3, 4);
+                    let stay = m.unit() >= chords;
+                    m.s_root = if stay || (m.s_root != 0 && u < 0.3) { 0 } else if u < 0.65 { m.s_root + 1 } else { m.s_root - 1 }.clamp(-3, 4);
                 } else {
                     m.s_root = roots[chord_i];
                 }
             }
         }
-        let root = self.minimal.s_root;
+        // Chords: its own, fewer (home), or a passing chord in each one's second half.
+        let late = if per >= 2 { bar.rem_euclid(per) >= per / 2 } else { t >= 12 };
+        let root = if style == 2 && !custom { self.minimal.s_root } else { chord_root(chords, chord_i as i64, roots[chord_i], roots[(chord_i + 1) % n_roots], late) };
         // The chord's notes over its root, an octave down (the root itself is the bass's).
         let tones: &[i32] = match color {
             1 => &[2, 4, 7],
@@ -727,7 +797,8 @@ impl SeqState {
             // A Sarabande: chords from the root up sliding, on one and on three.
             _ => {
                 if t == 0 || t == 24 {
-                    let r = if t == 24 { root + if self.minimal.unit() < 0.5 { 1 } else { -1 } } else { root };
+                    let slide = t == 24 && self.minimal.unit() < chords.min(1.0);
+                    let r = if slide { root + if self.minimal.unit() < 0.5 { 1 } else { -1 } } else { root };
                     let len = if t == 0 { 2.0 } else { 1.0 } * beat * (0.85 + 0.25 * pedal);
                     let full: &[i32] = match color {
                         1 => &[0, 2, 4, 7],
@@ -898,6 +969,7 @@ impl SeqState {
         let players = (p[R_PLAYERS].round() as usize).clamp(1, MAX_PLAYERS);
         let patience = p[R_PATIENCE].clamp(0.0, 1.0);
         let total = (p[R_FIGURES].round() as usize).clamp(8, 48);
+        let chords = p.get(R_CHORD_AMOUNT).copied().unwrap_or(1.0).clamp(0.0, 2.0);
         let base = p[R_BASE];
         let spread = p[R_SPREAD].clamp(0.0, 1.0);
         let gate = p[R_GATE].clamp(0.1, 1.0) as f64;
@@ -972,7 +1044,7 @@ impl SeqState {
             if m.r_fig[i] >= total {
                 continue;
             }
-            let fig = figure(m.r_fig[i], total);
+            let fig = figure(m.r_fig[i], total, chords);
             let pos = m.r_pos[i];
             if !m.r_rest[i] {
                 for &(s, len, d, ch) in &fig.notes[..fig.n] {
@@ -1139,7 +1211,8 @@ mod tests {
         let mut p = defaults(SATIE);
         p[S_STYLE] = 2.0;
         let n = notes(MidiFxKind::Satie, &p, 12.0);
-        let first = n.iter().filter(|x| x.0.abs() < 0.01 && x.1 >= 45).count();
+        // (rolled, now and then: within a fifth of a beat)
+        let first = n.iter().filter(|x| x.0 < 0.2 && x.1 >= 45).count();
         assert!(first >= 5, "five notes: {first}");
         assert!(in_key(&n));
     }
@@ -1276,8 +1349,10 @@ mod tests {
         assert!(pulse >= 120, "{pulse}");
         // The figures turn through a sharpened fourth and a flattened seventh.
         let total = 24;
-        let some_sharp4 = (0..total).any(|i| figure(i, total).notes.iter().any(|n| n.3 == 1));
-        let some_flat7 = (0..total).any(|i| figure(i, total).notes.iter().any(|n| n.3 == -1));
+        let some_sharp4 = (0..total).any(|i| figure(i, total, 1.0).notes.iter().any(|n| n.3 == 1));
+        let some_flat7 = (0..total).any(|i| figure(i, total, 1.0).notes.iter().any(|n| n.3 == -1));
+        // No harmony of its own: every figure in the tonic's notes.
+        assert!((0..total - 1).all(|i| figure(i, total, 0.0).notes[..figure(i, total, 0.0).n].iter().all(|n| n.3 == 0)));
         assert!(some_sharp4 && some_flat7);
         // Three players: several notes at once now and then.
         let mut at: std::collections::BTreeMap<i64, usize> = Default::default();
@@ -1316,5 +1391,27 @@ mod tests {
         assert!(in_key(&n));
         // Sixteenths, often several at once.
         assert!(n.len() > 120, "{}", n.len());
+    }
+
+    #[test]
+    fn chords_at_zero_stay_home_and_above_a_hundred_pass_into_the_next() {
+        for i in 0..20 {
+            assert_eq!(chord_root(0.0, i, 3, 5, false), 0);
+            assert_eq!(chord_root(1.0, i, 3, 5, true), 3);
+            assert_eq!(chord_root(2.0, i, 3, 5, false), 3);
+        }
+        // A passing chord a fifth above the next (vi: iii), in the second half.
+        assert!((0..20).any(|i| chord_root(2.0, i, 3, 5, true) == 9));
+        let kept = (0..100).filter(|&i| chord_root(0.5, i, 3, 5, false) == 3).count();
+        assert!((30..70).contains(&kept), "{kept}");
+        // Glass and Satie at 0 %: every bass on the tonic.
+        let mut p = defaults(GLASS);
+        p[G_CHORD_AMOUNT] = 0.0;
+        let bass: Vec<u8> = notes(MidiFxKind::Glass, &p, 64.0).iter().filter(|x| x.1 < 46).map(|x| x.1 % 12).collect();
+        assert!(!bass.is_empty() && bass.iter().all(|&v| v == 0), "{bass:?}");
+        let mut p = defaults(SATIE);
+        p[S_CHORD_AMOUNT] = 0.0;
+        let bass: Vec<u8> = notes(MidiFxKind::Satie, &p, 24.0).iter().filter(|x| x.1 < 50).map(|x| x.1 % 12).collect();
+        assert!(!bass.is_empty() && bass.iter().all(|&v| v == 0), "{bass:?}");
     }
 }

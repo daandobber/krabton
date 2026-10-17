@@ -25,7 +25,7 @@
 //!   patterns that come back a few times, each time a little changed, before
 //!   another takes their place.
 
-use super::minimal::{choose, hash, DYNAMICS};
+use super::minimal::{choose, chord_root, hash, CHORD_AMOUNT, DYNAMICS};
 use super::{SeqState, RATES};
 use crate::midi_fx::{MidiCtx, MidiEvent};
 use crate::params::{ParamSpec, Unit};
@@ -40,6 +40,8 @@ pub const RE_PATTERN: usize = 3;
 pub const RE_BASE: usize = 4;
 pub const RE_GATE: usize = 5;
 pub const RE_VELOCITY: usize = 6;
+/// (came later: after the keys and the dynamics)
+pub const RE_CHORD_AMOUNT: usize = 13;
 pub const REICH_STYLES: &[&str] = &["Phase", "Shifting Rhythm", "Pulses"];
 /// Each step of Reich is cut in eighths (for the phasing).
 pub const REICH_TICKS: f64 = 8.0;
@@ -58,6 +60,7 @@ pub static REICH: &[ParamSpec] = &[
     DYNAMICS[1],
     DYNAMICS[2],
     DYNAMICS[3],
+    CHORD_AMOUNT,
 ];
 
 /// Rhythms of twelve, as groups of claps with a rest after each.
@@ -107,6 +110,7 @@ pub const BA_VARIATION: usize = 3;
 pub const BA_BASE: usize = 4;
 pub const BA_GATE: usize = 5;
 pub const BA_VELOCITY: usize = 6;
+pub const BA_CHORD_AMOUNT: usize = 13;
 pub const BACH_STYLES: &[&str] = &["Prelude", "Invention", "Chorale"];
 pub const BACH_HARMONIES: &[&str] = &["Wandering", "Circle", "Lament"];
 
@@ -124,6 +128,7 @@ pub static BACH: &[ParamSpec] = &[
     DYNAMICS[1],
     DYNAMICS[2],
     DYNAMICS[3],
+    CHORD_AMOUNT,
 ];
 
 const CIRCLE: [i32; 8] = [0, 3, 6, 2, 5, 1, 4, 0];
@@ -184,6 +189,7 @@ pub const DE_MOTION: usize = 3;
 pub const DE_BASE: usize = 4;
 pub const DE_PEDAL: usize = 5;
 pub const DE_VELOCITY: usize = 6;
+pub const DE_CHORD_AMOUNT: usize = 13;
 pub const DEBUSSY_STYLES: &[&str] = &["Planing", "Whole Tone", "Arabesque", "Pentatonic"];
 pub const DEBUSSY_SHAPES: &[&str] = &["Ninth", "Major Seventh", "Fourths", "Triad"];
 /// The chord shapes, semitones up from the lowest note.
@@ -204,6 +210,7 @@ pub static DEBUSSY: &[ParamSpec] = &[
     DYNAMICS[1],
     DYNAMICS[2],
     DYNAMICS[3],
+    CHORD_AMOUNT,
 ];
 
 // ---------------------------------------------------------------- feldman
@@ -255,6 +262,10 @@ pub struct Composers {
     ba_count: i64,
     ba_root: i32,
     ba_bass: i32,
+    /// The chord after this one, chosen ahead (for a passing chord into it).
+    ba_next: Option<(i32, i32)>,
+    /// The chord sounding (its own, home, or passing).
+    ba_shown: i32,
     ba_voices: [i32; 5],
     ba_voiced: bool,
     ba_hist: u64,
@@ -281,6 +292,8 @@ impl Default for Composers {
             ba_count: 0,
             ba_root: 0,
             ba_bass: 0,
+            ba_next: None,
+            ba_shown: 0,
             ba_voices: [-14, -5, 0, 2, 4],
             ba_voiced: false,
             ba_hist: 0,
@@ -446,7 +459,9 @@ impl SeqState {
                 let bp = s.rem_euclid(breath);
                 let per = (repeats / 2).max(1);
                 let ci = (bi / per).rem_euclid(CHORDS.len() as i64) as usize;
-                let root = CHORDS[ci];
+                let amount = p.get(RE_CHORD_AMOUNT).copied().unwrap_or(1.0);
+                let late = if per >= 2 { bi.rem_euclid(per) >= per / 2 } else { bp >= breath / 2 };
+                let root = chord_root(amount, ci as i64, CHORDS[ci], CHORDS[(ci + 1) % CHORDS.len()], late);
                 if on_step {
                     let swell = (std::f64::consts::PI * (bp as f64 + 0.5) / breath as f64).sin() as f32;
                     let v = vel * (0.25 + 0.75 * swell);
@@ -481,6 +496,7 @@ impl SeqState {
         let base = p[BA_BASE];
         let gate = p[BA_GATE].clamp(0.1, 1.0) as f64;
         let vel = p[BA_VELOCITY];
+        let amount = p.get(BA_CHORD_AMOUNT).copied().unwrap_or(1.0);
         // A chord a bar (sixteen steps), a beat (four) in a chorale.
         let span = if style == 2 { 4 } else { 16 };
         let unit = k.div_euclid(span);
@@ -490,9 +506,17 @@ impl SeqState {
             c.ba_bar = unit;
             let i = c.ba_count;
             c.ba_count += 1;
-            let (root, bass) = c.next_chord(harmony, i);
-            c.ba_root = root;
-            c.ba_bass = bass;
+            let (own, own_bass) = match c.ba_next.take() {
+                Some(n) => n,
+                None => c.next_chord(harmony, i),
+            };
+            c.ba_root = own;
+            c.ba_bass = own_bass;
+            c.ba_next = Some(c.next_chord(harmony, i + 1));
+            // Chords: fewer of its own leave home.
+            let root = chord_root(amount.min(1.0), i, own, own, false);
+            let bass = if root == own { own_bass } else { root };
+            c.ba_shown = root;
             // A seventh on the dominant and the supertonic, now and then.
             let seventh = matches!(root.rem_euclid(7), 1 | 4) && hash(var, i as u32) < 0.6;
             let tones: &[i32] = if seventh { &[0, 2, 4, 6] } else { &[0, 2, 4] };
@@ -514,6 +538,27 @@ impl SeqState {
             c.ba_voices[0] = b.clamp(-17, -7);
             c.ba_hist = (c.ba_hist << 4) | (root.rem_euclid(7) as u64 & 0xf);
             c.ba_top = (c.ba_top << 8) | ((c.ba_voices[upper] + 64) as u64 & 0xff);
+        }
+        // More Chords: at the half bar, now and then a passing chord into the next.
+        if t == 8 && style != 2 && amount > 1.0 && self.composers.ba_bar == unit {
+            let c = &mut self.composers;
+            let i = c.ba_count - 1;
+            let next = c.ba_next.map(|n| n.0).unwrap_or(0);
+            let pass = chord_root(amount, i, c.ba_shown, next, true);
+            if pass != c.ba_shown {
+                c.ba_shown = pass;
+                let led = lead(&c.ba_voices[1..=4], pass, &[0, 2, 4]);
+                c.ba_voices[1..=4].copy_from_slice(&led);
+                let mut b = pass;
+                while b > c.ba_voices[0] + 3 {
+                    b -= 7;
+                }
+                while b < c.ba_voices[0] - 3 {
+                    b += 7;
+                }
+                c.ba_voices[0] = b.clamp(-17, -7);
+                c.ba_hist = (c.ba_hist << 4) | (pass.rem_euclid(7) as u64 & 0xf);
+            }
         }
         let v = self.composers.ba_voices;
         let note_len = step_frames * gate;
@@ -574,7 +619,7 @@ impl SeqState {
             }
         }
         let c = &self.composers;
-        self.visual[0] = (style as u64) | (harmony as u64) << 4 | ((c.ba_root + 64) as u64 & 0xff) << 8 | (t as u64 & 0xff) << 16;
+        self.visual[0] = (style as u64) | (harmony as u64) << 4 | ((c.ba_shown + 64) as u64 & 0xff) << 8 | (t as u64 & 0xff) << 16;
         self.visual[1] = c.ba_hist;
         self.visual[2] = c.ba_top;
         self.visual[3] = k as u64;
@@ -679,7 +724,9 @@ impl SeqState {
             // Arabesque: waves of triplets up the chord and back.
             2 => {
                 const CHORDS: [i32; 4] = [0, 3, 1, 4];
-                let root = CHORDS[bar.rem_euclid(4) as usize];
+                let ci = bar.rem_euclid(4) as usize;
+                let amount = p.get(DE_CHORD_AMOUNT).copied().unwrap_or(1.0);
+                let root = chord_root(amount, ci as i64, CHORDS[ci], CHORDS[(ci + 1) % 4], t >= 24);
                 if t.rem_euclid(4) == 0 {
                     let i = t / 4;
                     const WAVE: [i32; 12] = [0, 1, 2, 3, 4, 5, 6, 5, 4, 3, 2, 1];
@@ -1041,5 +1088,21 @@ mod tests {
         // Something comes back: a chord's notes heard again later.
         let first: Vec<u8> = n.iter().filter(|x| x.0 < 0.01).map(|x| x.1).collect();
         assert!(n.iter().filter(|x| x.0 > 4.0).any(|x| first.contains(&x.1)), "{first:?}");
+    }
+
+    #[test]
+    fn bach_at_no_chords_stays_on_the_tonic_and_with_more_passes() {
+        let mut p = defaults(BACH);
+        p[BA_CHORD_AMOUNT] = 0.0;
+        let n = notes(MidiFxKind::Bach, &p, 32.0);
+        assert!(n.iter().all(|x| [0, 4, 7].contains(&(x.1 % 12))), "home all along");
+        // More: some half bars break another chord than their bar's first half.
+        p[BA_CHORD_AMOUNT] = 2.0;
+        let n = notes(MidiFxKind::Bach, &p, 64.0);
+        let differs = (0..16).filter(|&b| {
+            let set = |lo: f64, hi: f64| n.iter().filter(|x| x.0 >= lo - 1e-3 && x.0 < hi - 1e-3).map(|x| x.1 % 12).collect::<std::collections::BTreeSet<u8>>();
+            set(b as f64 * 4.0, b as f64 * 4.0 + 2.0) != set(b as f64 * 4.0 + 2.0, b as f64 * 4.0 + 4.0)
+        });
+        assert!(differs.count() >= 3);
     }
 }

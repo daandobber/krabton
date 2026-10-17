@@ -50,6 +50,7 @@ impl App {
         self.ui_settings(ctx);
         self.ui_rack(ctx);
         self.ui_glitch_window(ctx);
+        self.ui_stage_window(ctx);
         if self.show_about {
             let mut open = true;
             egui::Window::new("About Krabton").collapsible(false).resizable(false).open(&mut open).show(ctx, |ui| {
@@ -199,7 +200,7 @@ impl App {
                 ui.label(RichText::new(current.name()).strong().color(ACCENT));
                 ui.label(RichText::new(current.note_names()).small().color(TEXT_DIM));
             });
-            ui.checkbox(&mut self.project.scale_mode, "Scale mode: highlight the scale in the piano roll");
+            ui.checkbox(&mut self.project.scale_mode, "In key: the piano roll shows it, the sequencers and MIDI effects play in it (off: all twelve notes everywhere)");
             ui.checkbox(&mut self.piano.fold, "Fold the piano roll to the scale");
             ui.checkbox(&mut self.snap_input, "Snap played notes (keyboard and MIDI) to the scale");
             ui.checkbox(&mut self.scale_keys, "Computer keyboard plays scale steps (A S D F ...)");

@@ -1830,6 +1830,9 @@ impl Engine {
             if track.midi_devices.iter().any(|d| d.enabled) {
                 let drum_notes = track.instrument.as_ref().map(|i| i.drum_notes()).unwrap_or(0);
                 let ctx = MidiCtx { now: clock, len: seg, samples_per_beat: spb, scale: project.scale, scale_on: project.scale_mode, beat: s0, playing, sr, drum_notes };
+                // All notes free (scale mode off): the twelve of them, but for
+                // what is in a key by nature.
+                let free = MidiCtx { scale: crate::scale::Scale::new(project.scale.root, crate::scale::ScaleKind::Chromatic), ..ctx };
                 let mut shown = false;
                 for (dev, (_, st)) in track.midi_devices.iter().zip(midi_fx.iter_mut()) {
                     if !dev.enabled {
@@ -1837,7 +1840,8 @@ impl Engine {
                     }
                     fx_buf.clear();
                     let params = mods.params(ModOwner::MidiDevice(dev.id)).unwrap_or(&dev.params);
-                    st.process(dev.kind, params, &dev.data, events, fx_buf, &ctx);
+                    let dctx = if !ctx.scale_on && !dev.kind.keeps_key() { &free } else { &ctx };
+                    st.process(dev.kind, params, &dev.data, events, fx_buf, dctx);
                     fx_buf.sort_by_key(|e| (e.offset, e.on));
                     std::mem::swap(events, fx_buf);
                     if let Some(v) = st.visual() {
@@ -1911,12 +1915,12 @@ impl Engine {
                     InstState::Birds(s) => s.playing = ctx.playing,
                     InstState::Nature(s) => s.playing = ctx.playing,
                     // The pipes of a pan flute, a harp's key: the song's key now.
-                    InstState::PanFlute(s) => s.key = key_new.unwrap_or(project.scale).mask(),
-                    InstState::Harmonica(s) => s.song_key = key_new.unwrap_or(project.scale),
+                    InstState::PanFlute(s) => s.key = key_new.filter(|_| !track.key_fixed).unwrap_or(project.scale).mask(),
+                    InstState::Harmonica(s) => s.song_key = key_new.filter(|_| !track.key_fixed).unwrap_or(project.scale),
                     _ => {}
                 }
                 // The Key drawer moves what it plays into its key (not drums).
-                let melodic = inst.transposes();
+                let melodic = inst.transposes() && !track.key_fixed;
                 let moved = |p: u8, s: i8| (p as i32 + s as i32).clamp(0, 127) as u8;
                 let mut pos = 0;
                 for ev in events.iter() {
@@ -2722,6 +2726,68 @@ mod tests {
         run(&mut e, 2.0);
         let tail = run(&mut e, 0.2);
         assert!(peak(&tail) < 1e-3, "the note was let go: {}", peak(&tail));
+    }
+
+    #[test]
+    fn a_track_can_stay_where_it_is_when_the_key_moves() {
+        let mut p = Project::new_default();
+        p.scale = crate::scale::Scale::new(0, crate::scale::ScaleKind::Major);
+        let ti = p.tracks.iter().position(|t| matches!(t.instrument, Some(Instrument::Synth { .. }))).expect("a synth track");
+        let id = p.tracks[ti].id;
+        for t in p.tracks.iter_mut() {
+            t.arrangement.clear();
+        }
+        let play = |p: &Project| {
+            let (mut e, h) = Engine::new(48000.0, Arc::new(p.clone()));
+            h.send(Command::NoteOn { track: id, pitch: 48, velocity: 0.9 });
+            period(&run(&mut e, 0.4))
+        };
+        let home = play(&p);
+        p.play_key = Some(crate::scale::Scale::new(7, crate::scale::ScaleKind::Major));
+        p.tracks[ti].key_fixed = true;
+        let fixed = play(&p);
+        assert!((home / fixed - 1.0).abs() < 0.02, "it stays: {home} {fixed}");
+    }
+
+    #[test]
+    fn with_all_notes_free_the_sequencers_that_pick_notes_take_all_twelve() {
+        // A Turing machine on the synth, playing; which notes the synth holds.
+        let held_classes = |scale_mode: bool, kind: crate::midi_fx::MidiFxKind| {
+            let mut p = Project::new_default();
+            p.scale = crate::scale::Scale::new(0, crate::scale::ScaleKind::Major);
+            p.scale_mode = scale_mode;
+            let ti = p.tracks.iter().position(|t| matches!(t.instrument, Some(Instrument::Synth { .. }))).expect("a synth track");
+            for t in p.tracks.iter_mut() {
+                t.arrangement.clear();
+            }
+            let dev = p.make_midi_device(kind);
+            p.tracks[ti].midi_devices.push(dev);
+            let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+            h.send(Command::Play);
+            let mut classes = 0u16;
+            for _ in 0..160 {
+                run(&mut e, 0.05);
+                let held = &h.status.tracks[ti].inst_held;
+                for (w, a) in held.iter().enumerate() {
+                    let bits = a.load(RELAXED);
+                    for b in 0..64 {
+                        if bits >> b & 1 == 1 {
+                            classes |= 1 << ((w * 64 + b) % 12);
+                        }
+                    }
+                }
+            }
+            classes
+        };
+        let c_major: u16 = [0, 2, 4, 5, 7, 9, 11].iter().fold(0, |m, &pc| m | 1 << pc);
+        use crate::midi_fx::MidiFxKind;
+        let in_key = held_classes(true, MidiFxKind::Turing);
+        assert!(in_key != 0 && in_key & !c_major == 0, "{in_key:012b}");
+        let free = held_classes(false, MidiFxKind::Turing);
+        assert!(free & !c_major != 0, "some note out of the key: {free:012b}");
+        // A composer stays in the key, notes free or not.
+        let glass = held_classes(false, MidiFxKind::Glass);
+        assert!(glass != 0 && glass & !c_major == 0, "{glass:012b}");
     }
 
     #[test]

@@ -230,6 +230,13 @@ impl MidiFxKind {
     /// The sequencers' groups, in menu order.
     pub const SEQUENCER_GROUPS: [&'static str; 8] = ["Classic", "Players", "Rhythm", "Played", "Generative", "Physics & Chaos", "Ambient", "Composers"];
 
+    /// Whether it is in a key by its nature (chords, the composers, the
+    /// ambient ones): with the project's notes free (scale mode off) it
+    /// stays in the song's key, where the others take all twelve notes.
+    pub fn keeps_key(self) -> bool {
+        matches!(self.group(), "Composers" | "Players" | "Ambient") || matches!(self, MidiFxKind::Progression | MidiFxKind::Chord)
+    }
+
     /// Which group a sequencer belongs to (see `SEQUENCER_GROUPS`).
     pub fn group(self) -> &'static str {
         use MidiFxKind as K;

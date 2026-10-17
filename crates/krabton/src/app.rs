@@ -451,6 +451,8 @@ pub struct App {
     pub(crate) auto_arm: bool,
     /// The Glitch Sequencer shown in a window of its own (by device id).
     pub(crate) glitch_window: Option<u64>,
+    /// The Stage's big map, in a window.
+    pub(crate) stage_window: bool,
     /// Size of everything asked for by a script (see `run_script`).
     script_zoom: Option<f32>,
     pub(crate) auto_prev: std::collections::HashMap<(usize, krabton_engine::modulation::ModTarget), f32>,
@@ -593,6 +595,7 @@ impl App {
             env_draw: false,
             auto_arm: false,
             glitch_window: None,
+            stage_window: false,
             script_zoom: None,
             auto_prev: Default::default(),
             auto_last: Default::default(),
@@ -2319,6 +2322,8 @@ impl App {
                 "rackcolumns" => self.prefs.layout.rack_columns = !self.prefs.layout.rack_columns,
                 "devices" => self.detail = DetailTab::Devices,
                 "settings" => self.show_settings = true,
+                "stageall" => self.stage_every_track(),
+                "stagewin" => self.stage_window = true,
                 "audioout" => {
                     let names = audio::output_device_names();
                     eprintln!("outputs: {names:?}");

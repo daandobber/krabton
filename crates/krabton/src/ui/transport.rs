@@ -3,7 +3,7 @@
 use crate::app::{App, View};
 use crate::theme::*;
 use crate::widgets::*;
-use egui::{vec2, Align2, RichText, Sense, Ui};
+use egui::{pos2, vec2, Align2, Rect, RichText, Sense, Stroke, Ui};
 use krabton_engine::{Command, Instrument, Quantize};
 use std::sync::atomic::Ordering;
 use std::time::Instant;
@@ -53,10 +53,37 @@ impl App {
                 Some(k) => format!("{}*", k.name()),
                 None => self.project.scale.name(),
             };
+            // In key (a closed lock), or every note free (open).
+            let (lr, lock) = ui.allocate_exact_size(vec2(20.0, 24.0), Sense::click());
+            {
+                let pnt = ui.painter();
+                rect_fill(pnt, lr, 3.0, if scale_on { ACCENT } else { PANEL3 });
+                let c = if scale_on { TEXT_DARK } else { TEXT };
+                let body = Rect::from_center_size(lr.center() + vec2(0.0, 3.0), vec2(10.0, 8.0));
+                rect_fill(pnt, body, 1.5, c);
+                let lift = if scale_on { 0.0 } else { 3.0 };
+                let top = body.top() - lift;
+                let pts: Vec<egui::Pos2> = (0..=12).map(|i| {
+                    let a = std::f32::consts::PI * i as f32 / 12.0;
+                    pos2(lr.center().x - 3.2 * a.cos(), top - 3.8 * a.sin())
+                }).collect();
+                pnt.add(egui::Shape::line(pts, Stroke::new(1.6_f32, c)));
+                if !scale_on {
+                    pnt.line_segment([pos2(lr.center().x - 3.2, top), pos2(lr.center().x - 3.2, body.top())], Stroke::new(1.6_f32, c));
+                }
+            }
+            let tip_lock = if scale_on {
+                "In key: the piano roll shows the key, the sequencers and MIDI effects play in it. Click for all twelve notes everywhere"
+            } else {
+                "All notes: nothing keeps to the key; the sequencers that pick notes take all twelve (those in a key by nature, the composers, players and ambient ones, stay in it). Click to keep to the key again"
+            };
+            if lock.on_hover_text(tip_lock).clicked() {
+                self.project.scale_mode = !scale_on;
+            }
             let scale_btn = egui::Button::new(RichText::new(key_name).color(if scale_on { TEXT_DARK } else { TEXT })).fill(if scale_on { ACCENT } else { PANEL3 });
             let tip = match moved {
-                Some(k) => format!("The song is in {}; the Key drawer plays it in {}. Click to change or convert the whole project; right-click toggles scale mode.", self.project.scale.name(), k.name()),
-                None => "Key & scale of the project. Click to change or convert the whole project; right-click toggles scale mode.".to_string(),
+                Some(k) => format!("The song is in {}; the Key drawer plays it in {}. Click to change or convert the whole project; right-click: in key or all notes.", self.project.scale.name(), k.name()),
+                None => "Key & scale of the project. Click to change or convert the whole project; right-click: in key or all notes.".to_string(),
             };
             let resp = ui.add(scale_btn).on_hover_text(tip);
             if resp.clicked() {

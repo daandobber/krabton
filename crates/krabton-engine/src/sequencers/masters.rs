@@ -36,7 +36,7 @@
 //! - Einaudi: a broken chord going round four chords with a few notes of
 //!   melody over it, or a pattern that builds layer by layer and falls back.
 
-use super::minimal::{choose, hash, DYNAMICS};
+use super::minimal::{choose, chord_root, hash, CHORD_AMOUNT, DYNAMICS};
 use super::{SeqState, RATES};
 use crate::midi_fx::{MidiCtx, MidiEvent};
 use crate::params::{ParamSpec, Unit};
@@ -79,6 +79,8 @@ pub const MO_REROLL: usize = 3;
 pub const MO_BASE: usize = 4;
 pub const MO_GATE: usize = 5;
 pub const MO_VELOCITY: usize = 6;
+/// (came later: after the keys and the dynamics)
+pub const MO_CHORD_AMOUNT: usize = 13;
 pub const MOZART_STYLES: &[&str] = &["Dice Minuet", "Sonata", "Alla Turca"];
 
 pub static MOZART: &[ParamSpec] = &[
@@ -95,6 +97,7 @@ pub static MOZART: &[ParamSpec] = &[
     DYNAMICS[1],
     DYNAMICS[2],
     DYNAMICS[3],
+    CHORD_AMOUNT,
 ];
 
 /// The minuet's sixteen bars: the chord of each (the first half ends on
@@ -204,23 +207,30 @@ fn below(root: i32) -> i32 {
 
 /// Bar `idx` of the minuet in round `round`: the dice's figure and where it
 /// goes, each bar's octave led from the bar before (so a repeat is the same).
-pub fn minuet_bar(seed: u32, round: u32, idx: usize) -> (usize, Fig, i32) {
+pub fn minuet_bar(seed: u32, round: u32, idx: usize, amount: f32) -> (usize, Fig, i32) {
     let mut last = 4;
     let mut out = (0, MINUET_END, 0);
     for i in 0..=idx.min(15) {
         let (a, b) = dice(seed, round, i);
         let f = (a + b - 2) as usize;
         let fig = if i == 15 { MINUET_END } else { MINUET_BARS[f] };
-        let sh = voice(MINUET_PLAN[i], fig, last);
+        let sh = voice(minuet_root(i, amount), fig, last);
         last = sh + fig[fig.len() - 1].2 as i32;
         out = (f, fig, sh);
     }
     out
 }
 
-/// Bar `b` of the sonata's period `pi`: its chords, figure and where it goes.
-fn sonata_bar(seed: u32, pi: u32, b: usize) -> ([i32; 8], Fig, i32) {
-    let plan = SONATA_PLANS[(hash(seed + 3, pi) * 3.0) as usize % 3];
+/// The minuet's chord in bar `i`, with fewer Chords (`amount` below 1) home more often.
+fn minuet_root(i: usize, amount: f32) -> i32 {
+    chord_root(amount.min(1.0), i as i64, MINUET_PLAN[i % 16], MINUET_PLAN[(i + 1) % 16], false)
+}
+
+/// Bar `b` of the sonata's period `pi`: its chords (as Chords leaves
+/// them), figure and where it goes.
+fn sonata_bar(seed: u32, pi: u32, b: usize, amount: f32) -> ([i32; 8], Fig, i32) {
+    let own = SONATA_PLANS[(hash(seed + 3, pi) * 3.0) as usize % 3];
+    let plan: [i32; 8] = std::array::from_fn(|i| chord_root(amount.min(1.0), i as i64, own[i], own[(i + 1) % 8], false));
     let fa = (hash(seed * 7 + 1, pi) * 8.0) as usize % 8;
     let fb = (fa + 1 + (hash(seed * 7 + 2, pi) * 7.0) as usize % 7) % 8;
     let mut last = 4;
@@ -250,6 +260,7 @@ pub const CH_ORNAMENT: usize = 4;
 pub const CH_BASE: usize = 5;
 pub const CH_PEDAL: usize = 6;
 pub const CH_VELOCITY: usize = 7;
+pub const CH_CHORD_AMOUNT: usize = 14;
 pub const CHOPIN_STYLES: &[&str] = &["Nocturne", "Waltz", "Prelude"];
 pub const CHOPIN_HARMONIES: &[&str] = &["Romantic", "Simple", "Circle"];
 pub const CHOPIN_ROOTS: [[i32; 8]; 3] = [[0, 5, 1, 4, 0, 3, 4, 0], [0, 3, 4, 0, 5, 3, 4, 0], [0, 3, 6, 2, 5, 1, 4, 0]];
@@ -271,6 +282,7 @@ pub static CHOPIN: &[ParamSpec] = &[
     DYNAMICS[1],
     DYNAMICS[2],
     DYNAMICS[3],
+    CHORD_AMOUNT,
 ];
 
 /// A nocturne's left hand: the bass, then up through the chord a tenth
@@ -676,6 +688,7 @@ pub const EI_MELODY: usize = 3;
 pub const EI_BASE: usize = 4;
 pub const EI_PEDAL: usize = 5;
 pub const EI_VELOCITY: usize = 6;
+pub const EI_CHORD_AMOUNT: usize = 13;
 pub const EINAUDI_STYLES: &[&str] = &["Arpeggio", "Build"];
 pub const EINAUDI_CHORDS: &[&str] = &["vi IV I V", "I V vi IV", "i VI III VII", "i iv VI V"];
 pub const EINAUDI_ROOTS: [[i32; 4]; 4] = [[5, 3, 0, 4], [0, 4, 5, 3], [0, 5, 2, 6], [0, 3, 5, 4]];
@@ -699,6 +712,7 @@ pub static EINAUDI: &[ParamSpec] = &[
     DYNAMICS[1],
     DYNAMICS[2],
     DYNAMICS[3],
+    CHORD_AMOUNT,
 ];
 
 /// Einaudi's motif for phrase seed `seed`: two bars of quavers as
@@ -919,6 +933,7 @@ impl SeqState {
         let base = p[MO_BASE];
         let gate = p[MO_GATE].clamp(0.1, 1.0) as f64;
         let vel = p[MO_VELOCITY];
+        let chords = p.get(MO_CHORD_AMOUNT).copied().unwrap_or(1.0).clamp(0.0, 2.0);
         let s = step_frames;
         let bar_len: i64 = match style {
             0 => 12,
@@ -934,8 +949,10 @@ impl SeqState {
                 let round = if reroll { (n.div_euclid(32)) as u32 } else { 0 };
                 let pos = n.rem_euclid(32) as usize;
                 let idx = if pos < 16 { pos % 8 } else { 8 + (pos - 16) % 8 };
-                let root = MINUET_PLAN[idx];
-                let (f, fig, shift) = minuet_bar(seed, round, idx);
+                let root = minuet_root(idx, chords);
+                let (f, fig, shift) = minuet_bar(seed, round, idx, chords);
+                // More Chords: the left hand's second half on a passing chord.
+                let lh_root = if t >= 6 { chord_root(chords, idx as i64, root, minuet_root(idx + 1, chords), true) } else { root };
                 if let Some(d) = self.play_fig(ctx, base, fig, t, shift, vel, s, gate, at, out) {
                     self.masters.mo_last = d;
                     push_hist(&mut self.masters.mo_hist, d);
@@ -953,7 +970,7 @@ impl SeqState {
                     self.note(ctx, at, Self::mdeg(ctx, base, lr - 14, 0), vel * 0.7, 4.0 * s * gate, out);
                 } else if t == 4 || t == 8 {
                     for d in [2, 4] {
-                        self.note(ctx, at, Self::mdeg(ctx, base, below(root) - 7 + d, 0), vel * 0.48, 2.5 * s * gate, out);
+                        self.note(ctx, at, Self::mdeg(ctx, base, below(lh_root) - 7 + d, 0), vel * 0.48, 2.5 * s * gate, out);
                     }
                 }
                 let (a, b) = dice(seed, round, idx);
@@ -969,8 +986,9 @@ impl SeqState {
             1 => {
                 let pi = if reroll { n.div_euclid(8) } else { n.div_euclid(8).rem_euclid(2) } as u32;
                 let b = n.rem_euclid(8) as usize;
-                let (plan, fig, shift) = sonata_bar(seed, pi, b);
+                let (plan, fig, shift) = sonata_bar(seed, pi, b, chords);
                 let root = plan[b];
+                let lh_root = if t >= 8 { chord_root(chords, b as i64, root, plan[(b + 1) % 8], true) } else { root };
                 if let Some(d) = self.play_fig(ctx, base, fig, t, shift, vel, s, gate, at, out) {
                     self.masters.mo_last = d;
                     push_hist(&mut self.masters.mo_hist, d);
@@ -986,7 +1004,7 @@ impl SeqState {
                 } else {
                     // Low, high, middle, high.
                     const ALBERTI: [i32; 4] = [0, 4, 2, 4];
-                    let d = lr - 7 + ALBERTI[t as usize % 4];
+                    let d = low(lh_root) - 7 + ALBERTI[t as usize % 4];
                     self.note(ctx, at, Self::mdeg(ctx, base, d, 0), vel * if t % 4 == 0 { 0.5 } else { 0.4 }, s * gate * 0.9, out);
                 }
                 self.visual[0] = (style as u64) | (b as u64) << 4 | (t as u64) << 8 | ((root + 64) as u64 & 0xff) << 16;
@@ -1012,7 +1030,8 @@ impl SeqState {
                         push_hist(&mut self.masters.mo_hist, d as i32);
                     }
                 }
-                let root = if refrain { REFRAIN_CHORDS[b] } else { TURCA_CHORDS[b] };
+                let chords_of = if refrain { REFRAIN_CHORDS } else { TURCA_CHORDS };
+                let root = chord_root(chords, b as i64, chords_of[b], chords_of[(b + 1) % 8], t >= 4);
                 let lr = low(root);
                 if refrain {
                     if t % 2 == 0 && !(b == 7 && t > 0) {
@@ -1081,7 +1100,9 @@ impl SeqState {
         let bar = k.div_euclid(bar_len);
         let t = k.rem_euclid(bar_len) as u8;
         self.masters.jumped(k);
-        let root = roots[bar.rem_euclid(8) as usize];
+        let chords = p.get(CH_CHORD_AMOUNT).copied().unwrap_or(1.0).clamp(0.0, 2.0);
+        let ci = bar.rem_euclid(8) as usize;
+        let root = chord_root(chords, ci as i64, roots[ci], roots[(ci + 1) % 8], 2 * t as i64 >= bar_len);
         let lr = low(root);
         let in_phrase = bar.rem_euclid(4);
         // The right hand takes its time (late, then catching up) while the left keeps it.
@@ -1119,7 +1140,9 @@ impl SeqState {
                             m.ch_line = 4;
                         }
                         0 => {
-                            if m.unit() < 0.85 {
+                            // Chords: how often a voice sinks (none at 0, now and then twice as often).
+                            let extra = m.unit() < 0.85 * (chords - 1.0).max(0.0);
+                            if m.unit() < 0.85 * chords.min(1.0) || extra {
                                 // One voice down a semitone, never onto another.
                                 const ORDER: [usize; 3] = [2, 0, 1];
                                 let v = ORDER[m.ch_voice % 3];
@@ -2025,7 +2048,9 @@ impl SeqState {
         let _ = self.masters.jumped(k);
         let bar = k.div_euclid(16);
         let t = k.rem_euclid(16);
-        let root = roots[bar.rem_euclid(4) as usize];
+        let chords = p.get(EI_CHORD_AMOUNT).copied().unwrap_or(1.0).clamp(0.0, 2.0);
+        let ci = bar.rem_euclid(4) as usize;
+        let root = chord_root(chords, ci as i64, roots[ci], roots[(ci + 1) % 4], t >= 8);
         let lr = low(root);
         let in_chord = |x: i32| [0, 2, 4].contains(&(x - root).rem_euclid(7));
         let nearest = |x: i32| if in_chord(x) { x } else if in_chord(x - 1) { x - 1 } else { x + 1 };
@@ -2550,5 +2575,31 @@ mod tests {
         assert!(count(3) > count(2));
         assert!(count(4) > count(1));
         assert!(count(5) < count(4));
+    }
+
+    #[test]
+    fn chords_off_keep_the_left_hand_home_and_more_moves_it_mid_bar() {
+        // Einaudi: at 0 % every bar over the tonic.
+        let mut p = defaults(EINAUDI);
+        p[EI_CHORD_AMOUNT] = 0.0;
+        let n = notes(MidiFxKind::Einaudi, &p, 16.0);
+        for bar in 0..4 {
+            let low = n.iter().find(|x| (x.0 - bar as f64 * 4.0).abs() < 1e-3).map(|x| x.1 % 12);
+            assert_eq!(low, Some(0), "bar {bar}");
+        }
+        // At 200 %: somewhere a bar's second half on a passing chord.
+        p[EI_CHORD_AMOUNT] = 2.0;
+        let n = notes(MidiFxKind::Einaudi, &p, 64.0);
+        const OWN: [[u8; 3]; 4] = [[9, 0, 4], [5, 9, 0], [0, 4, 7], [7, 11, 2]];
+        let passing = (0..16).any(|bar| n.iter().filter(|x| x.0 >= bar as f64 * 4.0 + 2.0 - 1e-3 && x.0 < bar as f64 * 4.0 + 4.0 - 1e-3 && x.1 < 72).any(|x| !OWN[bar % 4].contains(&(x.1 % 12))));
+        assert!(passing);
+        // Chopin and Mozart's sonata at 0 %: the left hand on the tonic triad.
+        let mut p = defaults(CHOPIN);
+        p[CH_CHORD_AMOUNT] = 0.0;
+        assert!(notes(MidiFxKind::Chopin, &p, 32.0).iter().filter(|x| x.1 < 70).all(|x| [0, 4, 7].contains(&(x.1 % 12))));
+        let mut p = defaults(MOZART);
+        p[MO_STYLE] = 1.0;
+        p[MO_CHORD_AMOUNT] = 0.0;
+        assert!(notes(MidiFxKind::Mozart, &p, 32.0).iter().filter(|x| x.1 < 72).all(|x| [0, 4, 7].contains(&(x.1 % 12))));
     }
 }

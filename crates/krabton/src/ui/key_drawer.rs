@@ -140,6 +140,22 @@ impl App {
                 ui.label(RichText::new("Chords next to each other are close. The lit ones are the song's key").small().color(TEXT_DIM));
             });
         });
+        // The tracks it moves (drums never move): click one to leave it where it is.
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("Moves").small().color(TEXT_DIM));
+            for t in self.project.tracks.iter_mut() {
+                let Some(inst) = &t.instrument else { continue };
+                if !inst.transposes() {
+                    continue;
+                }
+                let on = !t.key_fixed;
+                let c = rgb(t.color);
+                let b = egui::Button::new(RichText::new(&t.name).small().color(if on { TEXT_DARK } else { TEXT_DIM })).fill(if on { c } else { PANEL3 });
+                if ui.add(b).on_hover_text(if on { "Moves with the key. Click: stays where it is" } else { "Stays where it is. Click: moves with the key" }).clicked() {
+                    t.key_fixed = on;
+                }
+            }
+        });
         ui.add_space(4.0);
 
         ui.horizontal_top(|ui| {

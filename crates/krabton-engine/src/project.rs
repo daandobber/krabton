@@ -959,6 +959,9 @@ pub struct Track {
     pub name: String,
     pub color: Rgb,
     pub kind: TrackKind,
+    /// The Key drawer leaves this track where it is (it plays as written).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub key_fixed: bool,
     /// MIDI effects, processed in order before the instrument.
     #[serde(default)]
     pub midi_devices: Vec<MidiDevice>,
@@ -1407,6 +1410,7 @@ impl Project {
             name,
             color,
             kind,
+            key_fixed: false,
             midi_devices: Vec::new(),
             instrument,
             devices: Vec::new(),

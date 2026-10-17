@@ -57,6 +57,7 @@ pub enum EffectKind {
     Shimmer,
     Spring,
     OpenAir,
+    Stage,
     PitchDelay,
     Grains,
     Glitch,
@@ -192,7 +193,7 @@ static UTILITY: &[ParamSpec] = &[
 ];
 
 impl EffectKind {
-    pub const ALL: [EffectKind; 72] = [
+    pub const ALL: [EffectKind; 73] = [
         EffectKind::Eq3,
         EffectKind::AutoFilter,
         EffectKind::Compressor,
@@ -228,6 +229,7 @@ impl EffectKind {
         EffectKind::Shimmer,
         EffectKind::Spring,
         EffectKind::OpenAir,
+        EffectKind::Stage,
         EffectKind::PitchDelay,
         EffectKind::Grains,
         EffectKind::Glitch,
@@ -292,6 +294,7 @@ impl EffectKind {
             EffectKind::Shimmer => "Reverb & Resonance",
             EffectKind::Spring => "Reverb & Resonance",
             EffectKind::OpenAir => "Reverb & Resonance",
+            EffectKind::Stage => "Mixing",
             EffectKind::PitchDelay => "Delay & Loop",
             EffectKind::Grains => "Delay & Loop",
             EffectKind::Glitch => "Delay & Loop",
@@ -346,7 +349,7 @@ impl EffectKind {
     }
 
     /// The categories in menu order.
-    pub const CATEGORIES: [&'static str; 10] = ["Delay & Loop", "Distortion", "Dynamics", "EQ & Filters", "Modulation", "Pedals", "Pitch", "Reverb & Resonance", "Utilities", "Airwindows"];
+    pub const CATEGORIES: [&'static str; 11] = ["Delay & Loop", "Distortion", "Dynamics", "EQ & Filters", "Mixing", "Modulation", "Pedals", "Pitch", "Reverb & Resonance", "Utilities", "Airwindows"];
 
     /// Devices with their own display (they send audio and meters to the UI).
     pub fn has_display(self) -> bool {
@@ -415,6 +418,7 @@ impl EffectKind {
             EffectKind::Shimmer => "Shimmer",
             EffectKind::Spring => "Spring",
             EffectKind::OpenAir => "Open Air",
+            EffectKind::Stage => "Stage",
             EffectKind::PitchDelay => "Pitch Delay",
             EffectKind::Grains => "Grains",
             EffectKind::Glitch => "Glitch Sequencer",
@@ -492,6 +496,7 @@ impl EffectKind {
             EffectKind::Hall => "A big hall: decays up to a minute, separate low decay, modulation, freeze",
             EffectKind::Shimmer => "A hall with a pitch shifter in its loop: every pass an octave (or any interval) higher or lower",
             EffectKind::Spring => "A spring reverb tank: the chirp and boing of amps and dub mixers, with drips",
+            EffectKind::Stage => "Puts the track somewhere in a room it shares with the other tracks that have a Stage: across and how deep, as heard from where the listener sits. Direction, distance, reflections from the walls, floor and ceiling, and the room's tail, all from where it stands; for the mix, on every track",
             EffectKind::OpenAir => "Puts the sound outside: among the trees of a forest, on a meadow, between the walls of a canyon, over a lake or in a cave, near or far; with birds, the wind, rain, water or the night around it if you like, quieter while you play",
             EffectKind::PitchDelay => "A delay whose echoes are pitched in semitone steps: each repeat one more step up or down, or all by one interval",
             EffectKind::Grains => "Granular texture processor: grains from an 8-second buffer with random time, size, shape and pitch, regular or random density, freeze, feedback, reverb and tape or lo-fi buffers",
@@ -572,6 +577,7 @@ impl EffectKind {
             EffectKind::Shimmer => super::fx::hall::SHIMMER_SPECS,
             EffectKind::Spring => super::fx::spring::SPECS,
             EffectKind::OpenAir => super::fx::open_air::SPECS,
+            EffectKind::Stage => super::fx::stage::SPECS,
             EffectKind::PitchDelay => super::fx::pitch_delay::SPECS,
             EffectKind::Grains => super::fx::grains::SPECS,
             EffectKind::Glitch => super::fx::glitch::SPECS,
@@ -646,6 +652,7 @@ pub enum EffectState {
     Shimmer(Box<super::fx::hall::Hall>),
     Spring(Box<super::fx::spring::SpringReverb>),
     OpenAir(Box<super::fx::open_air::OpenAir>),
+    Stage(Box<super::fx::stage::Stage>),
     PitchDelay(Box<super::fx::pitch_delay::PitchDelay>),
     Grains(Box<super::fx::grains::Grains>),
     Glitch(Box<super::fx::glitch::Glitch>),
@@ -754,6 +761,7 @@ impl EffectState {
             EffectKind::Shimmer => EffectState::Shimmer(Box::new(super::fx::hall::Hall::new(sr))),
             EffectKind::Spring => EffectState::Spring(Box::new(super::fx::spring::SpringReverb::new(sr))),
             EffectKind::OpenAir => EffectState::OpenAir(Box::new(super::fx::open_air::OpenAir::new(sr))),
+            EffectKind::Stage => EffectState::Stage(Box::new(super::fx::stage::Stage::new(sr))),
             EffectKind::PitchDelay => EffectState::PitchDelay(Box::new(super::fx::pitch_delay::PitchDelay::new(sr))),
             EffectKind::Grains => EffectState::Grains(Box::new(super::fx::grains::Grains::new(sr))),
             EffectKind::Glitch => EffectState::Glitch(Box::new(super::fx::glitch::Glitch::new(sr))),
@@ -849,6 +857,7 @@ impl EffectState {
             EffectState::Shimmer(_) => EffectKind::Shimmer,
             EffectState::Spring(_) => EffectKind::Spring,
             EffectState::OpenAir(_) => EffectKind::OpenAir,
+            EffectState::Stage(_) => EffectKind::Stage,
             EffectState::PitchDelay(_) => EffectKind::PitchDelay,
             EffectState::Grains(_) => EffectKind::Grains,
             EffectState::Glitch(_) => EffectKind::Glitch,
@@ -1104,6 +1113,7 @@ impl EffectState {
             }
             EffectState::Spring(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::OpenAir(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
+            EffectState::Stage(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::PitchDelay(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Grains(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             // Without its device (no slots, the default pattern); the engine

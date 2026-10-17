@@ -142,7 +142,7 @@ impl App {
         use krabton_engine::midi_tools::ArpStyle;
         ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
         let on = self.project.scale_mode;
-        if ui.add(egui::Button::new(RichText::new("Scale").color(if on { TEXT_DARK } else { TEXT })).fill(if on { accent_now() } else { PANEL3 })).on_hover_text("Scale mode: highlight the project scale").clicked() {
+        if ui.add(egui::Button::new(RichText::new("Scale").color(if on { TEXT_DARK } else { TEXT })).fill(if on { accent_now() } else { PANEL3 })).on_hover_text("In key: the piano roll shows the project's key (off: all twelve notes, everywhere)").clicked() {
             self.project.scale_mode = !on;
         }
         if ui.button(self.project.scale.name()).on_hover_text("Change the key and scale of the project").clicked() {

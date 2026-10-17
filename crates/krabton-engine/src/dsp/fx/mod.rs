@@ -35,6 +35,7 @@ pub mod smear;
 pub mod snowglobe;
 pub mod slam;
 pub mod spring;
+pub mod stage;
 pub mod telephone;
 pub mod transient;
 pub mod verb;
