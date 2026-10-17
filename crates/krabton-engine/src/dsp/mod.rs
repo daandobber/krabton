@@ -54,6 +54,11 @@ pub mod micro;
 pub mod warp;
 pub mod hybrid;
 pub mod quartet;
+pub mod peaks;
+pub mod peaks_tables;
+pub mod macro_drums;
+pub mod circuit_kick;
+pub mod chip_drums;
 pub mod tides;
 
 use std::f32::consts::PI;

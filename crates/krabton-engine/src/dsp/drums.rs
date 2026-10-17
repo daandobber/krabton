@@ -6,6 +6,10 @@
 
 use super::acoustic::AcousticVoice;
 use super::retro::RetroVoice;
+use super::chip_drums::{self, ChipKnobs, ChipVoice};
+use super::circuit_kick::{CircuitKick, KickKnobs};
+use super::macro_drums::{self, MacroVoice};
+use super::peaks::{self, PeaksVoice};
 use super::machines::MachineVoice;
 use super::shakers::{self, Shaker, ShakerModel};
 use super::*;
@@ -131,6 +135,68 @@ pub enum DrumVoice {
     PkOpenHat,
     PkCymbal,
     PkClap,
+    RsKick,
+    RsSnare,
+    RsHat,
+    RsFmKick,
+    RsFmSnare,
+    RsCircuitKick,
+    MkKick,
+    MkSnare,
+    MkHat,
+    MkClap,
+    MkTom,
+    MkRim,
+    MkFm,
+    MkNoise,
+    MkCowbell,
+    MkCymbal,
+    MkShaker,
+    MkClave,
+    ChipConsoleKick,
+    ChipConsoleSampleKick,
+    ChipConsoleSnare,
+    ChipConsoleSampleSnare,
+    ChipConsoleHat,
+    ChipConsoleOpenHat,
+    ChipConsoleTom,
+    ChipConsoleCrash,
+    ChipHandheldKick,
+    ChipHandheldSnare,
+    ChipHandheldHat,
+    ChipHandheldOpenHat,
+    ChipHandheldTom,
+    ChipHandheldClap,
+    ChipMicroKick,
+    ChipMicroSnare,
+    ChipMicroTom,
+    ChipMicroClap,
+    ChipMicroRim,
+    ChipMicroHat,
+    ChipMicroOpenHat,
+    ChipMicroPunchKick,
+    ChipMicroPunchSnare,
+    ChipMicroPunchClap,
+    ChipMicroPunchRim,
+    ChipMicroPunchHat,
+    ChipMicroPunchOpenHat,
+    ChipMicroPunchTom,
+    ChipArcadeKick,
+    ChipArcadeSnare,
+    ChipArcadeTom,
+    ChipArcadeHat,
+    ChipArcadeOpenHat,
+    ChipArcadeCowbell,
+    ChipBeeperKick,
+    ChipBeeperSnare,
+    ChipBeeperHat,
+    ChipBeeperTom,
+    ChipWoodKick,
+    ChipWoodSnare,
+    ChipWoodHat,
+    ChipWoodTom,
+    ChipWoodZap,
+    ChipWoodBoom,
 }
 
 /// Where a voice comes from.
@@ -144,6 +210,12 @@ pub enum Family {
     Acoustic,
     /// More drum machines (see `retro`).
     Retro,
+    /// Drums that ring (see `peaks` and `circuit_kick`).
+    Resonant,
+    /// Twelve models with macros (see `macro_drums`).
+    Macro,
+    /// The old chips' drums (see `chip_drums`).
+    Chip,
 }
 
 impl DrumVoice {
@@ -219,8 +291,11 @@ impl DrumVoice {
     /// Hand percussion that goes with an acoustic kit.
     pub const KIT_PERC: [DrumVoice; 4] = [DrumVoice::Tambourine, DrumVoice::Cowbell, DrumVoice::Clap, DrumVoice::Maraca];
     pub const RETRO: [DrumVoice; 29] = [DrumVoice::RbKick, DrumVoice::RbSnare, DrumVoice::RbHat, DrumVoice::RbCymbal, DrumVoice::RbBongoHigh, DrumVoice::RbBongoLow, DrumVoice::RbClaves, DrumVoice::RbGuiro, DrumVoice::RbMaracas, DrumVoice::HxKick, DrumVoice::HxSnare, DrumVoice::HxTomHigh, DrumVoice::HxTomMid, DrumVoice::HxTomLow, DrumVoice::DgKick, DrumVoice::DgSnare, DrumVoice::DgClap, DrumVoice::DgRim, DrumVoice::DgHat, DrumVoice::DgOpenHat, DrumVoice::DgTomHigh, DrumVoice::DgTomLow, DrumVoice::DgCowbell, DrumVoice::PkKick, DrumVoice::PkSnare, DrumVoice::PkHat, DrumVoice::PkOpenHat, DrumVoice::PkCymbal, DrumVoice::PkClap];
+    pub const RESONANT: [DrumVoice; 6] = [DrumVoice::RsKick, DrumVoice::RsSnare, DrumVoice::RsHat, DrumVoice::RsFmKick, DrumVoice::RsFmSnare, DrumVoice::RsCircuitKick];
+    pub const MACRO: [DrumVoice; 12] = [DrumVoice::MkKick, DrumVoice::MkSnare, DrumVoice::MkHat, DrumVoice::MkClap, DrumVoice::MkTom, DrumVoice::MkRim, DrumVoice::MkFm, DrumVoice::MkNoise, DrumVoice::MkCowbell, DrumVoice::MkCymbal, DrumVoice::MkShaker, DrumVoice::MkClave];
+    pub const CHIP: [DrumVoice; 44] = [DrumVoice::ChipConsoleKick, DrumVoice::ChipConsoleSampleKick, DrumVoice::ChipConsoleSnare, DrumVoice::ChipConsoleSampleSnare, DrumVoice::ChipConsoleHat, DrumVoice::ChipConsoleOpenHat, DrumVoice::ChipConsoleTom, DrumVoice::ChipConsoleCrash, DrumVoice::ChipHandheldKick, DrumVoice::ChipHandheldSnare, DrumVoice::ChipHandheldHat, DrumVoice::ChipHandheldOpenHat, DrumVoice::ChipHandheldTom, DrumVoice::ChipHandheldClap, DrumVoice::ChipMicroKick, DrumVoice::ChipMicroSnare, DrumVoice::ChipMicroTom, DrumVoice::ChipMicroClap, DrumVoice::ChipMicroRim, DrumVoice::ChipMicroHat, DrumVoice::ChipMicroOpenHat, DrumVoice::ChipMicroPunchKick, DrumVoice::ChipMicroPunchSnare, DrumVoice::ChipMicroPunchClap, DrumVoice::ChipMicroPunchRim, DrumVoice::ChipMicroPunchHat, DrumVoice::ChipMicroPunchOpenHat, DrumVoice::ChipMicroPunchTom, DrumVoice::ChipArcadeKick, DrumVoice::ChipArcadeSnare, DrumVoice::ChipArcadeTom, DrumVoice::ChipArcadeHat, DrumVoice::ChipArcadeOpenHat, DrumVoice::ChipArcadeCowbell, DrumVoice::ChipBeeperKick, DrumVoice::ChipBeeperSnare, DrumVoice::ChipBeeperHat, DrumVoice::ChipBeeperTom, DrumVoice::ChipWoodKick, DrumVoice::ChipWoodSnare, DrumVoice::ChipWoodHat, DrumVoice::ChipWoodTom, DrumVoice::ChipWoodZap, DrumVoice::ChipWoodBoom];
     /// The voices as the pad menu groups them.
-    pub const GROUPS: [(&'static str, &'static [DrumVoice]); 11] = [
+    pub const GROUPS: [(&'static str, &'static [DrumVoice]); 14] = [
         ("Acoustic", &Self::ACOUSTIC),
         ("Retro", &Self::RETRO),
         ("Classic", &Self::CLASSIC),
@@ -232,6 +307,9 @@ impl DrumVoice {
         ("Electronic", &Self::ELECTRO),
         ("Mutable", &Self::MUTABLE),
         ("Shakers", &Self::SHAKERS),
+        ("Resonant", &Self::RESONANT),
+        ("Macro", &Self::MACRO),
+        ("Chip", &Self::CHIP),
     ];
 
     pub fn family(self) -> Family {
@@ -245,6 +323,12 @@ impl DrumVoice {
             Family::Acoustic
         } else if Self::RETRO.contains(&self) {
             Family::Retro
+        } else if Self::RESONANT.contains(&self) {
+            Family::Resonant
+        } else if Self::MACRO.contains(&self) {
+            Family::Macro
+        } else if Self::CHIP.contains(&self) {
+            Family::Chip
         } else {
             Family::Classic
         }
@@ -359,6 +443,68 @@ impl DrumVoice {
             DrumVoice::PkOpenHat => "Pocket Open Hat",
             DrumVoice::PkCymbal => "Pocket Cymbal",
             DrumVoice::PkClap => "Pocket Clap",
+            DrumVoice::RsKick => "Resonant Kick",
+            DrumVoice::RsSnare => "Resonant Snare",
+            DrumVoice::RsHat => "Resonant Hat",
+            DrumVoice::RsFmKick => "FM Drum",
+            DrumVoice::RsFmSnare => "FM Snare",
+            DrumVoice::RsCircuitKick => "Circuit Kick",
+            DrumVoice::MkKick => "Macro Kick",
+            DrumVoice::MkSnare => "Macro Snare",
+            DrumVoice::MkHat => "Macro Hat",
+            DrumVoice::MkClap => "Macro Clap",
+            DrumVoice::MkTom => "Macro Tom",
+            DrumVoice::MkRim => "Macro Rim",
+            DrumVoice::MkFm => "Macro FM",
+            DrumVoice::MkNoise => "Macro Noise",
+            DrumVoice::MkCowbell => "Macro Cowbell",
+            DrumVoice::MkCymbal => "Macro Cymbal",
+            DrumVoice::MkShaker => "Macro Shaker",
+            DrumVoice::MkClave => "Macro Clave",
+            DrumVoice::ChipConsoleKick => "Console Kick",
+            DrumVoice::ChipConsoleSampleKick => "Console Sample Kick",
+            DrumVoice::ChipConsoleSnare => "Console Snare",
+            DrumVoice::ChipConsoleSampleSnare => "Console Sample Snare",
+            DrumVoice::ChipConsoleHat => "Console Hat",
+            DrumVoice::ChipConsoleOpenHat => "Console Open Hat",
+            DrumVoice::ChipConsoleTom => "Console Tom",
+            DrumVoice::ChipConsoleCrash => "Console Crash",
+            DrumVoice::ChipHandheldKick => "Handheld Kick",
+            DrumVoice::ChipHandheldSnare => "Handheld Snare",
+            DrumVoice::ChipHandheldHat => "Handheld Hat",
+            DrumVoice::ChipHandheldOpenHat => "Handheld Open Hat",
+            DrumVoice::ChipHandheldTom => "Handheld Tom",
+            DrumVoice::ChipHandheldClap => "Handheld Clap",
+            DrumVoice::ChipMicroKick => "Micro Kick",
+            DrumVoice::ChipMicroSnare => "Micro Snare",
+            DrumVoice::ChipMicroTom => "Micro Tom",
+            DrumVoice::ChipMicroClap => "Micro Clap",
+            DrumVoice::ChipMicroRim => "Micro Rim",
+            DrumVoice::ChipMicroHat => "Micro Hat",
+            DrumVoice::ChipMicroOpenHat => "Micro Open Hat",
+            DrumVoice::ChipMicroPunchKick => "Micro Punch Kick",
+            DrumVoice::ChipMicroPunchSnare => "Micro Punch Snare",
+            DrumVoice::ChipMicroPunchClap => "Micro Punch Clap",
+            DrumVoice::ChipMicroPunchRim => "Micro Punch Rim",
+            DrumVoice::ChipMicroPunchHat => "Micro Punch Hat",
+            DrumVoice::ChipMicroPunchOpenHat => "Micro Punch Open Hat",
+            DrumVoice::ChipMicroPunchTom => "Micro Punch Tom",
+            DrumVoice::ChipArcadeKick => "Arcade Kick",
+            DrumVoice::ChipArcadeSnare => "Arcade Snare",
+            DrumVoice::ChipArcadeTom => "Arcade Tom",
+            DrumVoice::ChipArcadeHat => "Arcade Hat",
+            DrumVoice::ChipArcadeOpenHat => "Arcade Open Hat",
+            DrumVoice::ChipArcadeCowbell => "Arcade Cowbell",
+            DrumVoice::ChipBeeperKick => "Beeper Kick",
+            DrumVoice::ChipBeeperSnare => "Beeper Snare",
+            DrumVoice::ChipBeeperHat => "Beeper Hat",
+            DrumVoice::ChipBeeperTom => "Beeper Tom",
+            DrumVoice::ChipWoodKick => "Woodgrain Kick",
+            DrumVoice::ChipWoodSnare => "Woodgrain Snare",
+            DrumVoice::ChipWoodHat => "Woodgrain Hat",
+            DrumVoice::ChipWoodTom => "Woodgrain Tom",
+            DrumVoice::ChipWoodZap => "Woodgrain Zap",
+            DrumVoice::ChipWoodBoom => "Woodgrain Boom",
             _ => "",
         }
     }
@@ -460,6 +606,68 @@ impl DrumVoice {
             DrumVoice::PkOpenHat => 46,
             DrumVoice::PkCymbal => 49,
             DrumVoice::PkClap => 39,
+            DrumVoice::RsKick => 36,
+            DrumVoice::RsSnare => 38,
+            DrumVoice::RsHat => 42,
+            DrumVoice::RsFmKick => 41,
+            DrumVoice::RsFmSnare => 40,
+            DrumVoice::RsCircuitKick => 35,
+            DrumVoice::MkKick => 36,
+            DrumVoice::MkSnare => 38,
+            DrumVoice::MkHat => 42,
+            DrumVoice::MkClap => 39,
+            DrumVoice::MkTom => 45,
+            DrumVoice::MkRim => 37,
+            DrumVoice::MkFm => 47,
+            DrumVoice::MkNoise => 54,
+            DrumVoice::MkCowbell => 56,
+            DrumVoice::MkCymbal => 49,
+            DrumVoice::MkShaker => 70,
+            DrumVoice::MkClave => 75,
+            DrumVoice::ChipConsoleKick => 36,
+            DrumVoice::ChipConsoleSampleKick => 35,
+            DrumVoice::ChipConsoleSnare => 38,
+            DrumVoice::ChipConsoleSampleSnare => 40,
+            DrumVoice::ChipConsoleHat => 42,
+            DrumVoice::ChipConsoleOpenHat => 46,
+            DrumVoice::ChipConsoleTom => 45,
+            DrumVoice::ChipConsoleCrash => 49,
+            DrumVoice::ChipHandheldKick => 36,
+            DrumVoice::ChipHandheldSnare => 38,
+            DrumVoice::ChipHandheldHat => 42,
+            DrumVoice::ChipHandheldOpenHat => 46,
+            DrumVoice::ChipHandheldTom => 45,
+            DrumVoice::ChipHandheldClap => 39,
+            DrumVoice::ChipMicroKick => 36,
+            DrumVoice::ChipMicroSnare => 38,
+            DrumVoice::ChipMicroTom => 45,
+            DrumVoice::ChipMicroClap => 39,
+            DrumVoice::ChipMicroRim => 37,
+            DrumVoice::ChipMicroHat => 42,
+            DrumVoice::ChipMicroOpenHat => 46,
+            DrumVoice::ChipMicroPunchKick => 36,
+            DrumVoice::ChipMicroPunchSnare => 38,
+            DrumVoice::ChipMicroPunchClap => 39,
+            DrumVoice::ChipMicroPunchRim => 37,
+            DrumVoice::ChipMicroPunchHat => 42,
+            DrumVoice::ChipMicroPunchOpenHat => 46,
+            DrumVoice::ChipMicroPunchTom => 47,
+            DrumVoice::ChipArcadeKick => 36,
+            DrumVoice::ChipArcadeSnare => 38,
+            DrumVoice::ChipArcadeTom => 45,
+            DrumVoice::ChipArcadeHat => 42,
+            DrumVoice::ChipArcadeOpenHat => 46,
+            DrumVoice::ChipArcadeCowbell => 56,
+            DrumVoice::ChipBeeperKick => 36,
+            DrumVoice::ChipBeeperSnare => 38,
+            DrumVoice::ChipBeeperHat => 42,
+            DrumVoice::ChipBeeperTom => 45,
+            DrumVoice::ChipWoodKick => 36,
+            DrumVoice::ChipWoodSnare => 38,
+            DrumVoice::ChipWoodHat => 42,
+            DrumVoice::ChipWoodTom => 45,
+            DrumVoice::ChipWoodZap => 51,
+            DrumVoice::ChipWoodBoom => 57,
         }
     }
 
@@ -475,6 +683,31 @@ impl DrumVoice {
                 DrumVoice::AcCrash | DrumVoice::AcChina => [Some("Size"), None],
                 _ => [None, None],
             },
+            Family::Resonant => match self {
+                DrumVoice::RsKick => [Some("Punch"), None],
+                DrumVoice::RsSnare => [Some("Snappy"), None],
+                DrumVoice::RsHat => [None, None],
+                DrumVoice::RsFmKick => [Some("FM"), Some("Noise")],
+                DrumVoice::RsFmSnare => [Some("FM"), Some("Noise")],
+                DrumVoice::RsCircuitKick => [Some("Tight"), Some("Bounce")],
+                _ => [None, None],
+            },
+            Family::Macro => match self {
+                DrumVoice::MkKick => [Some("Sweep"), Some("Noise")],
+                DrumVoice::MkSnare => [Some("Sweep"), Some("Noise")],
+                DrumVoice::MkHat => [Some("Sweep"), Some("FM")],
+                DrumVoice::MkClap => [Some("Sweep"), Some("Noise")],
+                DrumVoice::MkTom => [Some("Sweep"), Some("FM")],
+                DrumVoice::MkRim => [Some("Sweep"), Some("FM")],
+                DrumVoice::MkFm => [Some("Sweep"), Some("FM")],
+                DrumVoice::MkNoise => [Some("Sweep"), Some("Noise")],
+                DrumVoice::MkCowbell => [Some("Sweep"), Some("FM")],
+                DrumVoice::MkCymbal => [Some("Sweep"), Some("FM")],
+                DrumVoice::MkShaker => [Some("Sweep"), Some("Noise")],
+                DrumVoice::MkClave => [Some("Sweep"), Some("FM")],
+                _ => [None, None],
+            },
+            Family::Chip => [Some("Sweep"), Some("Noise")],
             Family::Retro => match self {
                 DrumVoice::HxKick => [Some("Drop"), None],
                 DrumVoice::HxTomHigh | DrumVoice::HxTomMid | DrumVoice::HxTomLow => [Some("Sweep"), None],
@@ -531,6 +764,25 @@ fn model_decay(voice: DrumVoice, decay: f32) -> f32 {
     (base + 0.22 * decay.max(0.01).log2()).clamp(0.0, 1.0)
 }
 
+/// A Macro model's pitch at Tune 0 (Hz) and its length at Decay 1 (s).
+fn macro_base(model: macro_drums::Model) -> (f32, f32) {
+    use macro_drums::Model::*;
+    match model {
+        Kick => (50.0, 0.45),
+        Snare => (200.0, 0.25),
+        Hat => (261.6, 0.08),
+        Clap => (261.6, 0.3),
+        Tom => (110.0, 0.4),
+        Rim => (300.0, 0.06),
+        Fm => (70.0, 0.4),
+        Noise => (261.6, 0.3),
+        Cowbell => (560.0, 0.35),
+        Cymbal => (261.6, 1.2),
+        Shaker => (261.6, 0.15),
+        Clave => (400.0, 0.1),
+    }
+}
+
 /// A drum instrument: which voices its pads can play, and its kits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum DrumEngine {
@@ -552,6 +804,12 @@ pub enum DrumEngine {
     Shakers,
     M606,
     FmDrums,
+    /// Drums that ring: Peaks' drums and a circuit kick.
+    Resonant,
+    /// Twelve models with macros.
+    MacroDrums,
+    /// The old chips' drums.
+    Chip,
 }
 
 static G606: [(&str, &[DrumVoice]); 1] = [("606", &DrumVoice::M606)];
@@ -565,12 +823,15 @@ static GACOUSTIC: [(&str, &[DrumVoice]); 2] = [("Acoustic", &DrumVoice::ACOUSTIC
 static REAL_PERC: [DrumVoice; 8] = [DrumVoice::Tambourine, DrumVoice::Cowbell, DrumVoice::Clap, DrumVoice::Maraca, DrumVoice::Cr78Bongo, DrumVoice::M808Conga, DrumVoice::M808Claves, DrumVoice::M808Tom];
 static GMACHINES: [(&str, &[DrumVoice]); 3] = [("808", &DrumVoice::M808), ("Acoustic", &DrumVoice::ACOUSTIC), ("Percussion", &REAL_PERC)];
 static GRETRO: [(&str, &[DrumVoice]); 1] = [("Retro", &DrumVoice::RETRO)];
+static GRESONANT: [(&str, &[DrumVoice]); 1] = [("Resonant", &DrumVoice::RESONANT)];
+static GMACRO: [(&str, &[DrumVoice]); 1] = [("Macro", &DrumVoice::MACRO)];
+static GCHIP: [(&str, &[DrumVoice]); 1] = [("Chip", &DrumVoice::CHIP)];
 static GREAL: [(&str, &[DrumVoice]); 2] = [("Acoustic", &DrumVoice::ACOUSTIC), ("Percussion", &REAL_PERC)];
 
 impl DrumEngine {
     /// The engines to choose from. `Shakers` is only kept for old projects:
     /// its kits are the Drum Rack's now, and Shakers is an instrument.
-    pub const ALL: [DrumEngine; 11] = [DrumEngine::RealDrums, DrumEngine::SampledMachines, DrumEngine::Acoustic, DrumEngine::Retro, DrumEngine::M808, DrumEngine::M909, DrumEngine::M606, DrumEngine::Cr78, DrumEngine::Mutable, DrumEngine::FmDrums, DrumEngine::Rack];
+    pub const ALL: [DrumEngine; 14] = [DrumEngine::RealDrums, DrumEngine::SampledMachines, DrumEngine::Acoustic, DrumEngine::Retro, DrumEngine::Chip, DrumEngine::Resonant, DrumEngine::MacroDrums, DrumEngine::M808, DrumEngine::M909, DrumEngine::M606, DrumEngine::Cr78, DrumEngine::Mutable, DrumEngine::FmDrums, DrumEngine::Rack];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -585,6 +846,9 @@ impl DrumEngine {
             DrumEngine::Acoustic => "Acoustic Drums",
             DrumEngine::RealDrums => "Real Drums",
             DrumEngine::Retro => "Retro Machines",
+            DrumEngine::Resonant => "Resonant Drums",
+            DrumEngine::MacroDrums => "Macro Drums",
+            DrumEngine::Chip => "Chip Drums",
             DrumEngine::SampledMachines => "Sampled Machines",
         }
     }
@@ -600,6 +864,9 @@ impl DrumEngine {
             DrumEngine::M606 => "The 606, rebuilt from its circuits: tight kick, snare, two toms, six-square hats and cymbal; the acid house drummer",
             DrumEngine::FmDrums => "Two-operator FM drums: kick, snare, tom, hat, bell, zap, perc and noise, with an FM knob on every pad",
             DrumEngine::SampledMachines => "Drum machines and electronic kits, recorded: the 707 and the 808 (free sample sets from the nineties), an electro kit, a club kit and a glitch kit (Sonic Pi's samples); downloaded on first use",
+            DrumEngine::Resonant => "Drums that ring: the bass drum, snare, hi-hat and FM drum of Peaks by Emilie Gillet (ported, MIT), resonant filters struck by pulses, in fixed point as on the module; and a circuit kick after ChowKick by Jatin Chowdhury (BSD): the 808's pulse shaper as a wave digital filter with its diode, into a resonator that drops its pitch as it saturates (Tight, Bounce)",
+            DrumEngine::MacroDrums => "Twelve compact drum models (kick, snare, hat, clap, tom, rim, FM, noise, cowbell, cymbal, shaker, clave), all played with the same macros: Decay, Tone, Sweep and Noise or FM. A port of Bogie by Pierre-Emmanuel Surga (MIT)",
+            DrumEngine::Chip => "Drums as the old consoles, handhelds and home computers made them, from their chips' own parts: the console's frame-stepped triangle kicks, metallic noise and crunchy 1-bit delta sample drums; the handheld's 4-bit wave and 15/7-bit noise; SID-style 808 and 909 kits (after sidacid); arcade FM with PSG noise; a 1-bit beeper; the woodgrain console's polynomial counters",
             DrumEngine::Retro => "More drum machines: a seventies rhythm box (bongos, claves, guiro), the hexagonal electronic kit with its sweeping toms, the crunchy 8-bit digital eighties, a pocket rhythm machine",
             DrumEngine::RealDrums => "Recorded drums: acoustic kits from rusty rock, classic rock, metal and a big room to garage, seventies, a jazz club, brushes and dry; hand and body percussion and tabla. With velocity layers and round robins (free samples, each kit downloaded on first use; until then Krabton's own drums stand in)",
             DrumEngine::Acoustic => "A real drum kit, modelled: kick, snare with its wires, side stick, three toms, hi-hat (closed, pedal, open), ride and its bell, crashes; every hit a little different, harder hits brighter",
@@ -620,6 +887,9 @@ impl DrumEngine {
             DrumEngine::Acoustic => &GACOUSTIC,
             DrumEngine::RealDrums => &GREAL,
             DrumEngine::Retro => &GRETRO,
+            DrumEngine::Resonant => &GRESONANT,
+            DrumEngine::MacroDrums => &GMACRO,
+            DrumEngine::Chip => &GCHIP,
             DrumEngine::SampledMachines => &GMACHINES,
         }
     }
@@ -637,6 +907,9 @@ impl DrumEngine {
             DrumEngine::RealDrums => &["Real Kit", "Rusty Kit", "Classic Rock Kit", "Naked Kit", "Metal Kit", "Room Kit", "Garage Kit", "70s Kit", "Jazz Club Kit", "Lounge Kit", "Dry Kit", "Real Percussion", "Body Percussion", "Tabla"],
             DrumEngine::SampledMachines => &["707 Samples", "808 Samples", "Electro Kit", "Club Kit", "Glitch Kit"],
             DrumEngine::Retro => &["Rhythm Box", "Hexagon", "Digital 80s", "Pocket Rhythm"],
+            DrumEngine::Resonant => &["Resonant Kit", "Circuit Kit", "FM Perc Kit"],
+            DrumEngine::MacroDrums => &["Macro Kit", "Macro Electro", "Macro Industrial"],
+            DrumEngine::Chip => &["Console Kit", "Handheld Kit", "Micro Kit", "Micro Punch Kit", "Arcade Kit", "Beeper Kit", "Woodgrain Kit"],
             DrumEngine::Rack => &["Classic 808", "Classic 909", "Classic Lo-Fi", "Hybrid", "Electro", "606 Electro", "Shaker Kit", "Hand Percussion", "Found Sounds"],
         }
     }
@@ -842,6 +1115,261 @@ pub fn kit(name: &str) -> Vec<DrumPad> {
         // ---------------------------------------------------------- Acoustic
         n @ ("Studio Kit" | "Rock Kit" | "Jazz Kit" | "Funk Kit" | "Vintage Kit" | "Brush Kit") => acoustic_kit(n),
         n if super::real_drums::pack_of(n).is_some() => super::real_drums::kit(n),
+        // ---------------------------------------------------------- Resonant
+        "Resonant Kit" => vec![
+            pad("Kick", RsKick, 36, |p| p.level_db = 0.0),
+            pad("Circuit Kick", RsCircuitKick, 35, |p| p.level_db = 0.0),
+            pad("Snare", RsSnare, 38, |_| {}),
+            pad("Snare 2", RsSnare, 40, |p| {
+                p.tune = 3.0;
+                p.a = 0.85;
+            }),
+            pad("Hat", RsHat, 42, |p| {
+                p.choke = 1;
+                p.decay = 0.5;
+                p.level_db = -6.0;
+            }),
+            pad("Open Hat", RsHat, 46, |p| {
+                p.choke = 1;
+                p.decay = 3.0;
+                p.level_db = -6.0;
+            }),
+            pad("FM Tom", RsFmKick, 41, |p| p.tune = 9.0),
+            pad("FM Tom 2", RsFmKick, 43, |p| p.tune = 14.0),
+            pad("FM Snare", RsFmSnare, 39, |_| {}),
+            pad("FM Perc", RsFmSnare, 37, |p| {
+                p.tune = 12.0;
+                p.decay = 0.4;
+                p.b = 0.2;
+            }),
+        ],
+        "Circuit Kit" => vec![
+            pad("Kick", RsCircuitKick, 36, |p| p.level_db = 0.0),
+            pad("Tight Kick", RsCircuitKick, 35, |p| {
+                p.a = 0.9;
+                p.decay = 0.6;
+                p.level_db = 0.0;
+            }),
+            pad("Boom", RsCircuitKick, 41, |p| {
+                p.decay = 2.5;
+                p.tune = -3.0;
+                p.a = 0.3;
+                p.level_db = 0.0;
+            }),
+            pad("Bounce", RsCircuitKick, 43, |p| {
+                p.b = 0.7;
+                p.level_db = 0.0;
+            }),
+            pad("Bright Kick", RsCircuitKick, 45, |p| {
+                p.tone = 0.85;
+                p.tune = 5.0;
+            }),
+            pad("Snare", RsSnare, 38, |_| {}),
+            pad("Hat", RsHat, 42, |p| {
+                p.choke = 1;
+                p.decay = 0.5;
+                p.level_db = -6.0;
+            }),
+            pad("Open Hat", RsHat, 46, |p| {
+                p.choke = 1;
+                p.decay = 3.0;
+                p.level_db = -6.0;
+            }),
+            pad("FM Snare", RsFmSnare, 39, |_| {}),
+        ],
+        "FM Perc Kit" => vec![
+            pad("FM Kick", RsFmKick, 36, |p| {
+                p.a = 0.6;
+                p.level_db = 0.0;
+            }),
+            pad("Dirty Kick", RsFmKick, 35, |p| {
+                p.b = 0.05;
+                p.level_db = 0.0;
+            }),
+            pad("Low Tom", RsFmKick, 41, |p| p.tune = 7.0),
+            pad("Mid Tom", RsFmKick, 45, |p| p.tune = 12.0),
+            pad("High Tom", RsFmKick, 48, |p| p.tune = 17.0),
+            pad("Conga", RsFmSnare, 63, |p| {
+                p.tune = 2.0;
+                p.a = 0.2;
+                p.b = 0.5;
+            }),
+            pad("Snare", RsFmSnare, 38, |p| p.b = 0.85),
+            pad("Click", RsFmSnare, 37, |p| {
+                p.tune = 19.0;
+                p.decay = 0.3;
+                p.a = 0.9;
+            }),
+            pad("Noise Hat", RsFmSnare, 42, |p| {
+                p.tune = 24.0;
+                p.b = 1.0;
+                p.decay = 0.3;
+                p.choke = 1;
+            }),
+        ],
+        // ---------------------------------------------------------- Macro
+        "Macro Kit" => vec![
+            pad("Kick", MkKick, 36, |p| p.level_db = 0.0),
+            pad("Rim", MkRim, 37, |_| {}),
+            pad("Snare", MkSnare, 38, |_| {}),
+            pad("Clap", MkClap, 39, |_| {}),
+            pad("Hat", MkHat, 42, |p| p.choke = 1),
+            pad("Open Hat", MkHat, 46, |p| {
+                p.choke = 1;
+                p.decay = 4.0;
+            }),
+            pad("Tom", MkTom, 45, |_| {}),
+            pad("FM", MkFm, 47, |_| {}),
+            pad("Cymbal", MkCymbal, 49, |_| {}),
+            pad("Noise", MkNoise, 54, |_| {}),
+            pad("Cowbell", MkCowbell, 56, |_| {}),
+            pad("Shaker", MkShaker, 70, |_| {}),
+            pad("Clave", MkClave, 75, |_| {}),
+        ],
+        "Macro Electro" => vec![
+            pad("Kick", MkKick, 36, |p| {
+                p.a = 0.75;
+                p.tone = 0.3;
+                p.decay = 1.4;
+                p.level_db = 0.0;
+            }),
+            pad("Snare", MkSnare, 38, |p| {
+                p.b = 0.75;
+                p.tone = 0.7;
+            }),
+            pad("Clap", MkClap, 39, |p| p.a = 0.8),
+            pad("Hat", MkHat, 42, |p| {
+                p.choke = 1;
+                p.tone = 0.8;
+            }),
+            pad("Open Hat", MkHat, 46, |p| {
+                p.choke = 1;
+                p.decay = 5.0;
+                p.tone = 0.8;
+            }),
+            pad("Zap", MkFm, 47, |p| {
+                p.a = 1.0;
+                p.b = 0.8;
+            }),
+            pad("Cowbell", MkCowbell, 56, |_| {}),
+            pad("Clave", MkClave, 75, |p| p.tune = 5.0),
+            pad("Sweep", MkNoise, 54, |p| {
+                p.a = 1.0;
+                p.decay = 3.0;
+            }),
+        ],
+        "Macro Industrial" => vec![
+            pad("Kick", MkKick, 36, |p| {
+                p.b = 0.9;
+                p.tune = -3.0;
+                p.decay = 1.8;
+                p.level_db = 0.0;
+            }),
+            pad("Metal Snare", MkSnare, 38, |p| {
+                p.b = 0.95;
+                p.tone = 0.9;
+            }),
+            pad("Clank", MkCowbell, 39, |p| {
+                p.b = 1.0;
+                p.tune = -7.0;
+            }),
+            pad("Hat", MkHat, 42, |p| {
+                p.choke = 1;
+                p.b = 1.0;
+            }),
+            pad("Open Metal", MkCymbal, 46, |p| {
+                p.choke = 1;
+                p.b = 1.0;
+            }),
+            pad("Tom", MkTom, 45, |p| {
+                p.b = 0.9;
+                p.tune = -5.0;
+            }),
+            pad("Grind", MkNoise, 49, |p| {
+                p.a = 0.2;
+                p.b = 1.0;
+                p.decay = 2.5;
+            }),
+            pad("FM Hit", MkFm, 47, |p| {
+                p.b = 1.0;
+                p.tone = 0.1;
+            }),
+        ],
+        // ---------------------------------------------------------- Chip
+        "Console Kit" => vec![
+            pad("Kick", ChipConsoleKick, 36, |p| p.level_db = 0.0),
+            pad("Sample Kick", ChipConsoleSampleKick, 35, |p| p.level_db = 0.0),
+            pad("Snare", ChipConsoleSnare, 38, |_| {}),
+            pad("Sample Snare", ChipConsoleSampleSnare, 40, |_| {}),
+            pad("Hat", ChipConsoleHat, 42, |p| p.choke = 1),
+            pad("Open Hat", ChipConsoleOpenHat, 46, |p| p.choke = 1),
+            pad("Tom", ChipConsoleTom, 45, |_| {}),
+            pad("High Tom", ChipConsoleTom, 48, |p| p.tune = 5.0),
+            pad("Crash", ChipConsoleCrash, 49, |_| {}),
+        ],
+        "Handheld Kit" => vec![
+            pad("Kick", ChipHandheldKick, 36, |p| p.level_db = 0.0),
+            pad("Snare", ChipHandheldSnare, 38, |_| {}),
+            pad("Clap", ChipHandheldClap, 39, |_| {}),
+            pad("Hat", ChipHandheldHat, 42, |p| p.choke = 1),
+            pad("Open Hat", ChipHandheldOpenHat, 46, |p| p.choke = 1),
+            pad("Tom", ChipHandheldTom, 45, |_| {}),
+            pad("High Tom", ChipHandheldTom, 48, |p| p.tune = 5.0),
+            pad("Crash", ChipHandheldOpenHat, 49, |p| p.decay = 3.0),
+        ],
+        "Micro Kit" => vec![
+            pad("Kick", ChipMicroKick, 36, |p| p.level_db = 0.0),
+            pad("Rim", ChipMicroRim, 37, |_| {}),
+            pad("Snare", ChipMicroSnare, 38, |_| {}),
+            pad("Clap", ChipMicroClap, 39, |_| {}),
+            pad("Hat", ChipMicroHat, 42, |p| p.choke = 1),
+            pad("Open Hat", ChipMicroOpenHat, 46, |p| p.choke = 1),
+            pad("Low Tom", ChipMicroTom, 41, |_| {}),
+            pad("High Tom", ChipMicroTom, 48, |p| p.tune = 4.0),
+        ],
+        "Micro Punch Kit" => vec![
+            pad("Kick", ChipMicroPunchKick, 36, |p| p.level_db = 0.0),
+            pad("Rim", ChipMicroPunchRim, 37, |_| {}),
+            pad("Snare", ChipMicroPunchSnare, 38, |_| {}),
+            pad("Clap", ChipMicroPunchClap, 39, |_| {}),
+            pad("Hat", ChipMicroPunchHat, 42, |p| p.choke = 1),
+            pad("Open Hat", ChipMicroPunchOpenHat, 46, |p| p.choke = 1),
+            pad("Low Tom", ChipMicroPunchTom, 41, |_| {}),
+            pad("High Tom", ChipMicroPunchTom, 48, |p| p.tune = 4.0),
+        ],
+        "Arcade Kit" => vec![
+            pad("Kick", ChipArcadeKick, 36, |p| p.level_db = 0.0),
+            pad("Snare", ChipArcadeSnare, 38, |_| {}),
+            pad("Hat", ChipArcadeHat, 42, |p| p.choke = 1),
+            pad("Open Hat", ChipArcadeOpenHat, 46, |p| p.choke = 1),
+            pad("Tom", ChipArcadeTom, 45, |_| {}),
+            pad("High Tom", ChipArcadeTom, 48, |p| p.tune = 5.0),
+            pad("Cowbell", ChipArcadeCowbell, 56, |_| {}),
+            pad("Crash", ChipArcadeOpenHat, 49, |p| p.decay = 3.0),
+        ],
+        "Beeper Kit" => vec![
+            pad("Kick", ChipBeeperKick, 36, |p| p.level_db = 0.0),
+            pad("Snare", ChipBeeperSnare, 38, |_| {}),
+            pad("Hat", ChipBeeperHat, 42, |_| {}),
+            pad("Tom", ChipBeeperTom, 45, |_| {}),
+            pad("High Tom", ChipBeeperTom, 48, |p| p.tune = 5.0),
+            pad("Low Tom", ChipBeeperTom, 41, |p| p.tune = -4.0),
+            pad("Open Hat", ChipBeeperHat, 46, |p| p.decay = 5.0),
+            pad("Zap", ChipBeeperKick, 51, |p| {
+                p.tune = 12.0;
+                p.a = 1.0;
+            }),
+        ],
+        "Woodgrain Kit" => vec![
+            pad("Kick", ChipWoodKick, 36, |p| p.level_db = 0.0),
+            pad("Snare", ChipWoodSnare, 38, |_| {}),
+            pad("Hat", ChipWoodHat, 42, |_| {}),
+            pad("Tom", ChipWoodTom, 45, |_| {}),
+            pad("Zap", ChipWoodZap, 51, |_| {}),
+            pad("Boom", ChipWoodBoom, 49, |_| {}),
+            pad("Open Hat", ChipWoodHat, 46, |p| p.decay = 6.0),
+            pad("High Tom", ChipWoodTom, 48, |p| p.tune = 5.0),
+        ],
         // ---------------------------------------------------------- Retro
         "Rhythm Box" => vec![
             pad("Bass Drum", RbKick, 36, |p| p.level_db = 0.0),
@@ -1518,6 +2046,10 @@ struct PadVoice {
     machine: MachineVoice,
     acoustic: Box<AcousticVoice>,
     retro: RetroVoice,
+    peaks: PeaksVoice,
+    circuit: CircuitKick,
+    macro_voice: MacroVoice,
+    chip: ChipVoice,
 }
 
 impl PadVoice {
@@ -1550,6 +2082,10 @@ impl PadVoice {
             machine: MachineVoice::default(),
             acoustic: Box::default(),
             retro: RetroVoice::default(),
+            peaks: PeaksVoice::default(),
+            circuit: CircuitKick::default(),
+            macro_voice: MacroVoice::default(),
+            chip: ChipVoice::default(),
         }
     }
 
@@ -1599,6 +2135,102 @@ impl PadVoice {
             Family::Machine => self.machine.trigger(pad.voice, vel, tr, d, tone, pad.a, sr),
             Family::Acoustic => self.acoustic.trigger(pad.voice, vel, tr, d, tone, pad.a, pad.b, sr),
             Family::Retro => self.retro.trigger(pad.voice, vel, tr, d, tone, pad.a, sr),
+            Family::Resonant => {
+                let (a, b) = (pad.a.clamp(0.0, 1.0), pad.b.clamp(0.0, 1.0));
+                if pad.voice == DrumVoice::RsCircuitKick {
+                    let k = KickKnobs { freq: 55.0 * tr, ring: (0.5 + 0.2 * d.log2()).clamp(0.0, 1.0), tone: 300.0 * (7000.0f32 / 300.0).powf(tone), tight: a, bounce: b, ..KickKnobs::default() };
+                    self.circuit.trigger(k, vel, sr);
+                } else {
+                    // The module's knobs: 16 bits, its frequency in its own units.
+                    let semis = pad.tune;
+                    let fm_freq = |note: f32| (((note + semis - 24.0) / 72.0 * 65536.0).clamp(0.0, 65535.0)) as i32;
+                    let near = (semis * 32768.0 / 7.0).clamp(-32768.0, 32767.0) as i32;
+                    let (kind, frequency) = match pad.voice {
+                        DrumVoice::RsKick => (peaks::Kind::Kick, near),
+                        DrumVoice::RsSnare => (peaks::Kind::Snare, near),
+                        DrumVoice::RsHat => (peaks::Kind::Hat, near),
+                        DrumVoice::RsFmKick => (peaks::Kind::FmKick, fm_freq(36.0)),
+                        _ => (peaks::Kind::FmSnare, fm_freq(60.0)),
+                    };
+                    let u16k = |x: f32| (x.clamp(0.0, 1.0) * 65535.0) as u32;
+                    let k = peaks::Knobs { frequency, tone: u16k(tone), decay: (32768.0 + 16384.0 * d.log2()).clamp(0.0, 65535.0) as u32, a: u16k(a), b: u16k(b) };
+                    self.peaks.trigger(kind, k, vel, sr);
+                }
+            }
+            Family::Macro => {
+                let model = match pad.voice {
+                    DrumVoice::MkKick => macro_drums::Model::Kick,
+                    DrumVoice::MkSnare => macro_drums::Model::Snare,
+                    DrumVoice::MkHat => macro_drums::Model::Hat,
+                    DrumVoice::MkClap => macro_drums::Model::Clap,
+                    DrumVoice::MkTom => macro_drums::Model::Tom,
+                    DrumVoice::MkRim => macro_drums::Model::Rim,
+                    DrumVoice::MkFm => macro_drums::Model::Fm,
+                    DrumVoice::MkNoise => macro_drums::Model::Noise,
+                    DrumVoice::MkCowbell => macro_drums::Model::Cowbell,
+                    DrumVoice::MkCymbal => macro_drums::Model::Cymbal,
+                    DrumVoice::MkShaker => macro_drums::Model::Shaker,
+                    DrumVoice::MkClave => macro_drums::Model::Clave,
+                    _ => macro_drums::Model::Kick,
+                };
+                let (base_hz, secs) = macro_base(model);
+                let (a, b) = (pad.a.clamp(0.0, 1.0), pad.b.clamp(0.0, 1.0));
+                let fm_knob = matches!(pad.voice.macros()[1], Some("FM"));
+                let m = macro_drums::Macros { decay: macro_drums::decay_for(model, secs * d), tone, sweep: a, noise: if fm_knob { 0.5 } else { b }, fm: if fm_knob { b } else { 0.5 }, drive: 0.0 };
+                // (velocity sets its loudness in the rack)
+                self.macro_voice.trigger(model, base_hz * tr, m, 1.0, sr);
+            }
+            Family::Chip => {
+                let kind = match pad.voice {
+                    DrumVoice::ChipConsoleKick => chip_drums::Kind::ConsoleKick,
+                    DrumVoice::ChipConsoleSampleKick => chip_drums::Kind::ConsoleSampleKick,
+                    DrumVoice::ChipConsoleSnare => chip_drums::Kind::ConsoleSnare,
+                    DrumVoice::ChipConsoleSampleSnare => chip_drums::Kind::ConsoleSampleSnare,
+                    DrumVoice::ChipConsoleHat => chip_drums::Kind::ConsoleHat,
+                    DrumVoice::ChipConsoleOpenHat => chip_drums::Kind::ConsoleOpenHat,
+                    DrumVoice::ChipConsoleTom => chip_drums::Kind::ConsoleTom,
+                    DrumVoice::ChipConsoleCrash => chip_drums::Kind::ConsoleCrash,
+                    DrumVoice::ChipHandheldKick => chip_drums::Kind::HandheldKick,
+                    DrumVoice::ChipHandheldSnare => chip_drums::Kind::HandheldSnare,
+                    DrumVoice::ChipHandheldHat => chip_drums::Kind::HandheldHat,
+                    DrumVoice::ChipHandheldOpenHat => chip_drums::Kind::HandheldOpenHat,
+                    DrumVoice::ChipHandheldTom => chip_drums::Kind::HandheldTom,
+                    DrumVoice::ChipHandheldClap => chip_drums::Kind::HandheldClap,
+                    DrumVoice::ChipMicroKick => chip_drums::Kind::MicroKick,
+                    DrumVoice::ChipMicroSnare => chip_drums::Kind::MicroSnare,
+                    DrumVoice::ChipMicroTom => chip_drums::Kind::MicroTom,
+                    DrumVoice::ChipMicroClap => chip_drums::Kind::MicroClap,
+                    DrumVoice::ChipMicroRim => chip_drums::Kind::MicroRim,
+                    DrumVoice::ChipMicroHat => chip_drums::Kind::MicroHat,
+                    DrumVoice::ChipMicroOpenHat => chip_drums::Kind::MicroOpenHat,
+                    DrumVoice::ChipMicroPunchKick => chip_drums::Kind::MicroPunchKick,
+                    DrumVoice::ChipMicroPunchSnare => chip_drums::Kind::MicroPunchSnare,
+                    DrumVoice::ChipMicroPunchClap => chip_drums::Kind::MicroPunchClap,
+                    DrumVoice::ChipMicroPunchRim => chip_drums::Kind::MicroPunchRim,
+                    DrumVoice::ChipMicroPunchHat => chip_drums::Kind::MicroPunchHat,
+                    DrumVoice::ChipMicroPunchOpenHat => chip_drums::Kind::MicroPunchOpenHat,
+                    DrumVoice::ChipMicroPunchTom => chip_drums::Kind::MicroPunchTom,
+                    DrumVoice::ChipArcadeKick => chip_drums::Kind::ArcadeKick,
+                    DrumVoice::ChipArcadeSnare => chip_drums::Kind::ArcadeSnare,
+                    DrumVoice::ChipArcadeTom => chip_drums::Kind::ArcadeTom,
+                    DrumVoice::ChipArcadeHat => chip_drums::Kind::ArcadeHat,
+                    DrumVoice::ChipArcadeOpenHat => chip_drums::Kind::ArcadeOpenHat,
+                    DrumVoice::ChipArcadeCowbell => chip_drums::Kind::ArcadeCowbell,
+                    DrumVoice::ChipBeeperKick => chip_drums::Kind::BeeperKick,
+                    DrumVoice::ChipBeeperSnare => chip_drums::Kind::BeeperSnare,
+                    DrumVoice::ChipBeeperHat => chip_drums::Kind::BeeperHat,
+                    DrumVoice::ChipBeeperTom => chip_drums::Kind::BeeperTom,
+                    DrumVoice::ChipWoodKick => chip_drums::Kind::WoodKick,
+                    DrumVoice::ChipWoodSnare => chip_drums::Kind::WoodSnare,
+                    DrumVoice::ChipWoodHat => chip_drums::Kind::WoodHat,
+                    DrumVoice::ChipWoodTom => chip_drums::Kind::WoodTom,
+                    DrumVoice::ChipWoodZap => chip_drums::Kind::WoodZap,
+                    DrumVoice::ChipWoodBoom => chip_drums::Kind::WoodBoom,
+                    _ => chip_drums::Kind::ConsoleKick,
+                };
+                let k = ChipKnobs { tune: tr, decay: d, tone, sweep: pad.a, noise: pad.b };
+                self.chip.trigger(kind, k, 1.0, sr);
+            }
             Family::Classic => {}
         }
         match pad.voice {
@@ -1705,6 +2337,32 @@ impl PadVoice {
 
     #[inline]
     fn tick(&mut self, pad: &DrumPad, tr: f32, sr: f32) -> f32 {
+        match pad.voice.family() {
+            Family::Resonant => {
+                let circuit = pad.voice == DrumVoice::RsCircuitKick;
+                // (the circuit kick's click is sharp and its ring soft: a soft clip evens them)
+                let y = if circuit { (self.circuit.tick() * 3.0).tanh() * 0.9 } else { self.peaks.tick() };
+                if !(if circuit { self.circuit.is_active() } else { self.peaks.is_active() }) {
+                    self.active = false;
+                }
+                return y;
+            }
+            Family::Macro => {
+                let y = self.macro_voice.tick() * 0.7;
+                if !self.macro_voice.is_active() {
+                    self.active = false;
+                }
+                return y;
+            }
+            Family::Chip => {
+                let y = self.chip.tick() * 1.4;
+                if !self.chip.is_active() {
+                    self.active = false;
+                }
+                return y;
+            }
+            _ => {}
+        }
         if pad.voice.family() == Family::Retro {
             let y = self.retro.tick(pad.voice, &mut self.rng);
             if !self.retro.is_active() {
@@ -2166,3 +2824,4 @@ mod tests {
         assert!(d.voices.iter().all(|v| !v.active));
     }
 }
+
