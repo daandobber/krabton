@@ -1234,6 +1234,13 @@ impl App {
                             param_grid_mod(ui, Id::new(("wind_chimes", track_id)), krabton_engine::dsp::wind_chimes::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
                         });
                     }
+                    Instrument::BeadsSynth { preset, params } if crate::skin::current().is_some() => {
+                        ui.horizontal_top(|ui| {
+                            super::beads_view::beads_synth_screen(ui, Id::new(("beads_synth_screen", track_id)), params, &live, h - 36.0);
+                            ui.add_space(6.0);
+                            super::faces::modules::beads_panel(ui, Id::new(("beads_synth", track_id)), preset, params, h - 36.0, mv.as_mut());
+                        });
+                    }
                     Instrument::BeadsSynth { preset, params } => {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
@@ -1645,6 +1652,13 @@ impl App {
                             param_grid_mod(ui, Id::new(("monk", track_id)), krabton_engine::dsp::monk::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
                         });
                     }
+                    Instrument::Rings { preset, params } if crate::skin::current().is_some() => {
+                        ui.horizontal_top(|ui| {
+                            super::inst_screen::rings_screen(ui, params, &live, h - 36.0);
+                            ui.add_space(6.0);
+                            super::faces::modules::rings_panel(ui, Id::new(("rings_synth", track_id)), preset, params, h - 36.0, mv.as_mut());
+                        });
+                    }
                     Instrument::Rings { preset, params } => {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
@@ -1815,6 +1829,13 @@ impl App {
                             param_grid_mod(ui, Id::new(("macro", track_id)), &specs, params, accent_now(), h - 48.0, mv.as_mut());
                         });
                     }
+                    Instrument::Braids { preset, params } if crate::skin::current().is_some() => {
+                        ui.horizontal_top(|ui| {
+                            braids_shape_picker(ui, track_id, params, h - 36.0);
+                            ui.add_space(6.0);
+                            super::faces::modules::braids_panel(ui, Id::new(("braids", track_id)), preset, params, h - 36.0, mv.as_mut());
+                        });
+                    }
                     Instrument::Braids { preset, params } => {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
@@ -1836,6 +1857,15 @@ impl App {
                             specs[braids_synth::TIMBRE].name = braids_synth::SHAPE_KNOBS[shape][0];
                             specs[braids_synth::COLOR].name = braids_synth::SHAPE_KNOBS[shape][1];
                             param_grid_mod(ui, Id::new(("braids", track_id)), &specs, params, accent_now(), h - 48.0, mv.as_mut());
+                        });
+                    }
+                    Instrument::Elements { preset, params } if crate::skin::current().is_some() => {
+                        ui.horizontal_top(|ui| {
+                            elements_model_picker(ui, track_id, params, h - 36.0);
+                            ui.add_space(6.0);
+                            super::inst_screen::elements_screen(ui, Id::new(("elements_screen", track_id)), params, &live, h - 36.0);
+                            ui.add_space(6.0);
+                            super::faces::modules::elements_panel(ui, Id::new(("elements", track_id)), preset, params, h - 36.0, mv.as_mut());
                         });
                     }
                     Instrument::Elements { preset, params } => {

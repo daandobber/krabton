@@ -10,6 +10,7 @@ pub mod analog;
 pub mod bassline;
 pub mod drums;
 pub mod effects;
+pub mod modules;
 pub mod organ;
 pub mod piano;
 pub mod plaits;
