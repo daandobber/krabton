@@ -15,6 +15,8 @@ const TOOLBAR_H: f32 = 28.0;
 const SECTION_H: f32 = 20.0;
 const LANE_H: f32 = 62.0;
 const EDGE: f32 = 6.0;
+/// The overview of the whole song, over the arranger track.
+const OVERVIEW_H: f32 = 18.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DragKind {
@@ -70,6 +72,28 @@ pub struct ArrState {
     pub(crate) auto_drag: Option<crate::ui::automation::AutoDrag>,
     /// Where each track starts (from the first), and the end of the last.
     pub(crate) tops: Vec<f32>,
+    /// More clips picked along with `sel_clip` (Shift-click, or a box).
+    pub(crate) picked: Vec<u64>,
+    /// A box being drawn over empty lanes to pick clips: where it began (beat, y).
+    band: Option<(f64, f32)>,
+    /// The picked clips being dragged along: (id, where each started).
+    group: Vec<(u64, f64)>,
+}
+
+impl ArrState {
+    /// The grid edits snap to: the one chosen, or with Auto the finest whose
+    /// lines lie at least 14 points apart at this zoom.
+    pub fn grid_now(&self, bpb: f64) -> f64 {
+        if self.grid >= 0.0 {
+            return self.grid;
+        }
+        for g in [0.25, 0.5, 1.0, bpb, bpb * 4.0] {
+            if g * self.px_per_beat as f64 >= 14.0 {
+                return g;
+            }
+        }
+        bpb * 16.0
+    }
 }
 
 impl Default for ArrState {
@@ -78,7 +102,7 @@ impl Default for ArrState {
             px_per_beat: 18.0,
             scroll_x: 0.0,
             scroll_y: 0.0,
-            grid: 4.0,
+            grid: -1.0,
             follow: true,
             drag: None,
             loop_drag: None,
@@ -89,6 +113,9 @@ impl Default for ArrState {
             auto_draw: false,
             auto_drag: None,
             tops: Vec::new(),
+            picked: Vec::new(),
+            band: None,
+            group: Vec::new(),
         }
     }
 }
@@ -126,8 +153,9 @@ impl App {
         let lane_h = self.lane_h();
 
         let toolbar = Rect::from_min_size(full.min, vec2(full.width(), TOOLBAR_H));
-        // The arranger track (song sections) sits between the toolbar and the ruler.
-        let arranger = Rect::from_min_max(pos2(full.left() + head_w, toolbar.bottom()), pos2(full.right(), toolbar.bottom() + SECTION_H));
+        // The whole song in a strip, then the arranger track (song sections) and the ruler.
+        let overview = Rect::from_min_max(pos2(full.left() + head_w, toolbar.bottom()), pos2(full.right(), toolbar.bottom() + OVERVIEW_H));
+        let arranger = Rect::from_min_max(pos2(full.left() + head_w, overview.bottom()), pos2(full.right(), overview.bottom() + SECTION_H));
         let ruler = Rect::from_min_max(pos2(full.left() + head_w, arranger.bottom()), pos2(full.right(), arranger.bottom() + RULER_H));
         let lanes = Rect::from_min_max(pos2(full.left() + head_w, ruler.bottom()), full.max);
         let heads = Rect::from_min_max(pos2(full.left(), ruler.bottom()), pos2(full.left() + head_w, full.bottom()));
@@ -150,11 +178,11 @@ impl App {
             }
             tui.checkbox(&mut self.arr.follow, "Follow");
             tui.label(egui::RichText::new("Grid").small().color(TEXT_DIM));
-            let grids = [(bpb, "1 Bar"), (2.0, "1/2"), (1.0, "1/4"), (0.5, "1/8"), (0.25, "1/16"), (0.0, "Off")];
-            let cur = grids.iter().find(|g| (g.0 - self.arr.grid).abs() < 1e-9).map(|g| g.1).unwrap_or("1 Bar");
-            egui::ComboBox::from_id_salt("arr_grid").width(56.0).selected_text(cur).show_ui(&mut tui, |ui| {
+            let grids = [(-1.0, "Auto"), (bpb, "1 Bar"), (2.0, "1/2"), (1.0, "1/4"), (0.5, "1/8"), (0.25, "1/16"), (2.0 / 3.0, "1/4 T"), (1.0 / 3.0, "1/8 T"), (1.0 / 6.0, "1/16 T"), (0.0, "Off")];
+            let cur = grids.iter().find(|g| (g.0 - self.arr.grid).abs() < 1e-9).map(|g| g.1).unwrap_or("Auto");
+            egui::ComboBox::from_id_salt("arr_grid").width(60.0).selected_text(cur).show_ui(&mut tui, |ui| {
                 for (g, name) in grids {
-                    ui.selectable_value(&mut self.arr.grid, g, name);
+                    ui.selectable_value(&mut self.arr.grid, g, name).on_hover_text(if g < 0.0 { "The grid follows the zoom: finer as you zoom in" } else { "" });
                 }
             });
             if tui.button("-").on_hover_text("Zoom out (Ctrl+wheel)").clicked() {
@@ -162,6 +190,11 @@ impl App {
             }
             if tui.button("+").on_hover_text("Zoom in").clicked() {
                 self.arr.px_per_beat = (self.arr.px_per_beat * 1.4).min(400.0);
+            }
+            if tui.button("Fit").on_hover_text("The whole song in view").clicked() {
+                let end = self.song_end().max(4.0 * bpb);
+                self.arr.px_per_beat = (((full.width() - head_w - 20.0) / end as f32).clamp(2.0, 400.0)) as f32;
+                self.arr.scroll_x = 0.0;
             }
             tui.separator();
             let auto = self.arr.automation;
@@ -175,11 +208,11 @@ impl App {
                     self.arr.auto_draw = !draw;
                 }
             }
-            tui.label(egui::RichText::new("Double-click a MIDI lane to create a clip. Drag edges to resize. Alt = no snap.").small().color(TEXT_DIM));
+            tui.label(egui::RichText::new("Double-click a MIDI lane for a clip · drag on empty lanes to pick clips (Shift: more) · Ctrl+E split · 0 on/off · Alt: no snap").small().color(TEXT_DIM));
         }
 
         // Zoom and scroll.
-        if ui.rect_contains_pointer(lanes.union(ruler).union(arranger)) {
+        if ui.rect_contains_pointer(lanes.union(ruler).union(arranger).union(overview)) {
             let (d, shift, zoom, pointer) = ui.input(|i| (i.smooth_scroll_delta, i.modifiers.shift, i.zoom_delta(), i.pointer.hover_pos()));
             if zoom != 1.0 {
                 let px = pointer.map(|p| p.x).unwrap_or(lanes.left());
@@ -210,9 +243,9 @@ impl App {
         let auto_h = (lane_h * 0.7).clamp(30.0, 120.0);
         let mut tops = Vec::with_capacity(nt + 1);
         let mut acc = 0.0f32;
-        for tr in &self.project.tracks {
+        for (k, tr) in self.project.tracks.iter().enumerate() {
             tops.push(acc);
-            acc += lane_h + if self.arr.automation { tr.auto_lanes.len() as f32 * auto_h } else { 0.0 };
+            acc += self.track_h(k) + if self.arr.automation { tr.auto_lanes.len() as f32 * auto_h } else { 0.0 };
         }
         tops.push(acc);
         let content_h = acc + 60.0;
@@ -230,26 +263,52 @@ impl App {
 
         let p = ui.painter().clone();
 
-        // Grid lines (behind lanes).
+        // Grid lines (behind lanes): bars, beats and sixteenths as the zoom allows.
         let first_beat = xb(lanes.left()).floor().max(0.0);
         let last_beat = xb(lanes.right()).ceil();
         let lp = p.with_clip_rect(lanes.union(ruler));
-        let step = if ppb < 6.0 { bpb * 4.0 } else if ppb < 12.0 { bpb } else { 1.0 };
+        let bar_px = ppb * bpb as f32;
+        let step = if ppb >= 48.0 {
+            0.25
+        } else if ppb >= 10.0 {
+            1.0
+        } else if bar_px >= 8.0 {
+            bpb
+        } else {
+            bpb * 4.0
+        };
+        let label_every = if bar_px > 40.0 { 1 } else if bar_px > 12.0 { 4 } else { 16 };
+        let bpm = self.project.bpm.max(1.0);
         let mut b = (first_beat / step).floor() * step;
         while b <= last_beat {
             let x = bx(b);
-            let is_bar = (b / bpb).fract().abs() < 1e-9;
-            lp.line_segment([pos2(x, lanes.top()), pos2(x, lanes.bottom())], Stroke::new(1.0_f32, if is_bar { LINE_SOFT } else { shade(LINE_SOFT, 0.7) }));
+            let is_bar = (b / bpb).fract().abs() < 1e-9 || (b / bpb).fract() > 1.0 - 1e-9;
+            let is_beat = b.fract().abs() < 1e-9;
+            let line = if is_bar { LINE_SOFT } else if is_beat { shade(LINE_SOFT, 0.75) } else { shade(LINE_SOFT, 0.55) };
+            lp.line_segment([pos2(x, lanes.top()), pos2(x, lanes.bottom())], Stroke::new(1.0_f32, line));
             if is_bar {
-                let bar = (b / bpb) as i64 + 1;
-                let label_every = if ppb * bpb as f32 > 40.0 { 1 } else if ppb * bpb as f32 > 12.0 { 4 } else { 16 };
+                let bar = (b / bpb).round() as i64 + 1;
                 if (bar - 1) % label_every == 0 {
                     lp.line_segment([pos2(x, ruler.bottom() - 8.0), pos2(x, ruler.bottom())], Stroke::new(1.0_f32, TEXT_DIM));
-                    lp.text(pos2(x + 3.0, ruler.bottom() - 4.0), Align2::LEFT_BOTTOM, bar, small(), TEXT_DIM);
+                    let r = tabular_text(&lp, pos2(x + 3.0, ruler.bottom() - 4.0), Align2::LEFT_BOTTOM, &bar.to_string(), small(), TEXT_DIM);
+                    // And the time there, where it fits.
+                    if bar_px * label_every as f32 > 84.0 {
+                        let secs = b * 60.0 / bpm;
+                        let t = format!("{}:{:02}", (secs / 60.0) as i64, (secs % 60.0) as i64);
+                        tabular_text(&lp, pos2(r.right() + 6.0, ruler.bottom() - 4.0), Align2::LEFT_BOTTOM, &t, egui::FontId::proportional(9.0), shade(TEXT_DIM, 0.75));
+                    }
                 }
+            } else if is_beat && ppb >= 34.0 {
+                let bar = (b / bpb).floor() as i64 + 1;
+                let beat = (b - (bar - 1) as f64 * bpb).round() as i64 + 1;
+                lp.line_segment([pos2(x, ruler.bottom() - 4.0), pos2(x, ruler.bottom())], Stroke::new(1.0_f32, shade(TEXT_DIM, 0.7)));
+                tabular_text(&lp, pos2(x + 2.0, ruler.bottom() - 4.0), Align2::LEFT_BOTTOM, &format!("{bar}.{beat}"), egui::FontId::proportional(9.0), shade(TEXT_DIM, 0.7));
             }
             b += step;
         }
+
+        // The whole song: every clip, the view's window over it; click or drag to go there.
+        self.overview(ui, overview, lanes);
 
         // Loop brace + ruler interaction.
         self.ruler(ui, ruler, &bx, &xb);
@@ -264,18 +323,19 @@ impl App {
         let free = ui.input(|i| i.modifiers.alt);
         for i in 0..nt {
             let y = lane_y(i);
-            let lane = Rect::from_min_size(pos2(lanes.left(), y), vec2(lanes.width(), lane_h - 1.0));
-            if !lane.intersects(lanes) {
+            let th = self.track_h(i);
+            let lane = Rect::from_min_size(pos2(lanes.left(), y), vec2(lanes.width(), th - 1.0));
+            if !lane.intersects(lanes) && !(self.arr.automation && lane_y(i + 1) > lanes.top()) {
                 continue;
             }
-            let head = Rect::from_min_size(pos2(heads.left(), y), vec2(head_w - 1.0, lane_h - 1.0));
+            let head = Rect::from_min_size(pos2(heads.left(), y), vec2(head_w - 1.0, th - 1.0));
             self.arr_head(&mut hui, i, head);
             self.arr_lane(&mut lui, i, lane, &bx, &xb, free);
             // The automation lanes under it.
             if self.arr.automation {
                 let n = self.project.tracks.get(i).map(|t| t.auto_lanes.len()).unwrap_or(0);
                 for k in 0..n {
-                    let ky = y + lane_h + k as f32 * auto_h;
+                    let ky = y + th + k as f32 * auto_h;
                     let kl = Rect::from_min_size(pos2(lanes.left(), ky), vec2(lanes.width(), auto_h - 1.0));
                     let kh = Rect::from_min_size(pos2(heads.left(), ky), vec2(head_w - 1.0, auto_h - 1.0));
                     if !kl.intersects(lanes) {
@@ -356,15 +416,27 @@ impl App {
             self.layout_dirty = true;
         }
         for i in 0..nt {
-            let y = lane_y(i) + lane_h - 1.0;
+            let th = self.track_h(i);
+            let y = lane_y(i) + th - 1.0;
             if y < heads.top() || y > heads.bottom() {
                 continue;
             }
             let r = Rect::from_min_max(pos2(heads.left(), y - 3.0), pos2(heads.right() - 4.0, y + 3.0));
-            let resp = splitter(ui, Id::new(("arr_lane_split", i)), r, false);
+            let resp = splitter(ui, Id::new(("arr_lane_split", i)), r, false).on_hover_text("Drag: this track's height (Shift: every track's); double-click: back to the usual");
             if resp.dragged() {
-                self.prefs.layout.lane_h = (lane_h + resp.drag_delta().y / (i + 1) as f32).clamp(28.0, 240.0);
-                self.layout_dirty = true;
+                if ui.input(|k| k.modifiers.shift) {
+                    // Every lane: the usual height, and no track keeps its own.
+                    self.prefs.layout.lane_h = (lane_h + resp.drag_delta().y / (i + 1) as f32).clamp(28.0, 240.0);
+                    self.layout_dirty = true;
+                    for t in &mut self.project.tracks {
+                        t.lane_h = 0.0;
+                    }
+                } else {
+                    self.project.tracks[i].lane_h = (th + resp.drag_delta().y).clamp(28.0, 240.0);
+                }
+            }
+            if resp.double_clicked() {
+                self.project.tracks[i].lane_h = 0.0;
             }
         }
     }
@@ -406,6 +478,20 @@ impl App {
             }
             let body = ui.interact(sr, Id::new(("section", s.id)), Sense::click_and_drag());
             let edge = ui.interact(Rect::from_min_max(pos2(sr.right() - 5.0, sr.top()), sr.max), Id::new(("section_edge", s.id)), Sense::drag());
+            let edge_l = ui.interact(Rect::from_min_max(sr.min, pos2(sr.left() + 5.0, sr.bottom())), Id::new(("section_edge_l", s.id)), Sense::drag());
+            if edge_l.hovered() || edge_l.dragged() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+            }
+            if edge_l.dragged() {
+                if let Some(pos) = edge_l.interact_pointer_pos() {
+                    let prev = sections.iter().map(|x| x.end()).filter(|&x| x <= s.start + 1e-9).fold(0.0, f64::max);
+                    let start = ((xb(pos.x) / bpb).round() * bpb).clamp(prev, s.end() - bpb);
+                    if let Some(x) = self.project.sections.iter_mut().find(|x| x.id == s.id) {
+                        x.length = x.end() - start;
+                        x.start = start;
+                    }
+                }
+            }
             let selected = self.arr.sel_section == Some(s.id);
             let c = rgb(s.color);
             p.rect_filled(sr, 3.0, if selected { c } else { shade(c, 0.7) });
@@ -416,7 +502,8 @@ impl App {
             if edge.hovered() || edge.dragged() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
             }
-            if edge.dragged() {
+            if edge_l.dragged() {
+            } else if edge.dragged() {
                 if let Some(pos) = edge.interact_pointer_pos() {
                     let next = sections.iter().map(|x| x.start).filter(|&x| x > s.start).fold(f64::MAX, f64::min);
                     let end = ((xb(pos.x) / bpb).round() * bpb).clamp(s.start + bpb, next);
@@ -500,6 +587,65 @@ impl App {
         crate::prefs::Layout::or(self.prefs.layout.lane_h, LANE_H).clamp(28.0, 240.0)
     }
 
+    /// Track `i`'s lane height: its own, or the usual.
+    pub(crate) fn track_h(&self, i: usize) -> f32 {
+        match self.project.tracks.get(i).map(|t| t.lane_h) {
+            Some(h) if h > 0.0 => h.clamp(28.0, 240.0),
+            _ => self.lane_h(),
+        }
+    }
+
+    /// Where the song ends: its last clip, section or the loop.
+    pub(crate) fn song_end(&self) -> f64 {
+        let clips = self.project.tracks.iter().flat_map(|t| t.arrangement.iter().map(|a| a.end())).fold(0.0f64, f64::max);
+        let sections = self.project.sections.iter().map(|s| s.end()).fold(0.0f64, f64::max);
+        let lp = if self.project.loop_enabled { self.project.loop_end } else { 0.0 };
+        clips.max(sections).max(lp)
+    }
+
+    /// The whole song in a strip: a line of clips per track, the part in
+    /// view framed. Click or drag to look there.
+    fn overview(&mut self, ui: &mut Ui, r: Rect, lanes: Rect) {
+        let bpb = self.project.beats_per_bar_f();
+        let total = (self.song_end() + 8.0 * bpb).max(32.0 * bpb);
+        let p = ui.painter_at(r);
+        rect_fill(&p, r, 0.0, BG);
+        let x_of = |b: f64| r.left() + (b / total) as f32 * r.width();
+        let nt = self.project.tracks.len().max(1);
+        let row = ((r.height() - 4.0) / nt as f32).clamp(1.0, 4.0);
+        for (k, t) in self.project.tracks.iter().enumerate() {
+            let y = r.top() + 2.0 + k as f32 * row;
+            if y + row > r.bottom() {
+                break;
+            }
+            for a in &t.arrangement {
+                let c = rgb(a.clip.color);
+                p.rect_filled(Rect::from_min_max(pos2(x_of(a.start), y), pos2(x_of(a.end()).max(x_of(a.start) + 1.0), y + row - 0.5)), 0.0, if a.muted { shade(c, 0.35) } else { c });
+            }
+        }
+        for s in &self.project.sections {
+            p.line_segment([pos2(x_of(s.start), r.top()), pos2(x_of(s.start), r.bottom())], Stroke::new(1.0_f32, shade(rgb(s.color), 0.8)));
+        }
+        let ppb = self.arr.px_per_beat as f64;
+        let v0 = self.arr.scroll_x as f64 / ppb;
+        let v1 = v0 + lanes.width() as f64 / ppb;
+        let view = Rect::from_min_max(pos2(x_of(v0), r.top() + 0.5), pos2(x_of(v1).min(r.right()), r.bottom() - 0.5));
+        p.rect_filled(view, 2.0, egui::Color32::from_white_alpha(18));
+        p.rect_stroke(view, 2.0, Stroke::new(1.0_f32, egui::Color32::from_white_alpha(90)), egui::StrokeKind::Inside);
+        let song_pos = self.engine.status.song_pos.load();
+        p.line_segment([pos2(x_of(song_pos), r.top()), pos2(x_of(song_pos), r.bottom())], Stroke::new(1.0_f32, egui::Color32::WHITE));
+        p.line_segment([r.left_bottom(), r.right_bottom()], Stroke::new(1.0_f32, LINE));
+        let resp = ui.interact(r, Id::new("arr_overview"), Sense::click_and_drag());
+        if resp.clicked() || resp.dragged() {
+            if let Some(pos) = resp.interact_pointer_pos() {
+                let at = ((pos.x - r.left()) / r.width()) as f64 * total;
+                self.arr.scroll_x = ((at - (v1 - v0) * 0.5) * ppb).max(0.0) as f32;
+                self.arr.follow = false;
+            }
+        }
+        resp.on_hover_text("The whole song: click or drag to look there (Follow goes off)");
+    }
+
     fn ruler(&mut self, ui: &mut Ui, ruler: Rect, bx: &dyn Fn(f64) -> f32, xb: &dyn Fn(f32) -> f64) {
         let p = ui.painter().with_clip_rect(ruler);
         let brace = Rect::from_min_max(pos2(bx(self.project.loop_start), ruler.top() + 2.0), pos2(bx(self.project.loop_end), ruler.top() + 10.0));
@@ -527,7 +673,8 @@ impl App {
         }
         if bresp.dragged() {
             if let (Some(d), Some(pos)) = (self.arr.loop_drag, bresp.interact_pointer_pos()) {
-                let grid = if self.arr.grid > 0.0 { self.arr.grid } else { 1.0 };
+                let g = self.arr.grid_now(bpb);
+                let grid = if g > 0.0 { g } else { 1.0 };
                 match d {
                     LoopDrag::Start => self.project.loop_start = snap(xb(pos.x), grid, false).clamp(0.0, self.project.loop_end - grid),
                     LoopDrag::End => self.project.loop_end = snap(xb(pos.x), grid, false).max(self.project.loop_start + grid),
@@ -552,7 +699,8 @@ impl App {
         let resp = ui.interact(below, Id::new("ruler"), Sense::click_and_drag());
         if resp.clicked() || resp.dragged() {
             if let Some(pos) = resp.interact_pointer_pos() {
-                let grid = if self.arr.grid > 0.0 { self.arr.grid.min(bpb) } else { 0.0 };
+                let g = self.arr.grid_now(bpb);
+                let grid = if g > 0.0 { g.min(bpb) } else { 0.0 };
                 let beat = snap(xb(pos.x).max(0.0), grid, ui.input(|i| i.modifiers.alt));
                 self.cmd(Command::SetPosition(beat));
             }
@@ -579,10 +727,11 @@ impl App {
         }
         let t = &self.project.tracks[i];
         let id = t.id;
-        let selected = self.sel_track == TrackSel::Track(i);
+        let selected = self.sel_track == TrackSel::Track(i) || self.sel_more.contains(&id);
         let color = rgb(t.color);
         let name = t.name.clone();
         let (mute, solo, arm, kind) = (t.mixer.mute, t.mixer.solo, t.arm, t.kind);
+        let (vol, pan) = (t.mixer.volume_db, t.mixer.pan);
         let p = ui.painter().clone();
         let resp = ui.interact(r, Id::new(("arr_head", id)), Sense::click());
         rect_fill(&p, r, 0.0, if selected { PANEL3 } else { PANEL2 });
@@ -623,14 +772,32 @@ impl App {
         if button(ui, b2, Id::new(("arr_solo", id)), "S", solo, SOLO).clicked() {
             self.project.tracks[i].mixer.solo = !solo;
         }
-        if kind == TrackKind::Midi {
-            let b3 = Rect::from_min_size(pos2(b2.right() + 4.0, by), vec2(22.0, 17.0));
+        let b3 = Rect::from_min_size(pos2(b2.right() + 4.0, by), vec2(22.0, 17.0));
+        if kind == TrackKind::Midi || kind == TrackKind::Audio {
             let resp = button(ui, b3, Id::new(("arr_arm", id)), "", arm, REC).on_hover_text("Arm for recording (Ctrl+click for more)");
             rec_icon(ui.painter(), b3.center(), 7.0, if arm { TEXT_DARK } else { REC });
             if resp.clicked() {
                 let multi = ui.input(|k| k.modifiers.ctrl || k.modifiers.command);
                 self.click_arm(i, multi);
             }
+        }
+        // Volume and pan, where there is room.
+        let knob_s = (r.height() - 30.0).clamp(0.0, 22.0);
+        let room = r.right() - 18.0 - b3.right();
+        if knob_s >= 16.0 && room >= knob_s * 2.0 + 10.0 {
+            let ky = r.bottom() - 4.0 - knob_s;
+            let vr = Rect::from_min_size(pos2(r.right() - 18.0 - knob_s * 2.0 - 4.0, ky), vec2(knob_s, knob_s));
+            let (resp, new) = knob(ui, vr, Id::new(("arr_vol", id)), db_to_fader(vol), db_to_fader(0.0), false, color);
+            if let Some(n) = new {
+                self.project.tracks[i].mixer.volume_db = fader_to_db(n);
+            }
+            resp.on_hover_text(format!("Volume: {}", if krabton_engine::fader_gain(vol) == 0.0 { "-inf".into() } else { format!("{vol:.1} dB") }));
+            let pr = Rect::from_min_size(pos2(r.right() - 18.0 - knob_s, ky), vec2(knob_s, knob_s));
+            let (resp, new) = knob(ui, pr, Id::new(("arr_pan", id)), (pan + 1.0) * 0.5, 0.5, true, color);
+            if let Some(n) = new {
+                self.project.tracks[i].mixer.pan = (n * 2.0 - 1.0).clamp(-1.0, 1.0);
+            }
+            resp.on_hover_text(format!("Pan: {}", crate::ui::session::pan_text(pan)));
         }
         let (ml, mr) = self.meters.get(i).copied().unwrap_or((0.0, 0.0));
         meter(&p, Rect::from_min_size(pos2(r.right() - 14.0, r.top() + 6.0), vec2(8.0, r.height() - 12.0)), ml, mr);
@@ -647,8 +814,8 @@ impl App {
         let p = ui.painter().clone();
         p.line_segment([pos2(lane.left(), lane.bottom() + 0.5), pos2(lane.right(), lane.bottom() + 0.5)], Stroke::new(1.0_f32, LINE_SOFT));
 
-        let lresp = ui.interact(lane, Id::new(("lane", tid)), Sense::click());
-        let grid = self.arr.grid;
+        let lresp = ui.interact(lane, Id::new(("lane", tid)), Sense::click_and_drag());
+        let grid = self.arr.grid_now(bpb);
         if lresp.clicked() {
             if let Some(pos) = lresp.interact_pointer_pos() {
                 self.sel_track = TrackSel::Track(i);
@@ -657,13 +824,55 @@ impl App {
                 self.cmd(Command::SetPosition(beat));
             }
         }
+        // A box drawn over empty lanes picks the clips it touches (Shift: more).
+        if lresp.drag_started() {
+            if let Some(o) = ui.input(|i| i.pointer.press_origin()) {
+                self.arr.band = Some((xb(o.x), o.y));
+                if !ui.input(|i| i.modifiers.shift) {
+                    self.arr.picked.clear();
+                    self.sel_clip = None;
+                }
+            }
+        }
+        if let (true, Some((b0, y0)), Some(pos)) = (lresp.dragged(), self.arr.band, lresp.interact_pointer_pos()) {
+            let b1 = xb(pos.x);
+            let (lo, hi) = (b0.min(b1), b0.max(b1));
+            let (ya, yb) = (y0.min(pos.y), y0.max(pos.y));
+            let band = Rect::from_min_max(pos2(bx(lo), ya), pos2(bx(hi), yb));
+            let fg = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, Id::new("arr_band")));
+            fg.rect_filled(band.intersect(ui.clip_rect()), 0.0, egui::Color32::from_rgba_unmultiplied(0x9f, 0xd8, 0xff, 24));
+            fg.rect_stroke(band.intersect(ui.clip_rect()), 0.0, Stroke::new(1.0_f32, SELECT), egui::StrokeKind::Inside);
+            let mut hits = Vec::new();
+            for k in 0..self.project.tracks.len() {
+                let top = self.arr.lane_top + self.arr.tops.get(k).copied().unwrap_or(0.0);
+                if top > yb || top + self.track_h(k) < ya {
+                    continue;
+                }
+                hits.extend(self.project.tracks[k].arrangement.iter().filter(|a| a.start < hi && a.end() > lo).map(|a| (k, a.id)));
+            }
+            let keep = ui.input(|i| i.modifiers.shift);
+            if !keep {
+                self.arr.picked.clear();
+            }
+            for (_, id) in &hits {
+                if !self.arr.picked.contains(id) {
+                    self.arr.picked.push(*id);
+                }
+            }
+            if let Some(&(k, id)) = hits.first() {
+                self.sel_clip = Some(ClipSel::Arr { track: k, id });
+            }
+        }
+        if lresp.drag_stopped() {
+            self.arr.band = None;
+        }
         if lresp.double_clicked() && kind == TrackKind::Midi {
             if let Some(pos) = lresp.interact_pointer_pos() {
                 let start = (xb(pos.x).max(0.0) / bpb).floor() * bpb;
                 let id = self.project.alloc_id();
                 let cid = self.project.alloc_id();
                 let clip = Clip::new_midi(cid, "MIDI Clip", self.project.tracks[i].color, bpb);
-                self.project.tracks[i].arrangement.push(ArrangementClip { id, start, length: bpb, offset: 0.0, clip });
+                self.project.tracks[i].arrangement.push(ArrangementClip::new(id, start, bpb, clip));
                 self.select_clip(ClipSel::Arr { track: i, id });
             }
         }
@@ -674,7 +883,7 @@ impl App {
         }
         if let Some(item) = drop_payload::<BrowserItem>(&lresp) {
             let beat = snap(hover_beat.unwrap_or(0.0), if grid > 0.0 { grid } else { 1.0 }, free);
-            let target = if matches!(&*item, BrowserItem::Sample(_)) { DropTarget::ArrLane { track: i, beat } } else { DropTarget::Track(i) };
+            let target = if matches!(&*item, BrowserItem::Sample(_) | BrowserItem::Clip { .. }) { DropTarget::ArrLane { track: i, beat } } else { DropTarget::Track(i) };
             self.apply_item(&item, target);
         }
         if let Some(from) = drop_payload::<SlotDrag>(&lresp) {
@@ -685,7 +894,7 @@ impl App {
                     let id = self.project.alloc_id();
                     let clip = self.project.fresh_clip(&clip);
                     let length = clip.length;
-                    self.project.tracks[i].arrangement.push(ArrangementClip { id, start: beat, length, offset: 0.0, clip });
+                    self.project.tracks[i].arrangement.push(ArrangementClip::new(id, beat, length, clip));
                     self.select_clip(ClipSel::Arr { track: i, id });
                 }
             }
@@ -724,11 +933,11 @@ impl App {
     #[allow(clippy::too_many_arguments)]
     fn arr_clip(&mut self, ui: &mut Ui, i: usize, cid: u64, r: Rect, lane: Rect, track_color: egui::Color32, free: bool) {
         let sel = ClipSel::Arr { track: i, id: cid };
-        let selected = self.sel_clip == Some(sel);
+        let selected = self.sel_clip == Some(sel) || self.arr.picked.contains(&cid);
         let vis = r.intersect(lane);
         let resp = ui.interact(vis, Id::new(("arr_clip", cid)), Sense::click_and_drag());
         let ppb = self.arr.px_per_beat as f64;
-        let grid = self.arr.grid;
+        let grid = self.arr.grid_now(self.project.beats_per_bar_f());
 
         // Edge hover cursor.
         if let Some(h) = resp.hover_pos() {
@@ -745,16 +954,41 @@ impl App {
             } else {
                 DragKind::Move
             };
+            // Dragging one of the picked clips takes all of them along.
+            let together = matches!(kind, DragKind::Move) && selected && !self.arr.picked.is_empty();
+            self.arr.group.clear();
+            if together {
+                let picked: Vec<(usize, u64)> = self.arr_selection();
+                for (t, id) in picked {
+                    if id != cid {
+                        if let Some(a) = self.project.tracks[t].arrangement.iter().find(|a| a.id == id) {
+                            self.arr.group.push((id, a.start));
+                        }
+                    }
+                }
+            } else {
+                self.arr.picked.clear();
+            }
             if let Some(ac) = self.project.tracks[i].arrangement.iter().find(|a| a.id == cid).cloned() {
                 self.arr.drag = Some(ArrDrag { track: i, orig_track: i, id: cid, kind, orig_start: ac.start, orig_len: ac.length, orig_offset: ac.offset, press_x: px });
-                // Ctrl+drag leaves a copy behind.
+                // Ctrl+drag leaves a copy behind (of each picked one).
                 if matches!(kind, DragKind::Move) && ui.input(|i| i.modifiers.ctrl || i.modifiers.command) {
-                    let id = self.project.alloc_id();
-                    let clip = self.project.fresh_clip(&ac.clip);
-                    self.project.tracks[i].arrangement.push(krabton_engine::ArrangementClip { id, clip, ..ac });
+                    let mut copies: Vec<(usize, krabton_engine::ArrangementClip)> = vec![(i, ac.clone())];
+                    for (id, _) in &self.arr.group {
+                        if let Some((t, a)) = self.project.tracks.iter().enumerate().find_map(|(t, tr)| tr.arrangement.iter().find(|a| a.id == *id).map(|a| (t, a.clone()))) {
+                            copies.push((t, a));
+                        }
+                    }
+                    for (t, a) in copies {
+                        let id = self.project.alloc_id();
+                        let clip = self.project.fresh_clip(&a.clip);
+                        self.project.tracks[t].arrangement.push(krabton_engine::ArrangementClip { id, clip, ..a });
+                    }
                 }
             }
+            let keep = std::mem::take(&mut self.arr.picked);
             self.select_clip(sel);
+            self.arr.picked = keep;
         }
         resp.dnd_set_drag_payload(ArrClipDrag { id: cid });
         if resp.dragged() {
@@ -766,12 +1000,11 @@ impl App {
                     let min_len = if g > 0.0 { g.min(1.0) } else { 0.0625 };
                     // Moving up or down takes the clip to another track of the same kind.
                     let mut i = i;
-                    if matches!(d.kind, DragKind::Move) {
+                    if matches!(d.kind, DragKind::Move) && self.arr.group.is_empty() {
                         // The track under the pointer (its own lane, not its automation lanes).
                         let rel = pos.y - self.arr.lane_top;
                         let nt = self.project.tracks.len();
-                        let lane_h = self.lane_h();
-                        let row = self.arr.tops.iter().take(nt).rposition(|&top| rel >= top).filter(|&k| rel < self.arr.tops[k] + lane_h);
+                        let row = self.arr.tops.iter().take(nt).rposition(|&top| rel >= top).filter(|&k| rel < self.arr.tops[k] + self.track_h(k));
                         if let Some(to) = row {
                             if to != i && self.project.tracks[to].kind == self.project.tracks[i].kind {
                                 if let Some(at) = self.project.tracks[i].arrangement.iter().position(|a| a.id == cid) {
@@ -787,7 +1020,22 @@ impl App {
                             }
                         }
                     }
-                    if let Some(ac) = self.project.tracks[i].arrangement.iter_mut().find(|a| a.id == cid) {
+                    // The others picked move by as much (none before the start).
+                    if matches!(d.kind, DragKind::Move) && !self.arr.group.is_empty() {
+                        let earliest = self.arr.group.iter().map(|g| g.1).fold(d.orig_start, f64::min);
+                        let moved = (snap(d.orig_start + delta, g, free) - d.orig_start).max(-earliest);
+                        let group = self.arr.group.clone();
+                        for t in self.project.tracks.iter_mut() {
+                            for a in t.arrangement.iter_mut() {
+                                if let Some((_, from)) = group.iter().find(|x| x.0 == a.id) {
+                                    a.start = from + moved;
+                                }
+                            }
+                        }
+                        if let Some(ac) = self.project.tracks[i].arrangement.iter_mut().find(|a| a.id == cid) {
+                            ac.start = d.orig_start + moved;
+                        }
+                    } else if let Some(ac) = self.project.tracks[i].arrangement.iter_mut().find(|a| a.id == cid) {
                         match d.kind {
                             DragKind::Move => ac.start = snap(d.orig_start + delta, g, free).max(0.0),
                             DragKind::ResizeEnd => {
@@ -808,17 +1056,77 @@ impl App {
         }
         if resp.drag_stopped() {
             self.arr.drag = None;
+            self.arr.group.clear();
         }
         if resp.clicked() {
-            self.select_clip(sel);
+            // Shift or Ctrl: pick it too (or let it go); a plain click picks it alone.
+            if ui.input(|k| k.modifiers.shift || k.modifiers.ctrl || k.modifiers.command) {
+                if let Some(ClipSel::Arr { id, .. }) = self.sel_clip {
+                    if !self.arr.picked.contains(&id) {
+                        self.arr.picked.push(id);
+                    }
+                }
+                if let Some(k) = self.arr.picked.iter().position(|&x| x == cid) {
+                    self.arr.picked.remove(k);
+                    if self.sel_clip == Some(sel) {
+                        self.sel_clip = self.arr_selection().first().map(|&(t, id)| ClipSel::Arr { track: t, id });
+                    }
+                } else {
+                    self.arr.picked.push(cid);
+                    let keep = std::mem::take(&mut self.arr.picked);
+                    self.select_clip(sel);
+                    self.arr.picked = keep;
+                }
+            } else {
+                self.arr.picked.clear();
+                self.select_clip(sel);
+            }
         }
         if resp.double_clicked() {
             self.detail = DetailTab::Clip;
         }
 
+        // An audio clip's fades: a handle at each top corner, drag it in.
+        let audio_clip = self.project.tracks[i].arrangement.iter().find(|a| a.id == cid).is_some_and(|a| matches!(a.clip.content, ClipContent::Audio(_)));
+        if audio_clip && r.width() > 28.0 && r.height() > 26.0 {
+            let (fi, fo, len) = self.project.tracks[i].arrangement.iter().find(|a| a.id == cid).map(|a| (a.fade_in, a.fade_out, a.length)).unwrap_or((0.0, 0.0, 1.0));
+            let y = r.top() + 18.0;
+            for (k, x) in [(0, r.left() + (fi * ppb) as f32), (1, r.right() - (fo * ppb) as f32)] {
+                let x = x.clamp(r.left() + 4.0, r.right() - 4.0);
+                let hr = Rect::from_center_size(pos2(x, y), vec2(10.0, 10.0));
+                let h = ui.interact(hr.intersect(lane), Id::new(("arr_fade", cid, k)), Sense::drag());
+                let hot = h.hovered() || h.dragged();
+                if hot {
+                    ui.ctx().set_cursor_icon(CursorIcon::ResizeHorizontal);
+                }
+                if let Some(pos) = h.interact_pointer_pos().filter(|_| h.dragged()) {
+                    if let Some(ac) = self.project.tracks[i].arrangement.iter_mut().find(|a| a.id == cid) {
+                        if k == 0 {
+                            ac.fade_in = (((pos.x - r.left()) as f64) / ppb).clamp(0.0, (len - ac.fade_out).max(0.0));
+                        } else {
+                            ac.fade_out = (((r.right() - pos.x) as f64) / ppb).clamp(0.0, (len - ac.fade_in).max(0.0));
+                        }
+                    }
+                }
+                if h.double_clicked() {
+                    if let Some(ac) = self.project.tracks[i].arrangement.iter_mut().find(|a| a.id == cid) {
+                        if k == 0 {
+                            ac.fade_in = 0.0;
+                        } else {
+                            ac.fade_out = 0.0;
+                        }
+                    }
+                }
+                let painter = ui.painter();
+                painter.rect_filled(hr.shrink(1.5), 1.5, if hot { egui::Color32::WHITE } else { egui::Color32::from_white_alpha(170) });
+                painter.rect_stroke(hr.shrink(1.5), 1.5, Stroke::new(1.0_f32, egui::Color32::from_black_alpha(160)), egui::StrokeKind::Outside);
+                h.on_hover_text(if k == 0 { "Fade in: drag; double-click for none" } else { "Fade out: drag; double-click for none" });
+            }
+        }
+
         let Some(ac) = self.project.tracks[i].arrangement.iter().find(|a| a.id == cid) else { return };
         let p = ui.painter().clone();
-        let base = rgb(ac.clip.color);
+        let base = if ac.muted { egui::Color32::from_gray(0x70) } else { rgb(ac.clip.color) };
         let _ = track_color;
         let playing_here = self.engine.status.tracks.get(i).map(|t| t.arr_clip.load(Ordering::Relaxed) == cid).unwrap_or(false);
         rect_fill(&p, r, 2.0, shade(base, 0.35));
@@ -890,6 +1198,36 @@ impl App {
             pc.line_segment([pos2(x, body.top()), pos2(x, body.bottom())], Stroke::new(1.0_f32, shade(base, 0.6)));
             k += 1.0;
         }
+        // The fades: the curve, and the faded part darker.
+        for (k, f) in [(0, ac.fade_in), (1, ac.fade_out)] {
+            if f <= 1e-6 {
+                continue;
+            }
+            let w = (f * ppb) as f32;
+            let (x0, x1) = if k == 0 { (r.left(), r.left() + w) } else { (r.right() - w, r.right()) };
+            let corner = if k == 0 { pos2(r.left(), body.top()) } else { pos2(r.right(), body.top()) };
+            let curve: Vec<egui::Pos2> = (0..=16)
+                .map(|j| {
+                    let t = j as f32 / 16.0;
+                    let x = x0 + (x1 - x0) * t;
+                    let g = if k == 0 { (t * std::f32::consts::FRAC_PI_2).sin() } else { ((1.0 - t) * std::f32::consts::FRAC_PI_2).sin() };
+                    pos2(x, body.bottom() - g * body.height())
+                })
+                .collect();
+            let mut m = egui::epaint::Mesh::default();
+            m.colored_vertex(corner, egui::Color32::from_black_alpha(110));
+            for q in &curve {
+                m.colored_vertex(*q, egui::Color32::from_black_alpha(110));
+            }
+            for j in 0..curve.len() as u32 - 1 {
+                m.add_triangle(0, 1 + j, 2 + j);
+            }
+            pc.add(egui::Shape::mesh(m));
+            pc.add(egui::Shape::line(curve, Stroke::new(1.5_f32, egui::Color32::from_white_alpha(200))));
+        }
+        if ac.muted {
+            p.text(pos2(r.right() - 4.0, r.bottom() - 3.0), Align2::RIGHT_BOTTOM, "off", small(), TEXT_DIM);
+        }
         if selected {
             rect_line(&p, r, 2.0, 1.5, egui::Color32::WHITE);
         }
@@ -897,7 +1235,28 @@ impl App {
         let name = ac.clip.name.clone();
         let is_audio = matches!(ac.clip.content, ClipContent::Audio(_));
         let keeps = ac.clip.sound.is_some();
+        let muted = ac.muted;
+        let bpb = self.project.beats_per_bar_f();
+        let left = r.left();
+        let start = ac.start;
         resp.context_menu(|ui| {
+            // Where it was right-clicked, on the grid (Alt: anywhere).
+            let at = ui.ctx().input(|i| i.pointer.press_origin()).map(|p| start + ((p.x - left) as f64) / ppb);
+            if let Some(at) = at {
+                let at = snap(at, if grid > 0.0 { grid.min(bpb) } else { 0.0 }, ui.input(|k| k.modifiers.alt));
+                if ui.button("Split Here          Ctrl+E").on_hover_text("Cut the clip in two here (Ctrl+E cuts at the playhead)").clicked() {
+                    self.project.split_clip(i, cid, at);
+                    ui.close();
+                }
+            }
+            if ui.button(if muted { "Switch On                0" } else { "Switch Off              0" }).on_hover_text("A clip switched off stays where it is and does not play").clicked() {
+                if !self.arr.picked.contains(&cid) {
+                    self.arr.picked.clear();
+                    self.select_clip(sel);
+                }
+                self.arr_toggle_off();
+                ui.close();
+            }
             if ui.button("Rename").clicked() {
                 self.renaming = Some((RenameTarget::Clip(sel), name.clone()));
                 ui.close();
@@ -934,5 +1293,86 @@ impl App {
                 }
             }
         });
+    }
+
+    /// The arrangement clips picked now: (track, id), the selected one first.
+    pub(crate) fn arr_selection(&self) -> Vec<(usize, u64)> {
+        let mut out = Vec::new();
+        if let Some(ClipSel::Arr { track, id }) = self.sel_clip {
+            if self.project.tracks.get(track).is_some_and(|t| t.arrangement.iter().any(|a| a.id == id)) {
+                out.push((track, id));
+            }
+        }
+        for &id in &self.arr.picked {
+            if out.iter().any(|x| x.1 == id) {
+                continue;
+            }
+            if let Some(t) = self.project.tracks.iter().position(|t| t.arrangement.iter().any(|a| a.id == id)) {
+                out.push((t, id));
+            }
+        }
+        out
+    }
+
+    /// Deletes the picked clips.
+    pub(crate) fn arr_delete_selection(&mut self) {
+        let sel = self.arr_selection();
+        for t in self.project.tracks.iter_mut() {
+            t.arrangement.retain(|a| !sel.iter().any(|x| x.1 == a.id));
+        }
+        self.arr.picked.clear();
+        self.sel_clip = None;
+    }
+
+    /// Copies the picked clips right after them, as a block, and picks the copies.
+    pub(crate) fn arr_duplicate_selection(&mut self) {
+        let sel = self.arr_selection();
+        let clips: Vec<(usize, krabton_engine::ArrangementClip)> = sel.iter().filter_map(|&(t, id)| self.project.tracks[t].arrangement.iter().find(|a| a.id == id).map(|a| (t, a.clone()))).collect();
+        if clips.is_empty() {
+            return;
+        }
+        let from = clips.iter().map(|c| c.1.start).fold(f64::MAX, f64::min);
+        let to = clips.iter().map(|c| c.1.end()).fold(0.0, f64::max);
+        let mut picked = Vec::new();
+        for (t, a) in clips {
+            let id = self.project.alloc_id();
+            let clip = self.project.fresh_clip(&a.clip);
+            self.project.tracks[t].arrangement.push(krabton_engine::ArrangementClip { id, clip, start: a.start + (to - from), ..a });
+            picked.push((t, id));
+        }
+        self.arr.picked = picked.iter().map(|p| p.1).collect();
+        self.sel_clip = picked.first().map(|&(t, id)| ClipSel::Arr { track: t, id });
+    }
+
+    /// Cuts at the playhead: the picked clips under it, else every clip of
+    /// the selected track under it.
+    pub(crate) fn arr_split_at_playhead(&mut self) {
+        let at = self.engine.status.song_pos.load();
+        let mut targets: Vec<(usize, u64)> = self.arr_selection().into_iter().filter(|&(t, id)| self.project.tracks[t].arrangement.iter().any(|a| a.id == id && a.start < at && a.end() > at)).collect();
+        if targets.is_empty() {
+            if let TrackSel::Track(t) = self.sel_track {
+                if let Some(tr) = self.project.tracks.get(t) {
+                    targets = tr.arrangement.iter().filter(|a| a.start < at && a.end() > at).map(|a| (t, a.id)).collect();
+                }
+            }
+        }
+        if targets.is_empty() {
+            self.toast("Nothing to cut at the playhead: pick a clip under it, or a track");
+            return;
+        }
+        for (t, id) in targets {
+            self.project.split_clip(t, id, at);
+        }
+    }
+
+    /// Switches the picked clips off (or on again, when they all are off).
+    pub(crate) fn arr_toggle_off(&mut self) {
+        let sel = self.arr_selection();
+        let all_off = sel.iter().all(|&(t, id)| self.project.tracks[t].arrangement.iter().any(|a| a.id == id && a.muted));
+        for (t, id) in sel {
+            if let Some(a) = self.project.tracks[t].arrangement.iter_mut().find(|a| a.id == id) {
+                a.muted = !all_off;
+            }
+        }
     }
 }

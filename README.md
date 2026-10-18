@@ -85,9 +85,18 @@ For sound on Linux see [Building](#building) below: Krabton talks to PulseAudio/
 **Arrangement view**
 - One lane per track with mini note/waveform previews
 - Move clips and resize them from either edge (clips loop when stretched), with grid snapping (Alt = free)
-- Loop brace, click-to-locate ruler, follow playhead, Ctrl+wheel zoom
+- Loop brace, click-to-locate ruler, follow playhead, Ctrl+wheel zoom; *Fit* shows the whole song, Home and End go to its start and end
+- An **overview** of the whole song over the arranger track: every track's clips in a line, the part in view framed; click or drag it to look there
+- The ruler gets finer as you zoom in: bars, beats (with their numbers) and sixteenths, and the time (minutes and seconds) at the bars where it fits. The grid is *Auto* (finer as you zoom in), a fixed value from a bar to 1/16, triplets (1/4, 1/8, 1/16 T) or off
+- **Pick several clips**: Shift- or Ctrl-click them, or drag a box over empty lanes (Shift: add to it); drag one and the others come along, Delete removes them, Ctrl+D copies them as a block right after themselves
+- **Split** (Ctrl+E): cuts the picked clips (or the selected track's) at the playhead; right-click a clip for *Split Here*
+- **Switch a clip off** (0, or right-click): it stays where it is, grey, and does not play
+- **Fades** on audio clips: drag the handles at a clip's top corners (equal-power curves, drawn over the waveform; double-click a handle for none); every clip's cut edges are de-clicked
+- **A height per track**: drag the line under a track's header (Shift: all of them, double-click: back to the usual). The headers carry volume and pan knobs, and arm buttons on audio tracks too
+- **MIDI records onto the arrangement** too: in Arrangement view F9 puts a clip on every armed MIDI track at the playhead's bar that grows as you play (and ends when the loop jumps back); notes taken from other tracks are recorded there as well
+- A note right on the loop's start plays every time round
 - *Scenes to Arrangement* turns a session jam into a song
-- An **arranger track** (as in Studio One): song sections (Intro, Verse, Chorus...) above the ruler. Double-click to add one; drag a section to move it with all its music (the song closes up behind it and makes room where it lands), Ctrl+drag to copy it, drag its edge to resize; right-click to rename, loop it, duplicate it, recolour it or delete it with or without its music. Clips across a section's edge are cut in two
+- An **arranger track** (as in Studio One): song sections (Intro, Verse, Chorus...) above the ruler. Double-click to add one; drag a section to move it with all its music and automation (the song closes up behind it and makes room where it lands), Ctrl+drag to copy; drag either edge to resize it, Delete removes the selected one (the music stays) it, drag its edge to resize; right-click to rename, loop it, duplicate it, recolour it or delete it with or without its music. Clips across a section's edge are cut in two
 - Session clips override the arrangement per track, with *Back to Arrangement* like Live
 - **Automation** (as in Live): switch on *Automation* in the arrangement's toolbar and every track shows a parameter's red line over its clips: pick it in the track's header (the mixer's volume, pan and sends, every knob of the instrument, the MIDI effects and the audio effects; the ones with a line are marked ~), and + puts another parameter in a lane of its own under the track. Click to put a point, drag a point to move it (Alt: off the grid), double-click it to take it away, right-click to clear the line or hide the lane; with *Draw* paint the line along the grid. The clips stay movable by their title bars. While the track follows the arrangement the lines move what they point at, and the knobs show it
 
@@ -437,7 +446,9 @@ The [Release workflow](.github/workflows/release.yml) builds them on GitHub for 
 | Click / right-click the key in the transport | Key & Scale dialog / in key or all notes |
 | Ctrl+U, Ctrl+A | Quantize notes, select all notes |
 | Ctrl+C / Ctrl+X / Ctrl+V / Ctrl+D | Copy, cut, paste, duplicate the selected notes (in the clip view) or clip. Clips paste where you look: into the selected slot in the session, at the insert position on the selected track in the arrangement. Notes paste at the insert marker (click an empty spot) and repeated pastes line up |
-| Del | Delete the selected notes or clip |
+| Del | Delete the selected notes or clip (in the arrangement: the picked clips, or the selected section) |
+| Ctrl+E, 0 | Arrangement: split at the playhead, switch the picked clips off or on |
+| Home, End | Arrangement: the playhead to the song's start, its end |
 | Arrow keys | Notes: Left/Right move by the grid (Alt: finer), Up/Down transpose (Shift: octave, in a folded scale: scale steps), Shift+Left/Right length. Arrangement clip: Left/Right move, Up/Down to another track. Session: move the slot selection |
 | Drag a clip onto the Arrangement/Session button (or press Tab while dragging) | Switch views mid-drag: session clips drop on arrangement lanes, arrangement clips drop on session slots (as a copy) |
 | Ctrl+drag an arrangement clip | Leave a copy behind; drag up or down to move it to another track |

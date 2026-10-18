@@ -268,6 +268,8 @@ struct RecNote {
     scene: usize,
     start: f64,
     vel: f32,
+    /// Recorded into this arrangement clip (`start` in it) instead of a slot.
+    arr: Option<u64>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -419,6 +421,9 @@ pub struct App {
     pub rec_counter: u32,
     pub rec_quantize: bool,
     rec_notes: HashMap<(u64, u8), RecNote>,
+    /// MIDI recorded into the arrangement: per track (id), the clip it goes
+    /// into and where the song was last (it ends when the loop jumps back).
+    arr_takes: HashMap<u64, (u64, f64)>,
     /// The grand piano's samples being installed.
     pub piano_install: Option<crate::piano_lib::Install>,
     /// Orchestra instruments on their way, by instrument.
@@ -590,6 +595,7 @@ impl App {
             rec_counter: 0,
             rec_quantize: true,
             rec_notes: HashMap::new(),
+            arr_takes: HashMap::new(),
             piano_install: None,
             orchestra_installs: std::collections::HashMap::new(),
             drum_installs: Default::default(),
@@ -932,7 +938,7 @@ impl App {
         let id = self.project.alloc_id();
         let clip = self.project.fresh_clip(&clip);
         let length = clip.length;
-        self.project.tracks[track].arrangement.push(ArrangementClip { id, start, length, offset: 0.0, clip });
+        self.project.tracks[track].arrangement.push(ArrangementClip::new(id, start, length, clip));
         self.toast(format!("Copied to arrangement at bar {}", (start / bar) as i64 + 1));
     }
 
@@ -1267,7 +1273,7 @@ impl App {
                     DropTarget::ArrLane { track, beat } if fits(self, track) => {
                         let aid = self.project.alloc_id();
                         let length = clip.length;
-                        self.project.tracks[track].arrangement.push(ArrangementClip { id: aid, start: beat, length, offset: 0.0, clip });
+                        self.project.tracks[track].arrangement.push(ArrangementClip::new(aid, beat, length, clip));
                         self.select_clip(ClipSel::Arr { track, id: aid });
                     }
                     _ => {
@@ -1303,7 +1309,7 @@ impl App {
                         let color = self.project.tracks[track].color;
                         let clip = Clip::new_audio(cid, sample, color, bpm);
                         let length = clip.length;
-                        self.project.tracks[track].arrangement.push(ArrangementClip { id, start: beat, length, offset: 0.0, clip });
+                        self.project.tracks[track].arrangement.push(ArrangementClip::new(id, beat, length, clip));
                         self.select_clip(ClipSel::Arr { track, id });
                     }
                     _ => match target_track {
@@ -1346,7 +1352,7 @@ impl App {
                                 let cid = self.project.alloc_id();
                                 let clip = Clip::new_audio(cid, sample, color, bpm);
                                 let length = clip.length;
-                                self.project.tracks[t].arrangement.push(ArrangementClip { id, start, length, offset: 0.0, clip });
+                                self.project.tracks[t].arrangement.push(ArrangementClip::new(id, start, length, clip));
                                 self.select_clip(ClipSel::Arr { track: t, id });
                             } else {
                                 let scene = self.sel_scene;
@@ -1515,11 +1521,20 @@ impl App {
             ids.push(id);
             self.cmd(Command::NoteOn { track: id, pitch, velocity: vel });
             if self.recording && playing {
+                if let Some(&(aid, _)) = self.arr_takes.get(&id) {
+                    let song = status.song_pos.load();
+                    if let Some(a) = self.project.tracks[ti].arrangement.iter().find(|a| a.id == aid) {
+                        if song >= a.start {
+                            self.rec_notes.insert((id, pitch), RecNote { scene: 0, start: song - a.start, vel, arr: Some(aid) });
+                        }
+                    }
+                    continue;
+                }
                 let ts = &status.tracks[ti];
                 let slot = ts.playing_slot.load(Ordering::Relaxed);
                 let pos = ts.clip_pos.load();
                 if slot >= 0 && pos >= 0.0 {
-                    self.rec_notes.insert((id, pitch), RecNote { scene: slot as usize, start: pos, vel });
+                    self.rec_notes.insert((id, pitch), RecNote { scene: slot as usize, start: pos, vel, arr: None });
                 }
             }
         }
@@ -1788,6 +1803,23 @@ impl App {
         {
             let Some(rn) = self.rec_notes.remove(&(id, pitch)) else { return };
             let Some(ti) = self.project.track_index(id) else { return };
+            if let Some(aid) = rn.arr {
+                // Into the arrangement clip, which grows to hold it.
+                let song = status.song_pos.load();
+                let quant = self.rec_quantize;
+                let Some(a) = self.project.tracks[ti].arrangement.iter_mut().find(|a| a.id == aid) else { return };
+                let now = end.unwrap_or(song - a.start);
+                let length = (now - rn.start).max(1.0 / 32.0);
+                let start = if quant { (rn.start * 4.0).round() / 4.0 } else { rn.start };
+                if start + length > a.length {
+                    a.length = start + length;
+                    a.clip.length = a.length;
+                }
+                if let Some(notes) = a.clip.notes_mut() {
+                    notes.push(Note::new(pitch, start, length, rn.vel));
+                }
+                return;
+            }
             let ts = &status.tracks[ti];
             let now = match end {
                 Some(e) => e,
@@ -1839,13 +1871,80 @@ impl App {
     pub fn poll_midi_recording(&mut self) {
         let playing = self.is_playing();
         while let Ok(m) = self.engine.midi_recorded.try_recv() {
-            if !self.recording || !playing || m.slot < 0 {
+            if !self.recording || !playing {
+                continue;
+            }
+            // Into the arrangement clip the track records into, where the song is.
+            if let Some(&(aid, _)) = self.arr_takes.get(&m.track) {
+                let start = self.project.track_index(m.track).and_then(|ti| self.project.tracks[ti].arrangement.iter().find(|a| a.id == aid)).map(|a| a.start);
+                if let Some(start) = start.filter(|&s| m.song >= s) {
+                    if m.on {
+                        self.rec_notes.insert((m.track, m.pitch), RecNote { scene: 0, start: m.song - start, vel: m.vel, arr: Some(aid) });
+                    } else {
+                        self.finish_rec_note(m.track, m.pitch, Some(m.song - start));
+                    }
+                }
+                continue;
+            }
+            if m.slot < 0 {
                 continue;
             }
             if m.on {
-                self.rec_notes.insert((m.track, m.pitch), RecNote { scene: m.slot as usize, start: m.pos, vel: m.vel });
+                self.rec_notes.insert((m.track, m.pitch), RecNote { scene: m.slot as usize, start: m.pos, vel: m.vel, arr: None });
             } else {
                 self.finish_rec_note(m.track, m.pitch, Some(m.pos));
+            }
+        }
+        self.grow_arr_takes();
+    }
+
+    /// The arrangement's MIDI takes grow with the song; when the loop jumps
+    /// back (or the recording stops) a take ends at the beat.
+    fn grow_arr_takes(&mut self) {
+        if self.arr_takes.is_empty() {
+            return;
+        }
+        let song = self.engine.status.song_pos.load();
+        let mut done = Vec::new();
+        for (&track, take) in self.arr_takes.iter_mut() {
+            let Some(ti) = self.project.track_index(track) else {
+                done.push(track);
+                continue;
+            };
+            let Some(a) = self.project.tracks[ti].arrangement.iter_mut().find(|a| a.id == take.0) else {
+                done.push(track);
+                continue;
+            };
+            if song + 1e-6 < take.1 || !self.recording {
+                done.push(track);
+                continue;
+            }
+            take.1 = song;
+            let len = (song - a.start).max(0.25);
+            if len > a.length {
+                a.length = len;
+                a.clip.length = len;
+            }
+        }
+        for track in done {
+            self.end_arr_take(track);
+        }
+    }
+
+    /// Ends the arrangement take of track `track`: held notes end now, and
+    /// the clip ends on the next beat.
+    fn end_arr_take(&mut self, track: u64) {
+        let held: Vec<u8> = self.rec_notes.iter().filter(|((t, _), rn)| *t == track && rn.arr.is_some()).map(|((_, p), _)| *p).collect();
+        for p in held {
+            self.finish_rec_note(track, p, None);
+        }
+        if let Some((aid, _)) = self.arr_takes.remove(&track) {
+            if let Some(a) = self.project.track_index(track).and_then(|ti| self.project.tracks[ti].arrangement.iter_mut().find(|a| a.id == aid)) {
+                a.length = a.length.max(1.0).ceil();
+                a.clip.length = a.length;
+                if a.clip.name == "Recording" {
+                    a.clip.name = "Take".into();
+                }
             }
         }
     }
@@ -1866,6 +1965,9 @@ impl App {
         if self.recording || !self.takes.is_empty() {
             self.recording = false;
             self.stop_takes();
+            for track in self.arr_takes.keys().copied().collect::<Vec<_>>() {
+                self.end_arr_take(track);
+            }
             return;
         }
         self.recording = true;
@@ -1877,6 +1979,32 @@ impl App {
         }
         let status = self.status();
         let bars = self.project.beats_per_bar_f() * 4.0;
+        if self.view == View::Arrangement {
+            // MIDI goes onto the arrangement: a clip from the playhead's bar that grows.
+            let song = status.song_pos.load();
+            let bpb = self.project.beats_per_bar_f();
+            let start = (song / bpb).floor() * bpb;
+            let mut n = 0;
+            for ti in self.midi_record_targets() {
+                if self.project.tracks[ti].kind != TrackKind::Midi {
+                    continue;
+                }
+                let id = self.project.alloc_id();
+                let cid = self.project.alloc_id();
+                let t = &mut self.project.tracks[ti];
+                let len = (song - start).max(0.25);
+                t.arrangement.push(krabton_engine::ArrangementClip::new(id, start, len, Clip::new_midi(cid, "Recording", t.color, len)));
+                self.arr_takes.insert(t.id, (id, song));
+                n += 1;
+            }
+            if n > 0 {
+                if !self.is_playing() {
+                    self.cmd(Command::Play);
+                }
+                self.toast(format!("Recording {n} MIDI track{} on the arrangement", if n == 1 { "" } else { "s" }));
+            }
+            return;
+        }
         for ti in self.midi_record_targets() {
             let ts = &status.tracks[ti];
             if ts.playing_slot.load(Ordering::Relaxed) >= 0 || ts.queued_slot.load(Ordering::Relaxed) >= 0 {
@@ -2071,7 +2199,9 @@ impl App {
                 Key::S => self.save(m.shift),
                 Key::O => self.open(),
                 Key::N => self.new_project(),
+                Key::D if self.view == View::Arrangement && !self.arr.picked.is_empty() => self.arr_duplicate_selection(),
                 Key::D => self.edit_duplicate(),
+                Key::E if self.view == View::Arrangement => self.arr_split_at_playhead(),
                 Key::T if m.shift => {
                     self.add_midi_track(Some(Instrument::synth("Init")));
                 }
@@ -2098,6 +2228,21 @@ impl App {
                 self.detail = if self.detail == DetailTab::Clip { DetailTab::Devices } else { DetailTab::Clip };
             }
             Key::Tab => self.view = if self.view == View::Session { View::Arrangement } else { View::Session },
+            Key::Delete | Key::Backspace if self.view == View::Arrangement && !self.arr.picked.is_empty() => self.arr_delete_selection(),
+            Key::Delete | Key::Backspace if self.view == View::Arrangement && self.sel_clip.is_none() && self.arr.sel_section.is_some() => {
+                if let Some(id) = self.arr.sel_section.take() {
+                    self.project.delete_section(id, false);
+                }
+            }
+            Key::Num0 if self.view == View::Arrangement && !self.arr_selection().is_empty() => self.arr_toggle_off(),
+            Key::Home if self.view == View::Arrangement => {
+                self.cmd(Command::SetPosition(0.0));
+                self.arr.scroll_x = 0.0;
+            }
+            Key::End if self.view == View::Arrangement => {
+                let end = self.song_end();
+                self.cmd(Command::SetPosition(end));
+            }
             Key::Delete | Key::Backspace => {
                 if self.detail == DetailTab::Clip && !self.piano.selected.is_empty() {
                     self.piano_delete_selected();
@@ -2419,6 +2564,19 @@ impl App {
                         println!("chain {}: {} | {}", t.name, t.instrument.as_ref().map_or("-", |i| i.kind_name()), fx.join(", "));
                     }
                 }
+                // The arrangement's edits, to check by script: the playhead at
+                // a beat, pick a track's clips, split, switch off, duplicate.
+                "pos" => self.cmd(Command::SetPosition(arg.trim().parse::<f64>().unwrap_or(0.0))),
+                "arrpick" => {
+                    let t = nums.first().copied().unwrap_or(0);
+                    if let Some(tr) = self.project.tracks.get(t) {
+                        self.arr.picked = tr.arrangement.iter().map(|a| a.id).collect();
+                        self.sel_clip = tr.arrangement.first().map(|a| ClipSel::Arr { track: t, id: a.id });
+                    }
+                }
+                "arrsplit" => self.arr_split_at_playhead(),
+                "arroff" => self.arr_toggle_off(),
+                "arrdup" => self.arr_duplicate_selection(),
                 // keepsound=TRACK,SCENE: that clip keeps the track's sound.
                 "keepsound" if nums.len() == 2 => self.keep_sound_in_clip(ClipSel::Slot { track: nums[0], scene: nums[1] }),
                 "play" => self.cmd(Command::Play),

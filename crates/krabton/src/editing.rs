@@ -188,7 +188,7 @@ impl App {
                 let start = self.engine.status.song_pos.load().max(0.0);
                 let id = self.project.alloc_id();
                 let length = c.length;
-                self.project.tracks[track].arrangement.push(ArrangementClip { id, start, length, offset: 0.0, clip: c });
+                self.project.tracks[track].arrangement.push(ArrangementClip::new(id, start, length, c));
                 self.select_clip(ClipSel::Arr { track, id });
                 // The next paste goes right after this one.
                 self.cmd(krabton_engine::Command::SetPosition(start + length));
@@ -245,7 +245,7 @@ impl App {
                 if dy != 0 {
                     self.step_track(-dy);
                 } else {
-                    let g = if self.arr.grid > 0.0 { self.arr.grid } else { 1.0 };
+                    let g = { let g = self.arr.grid_now(self.project.beats_per_bar_f()); if g > 0.0 { g } else { 1.0 } };
                     let g = if m.shift { g * 0.25 } else { g };
                     let pos = self.engine.status.song_pos.load();
                     let next = ((pos / g).round() + dx as f64) * g;
@@ -316,7 +316,7 @@ impl App {
 
     fn arrow_arr_clip(&mut self, track: usize, id: u64, dx: i32, dtrack: i32, m: Modifiers) {
         if dx != 0 {
-            let g = if self.arr.grid > 0.0 { self.arr.grid } else { 1.0 };
+            let g = { let g = self.arr.grid_now(self.project.beats_per_bar_f()); if g > 0.0 { g } else { 1.0 } };
             let g = if m.shift { g * 0.25 } else { g };
             if let Some(ac) = self.project.tracks.get_mut(track).and_then(|t| t.arrangement.iter_mut().find(|a| a.id == id)) {
                 ac.start = (ac.start + dx as f64 * g).max(0.0);

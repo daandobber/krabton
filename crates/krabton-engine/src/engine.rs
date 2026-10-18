@@ -358,6 +358,8 @@ pub struct MidiRec {
     /// The playing slot (-1: none) and the position in its clip (beats).
     pub slot: i32,
     pub pos: f64,
+    /// Where the song is (beats), for recording into the arrangement.
+    pub song: f64,
 }
 
 /// Something the audio thread no longer needs. Drop it on another thread.
@@ -1186,6 +1188,10 @@ pub struct Engine {
     midi_rec_tx: Sender<MidiRec>,
     /// The grand piano's samples, for every Grand Piano.
     piano_lib: Option<Arc<PianoLibrary>>,
+    /// The arrangement looped back: the next block plays from the loop's
+    /// start itself (the position went a fraction of a sample past it, which
+    /// would miss a note right on the start).
+    loop_from: Option<f64>,
     /// The notes the current track takes from another track.
     midi_scratch: Vec<Ev>,
     tape: crate::tape::TapeRt,
@@ -1235,6 +1241,7 @@ impl Engine {
             midi_rec_tx,
             midi_scratch: Vec::with_capacity(512),
             piano_lib: crate::piano::library::shared(),
+            loop_from: None,
             tape: crate::tape::TapeRt::new(),
         };
         e.reconcile();
@@ -1632,7 +1639,7 @@ impl Engine {
             let now = if session {
                 0
             } else {
-                self.project.tracks.get(ti).and_then(|t| t.arrangement.iter().find(|a| a.start <= song && song < a.end())).map_or(0, |a| a.clip.id)
+                self.project.tracks.get(ti).and_then(|t| t.arrangement.iter().find(|a| !a.muted && a.start <= song && song < a.end())).map_or(0, |a| a.clip.id)
             };
             if now != before {
                 self.tracks[ti].arr_now = now;
@@ -1780,6 +1787,7 @@ impl Engine {
                 let p = &self.project;
                 if p.loop_enabled && p.loop_end > p.loop_start + 0.01 && before < p.loop_end && self.song_pos >= p.loop_end - 1e-9 {
                     self.song_pos = p.loop_start + (self.song_pos - p.loop_end).max(0.0);
+                    self.loop_from = Some(p.loop_start);
                     for rt in self.tracks.iter_mut() {
                         rt.release(Clock::Arrangement);
                     }
@@ -1796,7 +1804,11 @@ impl Engine {
         let playing = self.playing;
         let adv = if playing { seg as f64 / spb } else { 0.0 };
         let (s0, s1) = (self.session_pos, self.session_pos + adv);
-        let (a0, a1) = (self.song_pos, self.song_pos + adv);
+        let a0 = match self.loop_from.take() {
+            Some(from) if playing && from <= self.song_pos => from,
+            _ => self.song_pos,
+        };
+        let a1 = self.song_pos + adv;
         let any_solo = project.tracks.iter().any(|t| t.mixer.solo);
         let status = &self.status;
         let clock = self.clock;
@@ -1930,11 +1942,11 @@ impl Engine {
                         ClipContent::Midi { notes } => {
                             collect_notes(notes, clip.length, start, start, f64::INFINITY, s0, s1, spb, seg, Clock::Session, events, offs)
                         }
-                        ClipContent::Audio(a) => render_audio(clip.length, a, start, start, f64::INFINITY, s0, spb, seg, l, r),
+                        ClipContent::Audio(a) => render_audio(clip.length, a, start, start, f64::INFINITY, (0.0, 0.0), s0, spb, seg, l, r),
                     }
                 } else if !*overridden {
                     for ac in &track.arrangement {
-                        if ac.start >= a1 || ac.end() <= a0 {
+                        if ac.muted || ac.start >= a1 || ac.end() <= a0 {
                             continue;
                         }
                         let origin = ac.start - ac.offset;
@@ -1953,7 +1965,7 @@ impl Engine {
                                 events,
                                 offs,
                             ),
-                            ClipContent::Audio(a) => render_audio(ac.clip.length, a, origin, ac.start, ac.end(), a0, spb, seg, l, r),
+                            ClipContent::Audio(a) => render_audio(ac.clip.length, a, origin, ac.start, ac.end(), (ac.fade_in, ac.fade_out), a0, spb, seg, l, r),
                         }
                     }
                 }
@@ -1995,7 +2007,8 @@ impl Engine {
                             Some((slot, start, len)) => (slot as i32, (s0 + e.offset as f64 / spb - start).rem_euclid(len)),
                             None => (-1, 0.0),
                         };
-                        let _ = self.midi_rec_tx.try_send(MidiRec { track: track.id, pitch: e.pitch, vel: e.vel, on: e.on, slot, pos });
+                        let song = a0 + e.offset as f64 / spb;
+                        let _ = self.midi_rec_tx.try_send(MidiRec { track: track.id, pitch: e.pitch, vel: e.vel, on: e.on, slot, pos, song });
                     }
                 }
             }
@@ -2365,7 +2378,7 @@ impl Engine {
                     pos = (self.session_pos - pc.start).max(0.0).rem_euclid(clip.length.max(1e-6));
                 }
             } else if self.playing && !rt.overridden {
-                if let Some(ac) = track.arrangement.iter().find(|a| a.start <= self.song_pos && self.song_pos < a.end()) {
+                if let Some(ac) = track.arrangement.iter().find(|a| !a.muted && a.start <= self.song_pos && self.song_pos < a.end()) {
                     pos = (self.song_pos - ac.start + ac.offset).rem_euclid(ac.clip.length.max(1e-6));
                     arr_id = ac.id;
                 }
@@ -2551,12 +2564,14 @@ fn collect_notes(
 
 /// Mixes a looping, beat-locked audio clip into `l`/`r`.
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn render_audio(
     len: f64,
     a: &AudioClip,
     origin: f64,
     region_start: f64,
     region_end: f64,
+    fades: (f64, f64),
     w0: f64,
     spb: f64,
     seg: usize,
@@ -2581,7 +2596,20 @@ fn render_audio(
             continue;
         }
         let edge = pos.min(loop_frames - pos).min(frames - pos);
-        let e = (edge / FADE).clamp(0.0, 1.0) as f32;
+        // No click where a cut clip starts or ends either; and its fades.
+        let region = ((g - region_start) * spb).min((region_end - g) * spb);
+        let mut e = (edge.min(region) / FADE).clamp(0.0, 1.0) as f32;
+        let (fade_in, fade_out) = fades;
+        if fade_in > 1e-9 || fade_out > 1e-9 {
+            let mut x = 1.0f64;
+            if fade_in > 1e-9 {
+                x = x.min((g - region_start) / fade_in);
+            }
+            if fade_out > 1e-9 {
+                x = x.min((region_end - g) / fade_out);
+            }
+            e *= (x.clamp(0.0, 1.0) * std::f64::consts::FRAC_PI_2).sin() as f32;
+        }
         let (x, y) = s.read(pos);
         l[i] += x * gain * e;
         r[i] += y * gain * e;
@@ -2787,6 +2815,56 @@ mod tests {
         // One bar at the demo tempo is under two seconds.
         run(&mut e, 2.0);
         assert_eq!(h.status.tracks[0].playing_slot.load(RELAXED), 1);
+    }
+
+    #[test]
+    fn a_note_on_the_loops_start_plays_every_time_round() {
+        let mut p = crate::demo::demo_project();
+        let instance = p.alloc_id();
+        p.tracks[1].instrument = Some(Instrument::Plugin(PluginInstrument {
+            instance,
+            format: "clap".into(),
+            plugin_id: "test.fake".into(),
+            name: "Fake".into(),
+            vendor: "Test".into(),
+            path: "fake.clap".into(),
+            state: None,
+        }));
+        // One note on beat 1 of a one-beat clip at beat 1, looped there.
+        let id = p.alloc_id();
+        let cid = p.alloc_id();
+        let mut clip = Clip::new_midi(cid, "one", [1, 2, 3], 1.0);
+        if let Some(n) = clip.notes_mut() {
+            n.push(Note::new(60, 0.0, 0.5, 0.8));
+        }
+        p.tracks[1].arrangement = vec![ArrangementClip::new(id, 1.0, 1.0, clip)];
+        p.loop_enabled = true;
+        p.loop_start = 1.0;
+        p.loop_end = 2.0;
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        let notes = Arc::new(AtomicU32::new(0));
+        h.send(Command::AttachProcessor { instance, processor: Box::new(FakePlugin { notes: notes.clone(), level: 0.0 }) });
+        h.send(Command::SetPosition(1.0));
+        h.send(Command::Play);
+        // At the demo's tempo a beat is under half a second: eight times round.
+        let spb = 60.0 / e.project.bpm as f32;
+        run(&mut e, spb * 8.0 + 0.05);
+        assert!(notes.load(RELAXED) >= 8, "{} notes in eight times round", notes.load(RELAXED));
+    }
+
+    #[test]
+    fn a_clip_switched_off_does_not_play() {
+        let mut p = crate::demo::demo_project();
+        p.scenes_to_arrangement();
+        for t in &mut p.tracks {
+            for a in &mut t.arrangement {
+                a.muted = true;
+            }
+        }
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        h.send(Command::Play);
+        let out = run(&mut e, 2.0);
+        assert!(peak(&out) < 1e-3, "switched off: silence (peak {})", peak(&out));
     }
 
     #[test]

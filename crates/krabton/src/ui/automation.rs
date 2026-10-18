@@ -90,7 +90,7 @@ impl App {
         let v_of = |y: f32| ((area.bottom() - 2.0 - y) / (area.height() - 4.0)).clamp(0.0, 1.0);
         let env = track.automation_of(target).cloned();
         let base = self.env_base(t, target).unwrap_or(0.5);
-        let grid = self.arr.grid;
+        let grid = self.arr.grid_now(self.project.beats_per_bar_f());
         let pointer = ui.input(|i| i.pointer.hover_pos());
         let near = |pts: &[(f64, f32)], pos: egui::Pos2| pts.iter().position(|(b, v)| (bx(*b) - pos.x).abs() < GRAB && (y_of(*v) - pos.y).abs() < GRAB);
 

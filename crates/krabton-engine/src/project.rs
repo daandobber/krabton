@@ -135,6 +135,10 @@ fn one() -> f32 {
 fn is_one(v: &f32) -> bool {
     *v == 1.0
 }
+fn is_zero64(v: &f64) -> bool {
+    *v == 0.0
+}
+
 fn is_zero(v: &f32) -> bool {
     *v == 0.0
 }
@@ -486,11 +490,36 @@ pub struct ArrangementClip {
     /// Where inside the (looping) clip content playback begins.
     pub offset: f64,
     pub clip: Clip,
+    /// An audio clip's fades at its start and end, in beats.
+    #[serde(default, skip_serializing_if = "is_zero64")]
+    pub fade_in: f64,
+    #[serde(default, skip_serializing_if = "is_zero64")]
+    pub fade_out: f64,
+    /// Switched off: it stays where it is and does not play.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub muted: bool,
 }
 
 impl ArrangementClip {
+    /// A clip at `start`, `length` beats long, from the start of its content.
+    pub fn new(id: u64, start: f64, length: f64, clip: Clip) -> Self {
+        Self { id, start, length, offset: 0.0, clip, fade_in: 0.0, fade_out: 0.0, muted: false }
+    }
+
     pub fn end(&self) -> f64 {
         self.start + self.length
+    }
+
+    /// Its gain at song beat `g` from its fades (0..1, an equal-power curve).
+    pub fn fade_gain(&self, g: f64) -> f32 {
+        let mut x = 1.0f64;
+        if self.fade_in > 1e-9 {
+            x = x.min((g - self.start) / self.fade_in);
+        }
+        if self.fade_out > 1e-9 {
+            x = x.min((self.end() - g) / self.fade_out);
+        }
+        (x.clamp(0.0, 1.0) * std::f64::consts::FRAC_PI_2).sin() as f32
     }
 }
 
@@ -1127,6 +1156,9 @@ pub struct Track {
     /// More parameters, each in a lane of its own under the track.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub auto_lanes: Vec<crate::modulation::ModTarget>,
+    /// Its height in the arrangement (0: the one all lanes have).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub lane_h: f32,
 }
 
 impl Track {
@@ -1408,7 +1440,11 @@ impl Project {
                     right.start = t;
                     right.length = ac.end() - t;
                     right.offset = ac.offset + (t - ac.start);
+                    right.fade_in = 0.0;
+                    right.fade_out = right.fade_out.min(right.length);
                     ac.length = t - ac.start;
+                    ac.fade_out = 0.0;
+                    ac.fade_in = ac.fade_in.min(ac.length);
                     right_parts.push(right);
                 }
             }
@@ -1420,13 +1456,89 @@ impl Project {
         }
     }
 
+    /// Cuts the clip `id` on track `track` in two at `at` (inside it).
+    /// Returns the new right part's id.
+    pub fn split_clip(&mut self, track: usize, id: u64, at: f64) -> Option<u64> {
+        let t = self.tracks.get(track)?;
+        let ac = t.arrangement.iter().find(|a| a.id == id)?;
+        if at <= ac.start + 1e-6 || at >= ac.end() - 1e-6 {
+            return None;
+        }
+        let mut right = ac.clone();
+        let len = right.clip.length.max(1e-6);
+        right.start = at;
+        right.length = ac.end() - at;
+        right.offset = (ac.offset + (at - ac.start)).rem_euclid(len);
+        right.fade_in = 0.0;
+        right.fade_out = right.fade_out.min(right.length);
+        right.id = self.alloc_id();
+        right.clip.id = self.alloc_id();
+        let new = right.id;
+        let ac = self.tracks[track].arrangement.iter_mut().find(|a| a.id == id)?;
+        ac.length = at - ac.start;
+        ac.fade_out = 0.0;
+        ac.fade_in = ac.fade_in.min(ac.length);
+        self.tracks[track].arrangement.push(right);
+        Some(new)
+    }
+
+    /// Puts a point at `t` on every automation line that has points on
+    /// both sides (its value there), so a cut keeps the line's shape.
+    fn split_automation_at(&mut self, t: f64) {
+        for tr in &mut self.tracks {
+            for e in &mut tr.automation {
+                let before = e.points.iter().any(|p| p.0 < t - 1e-9);
+                let after = e.points.iter().any(|p| p.0 > t + 1e-9);
+                let there = e.points.iter().any(|p| (p.0 - t).abs() < 1e-9);
+                if before && after && !there {
+                    if let Some(v) = e.value_at(t) {
+                        let at = e.points.iter().position(|p| p.0 > t).unwrap_or(e.points.len());
+                        e.points.insert(at, (t, v));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Takes the automation points in `[a, b)` out: (track, line, points).
+    fn lift_automation(&mut self, a: f64, b: f64) -> Vec<(usize, usize, Vec<(f64, f32)>)> {
+        let mut out = Vec::new();
+        for (ti, tr) in self.tracks.iter_mut().enumerate() {
+            for (ei, e) in tr.automation.iter_mut().enumerate() {
+                let (inside, rest): (Vec<_>, Vec<_>) = e.points.drain(..).partition(|p| p.0 >= a - 1e-9 && p.0 < b - 1e-9);
+                e.points = rest;
+                if !inside.is_empty() {
+                    out.push((ti, ei, inside));
+                }
+            }
+        }
+        out
+    }
+
+    /// Puts lifted automation points back, moved by `by` beats.
+    fn drop_automation(&mut self, lifted: Vec<(usize, usize, Vec<(f64, f32)>)>, by: f64) {
+        for (ti, ei, pts) in lifted {
+            if let Some(e) = self.tracks.get_mut(ti).and_then(|t| t.automation.get_mut(ei)) {
+                e.points.extend(pts.into_iter().map(|(b, v)| (b + by, v)));
+                e.points.sort_by(|x, y| x.0.total_cmp(&y.0));
+            }
+        }
+    }
+
     /// Moves everything at or after `at` by `by` beats: arrangement clips,
-    /// sections (but `keep`) and a loop that lies after it.
+    /// automation, sections (but `keep`) and a loop that lies after it.
     fn shift_from(&mut self, at: f64, by: f64, keep: Option<u64>) {
         for t in &mut self.tracks {
             for ac in &mut t.arrangement {
                 if ac.start >= at - 1e-9 {
                     ac.start += by;
+                }
+            }
+            for e in &mut t.automation {
+                for p in &mut e.points {
+                    if p.0 >= at - 1e-9 {
+                        p.0 += by;
+                    }
                 }
             }
         }
@@ -1462,8 +1574,10 @@ impl Project {
         }
         for t in [a, b, to] {
             self.split_arrangement_at(t);
+            self.split_automation_at(t);
         }
         let lifted = self.lift(a, b);
+        let lines = self.lift_automation(a, b);
         self.shift_from(b, -len, Some(id));
         let to = if to > b { to - len } else { to };
         self.shift_from(to, len, Some(id));
@@ -1471,6 +1585,7 @@ impl Project {
             ac.start = ac.start - a + to;
             self.tracks[ti].arrangement.push(ac);
         }
+        self.drop_automation(lines, to - a);
         if let Some(s) = self.sections.iter_mut().find(|s| s.id == id) {
             s.start = to;
         }
@@ -1488,7 +1603,15 @@ impl Project {
         }
         for t in [a, b, to] {
             self.split_arrangement_at(t);
+            self.split_automation_at(t);
         }
+        let lines: Vec<(usize, usize, Vec<(f64, f32)>)> = self
+            .tracks
+            .iter()
+            .enumerate()
+            .flat_map(|(ti, t)| t.automation.iter().enumerate().map(move |(ei, e)| (ti, ei, e.points.iter().copied().filter(|p| p.0 >= a - 1e-9 && p.0 < b - 1e-9).collect::<Vec<_>>())))
+            .filter(|(_, _, pts)| !pts.is_empty())
+            .collect();
         let copies: Vec<(usize, ArrangementClip)> = self
             .tracks
             .iter()
@@ -1502,6 +1625,7 @@ impl Project {
             ac.clip.id = self.alloc_id();
             self.tracks[ti].arrangement.push(ac);
         }
+        self.drop_automation(lines, to - a);
         let new = self.alloc_id();
         self.sections.push(SongSection { id: new, name: s.name.clone(), start: to, length: len, color: s.color });
         self.sections.sort_by(|a, b| a.start.total_cmp(&b.start));
@@ -1512,9 +1636,12 @@ impl Project {
     pub fn delete_section(&mut self, id: u64, with_content: bool) {
         let Some(s) = self.sections.iter().find(|s| s.id == id).cloned() else { return };
         if with_content {
-            self.split_arrangement_at(s.start);
-            self.split_arrangement_at(s.end());
+            for t in [s.start, s.end()] {
+                self.split_arrangement_at(t);
+                self.split_automation_at(t);
+            }
             self.lift(s.start, s.end());
+            self.lift_automation(s.start, s.end());
             self.shift_from(s.end(), -s.length, Some(id));
         }
         self.sections.retain(|x| x.id != id);
@@ -1619,6 +1746,7 @@ impl Project {
             automation: Vec::new(),
             auto_shown: None,
             auto_lanes: Vec::new(),
+            lane_h: 0.0,
         }
     }
 
@@ -1802,7 +1930,7 @@ impl Project {
                 let Some(Some(clip)) = self.tracks[ti].slots.get(si).cloned() else { continue };
                 let id = self.alloc_id();
                 let clip = self.fresh_clip(&clip);
-                self.tracks[ti].arrangement.push(ArrangementClip { id, start: cursor, length: len, offset: 0.0, clip });
+                self.tracks[ti].arrangement.push(ArrangementClip::new(id, cursor, len, clip));
             }
             cursor += len;
             placed += 1;
@@ -2079,6 +2207,55 @@ mod tests {
     }
 
     #[test]
+    fn a_clip_splits_in_two_and_keeps_its_outer_fades() {
+        let mut p = Project::new_default();
+        let id = p.alloc_id();
+        let cid = p.alloc_id();
+        let mut ac = ArrangementClip::new(id, 4.0, 8.0, Clip::new_midi(cid, "c", [1, 2, 3], 4.0));
+        ac.offset = 1.0;
+        ac.fade_in = 1.0;
+        ac.fade_out = 2.0;
+        p.tracks[0].arrangement.push(ac);
+        assert!(p.split_clip(0, id, 4.0).is_none(), "not at its edge");
+        let right = p.split_clip(0, id, 7.0).expect("splits");
+        let a = p.tracks[0].arrangement.iter().find(|a| a.id == id).unwrap().clone();
+        let b = p.tracks[0].arrangement.iter().find(|a| a.id == right).unwrap().clone();
+        assert_eq!((a.start, a.length, a.fade_in, a.fade_out), (4.0, 3.0, 1.0, 0.0));
+        assert_eq!((b.start, b.length, b.fade_in, b.fade_out), (7.0, 5.0, 0.0, 2.0));
+        // The right part goes on where the left one stopped, in the looping content.
+        assert!((b.offset - 0.0).abs() < 1e-9, "1 + 3 beats into a 4-beat clip is its start again");
+        assert_ne!(a.clip.id, b.clip.id);
+    }
+
+    #[test]
+    fn fades_rise_from_silence_and_fall_back_to_it() {
+        let mut ac = ArrangementClip::new(1, 0.0, 8.0, Clip::new_midi(2, "c", [1, 2, 3], 8.0));
+        ac.fade_in = 2.0;
+        ac.fade_out = 2.0;
+        assert!(ac.fade_gain(0.0) < 1e-6);
+        assert!((ac.fade_gain(4.0) - 1.0).abs() < 1e-6);
+        assert!(ac.fade_gain(1.0) > 0.5 && ac.fade_gain(1.0) < 0.9, "equal power: about 0.71 halfway");
+        assert!(ac.fade_gain(8.0) < 1e-6);
+    }
+
+    #[test]
+    fn moving_a_section_takes_its_automation_along() {
+        let mut p = crate::demo::demo_project();
+        p.scenes_to_arrangement();
+        let bpb = p.beats_per_bar_f();
+        let a = p.add_section(0.0, 4.0 * bpb);
+        let b = p.add_section(4.0 * bpb, 4.0 * bpb);
+        let target = crate::modulation::ModTarget::Volume(p.tracks[0].id);
+        p.tracks[0].automation_mut(target).points = vec![(1.0, 0.2), (2.0, 0.9), (4.0 * bpb + 1.0, 0.5)];
+        // The first section goes after the second: its points come along, the second's move up.
+        p.move_section(a, 8.0 * bpb);
+        let pts = &p.tracks[0].automation_of(target).unwrap().points;
+        assert!(pts.iter().any(|&(x, v)| (x - (4.0 * bpb + 1.0)).abs() < 1e-6 && (v - 0.2).abs() < 1e-6), "{pts:?}");
+        assert!(pts.iter().any(|&(x, v)| (x - 1.0).abs() < 1e-6 && (v - 0.5).abs() < 1e-6), "{pts:?}");
+        let _ = b;
+    }
+
+    #[test]
     fn a_clip_sound_is_saved_and_loaded() {
         let (p, ti, clip) = with_clip_sound();
         let json = serde_json::to_string(&p).expect("saves");
@@ -2235,7 +2412,7 @@ mod tests {
             if let Some(v) = clip.notes_mut() {
                 v.push(Note::new(60 + k as u8, 0.0, 1.0, 0.8));
             }
-            p.tracks[t].arrangement.push(ArrangementClip { id, start, length, offset: 0.0, clip });
+            p.tracks[t].arrangement.push(ArrangementClip::new(id, start, length, clip));
         }
         p
     }

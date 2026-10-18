@@ -336,7 +336,7 @@ impl App {
                 let id = self.project.alloc_id();
                 let clip = self.recorded_clip(ti, id, beats, l, r, path, name);
                 let aid = self.project.alloc_id();
-                self.project.tracks[ti].arrangement.push(ArrangementClip { id: aid, start, length: clip.length, offset: 0.0, clip });
+                self.project.tracks[ti].arrangement.push(ArrangementClip::new(aid, start, clip.length, clip));
                 self.select_clip(ClipSel::Arr { track: ti, id: aid });
             }
         }
