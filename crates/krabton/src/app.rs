@@ -24,8 +24,9 @@ use std::time::Instant;
 pub enum View {
     Session,
     Arrangement,
-    /// Every track's devices at once.
-    Rack,
+    /// The studio: every track a machine on the shelf, its patterns and
+    /// mixer beside its devices (the home screen).
+    Studio,
     /// The four-track tape.
     Tape,
 }
@@ -564,7 +565,7 @@ impl App {
             midi,
             pending: Vec::new(),
             sound_from: std::collections::HashMap::new(),
-            view: View::Session,
+            view: View::Studio,
             detail: DetailTab::Clip,
             sel_track: TrackSel::Track(0),
             sel_more: Vec::new(),
@@ -2084,7 +2085,7 @@ impl App {
                 }
                 Key::A => self.piano_select_all(),
                 Key::U => self.piano_quantize(),
-                Key::R if m.shift => self.view = if self.view == View::Rack { View::Session } else { View::Rack },
+                Key::R if m.shift => self.view = if self.view == View::Studio { View::Session } else { View::Studio },
                 Key::R => self.export.open = true,
                 _ => {}
             }
@@ -2361,7 +2362,7 @@ impl App {
     /// Whether the detail panel (clip editor, devices) is out: the Rack has
     /// its own setting.
     pub(crate) fn detail_shown(&self) -> bool {
-        if self.view == View::Rack {
+        if self.view == View::Studio {
             self.prefs.layout.rack_detail
         } else {
             !self.prefs.layout.detail_hidden
@@ -2369,7 +2370,7 @@ impl App {
     }
 
     pub(crate) fn toggle_detail(&mut self) {
-        if self.view == View::Rack {
+        if self.view == View::Studio {
             self.prefs.layout.rack_detail = !self.prefs.layout.rack_detail;
         } else {
             self.prefs.layout.detail_hidden = !self.prefs.layout.detail_hidden;
@@ -2440,7 +2441,7 @@ impl App {
                     }
                 }
                 "session" => self.view = View::Session,
-                "rackview" => self.view = View::Rack,
+                "rackview" | "studio" => self.view = View::Studio,
                 "tapeview" => self.view = View::Tape,
                 "detail" => self.toggle_detail(),
                 // plain[=0]: devices in the flat look (or, with 0, each in its own).
@@ -3255,7 +3256,7 @@ impl eframe::App for App {
         egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::BG)).show(ctx, |ui| match self.view {
             View::Session => self.ui_session(ui),
             View::Arrangement => self.ui_arrangement(ui),
-            View::Rack => self.ui_device_rack(ui),
+            View::Studio => self.ui_device_rack(ui),
             View::Tape => self.ui_tape(ui),
         });
         self.ui_dialogs(ctx);

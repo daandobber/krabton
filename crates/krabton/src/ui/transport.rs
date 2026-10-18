@@ -176,10 +176,10 @@ impl App {
                 if ui.add(egui::Button::new(RichText::new("Map").color(if map_on { TEXT_DARK } else { TEXT })).fill(if map_on { ACCENT } else { PANEL3 })).on_hover_text("The Map: put the tracks where they stand in a room, with a mixer").clicked() {
                     self.map_window = !map_on;
                 }
-                for (v, label) in [(View::Tape, "Tape"), (View::Rack, "Rack"), (View::Arrangement, if short { "Arr." } else { "Arrangement" }), (View::Session, if short { "Sess." } else { "Session" })] {
+                for (v, label) in [(View::Tape, "Tape"), (View::Arrangement, if short { "Arr." } else { "Arrangement" }), (View::Session, if short { "Sess." } else { "Session" }), (View::Studio, "Studio")] {
                     let on = self.view == v;
                     let tip = match v {
-                        View::Rack => "Every track's devices at once (Ctrl+Shift+R)",
+                        View::Studio => "The studio: every track a machine on the shelf, its patterns and mixer beside it (Ctrl+Shift+R)",
                         View::Tape => "The four-track tape: record what you play, at any speed, backwards, looped",
                         _ => "Tab switches views (also while dragging a clip)",
                     };

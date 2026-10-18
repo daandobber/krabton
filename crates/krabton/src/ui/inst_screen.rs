@@ -512,7 +512,15 @@ pub(crate) fn analog_grid(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, h
 /// One of Analog's screens in `rect`, for its face: "osc1", "osc2", "mix",
 /// "filter", "fenv", "aenv" or "lfo". Returns whether a value changed.
 pub(crate) fn analog_screen(ui: &mut Ui, id: Id, rect: Rect, which: &str, p: &mut [f32], live: &InstLive) -> bool {
-    let s = &ANALOG;
+    sub_screen(ui, id, rect, &ANALOG, which, p, live)
+}
+
+/// The same for Synth.
+pub(crate) fn synth_screen(ui: &mut Ui, id: Id, rect: Rect, which: &str, p: &mut [f32], live: &InstLive) -> bool {
+    sub_screen(ui, id, rect, &SYNTH, which, p, live)
+}
+
+fn sub_screen(ui: &mut Ui, id: Id, rect: Rect, s: &'static SubLayout, which: &str, p: &mut [f32], live: &InstLive) -> bool {
     let painter = ui.painter_at(rect);
     rect_fill(&painter, rect.expand(1.5), 4.0, Color32::from_black_alpha(140));
     rect_fill(&painter, rect, 4.0, SCREEN_BG);

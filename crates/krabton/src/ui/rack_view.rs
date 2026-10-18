@@ -1,4 +1,4 @@
-//! The Rack view: every track's devices at once, MIDI effects and
+//! The Studio (the Rack): every track's devices at once, MIDI effects and
 //! sequencers, instrument and audio effects, a track per row with its
 //! devices side by side, or (with the axes swapped) a track per column with
 //! its devices under each other. Returns and the master come last. Each
@@ -14,37 +14,16 @@ use krabton_engine::modulation::ModTarget;
 use krabton_engine::{fader_gain, TrackKind};
 
 /// The mixer strip's width in rows, and its height on top of a column.
-const STRIP_W: f32 = 168.0;
+const STRIP_W: f32 = 258.0;
 const STRIP_H: f32 = 236.0;
+/// The column of a track's patterns (its clips) in its strip.
+const PADS_W: f32 = 88.0;
 
 impl App {
     pub(crate) fn ui_device_rack(&mut self, ui: &mut Ui) {
         let columns = self.prefs.layout.rack_columns;
         let h = crate::prefs::Layout::or(self.prefs.layout.rack_h, 230.0);
-        // The bar on top: the axes and the height of a row of devices.
-        ui.horizontal(|ui| {
-            ui.add_space(6.0);
-            ui.label(RichText::new("Rack").strong().color(TEXT));
-            ui.add_space(8.0);
-            let label = if columns { "Tracks in columns" } else { "Tracks in rows" };
-            if ui.add(egui::Button::new(RichText::new(label).color(TEXT)).fill(PANEL3)).on_hover_text("Swap the axes: a track per row with its devices side by side, or a track per column with its devices under each other").clicked() {
-                self.prefs.layout.rack_columns = !columns;
-                self.layout_dirty = true;
-            }
-            ui.add_space(8.0);
-            let shown = self.prefs.layout.rack_detail;
-            let label = if shown { "Hide clip view" } else { "Show clip view" };
-            if ui.add(egui::Button::new(RichText::new(label).color(TEXT)).fill(PANEL3)).on_hover_text("The clip editor, devices, modulation and grid at the bottom (Ctrl+Alt+L)").clicked() {
-                self.toggle_detail();
-            }
-            ui.add_space(8.0);
-            ui.label(RichText::new("Device height").small().color(TEXT_DIM)).on_hover_text("For devices you did not resize: drag the grip at the bottom of a device for its own height");
-            let mut hh = h;
-            if ui.add(egui::DragValue::new(&mut hh).range(140.0..=600.0).speed(1.0).suffix(" px")).changed() {
-                self.prefs.layout.rack_h = hh;
-                self.layout_dirty = true;
-            }
-        });
+        self.studio_bar(ui, columns, h);
         let mut sels: Vec<TrackSel> = (0..self.project.tracks.len()).map(TrackSel::Track).collect();
         sels.extend((0..self.project.returns.len()).map(TrackSel::Return));
         sels.push(TrackSel::Master);
@@ -116,15 +95,30 @@ impl App {
         };
         let selected = self.sel_track == sel;
         let p = ui.painter().clone();
-        rect_fill(&p, r, 4.0, if selected { shade(PANEL2, 1.2) } else { PANEL2 });
-        rect_fill(&p, Rect::from_min_size(r.min, vec2(r.width(), 3.0)), 1.0, color);
-        if selected {
-            rect_line(&p, r, 4.0, 1.0, shade(color, 0.8));
+        let machine = crate::skin::enabled();
+        let name_r = Rect::from_min_size(r.min + vec2(0.0, 3.0), vec2(r.width(), 24.0));
+        if machine {
+            // A channel of the studio's console, the track's name on a strip of tape.
+            p.add(crate::skin::panel(r, &crate::skin::console(), Some(color)));
+            let tape = Rect::from_min_size(pos2(r.left() + 10.0, name_r.top() + 2.0), vec2((r.width() - 20.0).min(220.0), 20.0));
+            p.rect_filled(tape.translate(vec2(0.0, 1.0)), 1.0, Color32::from_black_alpha(80));
+            p.rect_filled(tape, 1.0, if selected { Color32::from_rgb(0xf6, 0xf0, 0xd8) } else { Color32::from_rgb(0xe8, 0xe0, 0xc6) });
+            p.rect_filled(Rect::from_min_size(tape.min, vec2(5.0, tape.height())), 0.0, color);
+        } else {
+            rect_fill(&p, r, 4.0, if selected { shade(PANEL2, 1.2) } else { PANEL2 });
+            rect_fill(&p, Rect::from_min_size(r.min, vec2(r.width(), 3.0)), 1.0, color);
+            if selected {
+                rect_line(&p, r, 4.0, 1.0, shade(color, 0.8));
+            }
         }
         // The name: click to select, right-click for the track itself.
-        let name_r = Rect::from_min_size(r.min + vec2(0.0, 3.0), vec2(r.width(), 24.0));
         let nresp = ui.interact(name_r, Id::new(("rack_name", key)), Sense::click());
-        p.text(pos2(r.left() + 8.0, name_r.center().y), Align2::LEFT_CENTER, &name, FontId::proportional(14.0), if selected { Color32::WHITE } else { TEXT });
+        if machine {
+            let font = crate::skin::Font::Script.id(17.0);
+            p.with_clip_rect(name_r.shrink2(vec2(10.0, 0.0))).text(pos2(r.left() + 20.0, name_r.center().y + 1.0), Align2::LEFT_CENTER, &name, font, Color32::from_rgb(0x22, 0x20, 0x1c));
+        } else {
+            p.text(pos2(r.left() + 8.0, name_r.center().y), Align2::LEFT_CENTER, &name, FontId::proportional(14.0), if selected { Color32::WHITE } else { TEXT });
+        }
         if nresp.clicked() {
             self.sel_track = sel;
         }
@@ -140,10 +134,18 @@ impl App {
                 }
             });
         }
+        // A track's patterns: its clips, a pad per scene; the mixer beside them.
+        let m = if let TrackSel::Track(i) = sel {
+            let pads = Rect::from_min_max(pos2(r.left() + 6.0, r.top() + 30.0), pos2(r.left() + 6.0 + PADS_W, r.bottom() - 8.0));
+            self.pattern_pads(ui, i, pads);
+            Rect::from_min_max(pos2(pads.right() + 4.0, r.top()), r.max)
+        } else {
+            Rect::from_min_max(pos2(r.left() + PADS_W + 10.0, r.top()), r.max)
+        };
         // Mute (the activator), solo, arm.
         let by = r.top() + 30.0;
-        let bw = (r.width() - 20.0) / 3.0;
-        let b = |k: f32| Rect::from_min_size(pos2(r.left() + 6.0 + k * (bw + 4.0), by), vec2(bw, 18.0));
+        let bw = (m.width() - 20.0) / 3.0;
+        let b = |k: f32| Rect::from_min_size(pos2(m.left() + 6.0 + k * (bw + 4.0), by), vec2(bw, 18.0));
         match sel {
             TrackSel::Track(i) => {
                 let (mute, solo, arm, kind) = (self.project.tracks[i].mixer.mute, self.project.tracks[i].mixer.solo, self.project.tracks[i].arm, self.project.tracks[i].kind);
@@ -179,7 +181,7 @@ impl App {
         }
         // Volume with its meter on the left.
         let buttons_h = if matches!(sel, TrackSel::Track(_)) { 48.0 } else { 26.0 };
-        let area = Rect::from_min_max(pos2(r.left() + 6.0, by + 26.0), pos2(r.left() + 52.0, r.bottom() - buttons_h - 18.0));
+        let area = Rect::from_min_max(pos2(m.left() + 6.0, by + 26.0), pos2(m.left() + 52.0, r.bottom() - buttons_h - 18.0));
         let fr = Rect::from_min_size(area.min, vec2(22.0, area.height()));
         let (mut vol, meter_lr) = match sel {
             TrackSel::Track(i) => (self.project.tracks[i].mixer.volume_db, self.meters.get(i).copied().unwrap_or((0.0, 0.0))),
@@ -205,7 +207,7 @@ impl App {
         let db = if fader_gain(vol) == 0.0 { "-inf".to_string() } else { format!("{vol:.1} dB") };
         p.text(pos2(area.left(), area.bottom() + 3.0), Align2::LEFT_TOP, db, small(), TEXT_DIM);
         // Pan and the sends on the right.
-        let kx = r.left() + 66.0;
+        let kx = m.left() + 66.0;
         let pan = match sel {
             TrackSel::Track(i) => Some(self.project.tracks[i].mixer.pan),
             TrackSel::Return(j) => Some(self.project.returns[j].mixer.pan),
@@ -252,8 +254,8 @@ impl App {
             }
         }
         // Adding devices.
-        let row1 = Rect::from_min_max(pos2(r.left() + 6.0, r.bottom() - buttons_h), pos2(r.right() - 6.0, r.bottom() - buttons_h + 20.0));
-        let at = pos2(r.right() + 4.0, r.top());
+        let row1 = Rect::from_min_max(pos2(m.left() + 6.0, r.bottom() - buttons_h), pos2(m.right() - 6.0, r.bottom() - buttons_h + 20.0));
+        let at = pos2(m.right() + 4.0, r.top());
         match sel {
             TrackSel::Track(i) => {
                 let half = (row1.width() - 4.0) / 2.0;
@@ -291,4 +293,156 @@ impl App {
             }
         }
     }
+
+    /// The studio's bar: the song (a button per scene, lit while it plays,
+    /// blinking while it waits for its bar), stop, and the settings.
+    fn studio_bar(&mut self, ui: &mut Ui, columns: bool, h: f32) {
+        let status = self.engine.status.clone();
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.add_space(8.0);
+            ui.label(RichText::new("SONG").strong().color(TEXT_DIM)).on_hover_text("A button per scene: click to play it on every track");
+            ui.add_space(4.0);
+            let scenes: Vec<String> = self.project.scenes.iter().map(|s| s.name.clone()).collect();
+            for (s, name) in scenes.iter().enumerate() {
+                let (playing, queued) = scene_state(&self.project, &status, s);
+                let (r, resp) = ui.allocate_exact_size(vec2(74.0, 34.0), Sense::click());
+                let p = ui.painter();
+                let lit = playing || (queued && super::session::blink());
+                let fill = if lit { ACCENT } else if resp.hovered() { shade(PANEL3, 1.3) } else { PANEL3 };
+                p.rect_filled(r.translate(vec2(0.0, 2.0)), 4.0, Color32::from_black_alpha(110));
+                p.rect_filled(r, 4.0, fill);
+                p.rect_filled(Rect::from_min_size(r.min + vec2(2.0, 2.0), vec2(r.width() - 4.0, 9.0)), 3.0, Color32::from_white_alpha(18));
+                let ink = text_on(fill);
+                p.text(pos2(r.left() + 8.0, r.center().y), Align2::LEFT_CENTER, format!("{}", s + 1), crate::skin::Font::Block.id(17.0), ink);
+                let nr = Rect::from_min_max(pos2(r.left() + 26.0, r.top()), pos2(r.right() - 4.0, r.bottom()));
+                p.with_clip_rect(nr).text(nr.left_center(), Align2::LEFT_CENTER, name, small(), ink);
+                if resp.clicked() {
+                    self.cmd(krabton_engine::Command::LaunchScene(s));
+                    self.sel_scene = s;
+                }
+                resp.on_hover_text(format!("Scene {}: {name}. Click to play it on every track", s + 1));
+            }
+            ui.add_space(6.0);
+            let (r, resp) = ui.allocate_exact_size(vec2(40.0, 34.0), Sense::click());
+            let p = ui.painter();
+            p.rect_filled(r, 4.0, if resp.hovered() { shade(PANEL3, 1.3) } else { PANEL3 });
+            stop_icon(p, r.center(), 12.0, TEXT);
+            if resp.on_hover_text("Stop all clips").clicked() {
+                self.cmd(krabton_engine::Command::StopAllClips);
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_space(8.0);
+                let mut hh = h;
+                if ui.add(egui::DragValue::new(&mut hh).range(140.0..=600.0).speed(1.0).suffix(" px")).on_hover_text("For devices you did not resize: drag the grip at the bottom of a device for its own height").changed() {
+                    self.prefs.layout.rack_h = hh;
+                    self.layout_dirty = true;
+                }
+                ui.label(RichText::new("Height").small().color(TEXT_DIM));
+                let shown = self.prefs.layout.rack_detail;
+                if ui.add(egui::Button::new(RichText::new(if shown { "Hide clip view" } else { "Show clip view" }).color(TEXT)).fill(PANEL3)).on_hover_text("The clip editor, devices, modulation and grid at the bottom (Ctrl+Alt+L)").clicked() {
+                    self.toggle_detail();
+                }
+                let label = if columns { "Tracks in columns" } else { "Tracks in rows" };
+                if ui.add(egui::Button::new(RichText::new(label).color(TEXT)).fill(PANEL3)).on_hover_text("Swap the axes: a track per row with its devices side by side, or a track per column with its devices under each other").clicked() {
+                    self.prefs.layout.rack_columns = !columns;
+                    self.layout_dirty = true;
+                }
+            });
+        });
+        ui.add_space(4.0);
+    }
+
+    /// A track's patterns: a pad per scene with the clip in it (lit while it
+    /// plays, blinking while it waits). Click a pad to play it (an empty one
+    /// stops the track), double-click to edit it (an empty one gets a clip).
+    fn pattern_pads(&mut self, ui: &mut Ui, i: usize, area: Rect) {
+        let status = self.engine.status.clone();
+        let Some(ts) = status.tracks.get(i) else { return };
+        let playing = ts.playing_slot.load(std::sync::atomic::Ordering::Relaxed);
+        let queued = ts.queued_slot.load(std::sync::atomic::Ordering::Relaxed);
+        let n = self.project.scenes.len().max(1);
+        // One column where they fit (the names read), else two.
+        let cols = if n as f32 * 21.0 <= area.height() - 14.0 { 1usize } else { 2 };
+        let rows = n.div_ceil(cols);
+        let ph = ((area.height() - 14.0) / rows as f32 - 3.0).clamp(14.0, 34.0);
+        let pw = (area.width() - 3.0) / cols as f32;
+        let p = ui.painter().clone();
+        p.text(pos2(area.left() + 2.0, area.top() + 5.0), Align2::LEFT_CENTER, "PATTERNS", egui::FontId::proportional(9.0), crate::skin::ink_dim());
+        let track_id = self.project.tracks[i].id;
+        let midi = self.project.tracks[i].kind == TrackKind::Midi;
+        for s in 0..n {
+            let r = Rect::from_min_size(pos2(area.left() + (s % cols) as f32 * (pw + 3.0), area.top() + 12.0 + (s / cols) as f32 * (ph + 3.0)), vec2(pw, ph));
+            if r.bottom() > area.bottom() + 1.0 {
+                break;
+            }
+            let clip = self.project.tracks[i].slots.get(s).and_then(|c| c.as_ref()).map(|c| (c.name.clone(), c.color, c.sound.is_some()));
+            let resp = ui.interact(r, Id::new(("pattern", track_id, s)), Sense::click());
+            let on = playing == s as i32;
+            let waiting = queued == s as i32;
+            match &clip {
+                Some((name, color, keeps)) => {
+                    let base = rgb(*color);
+                    let lit = on || (waiting && super::session::blink());
+                    let fill = if lit { base } else { shade(base, if resp.hovered() { 0.62 } else { 0.45 }) };
+                    p.rect_filled(r.translate(vec2(0.0, 1.5)), 3.0, Color32::from_black_alpha(110));
+                    p.rect_filled(r, 3.0, fill);
+                    if on {
+                        p.rect_stroke(r, 3.0, egui::Stroke::new(1.5_f32, Color32::WHITE), egui::StrokeKind::Inside);
+                    }
+                    let ink = text_on(fill);
+                    let tr = Rect::from_min_max(pos2(r.left() + 4.0, r.top()), pos2(r.right() - if *keeps { 12.0 } else { 3.0 }, r.bottom()));
+                    p.with_clip_rect(tr).text(tr.left_center(), Align2::LEFT_CENTER, name, egui::FontId::proportional((ph * 0.42).clamp(8.5, 11.0)), ink);
+                    if *keeps {
+                        super::session::sound_mark(&p, pos2(r.right() - 7.0, r.center().y), ink);
+                    }
+                    if resp.clicked() {
+                        self.cmd(krabton_engine::Command::LaunchClip { track: track_id, slot: s });
+                        self.select_clip(crate::app::ClipSel::Slot { track: i, scene: s });
+                        self.detail = crate::app::DetailTab::Devices;
+                    }
+                    if resp.double_clicked() {
+                        self.select_clip(crate::app::ClipSel::Slot { track: i, scene: s });
+                        if !self.prefs.layout.rack_detail {
+                            self.toggle_detail();
+                        }
+                    }
+                    resp.on_hover_text(format!("{name} (scene {}): click to play it, double-click to edit it", s + 1));
+                }
+                None => {
+                    p.rect_filled(r, 3.0, if resp.hovered() { Color32::from_black_alpha(90) } else { Color32::from_black_alpha(60) });
+                    p.rect_stroke(r, 3.0, egui::Stroke::new(1.0_f32, Color32::from_white_alpha(14)), egui::StrokeKind::Inside);
+                    p.text(r.center(), Align2::CENTER_CENTER, format!("{}", s + 1), egui::FontId::proportional(9.0), Color32::from_white_alpha(50));
+                    if resp.clicked() {
+                        self.cmd(krabton_engine::Command::StopTrack { track: track_id });
+                    }
+                    if resp.double_clicked() && midi {
+                        self.create_midi_clip(i, s);
+                        self.select_clip(crate::app::ClipSel::Slot { track: i, scene: s });
+                        if !self.prefs.layout.rack_detail {
+                            self.toggle_detail();
+                        }
+                    }
+                    resp.on_hover_text(if midi { "Empty: click to stop the track, double-click for a new clip" } else { "Empty: click to stop the track" });
+                }
+            }
+        }
+    }
+}
+
+/// Whether scene `s` plays (every track with a clip in it plays that clip)
+/// and whether it waits for its bar.
+fn scene_state(project: &krabton_engine::Project, status: &krabton_engine::engine::EngineStatus, s: usize) -> (bool, bool) {
+    let mut any = false;
+    let mut all = true;
+    let mut queued = false;
+    for (i, t) in project.tracks.iter().enumerate() {
+        let Some(ts) = status.tracks.get(i) else { break };
+        if matches!(t.slots.get(s), Some(Some(_))) {
+            any = true;
+            all &= ts.playing_slot.load(std::sync::atomic::Ordering::Relaxed) == s as i32;
+            queued |= ts.queued_slot.load(std::sync::atomic::Ordering::Relaxed) == s as i32;
+        }
+    }
+    (any && all, queued)
 }

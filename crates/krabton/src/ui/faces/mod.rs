@@ -9,8 +9,11 @@
 pub mod analog;
 pub mod bassline;
 pub mod drums;
+pub mod effects;
 pub mod organ;
+pub mod piano;
 pub mod plaits;
+pub mod synth;
 
 use super::modulation::{knob_overlay, slider_overlay, ModView};
 use crate::theme::*;
@@ -23,7 +26,6 @@ use krabton_engine::params::{ParamKind, ParamSpec};
 pub enum Ctl {
     Knob,
     /// A vertical slider.
-    #[allow(dead_code)]
     Fader,
     /// A lever with two to four positions (a toggle or a short choice).
     Switch,
@@ -230,7 +232,8 @@ pub fn draw(ui: &mut Ui, face: &Face, height: f32, cx: &mut Ctx, screen: &mut dy
                 let c = match ctl {
                     Ctl::Knob => knob(ui, r, id, spec, &mut val, label, u),
                     Ctl::Fader => {
-                        let (c, track) = param_slider(ui, r, id, spec, &mut val, accent_now());
+                        let shown = ParamSpec { name: label, ..*spec };
+                        let (c, track) = param_slider(ui, r, id, &shown, &mut val, accent_now());
                         if let Some(mv) = cx.mv.as_deref_mut() {
                             slider_overlay(ui, r, track, id.with("mod"), spec, val, pi, mv);
                         }

@@ -60,7 +60,7 @@ impl App {
         match self.detail {
             DetailTab::Clip => self.ui_clip_detail(ui, content),
             // In the Rack every track's devices are already above.
-            DetailTab::Devices if self.view == crate::app::View::Rack => {
+            DetailTab::Devices if self.view == crate::app::View::Studio => {
                 ui.painter().text(content.center(), Align2::CENTER_CENTER, "The devices are in the Rack above", body(), TEXT_DIM);
             }
             DetailTab::Devices => self.ui_devices(ui, content),

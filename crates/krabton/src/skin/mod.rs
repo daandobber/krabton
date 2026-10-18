@@ -7,7 +7,7 @@
 mod catalog;
 mod paint;
 
-pub use catalog::{for_effect, for_instrument, for_midi};
+pub use catalog::{console, for_effect, for_instrument, for_midi};
 pub use paint::{group_backdrop, knob_face, logo, panel, CHEEK, STRIPE};
 
 use crate::theme::{AccentScope, KNOB, PANEL3, TEXT, TEXT_DIM};

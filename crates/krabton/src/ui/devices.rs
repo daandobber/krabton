@@ -689,6 +689,9 @@ impl App {
                 let (c, act) = convolution_face(ui, id, &mut params, conv_file.as_ref(), accent, h, mv.as_mut(), &mut width);
                 conv_act = act;
                 c
+            } else if let Some(face) = crate::skin::current().and(super::faces::effects::face(kind)) {
+                // The effect laid out as the box it comes from.
+                super::faces::effects::panel(ui, id, kind, &face, &mut params, h - 24.0, mv.as_mut())
             } else {
                 param_grid_mod(ui, id, kind.specs(), &mut params, accent, h - 24.0, mv.as_mut())
             }
@@ -1057,6 +1060,9 @@ impl App {
                             }
                         }
                     }
+                    Instrument::Synth { preset, params } if crate::skin::current().is_some() => {
+                        super::faces::synth::panel(ui, Id::new(("synth", track_id)), preset, params, &live, h - 36.0, mv.as_mut());
+                    }
                     Instrument::Synth { preset, params } => {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
@@ -1090,6 +1096,8 @@ impl App {
                         super::inst_screen::analog_grid(ui, Id::new(("analog", track_id)), params, &live, h - 48.0, mv.as_mut());
                     }
                     Instrument::Piano { preset, params } => {
+                        let faced = crate::skin::current().is_some();
+                        if !faced {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("piano_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
@@ -1102,6 +1110,7 @@ impl App {
                             });
                             ui.label(RichText::new(krabton_engine::piano::library::CREDIT).small().color(crate::skin::ink_dim()));
                         });
+                        }
                         let lib = if krabton_engine::piano::library::shared().is_some() {
                             super::inst_screen::PianoLib::Ready
                         } else {
@@ -1118,10 +1127,14 @@ impl App {
                         };
                         let mut install = false;
                         ui.horizontal_top(|ui| {
-                            let (_, clicked) = super::inst_screen::piano_screen(ui, Id::new(("piano_screen", track_id)), params, &live, h - 48.0, lib);
+                            let (_, clicked) = super::inst_screen::piano_screen(ui, Id::new(("piano_screen", track_id)), params, &live, if faced { h - 36.0 } else { h - 48.0 }, lib);
                             install = clicked;
                             ui.add_space(6.0);
-                            param_grid_mod(ui, Id::new(("piano", track_id)), krabton_engine::piano::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
+                            if faced {
+                                super::faces::piano::panel(ui, Id::new(("piano", track_id)), preset, params, h - 36.0, mv.as_mut());
+                            } else {
+                                param_grid_mod(ui, Id::new(("piano", track_id)), krabton_engine::piano::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
+                            }
                         });
                         if install {
                             self.start_piano_install();
