@@ -902,11 +902,6 @@ const VA_FILTER: Skin = Skin { heroes: &["Cutoff", "Resonance"], ..ANALOG };
 const SEQUENCER: Skin = Skin { accent: hex(0xff4f4f), knob: Knob::Led, cap: hex(0x3a3c41), logo_case: Case::Upper, ..BASE };
 const MIDI_FX: Skin = Skin { accent: hex(0x8fe388), knob: Knob::Led, cap: hex(0x3a3c41), logo_case: Case::Upper, ..BASE };
 
-/// The studio's console: the channel a track's patterns and mixer sit on.
-pub fn console() -> Skin {
-    Skin { top: hex(0x2d2f34), bottom: hex(0x1b1c1f), surface: Surface::Brushed, screws: true, ..BASE }
-}
-
 /// The look of an instrument, by its name (as its title shows it).
 pub fn for_instrument(name: &str) -> Option<Skin> {
     Some(match name {

@@ -95,30 +95,25 @@ impl App {
         };
         let selected = self.sel_track == sel;
         let p = ui.painter().clone();
-        let machine = crate::skin::enabled();
-        let name_r = Rect::from_min_size(r.min + vec2(0.0, 3.0), vec2(r.width(), 24.0));
-        if machine {
-            // A channel of the studio's console, the track's name on a strip of tape.
-            p.add(crate::skin::panel(r, &crate::skin::console(), Some(color)));
-            let tape = Rect::from_min_size(pos2(r.left() + 10.0, name_r.top() + 2.0), vec2((r.width() - 20.0).min(220.0), 20.0));
-            p.rect_filled(tape.translate(vec2(0.0, 1.0)), 1.0, Color32::from_black_alpha(80));
-            p.rect_filled(tape, 1.0, if selected { Color32::from_rgb(0xf6, 0xf0, 0xd8) } else { Color32::from_rgb(0xe8, 0xe0, 0xc6) });
-            p.rect_filled(Rect::from_min_size(tape.min, vec2(5.0, tape.height())), 0.0, color);
-        } else {
-            rect_fill(&p, r, 4.0, if selected { shade(PANEL2, 1.2) } else { PANEL2 });
-            rect_fill(&p, Rect::from_min_size(r.min, vec2(r.width(), 3.0)), 1.0, color);
-            if selected {
-                rect_line(&p, r, 4.0, 1.0, shade(color, 0.8));
-            }
+        // A clean channel: its colour along the top and in the name's band.
+        let name_r = Rect::from_min_size(r.min, vec2(r.width(), 28.0));
+        rect_fill(&p, r, 6.0, if selected { shade(PANEL2, 1.12) } else { PANEL2 });
+        p.rect_filled(name_r, egui::CornerRadius { nw: 6, ne: 6, sw: 0, se: 0 }, mix(PANEL2, color, if selected { 0.3 } else { 0.18 }));
+        p.rect_filled(Rect::from_min_size(r.min, vec2(r.width(), 3.0)), egui::CornerRadius { nw: 6, ne: 6, sw: 0, se: 0 }, color);
+        if selected {
+            rect_line(&p, r, 6.0, 1.0, shade(color, 0.9));
         }
-        // The name: click to select, right-click for the track itself.
+        // The name: click to select, right-click for the track itself; what plays it beside.
         let nresp = ui.interact(name_r, Id::new(("rack_name", key)), Sense::click());
-        if machine {
-            let font = crate::skin::Font::Script.id(17.0);
-            p.with_clip_rect(name_r.shrink2(vec2(10.0, 0.0))).text(pos2(r.left() + 20.0, name_r.center().y + 1.0), Align2::LEFT_CENTER, &name, font, Color32::from_rgb(0x22, 0x20, 0x1c));
-        } else {
-            p.text(pos2(r.left() + 8.0, name_r.center().y), Align2::LEFT_CENTER, &name, FontId::proportional(14.0), if selected { Color32::WHITE } else { TEXT });
-        }
+        let kind_name = match sel {
+            TrackSel::Track(i) => self.project.tracks[i].instrument.as_ref().map(|x| x.kind_name()).unwrap_or(if self.project.tracks[i].kind == TrackKind::Audio { "Audio" } else { "" }),
+            TrackSel::Return(_) => "Return",
+            TrackSel::Master => "",
+        };
+        let kind_w = p.layout_no_wrap(kind_name.to_string(), small(), TEXT_DIM).size().x;
+        p.text(pos2(r.right() - 10.0, name_r.center().y + 1.0), Align2::RIGHT_CENTER, kind_name, small(), TEXT_DIM);
+        let name_clip = Rect::from_min_max(name_r.min, pos2(r.right() - kind_w - 18.0, name_r.bottom()));
+        p.with_clip_rect(name_clip).text(pos2(r.left() + 10.0, name_r.center().y + 1.0), Align2::LEFT_CENTER, &name, FontId::proportional(15.0), if selected { Color32::WHITE } else { TEXT });
         if nresp.clicked() {
             self.sel_track = sel;
         }
@@ -136,9 +131,10 @@ impl App {
         }
         // A track's patterns: its clips, a pad per scene; the mixer beside them.
         let m = if let TrackSel::Track(i) = sel {
-            let pads = Rect::from_min_max(pos2(r.left() + 6.0, r.top() + 30.0), pos2(r.left() + 6.0 + PADS_W, r.bottom() - 8.0));
+            let pads = Rect::from_min_max(pos2(r.left() + 6.0, r.top() + 34.0), pos2(r.left() + 6.0 + PADS_W, r.bottom() - 8.0));
             self.pattern_pads(ui, i, pads);
-            Rect::from_min_max(pos2(pads.right() + 4.0, r.top()), r.max)
+            p.line_segment([pos2(pads.right() + 5.0, pads.top()), pos2(pads.right() + 5.0, pads.bottom())], egui::Stroke::new(1.0_f32, LINE_SOFT));
+            Rect::from_min_max(pos2(pads.right() + 6.0, r.top()), r.max)
         } else {
             Rect::from_min_max(pos2(r.left() + PADS_W + 10.0, r.top()), r.max)
         };
@@ -363,16 +359,16 @@ impl App {
         let queued = ts.queued_slot.load(std::sync::atomic::Ordering::Relaxed);
         let n = self.project.scenes.len().max(1);
         // One column where they fit (the names read), else two.
-        let cols = if n as f32 * 21.0 <= area.height() - 14.0 { 1usize } else { 2 };
+        let cols = if n as f32 * 21.0 <= area.height() - 16.0 { 1usize } else { 2 };
         let rows = n.div_ceil(cols);
-        let ph = ((area.height() - 14.0) / rows as f32 - 3.0).clamp(14.0, 34.0);
+        let ph = ((area.height() - 16.0) / rows as f32 - 3.0).clamp(14.0, 26.0);
         let pw = (area.width() - 3.0) / cols as f32;
         let p = ui.painter().clone();
-        p.text(pos2(area.left() + 2.0, area.top() + 5.0), Align2::LEFT_CENTER, "PATTERNS", egui::FontId::proportional(9.0), crate::skin::ink_dim());
+        p.text(pos2(area.left() + 1.0, area.top() + 5.0), Align2::LEFT_CENTER, "Patterns", small(), TEXT_DIM);
         let track_id = self.project.tracks[i].id;
         let midi = self.project.tracks[i].kind == TrackKind::Midi;
         for s in 0..n {
-            let r = Rect::from_min_size(pos2(area.left() + (s % cols) as f32 * (pw + 3.0), area.top() + 12.0 + (s / cols) as f32 * (ph + 3.0)), vec2(pw, ph));
+            let r = Rect::from_min_size(pos2(area.left() + (s % cols) as f32 * (pw + 3.0), area.top() + 14.0 + (s / cols) as f32 * (ph + 3.0)), vec2(pw, ph));
             if r.bottom() > area.bottom() + 1.0 {
                 break;
             }
@@ -384,15 +380,19 @@ impl App {
                 Some((name, color, keeps)) => {
                     let base = rgb(*color);
                     let lit = on || (waiting && super::session::blink());
-                    let fill = if lit { base } else { shade(base, if resp.hovered() { 0.62 } else { 0.45 }) };
-                    p.rect_filled(r.translate(vec2(0.0, 1.5)), 3.0, Color32::from_black_alpha(110));
-                    p.rect_filled(r, 3.0, fill);
-                    if on {
-                        p.rect_stroke(r, 3.0, egui::Stroke::new(1.5_f32, Color32::WHITE), egui::StrokeKind::Inside);
-                    }
+                    let fill = if lit { base } else { shade(base, if resp.hovered() { 0.85 } else { 0.72 }) };
+                    rect_fill(&p, r, 3.0, fill);
                     let ink = text_on(fill);
-                    let tr = Rect::from_min_max(pos2(r.left() + 4.0, r.top()), pos2(r.right() - if *keeps { 12.0 } else { 3.0 }, r.bottom()));
-                    p.with_clip_rect(tr).text(tr.left_center(), Align2::LEFT_CENTER, name, egui::FontId::proportional((ph * 0.42).clamp(8.5, 11.0)), ink);
+                    // The playing one shows its triangle, the others their scene.
+                    let lead = Rect::from_min_size(r.min, vec2(16.0, r.height()));
+                    if on || waiting {
+                        rect_fill(&p, lead.shrink(2.0), 2.0, shade(base, 0.3));
+                        play_icon(&p, lead.center(), 8.0, if on || super::session::blink() { PLAY } else { TEXT_DARK });
+                    } else {
+                        p.text(lead.center(), Align2::CENTER_CENTER, format!("{}", s + 1), egui::FontId::proportional(9.5), shade(ink, 0.75));
+                    }
+                    let tr = Rect::from_min_max(pos2(lead.right() + 1.0, r.top()), pos2(r.right() - if *keeps { 13.0 } else { 3.0 }, r.bottom()));
+                    p.with_clip_rect(tr).text(tr.left_center(), Align2::LEFT_CENTER, name, egui::FontId::proportional((ph * 0.46).clamp(9.0, 11.5)), ink);
                     if *keeps {
                         super::session::sound_mark(&p, pos2(r.right() - 7.0, r.center().y), ink);
                     }
@@ -410,9 +410,8 @@ impl App {
                     resp.on_hover_text(format!("{name} (scene {}): click to play it, double-click to edit it", s + 1));
                 }
                 None => {
-                    p.rect_filled(r, 3.0, if resp.hovered() { Color32::from_black_alpha(90) } else { Color32::from_black_alpha(60) });
-                    p.rect_stroke(r, 3.0, egui::Stroke::new(1.0_f32, Color32::from_white_alpha(14)), egui::StrokeKind::Inside);
-                    p.text(r.center(), Align2::CENTER_CENTER, format!("{}", s + 1), egui::FontId::proportional(9.0), Color32::from_white_alpha(50));
+                    rect_fill(&p, r, 3.0, if resp.hovered() { shade(SLOT, 1.2) } else { SLOT });
+                    p.text(pos2(r.left() + 8.0, r.center().y), Align2::CENTER_CENTER, format!("{}", s + 1), egui::FontId::proportional(9.5), TEXT_DIM);
                     if resp.clicked() {
                         self.cmd(krabton_engine::Command::StopTrack { track: track_id });
                     }
