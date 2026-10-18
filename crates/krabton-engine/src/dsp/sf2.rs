@@ -121,8 +121,9 @@ impl fmt::Debug for Sf2Ref {
 /// file again (another track, undo, a project) shares it.
 static OPEN: Mutex<Vec<(PathBuf, Weak<Sf2Data>)>> = Mutex::new(Vec::new());
 
+/// A bank's name from its file: "MuseScore_General.sf2" is MuseScore General.
 fn file_name(path: &Path) -> String {
-    path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "Bank".into())
+    path.file_stem().map(|s| s.to_string_lossy().replace('_', " ").trim().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| "Bank".into())
 }
 
 impl Sf2Ref {
@@ -468,6 +469,29 @@ mod tests {
         c.note_on(&quiet, 0, 0, 69, 1.0);
         let (la, lc) = (energy(&mut a, &loud, 0, 0, 8192), energy(&mut c, &quiet, 0, 0, 8192));
         assert!(lc < la * 0.05, "{lc} vs {la}");
+    }
+
+    /// Every preset of a real bank sounds: `KRABTON_SF2=path.sf2 cargo test
+    /// -p krabton-engine every_preset -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn every_preset_of_a_real_bank_sounds() {
+        let path = std::env::var("KRABTON_SF2").expect("KRABTON_SF2 names a bank");
+        let t = std::time::Instant::now();
+        let b = Sf2Ref::load(Path::new(&path)).expect("reads");
+        println!("{}: {} presets, read in {:.2?}, General MIDI: {}", b.name, b.presets.len(), t.elapsed(), b.is_gm());
+        let p = defaults(SPECS);
+        let mut quiet = Vec::new();
+        for pr in &b.presets {
+            let mut st = Sf2State::new(Some(&b), 48_000.0);
+            let key = if pr.is_drums() { 38 } else { 60 };
+            st.note_on(&p, pr.bank, pr.patch, key, 0.8);
+            if energy(&mut st, &p, pr.bank, pr.patch, 12_000) < 1e-7 {
+                quiet.push(pr.label());
+            }
+        }
+        println!("silent at their key: {quiet:?}");
+        assert!(quiet.len() * 20 < b.presets.len(), "too many silent presets: {quiet:?}");
     }
 
     #[test]

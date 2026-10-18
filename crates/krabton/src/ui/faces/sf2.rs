@@ -10,8 +10,22 @@ use crate::widgets::*;
 use egui::{pos2, vec2, Align2, Color32, Id, Rect, RichText, Sense, Shape, Stroke, Ui};
 use krabton_engine::dsp::sf2::{self, Sf2Preset, Sf2Ref};
 
-/// A free General MIDI bank to get (its author asks for links to his page).
-pub(crate) const GM_BANK_URL: &str = "https://schristiancollins.com/generaluser.php";
+/// A bank Krabton can fetch, as the display offers it.
+pub(crate) struct OfferView {
+    pub name: &'static str,
+    pub mb: u64,
+    pub state: OfferState,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum OfferState {
+    Get,
+    /// On this computer already.
+    Here,
+    /// How far (0..1).
+    Downloading(f32),
+    Failed,
+}
 
 pub(crate) fn face() -> Face {
     Face::new(31.2, 12.0)
@@ -39,14 +53,16 @@ pub(crate) struct Asked {
     pub dropped: Option<BrowserItem>,
     /// Make it (or no longer) the bank MIDI files play with.
     pub midi_files: bool,
+    /// Get (or, when it is here, play) offered bank number `n`.
+    pub get: Option<usize>,
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn panel(ui: &mut Ui, id: Id, font: Option<&Sf2Ref>, bank: u16, patch: u8, params: &mut [f32], for_midi: bool, height: f32, mv: Option<&mut ModView>, asked: &mut Asked) -> bool {
+pub(crate) fn panel(ui: &mut Ui, id: Id, font: Option<&Sf2Ref>, bank: u16, patch: u8, params: &mut [f32], for_midi: bool, offers: &[OfferView], height: f32, mv: Option<&mut ModView>, asked: &mut Asked) -> bool {
     let face = face();
     let mut cx = Ctx { id, keys: sf2::SPECS, specs: sf2::SPECS, params, mv, presets: None };
     draw(ui, &face, height, &mut cx, &mut |ui, _, r, _| {
-        display(ui, id.with("bank"), r, font, bank, patch, for_midi, asked);
+        display(ui, id.with("bank"), r, font, bank, patch, for_midi, offers, asked);
         false
     })
 }
@@ -54,7 +70,7 @@ pub(crate) fn panel(ui: &mut Ui, id: Id, font: Option<&Sf2Ref>, bank: u16, patch
 /// The display: the bank, the preset big between arrows, where it sits, and
 /// buttons to open a bank and to play MIDI files with it.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn display(ui: &mut Ui, id: Id, r: Rect, font: Option<&Sf2Ref>, bank: u16, patch: u8, for_midi: bool, asked: &mut Asked) {
+pub(crate) fn display(ui: &mut Ui, id: Id, r: Rect, font: Option<&Sf2Ref>, bank: u16, patch: u8, for_midi: bool, offers: &[OfferView], asked: &mut Asked) {
     // A bank or a preset from the browser lands here.
     let drop = ui.interact(r, id.with("drop"), Sense::hover());
     if let Some(item) = drop_payload::<BrowserItem>(&drop) {
@@ -89,9 +105,26 @@ pub(crate) fn display(ui: &mut Ui, id: Id, r: Rect, font: Option<&Sf2Ref>, bank:
     let row = Rect::from_min_size(pos2(inner.left(), inner.top() + u * 1.3), vec2(inner.width(), u * 3.6));
     let at = presets.iter().position(|q| q.bank == bank && q.patch == patch);
     if presets.is_empty() {
-        let msg = if font.is_some_and(|f| f.is_missing()) { "OPEN IT AGAIN" } else { "DROP A .SF2 BANK" };
-        let f = fit(&p, msg, lcd(u * 1.3), row.width());
-        p.text(row.center(), Align2::CENTER_CENTER, msg, f, ink);
+        // No bank yet: the ones Krabton can get, one button each.
+        let msg = if font.is_some_and(|f| f.is_missing()) { "OPEN IT AGAIN, OR GET ONE" } else { "GET A BANK" };
+        let head = Rect::from_min_size(row.min, vec2(row.width(), u * 1.8));
+        let f = fit(&p, msg, lcd(u * 1.1), head.width());
+        p.text(head.center(), Align2::CENTER_CENTER, msg, f, ink);
+        for (k, o) in offers.iter().enumerate() {
+            let b = Rect::from_min_size(pos2(inner.left(), head.bottom() + u * 0.4 + k as f32 * u * 2.0), vec2(inner.width(), u * 1.7));
+            let (text, on, tip) = match o.state {
+                OfferState::Get => (format!("{}  ·  {} MB", o.name.to_uppercase(), o.mb), false, "Download this free General MIDI bank (MIT license)"),
+                OfferState::Here => (o.name.to_uppercase(), false, "On this computer: play it"),
+                OfferState::Downloading(f) => (format!("{}  {:.0}%", o.name.to_uppercase(), f * 100.0), true, "Downloading"),
+                OfferState::Failed => (format!("{}: FAILED, AGAIN?", o.name.to_uppercase()), false, "The download failed: click to try again"),
+            };
+            if let OfferState::Downloading(f) = o.state {
+                p.rect_filled(Rect::from_min_size(b.min, vec2(b.width() * f.clamp(0.0, 1.0), b.height())), 2.0, shade(ink, 0.25));
+            }
+            if lcd_button(ui, &p, b, id.with(("get", k)), &text, on, u).on_hover_text(tip).clicked() && !matches!(o.state, OfferState::Downloading(_)) {
+                asked.get = Some(k);
+            }
+        }
     } else {
         let aw = u * 1.3;
         let left = Rect::from_min_size(row.min, vec2(aw, row.height()));
@@ -148,10 +181,6 @@ pub(crate) fn display(ui: &mut Ui, id: Id, r: Rect, font: Option<&Sf2Ref>, bank:
             if lcd_button(ui, &p, mr, id.with("midi"), "MIDI FILES", for_midi, u).on_hover_text(tip).clicked() {
                 asked.midi_files = true;
             }
-        }
-        None => {
-            let lr = Rect::from_min_max(pos2(open_r.right() + u * 0.5, by), pos2(inner.right(), by + bh));
-            ui.put(lr, egui::Hyperlink::from_label_and_url(RichText::new("Get GeneralUser GS (free GM bank)").size((u * 0.6).clamp(9.0, 12.0)), GM_BANK_URL));
         }
         _ => {}
     }

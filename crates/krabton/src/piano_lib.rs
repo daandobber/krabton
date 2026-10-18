@@ -45,7 +45,7 @@ pub fn open_installed() -> Option<Arc<PianoLibrary>> {
     }
 }
 
-fn curl() -> std::process::Command {
+pub(crate) fn curl() -> std::process::Command {
     let mut cmd = std::process::Command::new("curl");
     cmd.stdin(std::process::Stdio::null());
     #[cfg(windows)]

@@ -113,6 +113,8 @@ enum Act {
     LoadSyx,
     LoadSyxFolder,
     LoadSf2,
+    /// Download offered SoundFont bank number n.
+    GetSf2(usize),
 }
 
 enum Kids {
@@ -836,7 +838,24 @@ impl App {
         out.extend(drum_engine_nodes());
         // The SF2 Player, with the banks opened before.
         let mut sf2 = vec![Node::Action { label: "Open a SoundFont bank (.sf2)...".into(), hint: "Open .sf2 banks: their presets show here".into(), act: Act::LoadSf2 }];
-        for path in self.prefs.sf2_banks.iter().filter(|p| p.is_file()) {
+        // The free banks Krabton can get, until they are here.
+        for (i, o) in self.sf2_offers().iter().enumerate() {
+            use crate::ui::faces::sf2::OfferState;
+            let label = match o.state {
+                OfferState::Here => continue,
+                OfferState::Get => format!("Download {} ({} MB)", o.name, o.mb),
+                OfferState::Downloading(f) => format!("{}: downloading {:.0}%", o.name, f * 100.0),
+                OfferState::Failed => format!("{}: download failed, try again", o.name),
+            };
+            sf2.push(Node::Action { label, hint: crate::sf2_lib::OFFERS[i].about.into(), act: Act::GetSf2(i) });
+        }
+        let mut banks: Vec<PathBuf> = crate::sf2_lib::all_installed();
+        for p in &self.prefs.sf2_banks {
+            if !banks.contains(p) {
+                banks.push(p.clone());
+            }
+        }
+        for path in banks.iter().filter(|p| p.is_file()) {
             sf2.push(Node::Folder { tag: Some(file_tag(path)), label: file_name(path).trim_end_matches(".sf2").trim_end_matches(".SF2").to_string(), icon: Icon::Bank, hint: path.display().to_string(), load: None, kids: Kids::Sf2(path.clone()) });
         }
         out.push(Node::Folder { tag: None, label: "SF2 Player".into(), icon: Icon::Device, hint: SF2_HINT.into(), load: Some(BrowserItem::Sf2Player), kids: Kids::Nodes(sf2) });
@@ -1457,6 +1476,7 @@ impl App {
                 self.open_sf2_dialog();
                 self.browser.sf2.clear();
             }
+            Act::GetSf2(i) => self.start_sf2_install(i),
             Act::LoadSyx => {
                 if let Some(files) = rfd::FileDialog::new().add_filter("DX7 sysex", &["syx", "SYX"]).pick_files() {
                     let mut ok = 0;

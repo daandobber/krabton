@@ -441,6 +441,8 @@ pub struct App {
     pub orchestra_installs: std::collections::HashMap<usize, crate::orchestra_lib::Install>,
     /// Sampled drum packs being downloaded, and those that are here (by folder).
     pub(crate) drum_installs: std::collections::HashMap<&'static str, crate::drum_lib::Install>,
+    /// The SoundFont banks downloading, by offer (see `sf2_lib::OFFERS`).
+    pub(crate) sf2_installs: HashMap<usize, crate::sf2_lib::Install>,
     pub(crate) packs_here: std::collections::HashSet<&'static str>,
 
     pub meters: Vec<(f32, f32)>,
@@ -611,6 +613,7 @@ impl App {
             piano_install: None,
             orchestra_installs: std::collections::HashMap::new(),
             drum_installs: Default::default(),
+            sf2_installs: HashMap::new(),
             packs_here: krabton_engine::dsp::real_drums::PACKS.iter().filter(|p| krabton_engine::dsp::real_drums::installed(p)).map(|p| p.folder).collect(),
             meters: Vec::new(),
             return_meters: Vec::new(),
@@ -1311,7 +1314,13 @@ impl App {
                         let Some(font) = self.sf2_bank(path) else { return };
                         Instrument::sf2(Some(font), *bank, *patch)
                     }
-                    _ => Instrument::sf2(None, 0, 0),
+                    _ => match self.default_sf2() {
+                        Some(f) => {
+                            let (b, p) = f.preset(0, 0).or_else(|| f.presets.first()).map(|p| (p.bank, p.patch)).unwrap_or((0, 0));
+                            Instrument::sf2(Some(f), b, p)
+                        }
+                        None => Instrument::sf2(None, 0, 0),
+                    },
                 };
                 match target_track {
                     Some(t) if is_midi(self, t) => {
@@ -2384,6 +2393,106 @@ impl App {
         }
     }
 
+    /// Downloads an offered SoundFont bank (unless it is here or on its way).
+    pub(crate) fn start_sf2_install(&mut self, i: usize) {
+        let Some(offer) = crate::sf2_lib::OFFERS.get(i) else { return };
+        let busy = self.sf2_installs.get(&i).and_then(|s| s.lock().ok().map(|s| matches!(*s, crate::sf2_lib::State::Downloading { .. }))).unwrap_or(false);
+        if busy || crate::sf2_lib::installed(offer).is_some() {
+            return;
+        }
+        self.sf2_installs.insert(i, crate::sf2_lib::start(i));
+        self.toast(format!("Downloading {} ({} MB)...", offer.name, offer.bytes / 1_000_000));
+    }
+
+    /// What the SF2 Player's display offers to get, and how far each is.
+    pub(crate) fn sf2_offers(&self) -> Vec<crate::ui::faces::sf2::OfferView> {
+        use crate::ui::faces::sf2::{OfferState, OfferView};
+        crate::sf2_lib::OFFERS
+            .iter()
+            .enumerate()
+            .map(|(i, o)| {
+                let state = match self.sf2_installs.get(&i).and_then(|s| s.lock().ok().map(|s| s.clone())) {
+                    Some(crate::sf2_lib::State::Downloading { bytes }) => OfferState::Downloading(bytes as f32 / o.bytes.max(1) as f32),
+                    Some(crate::sf2_lib::State::Failed(_)) => OfferState::Failed,
+                    _ if crate::sf2_lib::installed(o).is_some() => OfferState::Here,
+                    _ => OfferState::Get,
+                };
+                OfferView { name: o.name, mb: o.bytes / 1_000_000, state }
+            })
+            .collect()
+    }
+
+    /// The bank a new SF2 Player starts on: the one MIDI files play with, a
+    /// downloaded one, or one opened before.
+    pub(crate) fn default_sf2(&mut self) -> Option<krabton_engine::dsp::sf2::Sf2Ref> {
+        let mut paths: Vec<PathBuf> = self.prefs.gm_bank.iter().cloned().collect();
+        paths.extend(crate::sf2_lib::all_installed());
+        paths.extend(self.prefs.sf2_banks.iter().cloned());
+        let path = paths.into_iter().find(|p| p.is_file())?;
+        self.sf2_bank(&path)
+    }
+
+    /// A bank arrived: every SF2 Player without one plays it, and MIDI files
+    /// play with it if they had no bank.
+    fn poll_sf2_installs(&mut self) {
+        let mut done = Vec::new();
+        for (&i, s) in &self.sf2_installs {
+            match s.lock().map(|s| s.clone()) {
+                Ok(crate::sf2_lib::State::Ready(bank)) => done.push((i, Ok(bank))),
+                Ok(crate::sf2_lib::State::Failed(e)) if !e.is_empty() => done.push((i, Err(e))),
+                _ => {}
+            }
+        }
+        for (i, result) in done {
+            match result {
+                Ok(bank) => {
+                    self.sf2_installs.remove(&i);
+                    let Some(path) = bank.path.clone() else { continue };
+                    if self.sf2_open.len() >= 4 {
+                        self.sf2_open.remove(0);
+                    }
+                    self.sf2_open.push(bank.clone());
+                    if !self.prefs.sf2_banks.contains(&path) {
+                        self.prefs.sf2_banks.push(path.clone());
+                    }
+                    let mut midi = "";
+                    if self.prefs.gm_bank.as_ref().is_none_or(|p| !p.is_file()) && bank.is_gm() {
+                        self.prefs.gm_bank = Some(path);
+                        midi = "; MIDI files play with it";
+                    }
+                    self.prefs.save();
+                    let first = bank.preset(0, 0).or_else(|| bank.presets.first()).map(|p| (p.bank, p.patch, p.name.clone()));
+                    for t in self.project.tracks.iter_mut() {
+                        if let Some(Instrument::Sf2 { font, bank: b, patch, preset, .. }) = t.instrument.as_mut() {
+                            if font.as_ref().is_none_or(|f| f.is_missing()) {
+                                if let Some((nb, np, name)) = &first {
+                                    let named = t.name == "SF2 Player" || t.name == *preset;
+                                    *font = Some(bank.clone());
+                                    (*b, *patch, *preset) = (*nb, *np, name.clone());
+                                    if named {
+                                        t.name = name.clone();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    self.toast(format!("{} is here: {} presets{midi}", bank.name, bank.presets.len()));
+                }
+                // The display shows it failed (and offers it again); say why once.
+                Err(e) => {
+                    if let Some(s) = self.sf2_installs.get(&i) {
+                        if let Ok(mut st) = s.lock() {
+                            *st = crate::sf2_lib::State::Failed(String::new());
+                        }
+                    }
+                    if !e.is_empty() {
+                        self.toast(e);
+                    }
+                }
+            }
+        }
+    }
+
     fn poll_piano_install(&mut self) {
         let Some(state) = self.piano_install.clone() else { return };
         let ready = state.lock().map(|s| *s == crate::piano_lib::InstallState::Ready).unwrap_or(false);
@@ -2855,6 +2964,13 @@ impl App {
                     }
                 }
                 "gmbank" => self.prefs.gm_bank = Some(PathBuf::from(arg.trim())),
+                // sf2get=N: download offered bank N; sf2empty: a new SF2 Player as from the
+                // browser (on a bank when there is one); sf2none: one without a bank.
+                "sf2get" => self.start_sf2_install(nums.first().copied().unwrap_or(0)),
+                "sf2empty" => self.apply_item(&BrowserItem::Sf2Player, DropTarget::NewTrack),
+                "sf2none" => {
+                    self.add_midi_track(Some(Instrument::sf2(None, 0, 0)));
+                }
                 // midifile=PATH: a MIDI file as if double-clicked in the browser.
                 "midifile" => self.apply_item(&BrowserItem::MidiFile(PathBuf::from(arg.trim())), DropTarget::NewTrack),
                 // toclip=DEVICE,BARS: the selected track's MIDI device's To Clip.
@@ -3570,6 +3686,7 @@ impl eframe::App for App {
         self.poll_piano_install();
         self.poll_orchestra_installs();
         self.poll_drum_install();
+        self.poll_sf2_installs();
         self.poll_recording();
         self.tape_frame();
         self.poll_export();

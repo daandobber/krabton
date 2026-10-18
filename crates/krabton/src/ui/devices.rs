@@ -1122,13 +1122,28 @@ impl App {
                     Instrument::Sf2 { params, font, bank, patch, preset } => {
                         let mut asked = super::faces::sf2::Asked::default();
                         let for_midi = font.as_ref().and_then(|f| f.path.as_ref()).is_some_and(|p| self.prefs.gm_bank.as_ref() == Some(p));
+                        let offers = self.sf2_offers();
                         if crate::skin::current().is_some() {
-                            super::faces::sf2::panel(ui, Id::new(("sf2", track_id)), font.as_ref(), *bank, *patch, params, for_midi, h - 36.0, mv.as_mut(), &mut asked);
+                            super::faces::sf2::panel(ui, Id::new(("sf2", track_id)), font.as_ref(), *bank, *patch, params, for_midi, &offers, h - 36.0, mv.as_mut(), &mut asked);
                         } else {
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new(font.as_ref().map_or("No bank", |f| f.name.as_str())).strong().color(TEXT));
                                 if ui.button("Open...").on_hover_text("Open a SoundFont 2 bank (.sf2)").clicked() {
                                     asked.open = true;
+                                }
+                                if font.as_ref().is_none_or(|f| f.presets.is_empty()) {
+                                    use super::faces::sf2::OfferState;
+                                    for (k, o) in offers.iter().enumerate() {
+                                        let label = match o.state {
+                                            OfferState::Get => format!("Get {} ({} MB)", o.name, o.mb),
+                                            OfferState::Here => o.name.to_string(),
+                                            OfferState::Downloading(f) => format!("{} {:.0}%", o.name, f * 100.0),
+                                            OfferState::Failed => format!("{}: try again", o.name),
+                                        };
+                                        if ui.button(label).clicked() && !matches!(o.state, OfferState::Downloading(_)) {
+                                            asked.get = Some(k);
+                                        }
+                                    }
                                 }
                                 if let Some(f) = font.as_ref() {
                                     ui.menu_button(if preset.is_empty() { "Presets" } else { preset.as_str() }, |ui| super::faces::sf2::preset_menu(ui, f, *bank, *patch, &mut asked.pick));
@@ -1148,6 +1163,13 @@ impl App {
                         }
                         if let Some(BrowserItem::Sf2 { path, bank: b, patch: p, .. }) = asked.dropped.take() {
                             new_bank = self.sf2_bank(&path).map(|f| (f, Some((b, p))));
+                        }
+                        // An offered bank: played when it is here, else fetched (it comes to this player when it arrives).
+                        if let Some(k) = asked.get {
+                            match crate::sf2_lib::OFFERS.get(k).and_then(crate::sf2_lib::installed) {
+                                Some(path) => new_bank = self.sf2_bank(&path).map(|f| (f, None)),
+                                None => self.start_sf2_install(k),
+                            }
                         }
                         if let Some((f, at)) = new_bank {
                             let at = at.or_else(|| f.preset(*bank, *patch).map(|_| (*bank, *patch))).or_else(|| f.presets.first().map(|p| (p.bank, p.patch)));
