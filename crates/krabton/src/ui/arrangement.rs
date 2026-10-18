@@ -824,7 +824,12 @@ impl App {
         rect_fill(&p, r, 2.0, shade(base, 0.35));
         let head = Rect::from_min_size(r.min, vec2(r.width(), 13.0));
         rect_fill(&p, head, 2.0, if playing_here { base } else { shade(base, 0.85) });
-        text_in(&p, head, &ac.clip.name, small(), text_on(base));
+        let mut name_box = head;
+        if ac.clip.sound.is_some() && head.width() > 40.0 {
+            name_box.max.x -= 16.0;
+            crate::ui::session::sound_mark(&p, pos2(head.right() - 9.0, head.center().y + 1.0), text_on(base));
+        }
+        text_in(&p, name_box, &ac.clip.name, small(), text_on(base));
         let body = Rect::from_min_max(pos2(r.left(), head.bottom() + 1.0), pos2(r.right(), r.bottom() - 2.0));
         let pc = p.with_clip_rect(body.intersect(lane));
         let origin = ac.start - ac.offset;
@@ -891,11 +896,13 @@ impl App {
 
         let name = ac.clip.name.clone();
         let is_audio = matches!(ac.clip.content, ClipContent::Audio(_));
+        let keeps = ac.clip.sound.is_some();
         resp.context_menu(|ui| {
             if ui.button("Rename").clicked() {
                 self.renaming = Some((RenameTarget::Clip(sel), name.clone()));
                 ui.close();
             }
+            crate::ui::session::sound_menu(self, ui, sel, keeps);
             if ui.button("Duplicate      Ctrl+D").clicked() {
                 self.duplicate_clip(sel);
                 ui.close();

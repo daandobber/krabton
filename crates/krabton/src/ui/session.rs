@@ -419,13 +419,13 @@ impl App {
         let in_tri = resp.interact_pointer_pos().or(resp.hover_pos()).map(|p| p.x < r.left() + TRI_W).unwrap_or(false);
         let p = ui.painter().clone();
         let tri_center = pos2(r.left() + TRI_W * 0.5, r.center().y);
-        let clip_info = track.slots[s].as_ref().map(|c| (c.name.clone(), c.color, c.length, c.is_midi()));
+        let clip_info = track.slots[s].as_ref().map(|c| (c.name.clone(), c.color, c.length, c.sound.is_some()));
         let armed = track.arm;
         let kind = track.kind;
         let spb = status.sample_rate.load() as f64 * 60.0 / self.project.bpm.max(1.0);
         let take = self.take_on(track.id, crate::recording::TakeTarget::Slot(s)).map(|t| (t.beats(spb), t.end.is_some(), t.start));
 
-        if let Some((name, color, length, _)) = &clip_info {
+        if let Some((name, color, length, keeps)) = &clip_info {
             let base = rgb(*color);
             let fill = if playing { base } else { shade(base, 0.72) };
             rect_fill(&p, r, 2.0, fill);
@@ -447,7 +447,12 @@ impl App {
                 shade(text_on(fill), 0.9)
             };
             play_icon(&p, tri_center, 10.0, tri_col);
-            let name_rect = Rect::from_min_max(pos2(r.left() + TRI_W, r.top()), r.max);
+            let mut name_rect = Rect::from_min_max(pos2(r.left() + TRI_W, r.top()), r.max);
+            if *keeps {
+                // It keeps its own sound: a knob.
+                name_rect.max.x -= 16.0;
+                sound_mark(&p, pos2(r.right() - 9.0, r.center().y), text_on(fill));
+            }
             text_in(&p, name_rect, name, small(), text_on(fill));
             if playing {
                 let pos = ts.clip_pos.load().max(0.0);
@@ -545,11 +550,12 @@ impl App {
         }
         let sel = ClipSel::Slot { track: i, scene: s };
         resp.context_menu(|ui| {
-            if let Some((name, ..)) = &clip_info {
+            if let Some((name, _, _, keeps)) = &clip_info {
                 if ui.button("Launch").clicked() {
                     self.cmd(Command::LaunchClip { track: track_id, slot: s });
                     ui.close();
                 }
+                sound_menu(self, ui, sel, *keeps);
                 if ui.button("Rename").clicked() {
                     self.renaming = Some((RenameTarget::Clip(sel), name.clone()));
                     ui.close();
@@ -893,5 +899,30 @@ pub fn pan_text(pan: f32) -> String {
         0 => "C".into(),
         p if p < 0 => format!("{}L", -p),
         p => format!("{p}R"),
+    }
+}
+
+/// The mark of a clip that keeps its track's sound: a little knob.
+pub(crate) fn sound_mark(p: &egui::Painter, c: egui::Pos2, col: egui::Color32) {
+    let stroke = Stroke::new(1.4_f32, col);
+    p.circle_stroke(c, 4.5, stroke);
+    p.line_segment([c, c + vec2(2.4, -2.6)], stroke);
+    for a in [0.75f32, 2.25] {
+        let d = vec2((a * std::f32::consts::PI).cos(), (a * std::f32::consts::PI).sin());
+        p.line_segment([c + d * 6.0, c + d * 7.5], stroke);
+    }
+}
+
+/// What a clip menu offers for the sound a clip keeps.
+pub(crate) fn sound_menu(app: &mut App, ui: &mut Ui, sel: ClipSel, keeps: bool) {
+    let label = if keeps { "Keep the Sound Anew" } else { "Keep the Track's Sound" };
+    let tip = "The clip remembers the track's instrument, MIDI effects and audio effects with all their settings: when it starts, the track plays with that sound (on the very beat), and while it plays what you change is kept in it";
+    if ui.button(label).on_hover_text(tip).clicked() {
+        app.keep_sound_in_clip(sel);
+        ui.close();
+    }
+    if keeps && ui.button("Forget Its Sound").on_hover_text("The clip plays with whatever sound the track has").clicked() {
+        app.forget_clip_sound(sel);
+        ui.close();
     }
 }

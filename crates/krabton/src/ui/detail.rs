@@ -329,6 +329,35 @@ impl App {
             }
         });
 
+        // The track's sound, kept in the clip.
+        let tip = "The clip remembers the track's instrument, MIDI effects and audio effects with all their settings: when it starts, the track plays with that sound (on the very beat), and while it plays what you change is kept in it";
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Sound").small().color(TEXT_DIM));
+            match clip.sound.as_deref() {
+                Some(snd) => {
+                    let what = snd.instrument.as_ref().map_or("no instrument", |i| i.kind_name());
+                    let fx = snd.devices.len() + snd.midi_devices.len();
+                    let text = if fx == 0 { format!("kept: {what}") } else { format!("kept: {what} + {fx} fx") };
+                    ui.label(RichText::new(text).small().color(accent_now())).on_hover_text(tip);
+                }
+                None => {
+                    if ui.small_button("Keep the track's sound").on_hover_text(tip).clicked() {
+                        self.keep_sound_in_clip(sel);
+                    }
+                }
+            }
+        });
+        if clip.sound.is_some() {
+            ui.horizontal(|ui| {
+                if ui.small_button("Keep anew").on_hover_text("Keep the track's sound as it is now").clicked() {
+                    self.keep_sound_in_clip(sel);
+                }
+                if ui.small_button("Forget").on_hover_text("The clip plays with whatever sound the track has").clicked() {
+                    self.forget_clip_sound(sel);
+                }
+            });
+        }
+
         match &clip.content {
             ClipContent::Midi { notes } => {
                 ui.horizontal(|ui| {

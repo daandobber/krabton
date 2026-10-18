@@ -300,6 +300,38 @@ pub struct Clip {
     /// envelopes): drawn, or recorded from the knobs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub envelopes: Vec<Envelope>,
+    /// The track's sound kept in the clip: when the clip starts, the track
+    /// plays with it (and while it plays, what changes on the track goes
+    /// into it). None: the track sounds as it does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sound: Option<Box<Sound>>,
+}
+
+/// A track's sound: its MIDI effects, its instrument and its audio effects,
+/// with all their settings.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Sound {
+    #[serde(default)]
+    pub midi_devices: Vec<MidiDevice>,
+    #[serde(default)]
+    pub instrument: Option<Instrument>,
+    #[serde(default)]
+    pub devices: Vec<Device>,
+}
+
+/// A track's sound as the engine reads it: its own or a clip's.
+#[derive(Clone, Copy, Debug)]
+pub struct SoundRef<'a> {
+    pub midi_devices: &'a [MidiDevice],
+    pub instrument: Option<&'a Instrument>,
+    pub devices: &'a [Device],
+}
+
+impl SoundRef<'_> {
+    /// Whether it is `s`, setting for setting.
+    pub fn is(&self, s: &Sound) -> bool {
+        self.instrument == s.instrument.as_ref() && self.midi_devices == s.midi_devices.as_slice() && self.devices == s.devices.as_slice()
+    }
 }
 
 /// A clip envelope: what it moves, and the line it follows.
@@ -398,7 +430,7 @@ pub fn db_to_fader_pos(db: f32) -> f32 {
 
 impl Clip {
     pub fn new_midi(id: u64, name: impl Into<String>, color: Rgb, length: f64) -> Self {
-        Self { id, name: name.into(), color, length, content: ClipContent::Midi { notes: Vec::new() }, envelopes: Vec::new() }
+        Self { id, name: name.into(), color, length, content: ClipContent::Midi { notes: Vec::new() }, envelopes: Vec::new(), sound: None }
     }
 
     /// Creates an audio clip, guessing the source tempo the way Live's
@@ -423,7 +455,7 @@ impl Clip {
         }
         let audio = AudioClip { sample: sample.clone(), bpm, gain_db: 0.0 };
         let length = audio.sample_beats().max(0.25);
-        Self { id, name: sample.name.clone(), color, length, content: ClipContent::Audio(audio), envelopes: Vec::new() }
+        Self { id, name: sample.name.clone(), color, length, content: ClipContent::Audio(audio), envelopes: Vec::new(), sound: None }
     }
 
     pub fn is_midi(&self) -> bool {
@@ -1098,6 +1130,62 @@ pub struct Track {
 }
 
 impl Track {
+    /// Its sound now, to keep in a clip; None while a CLAP plug-in is part of
+    /// it (a plug-in keeps its own state, which a clip can't switch).
+    pub fn sound_now(&self) -> Option<Sound> {
+        let plugin = matches!(self.instrument, Some(Instrument::Plugin(_))) || self.devices.iter().any(|d| d.plugin.is_some());
+        (!plugin).then(|| Sound { midi_devices: self.midi_devices.clone(), instrument: self.instrument.clone(), devices: self.devices.clone() })
+    }
+
+    /// The sound kept in its clip `clip` (a session or an arrangement clip).
+    pub fn clip_sound(&self, clip: u64) -> Option<&Sound> {
+        let c = self.slots.iter().flatten().find(|c| c.id == clip).or_else(|| self.arrangement.iter().map(|a| &a.clip).find(|c| c.id == clip));
+        c.and_then(|c| c.sound.as_deref())
+    }
+
+    /// The same, to change.
+    pub fn clip_sound_mut(&mut self, clip: u64) -> Option<&mut Sound> {
+        let c = match self.slots.iter_mut().flatten().find(|c| c.id == clip) {
+            Some(c) => Some(c),
+            None => self.arrangement.iter_mut().map(|a| &mut a.clip).find(|c| c.id == clip),
+        };
+        c.and_then(|c| c.sound.as_deref_mut())
+    }
+
+    /// The sound it plays with: the one in clip `from` if that has one, else its own.
+    pub fn sound(&self, from: Option<u64>) -> SoundRef<'_> {
+        match from.and_then(|id| self.clip_sound(id)) {
+            Some(s) => SoundRef { midi_devices: &s.midi_devices, instrument: s.instrument.as_ref(), devices: &s.devices },
+            None => SoundRef { midi_devices: &self.midi_devices, instrument: self.instrument.as_ref(), devices: &self.devices },
+        }
+    }
+
+    /// Takes the sound kept in clip `clip`. Returns whether anything changed.
+    pub fn take_clip_sound(&mut self, clip: u64) -> bool {
+        let Some(s) = self.clip_sound(clip) else { return false };
+        if self.sound(None).is(s) {
+            return false;
+        }
+        let s = s.clone();
+        self.midi_devices = s.midi_devices;
+        self.instrument = s.instrument;
+        self.devices = s.devices;
+        true
+    }
+
+    /// Keeps its sound in clip `clip` (which has one already). Returns whether it changed.
+    pub fn update_clip_sound(&mut self, clip: u64) -> bool {
+        match self.clip_sound(clip) {
+            Some(s) if !self.sound(None).is(s) => {}
+            _ => return false,
+        }
+        let Some(now) = self.sound_now() else { return false };
+        if let Some(s) = self.clip_sound_mut(clip) {
+            *s = now;
+        }
+        true
+    }
+
     /// The automation line of `target`, if it has one.
     pub fn automation_of(&self, target: crate::modulation::ModTarget) -> Option<&Envelope> {
         self.automation.iter().find(|e| e.target == target)
@@ -1553,6 +1641,58 @@ impl Project {
         self.tracks.len() - 1
     }
 
+    /// A device in a clip's sound has an id of its own track: one that is
+    /// another track's (a clip moved or copied to another track) is renewed,
+    /// the same way in all that track's clips. Returns whether any changed.
+    pub fn fix_clip_sound_ids(&mut self) -> bool {
+        use std::collections::HashMap;
+        // Whose each id is: the tracks' own devices first, then their clips', in order.
+        let mut owner: HashMap<u64, usize> = HashMap::new();
+        for (ti, t) in self.tracks.iter().enumerate() {
+            for d in &t.devices {
+                owner.insert(d.id, ti);
+                for c in &d.children {
+                    owner.insert(c.id, ti);
+                }
+            }
+            for d in &t.midi_devices {
+                owner.insert(d.id, ti);
+            }
+        }
+        for devs in self.returns.iter().map(|r| &r.devices).chain(std::iter::once(&self.master.devices)) {
+            for d in devs {
+                owner.insert(d.id, usize::MAX);
+            }
+        }
+        let mut next = self.next_id;
+        let mut changed = false;
+        for (ti, t) in self.tracks.iter_mut().enumerate() {
+            let mut renewed: HashMap<u64, u64> = HashMap::new();
+            let sounds = t.slots.iter_mut().flatten().chain(t.arrangement.iter_mut().map(|a| &mut a.clip)).filter_map(|c| c.sound.as_deref_mut());
+            for s in sounds {
+                let ids = s.devices.iter_mut().flat_map(|d| std::iter::once(&mut d.id).chain(d.children.iter_mut().map(|c| &mut c.id))).chain(s.midi_devices.iter_mut().map(|d| &mut d.id));
+                for id in ids {
+                    match owner.get(id) {
+                        Some(&o) if o != ti => {
+                            *id = *renewed.entry(*id).or_insert_with(|| {
+                                next += 1;
+                                next - 1
+                            });
+                            owner.insert(*id, ti);
+                            changed = true;
+                        }
+                        Some(_) => {}
+                        None => {
+                            owner.insert(*id, ti);
+                        }
+                    }
+                }
+            }
+        }
+        self.next_id = next;
+        changed
+    }
+
     /// Copy of a clip with fresh ids, for duplicating.
     pub fn fresh_clip(&mut self, clip: &Clip) -> Clip {
         let mut c = clip.clone();
@@ -1565,14 +1705,29 @@ impl Project {
         t.id = self.alloc_id();
         t.name = format!("{} copy", t.name);
         t.arm = false;
+        // A device gets one new id, in the track and in the sounds of its clips.
+        let mut ids = std::collections::HashMap::new();
+        let mut renew = |id: &mut u64, p: &mut Project| *id = *ids.entry(*id).or_insert_with(|| p.alloc_id());
         for d in &mut t.devices {
-            d.id = self.alloc_id();
+            renew(&mut d.id, self);
             for c in &mut d.children {
-                c.id = self.alloc_id();
+                renew(&mut c.id, self);
             }
         }
         for d in &mut t.midi_devices {
-            d.id = self.alloc_id();
+            renew(&mut d.id, self);
+        }
+        let sounds = t.slots.iter_mut().flatten().chain(t.arrangement.iter_mut().map(|a| &mut a.clip)).filter_map(|c| c.sound.as_deref_mut());
+        for s in sounds {
+            for d in &mut s.devices {
+                renew(&mut d.id, self);
+                for c in &mut d.children {
+                    renew(&mut c.id, self);
+                }
+            }
+            for d in &mut s.midi_devices {
+                renew(&mut d.id, self);
+            }
         }
         if let Some(Instrument::Plugin(p)) = &mut t.instrument {
             p.instance = self.alloc_id();
@@ -1723,6 +1878,85 @@ impl Project {
                 }
             }
         };
+        let fix_instrument = |inst: &mut Option<Instrument>, max_id: &mut u64| {
+                // Names that changed.
+                match &mut *inst {
+                    Some(Instrument::Drums { kit, .. }) => *kit = drums::current_name(kit).to_string(),
+                    Some(Instrument::Analog { preset, .. } | Instrument::Calculator { preset, .. } | Instrument::Micro { preset, .. }) => {
+                        if let Some(n) = renamed_preset(preset) {
+                            *preset = n.to_string();
+                        }
+                    }
+                    _ => {}
+                }
+                match &mut *inst {
+                    Some(Instrument::Synth { params, .. }) => params::fix_len(params, synth::SPECS),
+                    Some(Instrument::Sampler { params, .. }) => params::fix_len(params, sampler::SPECS),
+                    Some(Instrument::Macro { params, .. }) => params::fix_len(params, macro_osc::SPECS),
+                    Some(Instrument::Braids { params, .. }) => params::fix_len(params, braids_synth::SPECS),
+                    Some(Instrument::Elements { params, .. }) => params::fix_len(params, elements_synth::SPECS),
+                    Some(Instrument::Analog { params, .. }) => params::fix_len(params, analog::SPECS),
+                    Some(Instrument::Shakers { params, .. }) => params::fix_len(params, shaker_synth::SPECS),
+                    Some(Instrument::Modular { params, patch, .. }) => {
+                        params::fix_len(params, crate::modular::SPECS);
+                        patch.sanitize();
+                    }
+                    Some(Instrument::Voice { params, .. }) => params::fix_len(params, stk_voice::SPECS),
+                    Some(Instrument::Mallets { params, .. }) => params::fix_len(params, stk_mallets::SPECS),
+                    Some(Instrument::Strings { params, .. }) => params::fix_len(params, stk_strings::SPECS),
+                    Some(Instrument::Winds { params, .. }) => params::fix_len(params, stk_winds::SPECS),
+                    Some(Instrument::Organ { params, .. }) => params::fix_len(params, organ::SPECS),
+                    Some(Instrument::Rings { params, .. }) => params::fix_len(params, rings_synth::SPECS),
+                    Some(Instrument::Monk { params, .. }) => params::fix_len(params, crate::dsp::monk::SPECS),
+                    Some(Instrument::Piano { params, .. }) => params::fix_len(params, crate::piano::SPECS),
+                    Some(Instrument::Bassline { params, .. }) => params::fix_len(params, crate::dsp::bassline::SPECS),
+                    Some(Instrument::Mono101 { params, .. }) => params::fix_len(params, crate::dsp::mono101::SPECS),
+                    Some(Instrument::Drone { params, .. }) => params::fix_len(params, crate::dsp::drone::SPECS),
+                    Some(Instrument::Waves { params, .. }) => params::fix_len(params, crate::dsp::waves::SPECS),
+                    Some(Instrument::Guitar { params, .. }) => params::fix_len(params, crate::dsp::guitar::SPECS),
+                    Some(Instrument::WindChimes { params, .. }) => params::fix_len(params, crate::dsp::wind_chimes::SPECS),
+                    Some(Instrument::BeadsSynth { params, .. }) => params::fix_len(params, crate::dsp::beads_synth::SPECS),
+                    Some(Instrument::Birds { params, .. }) => params::fix_len(params, crate::dsp::birds::SPECS),
+                    Some(Instrument::Nature { params, .. }) => params::fix_len(params, crate::dsp::nature::SPECS),
+                    Some(Instrument::PanFlute { params, .. }) => params::fix_len(params, crate::dsp::pan_flute::SPECS),
+                    Some(Instrument::Melodica { params, .. }) => params::fix_len(params, crate::dsp::melodica::SPECS),
+                    Some(Instrument::Harmonica { params, .. }) => params::fix_len(params, crate::dsp::harmonica::SPECS),
+                    Some(Instrument::Calculator { params, .. }) => params::fix_len(params, crate::dsp::calculator::SPECS),
+                    Some(Instrument::Console { params, .. }) => params::fix_len(params, crate::dsp::console::SPECS),
+                    Some(Instrument::Handheld { params, .. }) => params::fix_len(params, crate::dsp::handheld::SPECS),
+                    Some(Instrument::Micro { params, .. }) => params::fix_len(params, crate::dsp::micro::SPECS),
+                    Some(Instrument::Warp { params, .. }) => params::fix_len(params, crate::dsp::warp::SPECS),
+                    Some(Instrument::Hybrid { params, .. }) => params::fix_len(params, crate::dsp::hybrid::SPECS),
+                    Some(Instrument::ChipFm { params, .. }) => params::fix_len(params, crate::dsp::chipfm::SPECS),
+                    Some(Instrument::V2 { params, .. }) => params::fix_len(params, crate::dsp::v2::SPECS),
+                    Some(Instrument::Oidos { params, .. }) => params::fix_len(params, crate::dsp::oidos::SPECS),
+                    Some(Instrument::Quartet { params, .. }) => params::fix_len(params, crate::dsp::quartet::SPECS),
+                    Some(Instrument::Orchestra { params, .. }) => params::fix_len(params, crate::orchestra::SPECS),
+                    Some(Instrument::Facet { params, .. }) => params::fix_len(params, crate::dsp::facet::SPECS),
+                    // Shakers became an instrument; their kits are the Drum Rack's.
+                    Some(Instrument::Drums { engine, .. }) if *engine == drums::DrumEngine::Shakers => *engine = drums::DrumEngine::Rack,
+                    Some(Instrument::Plugin(p)) => *max_id = (*max_id).max(p.instance + 1),
+                    Some(Instrument::Fm { voice, params, .. }) => {
+                        params::fix_len(params, fm::SPECS);
+                        let fixed = Dx7Voice::from_slice(voice).unwrap_or_else(dx7::init_voice);
+                        *voice = fixed.0.to_vec();
+                    }
+                    _ => {}
+                }
+        };
+        // The sounds kept in clips: the same, and without plug-ins (a clip can't switch them).
+        let fix_sound = |snd: &mut Sound, max_id: &mut u64| {
+            snd.devices.retain(|d| d.plugin.is_none());
+            fix_devices(&mut snd.devices, max_id);
+            for d in snd.midi_devices.iter_mut() {
+                params::fix_len(&mut d.params, d.kind.specs());
+                *max_id = (*max_id).max(d.id + 1);
+            }
+            if matches!(snd.instrument, Some(Instrument::Plugin(_))) {
+                snd.instrument = None;
+            }
+            fix_instrument(&mut snd.instrument, max_id);
+        };
         for t in &mut self.tracks {
             t.slots.resize(n_scenes, None);
             t.mixer.sends.resize(n_returns, 0.0);
@@ -1732,73 +1966,13 @@ impl Project {
                 params::fix_len(&mut d.params, d.kind.specs());
                 max_id = max_id.max(d.id + 1);
             }
-            // Names that changed.
-            match &mut t.instrument {
-                Some(Instrument::Drums { kit, .. }) => *kit = drums::current_name(kit).to_string(),
-                Some(Instrument::Analog { preset, .. } | Instrument::Calculator { preset, .. } | Instrument::Micro { preset, .. }) => {
-                    if let Some(n) = renamed_preset(preset) {
-                        *preset = n.to_string();
-                    }
-                }
-                _ => {}
-            }
-            match &mut t.instrument {
-                Some(Instrument::Synth { params, .. }) => params::fix_len(params, synth::SPECS),
-                Some(Instrument::Sampler { params, .. }) => params::fix_len(params, sampler::SPECS),
-                Some(Instrument::Macro { params, .. }) => params::fix_len(params, macro_osc::SPECS),
-                Some(Instrument::Braids { params, .. }) => params::fix_len(params, braids_synth::SPECS),
-                Some(Instrument::Elements { params, .. }) => params::fix_len(params, elements_synth::SPECS),
-                Some(Instrument::Analog { params, .. }) => params::fix_len(params, analog::SPECS),
-                Some(Instrument::Shakers { params, .. }) => params::fix_len(params, shaker_synth::SPECS),
-                Some(Instrument::Modular { params, patch, .. }) => {
-                    params::fix_len(params, crate::modular::SPECS);
-                    patch.sanitize();
-                }
-                Some(Instrument::Voice { params, .. }) => params::fix_len(params, stk_voice::SPECS),
-                Some(Instrument::Mallets { params, .. }) => params::fix_len(params, stk_mallets::SPECS),
-                Some(Instrument::Strings { params, .. }) => params::fix_len(params, stk_strings::SPECS),
-                Some(Instrument::Winds { params, .. }) => params::fix_len(params, stk_winds::SPECS),
-                Some(Instrument::Organ { params, .. }) => params::fix_len(params, organ::SPECS),
-                Some(Instrument::Rings { params, .. }) => params::fix_len(params, rings_synth::SPECS),
-                Some(Instrument::Monk { params, .. }) => params::fix_len(params, crate::dsp::monk::SPECS),
-                Some(Instrument::Piano { params, .. }) => params::fix_len(params, crate::piano::SPECS),
-                Some(Instrument::Bassline { params, .. }) => params::fix_len(params, crate::dsp::bassline::SPECS),
-                Some(Instrument::Mono101 { params, .. }) => params::fix_len(params, crate::dsp::mono101::SPECS),
-                Some(Instrument::Drone { params, .. }) => params::fix_len(params, crate::dsp::drone::SPECS),
-                Some(Instrument::Waves { params, .. }) => params::fix_len(params, crate::dsp::waves::SPECS),
-                Some(Instrument::Guitar { params, .. }) => params::fix_len(params, crate::dsp::guitar::SPECS),
-                Some(Instrument::WindChimes { params, .. }) => params::fix_len(params, crate::dsp::wind_chimes::SPECS),
-                Some(Instrument::BeadsSynth { params, .. }) => params::fix_len(params, crate::dsp::beads_synth::SPECS),
-                Some(Instrument::Birds { params, .. }) => params::fix_len(params, crate::dsp::birds::SPECS),
-                Some(Instrument::Nature { params, .. }) => params::fix_len(params, crate::dsp::nature::SPECS),
-                Some(Instrument::PanFlute { params, .. }) => params::fix_len(params, crate::dsp::pan_flute::SPECS),
-                Some(Instrument::Melodica { params, .. }) => params::fix_len(params, crate::dsp::melodica::SPECS),
-                Some(Instrument::Harmonica { params, .. }) => params::fix_len(params, crate::dsp::harmonica::SPECS),
-                Some(Instrument::Calculator { params, .. }) => params::fix_len(params, crate::dsp::calculator::SPECS),
-                Some(Instrument::Console { params, .. }) => params::fix_len(params, crate::dsp::console::SPECS),
-                Some(Instrument::Handheld { params, .. }) => params::fix_len(params, crate::dsp::handheld::SPECS),
-                Some(Instrument::Micro { params, .. }) => params::fix_len(params, crate::dsp::micro::SPECS),
-                Some(Instrument::Warp { params, .. }) => params::fix_len(params, crate::dsp::warp::SPECS),
-                Some(Instrument::Hybrid { params, .. }) => params::fix_len(params, crate::dsp::hybrid::SPECS),
-                Some(Instrument::ChipFm { params, .. }) => params::fix_len(params, crate::dsp::chipfm::SPECS),
-                Some(Instrument::V2 { params, .. }) => params::fix_len(params, crate::dsp::v2::SPECS),
-                Some(Instrument::Oidos { params, .. }) => params::fix_len(params, crate::dsp::oidos::SPECS),
-                Some(Instrument::Quartet { params, .. }) => params::fix_len(params, crate::dsp::quartet::SPECS),
-                Some(Instrument::Orchestra { params, .. }) => params::fix_len(params, crate::orchestra::SPECS),
-                Some(Instrument::Facet { params, .. }) => params::fix_len(params, crate::dsp::facet::SPECS),
-                // Shakers became an instrument; their kits are the Drum Rack's.
-                Some(Instrument::Drums { engine, .. }) if *engine == drums::DrumEngine::Shakers => *engine = drums::DrumEngine::Rack,
-                Some(Instrument::Plugin(p)) => max_id = max_id.max(p.instance + 1),
-                Some(Instrument::Fm { voice, params, .. }) => {
-                    params::fix_len(params, fm::SPECS);
-                    let fixed = Dx7Voice::from_slice(voice).unwrap_or_else(dx7::init_voice);
-                    *voice = fixed.0.to_vec();
-                }
-                _ => {}
-            }
+            fix_instrument(&mut t.instrument, &mut max_id);
             for c in t.slots.iter_mut().flatten() {
                 c.length = c.length.max(0.0625);
                 max_id = max_id.max(c.id + 1);
+                if let Some(snd) = c.sound.as_deref_mut() {
+                    fix_sound(snd, &mut max_id);
+                }
                 // Notes hidden under others of their pitch (older recordings) go.
                 if let Some(n) = c.notes_mut() {
                     tidy_notes(n);
@@ -1809,6 +1983,9 @@ impl Project {
                 a.clip.length = a.clip.length.max(0.0625);
                 if let Some(n) = a.clip.notes_mut() {
                     tidy_notes(n);
+                }
+                if let Some(snd) = a.clip.sound.as_deref_mut() {
+                    fix_sound(snd, &mut max_id);
                 }
                 max_id = max_id.max(a.id + 1).max(a.clip.id + 1);
             }
@@ -1888,6 +2065,61 @@ mod tidy_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn with_clip_sound() -> (Project, usize, u64) {
+        let mut p = crate::demo::demo_project();
+        let ti = 1;
+        let mut snd = p.tracks[ti].sound_now().expect("no plug-ins");
+        let rev = p.make_device(EffectKind::Reverb);
+        snd.devices.push(rev);
+        let clip = p.tracks[ti].slots[1].as_mut().expect("a second clip");
+        clip.sound = Some(Box::new(snd));
+        let id = clip.id;
+        (p, ti, id)
+    }
+
+    #[test]
+    fn a_clip_sound_is_saved_and_loaded() {
+        let (p, ti, clip) = with_clip_sound();
+        let json = serde_json::to_string(&p).expect("saves");
+        let mut back: Project = serde_json::from_str(&json).expect("loads");
+        back.sanitize();
+        assert_eq!(back.tracks[ti].clip_sound(clip), p.tracks[ti].clip_sound(clip));
+        // Clips without one save as they did.
+        let plain = serde_json::to_string(&p.tracks[0].slots[0]).expect("saves");
+        assert!(!plain.contains("sound"));
+        // A track takes it, and keeps what changes on it in the clip.
+        let mut t = back.tracks[ti].clone();
+        assert!(t.take_clip_sound(clip));
+        assert!(!t.take_clip_sound(clip), "already its own");
+        if let Some(d) = t.devices.last_mut() {
+            d.params[0] = 0.123;
+        }
+        assert!(t.update_clip_sound(clip));
+        assert_eq!(t.clip_sound(clip).and_then(|s| s.devices.last()).map(|d| d.params[0]), Some(0.123));
+    }
+
+    #[test]
+    fn a_duplicated_track_and_a_moved_clip_get_their_own_ids() {
+        let (mut p, ti, clip) = with_clip_sound();
+        let at = p.duplicate_track(ti).expect("duplicates");
+        let own: Vec<u64> = p.tracks[at].devices.iter().map(|d| d.id).collect();
+        let copy = p.tracks[at].slots[1].as_ref().and_then(|c| c.sound.as_deref()).expect("its clip keeps the sound").clone();
+        // The devices the track has are the same ones in its clip's sound (new ids, the same in both).
+        for id in &own {
+            assert!(copy.devices.iter().any(|d| d.id == *id));
+            assert!(!p.tracks[ti].devices.iter().any(|d| d.id == *id));
+        }
+        assert!(!p.fix_clip_sound_ids(), "nothing to fix");
+        // A clip moved to another track brings its sound with ids of that track.
+        let moved = p.tracks[ti].slots[1].clone();
+        p.tracks[0].slots[3] = moved;
+        assert!(p.fix_clip_sound_ids());
+        let theirs: Vec<u64> = p.tracks[0].slots[3].as_ref().and_then(|c| c.sound.as_deref()).map(|s| s.devices.iter().map(|d| d.id).collect()).unwrap_or_default();
+        let mine: Vec<u64> = p.tracks[ti].clip_sound(clip).map(|s| s.devices.iter().map(|d| d.id).collect()).unwrap_or_default();
+        assert!(!theirs.is_empty() && theirs.iter().all(|id| !mine.contains(id)));
+        assert!(!p.fix_clip_sound_ids(), "fixed once");
+    }
 
     #[test]
     fn an_old_glitch_sequencer_is_brought_up_to_date() {

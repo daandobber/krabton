@@ -395,8 +395,25 @@ impl Project {
         match target {
             ModTarget::Volume(t) | ModTarget::Pan(t) => has_track(t),
             ModTarget::Send { track, send } => self.tracks.iter().any(|t| t.id == track) && (send as usize) < self.returns.len(),
-            ModTarget::Param { owner, param } => self.owner_specs(owner).map(|s| (param as usize) < s.len()).unwrap_or(false),
+            ModTarget::Param { owner, param } => self.owner_specs(owner).map(|s| (param as usize) < s.len()).unwrap_or(false) || self.in_clip_sounds(owner, param as usize),
         }
+    }
+
+    /// Whether `owner`'s parameter `param` is in a sound kept in a clip (a
+    /// connection to it stays while another sound plays).
+    fn in_clip_sounds(&self, owner: ModOwner, param: usize) -> bool {
+        self.tracks.iter().any(|t| {
+            let clips = t.slots.iter().flatten().chain(t.arrangement.iter().map(|a| &a.clip));
+            clips.filter_map(|c| c.sound.as_deref()).any(|s| {
+                let specs = match owner {
+                    ModOwner::Instrument(id) if id == t.id => s.instrument.as_ref().and_then(instrument_specs),
+                    ModOwner::Device(id) => s.devices.iter().find(|d| d.id == id).map(|d| d.kind.specs()),
+                    ModOwner::MidiDevice(id) => s.midi_devices.iter().find(|d| d.id == id).map(|d| d.kind.specs()),
+                    _ => None,
+                };
+                specs.is_some_and(|sp| param < sp.len())
+            })
+        })
     }
 
     /// Drops routes whose source or target no longer exists. Returns true

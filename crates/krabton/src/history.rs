@@ -123,6 +123,8 @@ fn describe_track(a: &Track, b: &Track) -> String {
                         format!("Edit notes in {}", cy.name)
                     } else if cx.envelopes != cy.envelopes {
                         format!("Envelopes in {}", cy.name)
+                    } else if cx.sound.is_some() != cy.sound.is_some() {
+                        if cy.sound.is_some() { format!("Keep the sound in {}", cy.name) } else { format!("Forget the sound of {}", cy.name) }
                     } else {
                         format!("{t}: clip {}", cy.name)
                     };

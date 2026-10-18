@@ -876,6 +876,11 @@ struct TrackRt {
     playing: Option<PlayingClip>,
     queued: Option<Queued>,
     overridden: bool,
+    /// The clip whose sound it plays with, from the moment that clip started
+    /// until the project has made that sound the track's own.
+    sound_from: Option<u64>,
+    /// The arrangement clip under the playhead (0: none), to see one start.
+    arr_now: u64,
     offs: Vec<PendingOff>,
     events: Vec<Ev>,
     /// Scratch buffer for the MIDI effect chain.
@@ -936,6 +941,8 @@ impl TrackRt {
             playing: None,
             queued: None,
             overridden: false,
+            sound_from: None,
+            arr_now: 0,
             offs: Vec::with_capacity(512),
             events: Vec::with_capacity(1024),
             fx_buf: Vec::with_capacity(1024),
@@ -1538,6 +1545,11 @@ impl Engine {
         let slot = slot.filter(|&s| self.slot_has_clip(ti, s));
         let q = self.project.launch_quantize.beats(self.project.beats_per_bar);
         let session_pos = self.session_pos;
+        if immediate {
+            if let Some(clip) = slot.and_then(|s| self.slot_clip_id(ti, s)) {
+                self.follow_clip_sound(ti, clip);
+            }
+        }
         let Some(rt) = self.tracks.get_mut(ti) else { return };
         if immediate {
             rt.queued = None;
@@ -1564,7 +1576,8 @@ impl Engine {
 
     fn fire_due_launches(&mut self) {
         let pos = self.session_pos;
-        for rt in self.tracks.iter_mut() {
+        for ti in 0..self.tracks.len() {
+            let rt = &mut self.tracks[ti];
             let Some(q) = rt.queued else { continue };
             if q.at > pos + 1e-9 {
                 continue;
@@ -1578,6 +1591,55 @@ impl Engine {
                 rt.overridden = true;
             }
             rt.queued = None;
+            // A clip that keeps a sound starts with it, on the very sample.
+            if let Some(clip) = q.slot.and_then(|s| self.slot_clip_id(ti, s)) {
+                self.follow_clip_sound(ti, clip);
+            }
+        }
+    }
+
+    fn slot_clip_id(&self, ti: usize, slot: usize) -> Option<u64> {
+        self.project.tracks.get(ti)?.slots.get(slot)?.as_ref().map(|c| c.id)
+    }
+
+    /// Clip `clip` started on track `ti`: if it keeps a sound, the track
+    /// plays with that sound from now on (a clip without one leaves it be).
+    fn follow_clip_sound(&mut self, ti: usize, clip: u64) {
+        let project = self.project.clone();
+        let Some(t) = project.tracks.get(ti) else { return };
+        let Some(snd) = t.clip_sound(clip) else { return };
+        let Some(rt) = self.tracks.get_mut(ti) else { return };
+        if t.sound(rt.sound_from).is(snd) {
+            return;
+        }
+        rt.sound_from = Some(clip);
+        let mut trash = Vec::new();
+        sync_track_state(t, rt, self.sr, &self.piano_lib, &mut trash, &mut self.parked);
+        for g in trash {
+            self.trash(g);
+        }
+    }
+
+    /// An arrangement clip that keeps a sound gives its track that sound
+    /// when the playhead comes into it.
+    fn follow_arrangement_sounds(&mut self) {
+        let song = self.song_pos;
+        for ti in 0..self.tracks.len() {
+            let (session, before) = {
+                let rt = &self.tracks[ti];
+                (rt.playing.is_some() || rt.overridden, rt.arr_now)
+            };
+            let now = if session {
+                0
+            } else {
+                self.project.tracks.get(ti).and_then(|t| t.arrangement.iter().find(|a| a.start <= song && song < a.end())).map_or(0, |a| a.clip.id)
+            };
+            if now != before {
+                self.tracks[ti].arr_now = now;
+                if now != 0 {
+                    self.follow_clip_sound(ti, now);
+                }
+            }
         }
     }
 
@@ -1613,30 +1675,13 @@ impl Engine {
 
         let mut trash = Vec::new();
         for (t, rt) in project.tracks.iter().zip(self.tracks.iter_mut()) {
-            if !rt.instrument.matches(t.instrument.as_ref()) {
-                let mut old = std::mem::replace(&mut rt.instrument, InstState::for_instrument(t.instrument.as_ref(), sr));
-                if let InstState::Piano(s) = &mut rt.instrument {
-                    s.set_library(self.piano_lib.clone());
-                }
-                old.suspend();
-                trash.push(GarbageInner::Instrument(old));
-                if let InstState::Plugin { instance, proc, .. } = &mut rt.instrument {
-                    if let Some(pos) = self.parked.iter().position(|(i, _)| i == instance) {
-                        *proc = Some(self.parked.swap_remove(pos).1);
-                    }
+            // Once the project has made a clip's sound the track's own, the track's is the one.
+            if let Some(id) = rt.sound_from {
+                if t.clip_sound(id).is_none_or(|snd| t.sound(None).is(snd)) {
+                    rt.sound_from = None;
                 }
             }
-            sync_devices(&t.devices, &mut rt.devices, sr, &mut trash, &mut self.parked);
-            let same_fx = t.midi_devices.len() == rt.midi_fx.len() && t.midi_devices.iter().zip(&rt.midi_fx).all(|(d, (id, st))| d.id == *id && st.matches(d.kind));
-            if !same_fx {
-                let mut old = std::mem::take(&mut rt.midi_fx);
-                for d in &t.midi_devices {
-                    match old.iter().position(|(id, st)| *id == d.id && st.matches(d.kind)) {
-                        Some(pos) => rt.midi_fx.push(old.swap_remove(pos)),
-                        None => rt.midi_fx.push((d.id, MidiFxState::new(d.kind))),
-                    }
-                }
-            }
+            sync_track_state(t, rt, sr, &self.piano_lib, &mut trash, &mut self.parked);
             if let Some(pc) = rt.playing {
                 if !matches!(t.slots.get(pc.slot), Some(Some(_))) {
                     rt.playing = None;
@@ -1707,6 +1752,7 @@ impl Engine {
             let spb = self.samples_per_beat();
             if self.playing {
                 self.fire_due_launches();
+                self.follow_arrangement_sounds();
                 if let Some(t) = self.next_launch() {
                     let k = ((t - self.session_pos) * spb).ceil();
                     if k >= 1.0 {
@@ -1717,6 +1763,11 @@ impl Engine {
                 if p.loop_enabled && p.loop_end > p.loop_start + 0.01 && self.song_pos < p.loop_end {
                     let k = ((p.loop_end - self.song_pos) * spb).ceil().max(1.0) as usize;
                     seg = seg.min(k);
+                }
+            }
+            if !self.playing {
+                for rt in self.tracks.iter_mut() {
+                    rt.arr_now = 0;
                 }
             }
             self.render_segment(done, seg);
@@ -1863,6 +1914,10 @@ impl Engine {
                 self.midi_scratch.extend_from_slice(&src.midi_out);
             }
             let Some(rt) = self.tracks.get_mut(ti) else { continue };
+            let snd = track.sound(rt.sound_from);
+            // The modulators move the track's own instrument (a clip's sound
+            // is the track's own a moment later).
+            let own_sound = rt.sound_from.is_none();
             let TrackRt { instrument, devices, placer, placer_idle, playing: pc, overridden, offs, events, fx_buf, live, midi_fx, fx_sig, sounding, shifted, signal, bend, l, r, gain_l, gain_r, sends, pre_l, pre_r, post_l, post_r, out_l, out_r, to_master, midi_out, .. } = &mut **rt;
             l[..seg].fill(0.0);
             r[..seg].fill(0.0);
@@ -1946,14 +2001,14 @@ impl Engine {
             }
             events.sort_unstable_by_key(|e| (e.offset, e.on));
             // MIDI effects transform the events before the instrument hears them.
-            if track.midi_devices.iter().any(|d| d.enabled) {
-                let drum_notes = track.instrument.as_ref().map(|i| i.drum_notes()).unwrap_or(0);
+            if snd.midi_devices.iter().any(|d| d.enabled) {
+                let drum_notes = snd.instrument.map(|i| i.drum_notes()).unwrap_or(0);
                 let ctx = MidiCtx { now: clock, len: seg, samples_per_beat: spb, scale: project.scale, scale_on: project.scale_mode, beat: s0, playing, sr, drum_notes };
                 // All notes free (scale mode off): the twelve of them, but for
                 // what is in a key by nature.
                 let free = MidiCtx { scale: crate::scale::Scale::new(project.scale.root, crate::scale::ScaleKind::Chromatic), ..ctx };
                 let mut shown = false;
-                for (dev, (_, st)) in track.midi_devices.iter().zip(midi_fx.iter_mut()) {
+                for (dev, (_, st)) in snd.midi_devices.iter().zip(midi_fx.iter_mut()) {
                     if !dev.enabled {
                         continue;
                     }
@@ -1982,7 +2037,7 @@ impl Engine {
                 MidiInput::Track(id) => id.wrapping_mul(0x9E37_79B9_7F4A_7C15),
                 _ => 0,
             };
-            let sig = fx_signature(&track.midi_devices) ^ route;
+            let sig = fx_signature(snd.midi_devices) ^ route;
             if sig != *fx_sig {
                 *fx_sig = sig;
                 fx_buf.clear();
@@ -2012,8 +2067,8 @@ impl Engine {
             midi_out.clear();
             midi_out.extend_from_slice(events);
 
-            if let Some(inst) = &track.instrument {
-                let ov = mods.params(ModOwner::Instrument(track.id));
+            if let Some(inst) = snd.instrument {
+                let ov = mods.params(ModOwner::Instrument(track.id)).filter(|_| own_sound);
                 instrument.set_bend(*bend);
                 // Clocks in a modular patch keep time with the song; wind,
                 // birds and nature play while it plays.
@@ -2120,7 +2175,7 @@ impl Engine {
             }
             pre_l[..seg].copy_from_slice(&l[..seg]);
             pre_r[..seg].copy_from_slice(&r[..seg]);
-            for (dev, (_, st)) in track.devices.iter().zip(devices.iter_mut()) {
+            for (dev, (_, st)) in snd.devices.iter().zip(devices.iter_mut()) {
                 if dev.enabled {
                     let params = mods.params(ModOwner::Device(dev.id)).unwrap_or(&dev.params);
                     run_device(st, dev, params, &mut l[..seg], &mut r[..seg], &ctx, status);
@@ -2324,6 +2379,36 @@ impl Engine {
             }
             ts.playing_slot.store(-1, RELAXED);
             ts.queued_slot.store(QUEUE_NONE, RELAXED);
+        }
+    }
+}
+
+/// Brings a track's instrument, effect and MIDI effect states in line with
+/// the sound it plays with (its own or a clip's), keyed by ids.
+fn sync_track_state(t: &Track, rt: &mut TrackRt, sr: f32, piano: &Option<Arc<PianoLibrary>>, trash: &mut Vec<GarbageInner>, parked: &mut Vec<(u64, Box<dyn AudioProcessor>)>) {
+    let snd = t.sound(rt.sound_from);
+    if !rt.instrument.matches(snd.instrument) {
+        let mut old = std::mem::replace(&mut rt.instrument, InstState::for_instrument(snd.instrument, sr));
+        if let InstState::Piano(s) = &mut rt.instrument {
+            s.set_library(piano.clone());
+        }
+        old.suspend();
+        trash.push(GarbageInner::Instrument(old));
+        if let InstState::Plugin { instance, proc, .. } = &mut rt.instrument {
+            if let Some(pos) = parked.iter().position(|(i, _)| i == instance) {
+                *proc = Some(parked.swap_remove(pos).1);
+            }
+        }
+    }
+    sync_devices(snd.devices, &mut rt.devices, sr, trash, parked);
+    let same_fx = snd.midi_devices.len() == rt.midi_fx.len() && snd.midi_devices.iter().zip(&rt.midi_fx).all(|(d, (id, st))| d.id == *id && st.matches(d.kind));
+    if !same_fx {
+        let mut old = std::mem::take(&mut rt.midi_fx);
+        for d in snd.midi_devices {
+            match old.iter().position(|(id, st)| *id == d.id && st.matches(d.kind)) {
+                Some(pos) => rt.midi_fx.push(old.swap_remove(pos)),
+                None => rt.midi_fx.push((d.id, MidiFxState::new(d.kind))),
+            }
         }
     }
 }
@@ -2609,6 +2694,84 @@ mod tests {
             let i = e.project.tracks.iter().position(|t| t.name == name).unwrap();
             assert!(h.status.tracks[i].peak_l.load() > 0.0 || h.status.tracks[i].peak_r.load() > 0.0, "{name}");
         }
+    }
+
+    /// The demo's bass track with its second clip keeping another sound: an
+    /// analog bass instead of its synth, and a reverb after it.
+    fn bass_with_a_clip_sound() -> (Project, usize, u64) {
+        let mut p = crate::demo::demo_project();
+        let ti = 1;
+        assert!(matches!(p.tracks[ti].instrument, Some(Instrument::Synth { .. })));
+        let mut snd = p.tracks[ti].sound_now().expect("no plug-ins");
+        snd.instrument = Some(Instrument::analog("Moog Bass"));
+        let rev = p.make_device(crate::dsp::effects::EffectKind::Reverb);
+        snd.devices.push(rev);
+        let clip = p.tracks[ti].slots[2].as_mut().expect("a third clip");
+        clip.sound = Some(Box::new(snd));
+        let id = clip.id;
+        (p, ti, id)
+    }
+
+    #[test]
+    fn a_clip_starts_with_the_sound_it_keeps() {
+        let (p, ti, clip) = bass_with_a_clip_sound();
+        let own_fx = p.tracks[ti].devices.len();
+        let track = p.tracks[ti].id;
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        h.send(Command::LaunchClip { track, slot: 1 });
+        run(&mut e, 0.25);
+        assert!(matches!(e.tracks[ti].instrument, InstState::Synth(_)));
+        h.send(Command::LaunchClip { track, slot: 2 });
+        run(&mut e, 0.05);
+        // Waiting for the bar: still the track's own sound.
+        assert_eq!(h.status.tracks[ti].playing_slot.load(RELAXED), 1);
+        assert!(matches!(e.tracks[ti].instrument, InstState::Synth(_)));
+        run(&mut e, 2.0);
+        assert_eq!(h.status.tracks[ti].playing_slot.load(RELAXED), 2);
+        assert!(matches!(e.tracks[ti].instrument, InstState::Analog(_)), "the clip's instrument plays");
+        assert_eq!(e.tracks[ti].devices.len(), own_fx + 1, "with the clip's reverb");
+        assert_eq!(e.tracks[ti].sound_from, Some(clip));
+        // The app makes it the track's own; from then on the track's is the one.
+        let mut p2 = (*e.project).clone();
+        assert!(p2.tracks[ti].take_clip_sound(clip));
+        h.send(Command::SetProject(Arc::new(p2)));
+        run(&mut e, 0.05);
+        assert_eq!(e.tracks[ti].sound_from, None);
+        assert!(matches!(e.tracks[ti].instrument, InstState::Analog(_)));
+        // The other clip keeps no sound: the track keeps the one it has.
+        h.send(Command::LaunchClip { track, slot: 1 });
+        run(&mut e, 2.0);
+        assert_eq!(h.status.tracks[ti].playing_slot.load(RELAXED), 1);
+        assert!(matches!(e.tracks[ti].instrument, InstState::Analog(_)));
+    }
+
+    #[test]
+    fn the_sound_switches_on_the_very_sample_the_clip_starts() {
+        let (p, ti, _) = bass_with_a_clip_sound();
+        let track = p.tracks[ti].id;
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        // Launched with the transport stopped: at once, with its sound.
+        h.send(Command::LaunchClip { track, slot: 2 });
+        run(&mut e, 0.01);
+        assert!(matches!(e.tracks[ti].instrument, InstState::Analog(_)));
+        let out = run(&mut e, 1.0);
+        assert!(peak(&out) > 0.01, "it plays");
+    }
+
+    #[test]
+    fn an_arrangement_clip_brings_its_sound() {
+        let (mut p, ti, _) = bass_with_a_clip_sound();
+        p.scenes_to_arrangement();
+        let ac = p.tracks[ti].arrangement.iter().find(|a| a.clip.sound.is_some()).expect("the clip went into the arrangement with its sound");
+        let start = ac.start;
+        assert!(start > 0.0, "the second scene comes later");
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        h.send(Command::Play);
+        run(&mut e, 0.1);
+        assert!(matches!(e.tracks[ti].instrument, InstState::Synth(_)));
+        let spb = 60.0 / e.project.bpm as f32;
+        run(&mut e, start as f32 * spb);
+        assert!(matches!(e.tracks[ti].instrument, InstState::Analog(_)), "the playhead reached it");
     }
 
     #[test]

@@ -382,6 +382,8 @@ pub struct App {
     pub show_settings: bool,
     pub midi: Midi,
     pending: Vec<Command>,
+    /// Per track (by id): the clip whose sound it has taken, while that clip plays.
+    sound_from: std::collections::HashMap<u64, u64>,
 
     pub view: View,
     pub detail: DetailTab,
@@ -561,6 +563,7 @@ impl App {
             show_settings: false,
             midi,
             pending: Vec::new(),
+            sound_from: std::collections::HashMap::new(),
             view: View::Session,
             detail: DetailTab::Clip,
             sel_track: TrackSel::Track(0),
@@ -666,7 +669,10 @@ impl App {
     /// Sends the project snapshot (if it changed) followed by queued commands.
     fn sync(&mut self, ctx: &Context) {
         self.band_frame();
+        self.follow_clip_sounds();
         if *self.last_sent != self.project {
+            // A clip moved to another track brings its sound with that track's ids.
+            self.project.fix_clip_sound_ids();
             // Connections to deleted tracks, devices or modulators go away.
             self.project.prune_mod_routes();
             let snap = Arc::new(self.project.clone());
@@ -693,6 +699,66 @@ impl App {
         }
     }
 
+    /// Clips that keep a sound: the one that started gives its track that
+    /// sound (no step to undo: the clip just plays), and while it plays what
+    /// changes on the track is kept in it. A clip without one leaves the
+    /// track as it is.
+    fn follow_clip_sounds(&mut self) {
+        let status = self.engine.status.clone();
+        for ti in 0..self.project.tracks.len() {
+            let Some(ts) = status.tracks.get(ti) else { break };
+            let t = &self.project.tracks[ti];
+            let slot = ts.playing_slot.load(Ordering::Relaxed);
+            let clip = if slot >= 0 {
+                t.slots.get(slot as usize).and_then(|c| c.as_ref()).map(|c| c.id)
+            } else if !ts.overridden.load(Ordering::Relaxed) {
+                let a = ts.arr_clip.load(Ordering::Relaxed);
+                t.arrangement.iter().find(|x| a != 0 && x.id == a).map(|x| x.clip.id)
+            } else {
+                None
+            };
+            let track_id = t.id;
+            let Some(clip) = clip.filter(|&c| t.clip_sound(c).is_some()) else {
+                self.sound_from.remove(&track_id);
+                continue;
+            };
+            if self.sound_from.get(&track_id) == Some(&clip) {
+                self.project.tracks[ti].update_clip_sound(clip);
+            } else {
+                if self.project.tracks[ti].take_clip_sound(clip) {
+                    // The same in what undo goes back to.
+                    let t = &self.project.tracks[ti];
+                    if let Some(c) = self.committed.tracks.iter_mut().find(|c| c.id == track_id) {
+                        c.midi_devices = t.midi_devices.clone();
+                        c.instrument = t.instrument.clone();
+                        c.devices = t.devices.clone();
+                    }
+                }
+                self.sound_from.insert(track_id, clip);
+            }
+        }
+    }
+
+    /// Keeps the track's sound in clip `sel` (anew, if it kept one).
+    pub(crate) fn keep_sound_in_clip(&mut self, sel: ClipSel) {
+        let Some(sound) = self.project.tracks.get(sel.track()).and_then(|t| t.sound_now()) else {
+            self.toast("A track with a CLAP plug-in can't keep its sound in a clip (the plug-in keeps its own)");
+            return;
+        };
+        if let Some(c) = self.clip_mut(sel) {
+            c.sound = Some(Box::new(sound));
+            let name = c.name.clone();
+            self.toast(format!("{name} keeps this sound: it plays with it when it starts"));
+        }
+    }
+
+    /// The clip `sel` no longer keeps a sound.
+    pub(crate) fn forget_clip_sound(&mut self, sel: ClipSel) {
+        if let Some(c) = self.clip_mut(sel) {
+            c.sound = None;
+        }
+    }
+
     pub fn undo(&mut self) {
         if let Some(label) = self.undo_step() {
             self.toast(format!("Undo: {label}"));
@@ -713,6 +779,8 @@ impl App {
         self.redo.push(cur);
         self.redo_labels.push(label.clone());
         self.committed = self.project.clone();
+        // A clip playing with its sound gives it to its track again.
+        self.sound_from.clear();
         self.dirty = true;
         Some(label)
     }
@@ -725,6 +793,7 @@ impl App {
         self.undo.push(cur);
         self.undo_labels.push(label.clone());
         self.committed = self.project.clone();
+        self.sound_from.clear();
         self.dirty = true;
         Some(label)
     }
@@ -2342,6 +2411,15 @@ impl App {
             let nums: Vec<usize> = arg.split(',').filter_map(|v| v.trim().parse().ok()).collect();
             match name {
                 "scene" => self.cmd(Command::LaunchScene(nums.first().copied().unwrap_or(0))),
+                // chain=TRACK: prints its instrument and effects (to check by script).
+                "chain" => {
+                    if let Some(t) = self.project.tracks.get(nums.first().copied().unwrap_or(0)) {
+                        let fx: Vec<&str> = t.devices.iter().map(|d| d.kind.name()).collect();
+                        println!("chain {}: {} | {}", t.name, t.instrument.as_ref().map_or("-", |i| i.kind_name()), fx.join(", "));
+                    }
+                }
+                // keepsound=TRACK,SCENE: that clip keeps the track's sound.
+                "keepsound" if nums.len() == 2 => self.keep_sound_in_clip(ClipSel::Slot { track: nums[0], scene: nums[1] }),
                 "play" => self.cmd(Command::Play),
                 "ambient" => self.load_ambient(),
                 "stop" => self.cmd(Command::Stop),
