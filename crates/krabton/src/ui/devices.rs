@@ -1071,6 +1071,9 @@ impl App {
                         });
                         super::inst_screen::synth_grid(ui, Id::new(("synth", track_id)), params, &live, h - 48.0, mv.as_mut());
                     }
+                    Instrument::Analog { preset, params } if crate::skin::current().is_some() => {
+                        super::faces::analog::panel(ui, Id::new(("analog", track_id)), preset, params, &live, h - 36.0, mv.as_mut());
+                    }
                     Instrument::Analog { preset, params } => {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
@@ -1123,6 +1126,9 @@ impl App {
                         if install {
                             self.start_piano_install();
                         }
+                    }
+                    Instrument::Bassline { preset, params } if crate::skin::current().is_some() => {
+                        super::faces::bassline::panel(ui, Id::new(("bassline", track_id)), preset, params, &live, h - 36.0, mv.as_mut());
                     }
                     Instrument::Bassline { preset, params } => {
                         ui.horizontal(|ui| {
@@ -1645,6 +1651,9 @@ impl App {
                             param_grid_mod(ui, Id::new(("rings_synth", track_id)), rings_synth::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
                         });
                     }
+                    Instrument::Organ { preset, params } if crate::skin::current().is_some() => {
+                        super::faces::organ::panel(ui, Id::new(("organ", track_id)), preset, params, &live, h - 36.0, mv.as_mut());
+                    }
                     Instrument::Organ { preset, params } => {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
@@ -1764,6 +1773,9 @@ impl App {
                             ui.add_space(6.0);
                             param_grid_mod(ui, Id::new(("shakers", track_id)), shaker_synth::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
                         });
+                    }
+                    Instrument::Macro { preset, params } if crate::skin::current().is_some() => {
+                        super::faces::plaits::panel(ui, Id::new(("macro", track_id)), preset, params, h - 36.0, mv.as_mut());
                     }
                     Instrument::Macro { preset, params } => {
                         ui.horizontal(|ui| {
@@ -1986,17 +1998,26 @@ impl App {
                     Instrument::Drums { kit, pads, engine } => {
                         let engine = *engine;
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Kit").small().color(crate::skin::ink_dim()));
-                            egui::ComboBox::from_id_salt(("drum_kit", track_id)).width(130.0).height(360.0).selected_text(kit.as_str()).show_ui(ui, |ui| {
-                                for name in engine.kits() {
-                                    if ui.selectable_label(kit == name, *name).clicked() {
-                                        *kit = name.to_string();
-                                        *pads = drums::kit(name);
-                                    }
+                            if crate::skin::current().is_some() && !engine.kits().is_empty() {
+                                // The machine's display: its kit.
+                                let (r, _) = ui.allocate_exact_size(vec2(220.0, 24.0), Sense::hover());
+                                if let Some(k) = super::faces::names_display(ui, r, Id::new(("drum_kit", track_id)), engine.kits(), kit.as_str(), 18.0) {
+                                    *kit = engine.kits()[k].to_string();
+                                    *pads = drums::kit(&kit.clone());
                                 }
-                            })
-                            .response
-                            .on_hover_text(engine.description());
+                            } else {
+                                ui.label(RichText::new("Kit").small().color(crate::skin::ink_dim()));
+                                egui::ComboBox::from_id_salt(("drum_kit", track_id)).width(130.0).height(360.0).selected_text(kit.as_str()).show_ui(ui, |ui| {
+                                    for name in engine.kits() {
+                                        if ui.selectable_label(kit == name, *name).clicked() {
+                                            *kit = name.to_string();
+                                            *pads = drums::kit(name);
+                                        }
+                                    }
+                                })
+                                .response
+                                .on_hover_text(engine.description());
+                            }
                             if engine == drums::DrumEngine::Rack && ui.button("From folder...").on_hover_text("A kit from a folder of drum samples: kick, snare, hats, ... go to their pads by name").clicked() {
                                 if let Some(dir) = rfd::FileDialog::new().pick_folder() {
                                     let files = krabton_engine::sample_map::files_in(&dir);
@@ -2044,59 +2065,67 @@ impl App {
                             });
                         }
                         ui.horizontal_top(|ui| {
-                            // Pad grid: four across (two or four rows), lowest note
-                            // bottom-left like a drum rack.
-                            let rows = pads.len().clamp(1, 16).div_ceil(4).max(2);
-                            let cell = vec2(70.0, ((h - 60.0) / rows as f32 - 2.0).clamp(22.0, 60.0));
-                            let (grid, _) = ui.allocate_exact_size(vec2(cell.x * 4.0 + 6.0, (cell.y + 2.0) * rows as f32), Sense::hover());
-                            let mut order: Vec<usize> = (0..pads.len().min(16)).collect();
-                            order.sort_by_key(|&k| pads[k].note);
-                            for (slot, &k) in order.iter().enumerate() {
-                                let col = slot % 4;
-                                let row = rows - 1 - (slot / 4).min(rows - 1);
-                                let r = Rect::from_min_size(pos2(grid.left() + col as f32 * (cell.x + 2.0), grid.top() + row as f32 * (cell.y + 2.0)), cell);
-                                let resp = ui.interact(r, Id::new(("pad", track_id, k)), Sense::click());
-                                let selected = self.sel_pad == k;
-                                let pad = &mut pads[k];
-                                // A drum machine's pads are its step buttons, in their colours.
-                                let own = crate::skin::current().and_then(|s| (!s.pads.is_empty()).then(|| s.pads[col % s.pads.len()]));
-                                let fill = if resp.is_pointer_button_down_on() {
-                                    accent_now()
-                                } else if let Some(c) = own {
-                                    if selected { mix(c, Color32::WHITE, 0.25) } else { c }
-                                } else if selected {
-                                    PANEL3
-                                } else {
-                                    KNOB
-                                };
-                                let p = ui.painter();
-                                rect_fill(p, r, 3.0, fill);
-                                if selected {
-                                    rect_line(p, r, 3.0, 1.0, accent_now());
+                            if crate::skin::current().is_some() {
+                                // A drum machine's face: a column per drum, its step button below.
+                                if super::faces::drums::columns(ui, Id::new(("drum_face", track_id)), pads, &mut self.sel_pad, &mut self.pending_pad_hit, live.notes, h - 70.0) {
+                                    // (the pads were changed in place)
                                 }
-                                if own.is_some() {
-                                    // Lit like a step button when picked.
-                                    p.circle_filled(pos2(r.right() - 7.0, r.top() + 7.0), 3.0, if selected { REC } else { Color32::from_black_alpha(90) });
-                                }
-                                let tc = if fill == accent_now() || own.is_some() { text_on(fill) } else { TEXT };
-                                p.with_clip_rect(r).text(pos2(r.left() + 5.0, r.top() + 10.0), Align2::LEFT_CENTER, &pad.name, small(), tc);
-                                let sub = if !pad.layers.is_empty() { format!("{}  rec", note_name(pad.note)) } else if pad.sample.is_some() { format!("{}  sample", note_name(pad.note)) } else { note_name(pad.note) };
-                                p.text(pos2(r.left() + 5.0, r.bottom() - 9.0), Align2::LEFT_CENTER, sub, small(), shade(tc, 0.7));
-                                if resp.dnd_hover_payload::<BrowserItem>().is_some() {
-                                    rect_line(p, r, 3.0, 2.0, accent_now());
-                                }
-                                if let Some(item) = drop_payload::<BrowserItem>(&resp) {
-                                    if let BrowserItem::Sample(path) = &*item {
-                                        if let Ok(s) = SampleRef::load(path) {
-                                            pad.name = s.name.clone();
-                                            pad.sample = Some(s);
+                                ui.add_space(8.0);
+                            } else {
+                                // Pad grid: four across (two or four rows), lowest note
+                                // bottom-left like a drum rack.
+                                let rows = pads.len().clamp(1, 16).div_ceil(4).max(2);
+                                let cell = vec2(70.0, ((h - 60.0) / rows as f32 - 2.0).clamp(22.0, 60.0));
+                                let (grid, _) = ui.allocate_exact_size(vec2(cell.x * 4.0 + 6.0, (cell.y + 2.0) * rows as f32), Sense::hover());
+                                let mut order: Vec<usize> = (0..pads.len().min(16)).collect();
+                                order.sort_by_key(|&k| pads[k].note);
+                                for (slot, &k) in order.iter().enumerate() {
+                                    let col = slot % 4;
+                                    let row = rows - 1 - (slot / 4).min(rows - 1);
+                                    let r = Rect::from_min_size(pos2(grid.left() + col as f32 * (cell.x + 2.0), grid.top() + row as f32 * (cell.y + 2.0)), cell);
+                                    let resp = ui.interact(r, Id::new(("pad", track_id, k)), Sense::click());
+                                    let selected = self.sel_pad == k;
+                                    let pad = &mut pads[k];
+                                    // A drum machine's pads are its step buttons, in their colours.
+                                    let own = crate::skin::current().and_then(|s| (!s.pads.is_empty()).then(|| s.pads[col % s.pads.len()]));
+                                    let fill = if resp.is_pointer_button_down_on() {
+                                        accent_now()
+                                    } else if let Some(c) = own {
+                                        if selected { mix(c, Color32::WHITE, 0.25) } else { c }
+                                    } else if selected {
+                                        PANEL3
+                                    } else {
+                                        KNOB
+                                    };
+                                    let p = ui.painter();
+                                    rect_fill(p, r, 3.0, fill);
+                                    if selected {
+                                        rect_line(p, r, 3.0, 1.0, accent_now());
+                                    }
+                                    if own.is_some() {
+                                        // Lit like a step button when picked.
+                                        p.circle_filled(pos2(r.right() - 7.0, r.top() + 7.0), 3.0, if selected { REC } else { Color32::from_black_alpha(90) });
+                                    }
+                                    let tc = if fill == accent_now() || own.is_some() { text_on(fill) } else { TEXT };
+                                    p.with_clip_rect(r).text(pos2(r.left() + 5.0, r.top() + 10.0), Align2::LEFT_CENTER, &pad.name, small(), tc);
+                                    let sub = if !pad.layers.is_empty() { format!("{}  rec", note_name(pad.note)) } else if pad.sample.is_some() { format!("{}  sample", note_name(pad.note)) } else { note_name(pad.note) };
+                                    p.text(pos2(r.left() + 5.0, r.bottom() - 9.0), Align2::LEFT_CENTER, sub, small(), shade(tc, 0.7));
+                                    if resp.dnd_hover_payload::<BrowserItem>().is_some() {
+                                        rect_line(p, r, 3.0, 2.0, accent_now());
+                                    }
+                                    if let Some(item) = drop_payload::<BrowserItem>(&resp) {
+                                        if let BrowserItem::Sample(path) = &*item {
+                                            if let Ok(s) = SampleRef::load(path) {
+                                                pad.name = s.name.clone();
+                                                pad.sample = Some(s);
+                                            }
                                         }
                                     }
-                                }
-                                if resp.clicked() {
-                                    self.sel_pad = k;
-                                    let note = pad.note;
-                                    self.pending_pad_hit = Some(note);
+                                    if resp.clicked() {
+                                        self.sel_pad = k;
+                                        let note = pad.note;
+                                        self.pending_pad_hit = Some(note);
+                                    }
                                 }
                             }
                             ui.vertical(|ui| {
@@ -2156,7 +2185,9 @@ impl App {
                                     }
                                     let mut vals = vec![pad.level_db, pad.tune, pad.decay, pad.tone, pad.pan, pad.vel_level, pad.vel_tone, pad.vel_decay];
                                     vals.extend(macros.iter().zip([pad.a, pad.b]).filter(|(m, _)| m.is_some()).map(|(_, v)| v));
-                                    if param_grid(ui, Id::new(("pad_params", track_id, k)), &specs, &mut vals, accent_now(), h - 80.0) {
+                                    // On a machine's face its columns have the first four.
+                                    let skip = if crate::skin::current().is_some() { 4 } else { 0 };
+                                    if param_grid(ui, Id::new(("pad_params", track_id, k)), &specs[skip..], &mut vals[skip..], accent_now(), h - 80.0) {
                                         pad.level_db = vals[0];
                                         pad.tune = vals[1];
                                         pad.decay = vals[2];

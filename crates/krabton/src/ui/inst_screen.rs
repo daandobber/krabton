@@ -509,6 +509,26 @@ pub(crate) fn analog_grid(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, h
     sub_grid(ui, id, &ANALOG, p, live, height, mv)
 }
 
+/// One of Analog's screens in `rect`, for its face: "osc1", "osc2", "mix",
+/// "filter", "fenv", "aenv" or "lfo". Returns whether a value changed.
+pub(crate) fn analog_screen(ui: &mut Ui, id: Id, rect: Rect, which: &str, p: &mut [f32], live: &InstLive) -> bool {
+    let s = &ANALOG;
+    let painter = ui.painter_at(rect);
+    rect_fill(&painter, rect.expand(1.5), 4.0, Color32::from_black_alpha(140));
+    rect_fill(&painter, rect, 4.0, SCREEN_BG);
+    match which {
+        "osc1" => osc_part(&painter, rect, s, p, Some(0)),
+        "osc2" => osc_part(&painter, rect, s, p, Some(1)),
+        "mix" => osc_part(&painter, rect, s, p, None),
+        "filter" => filter_part(&painter, rect, s, p, live),
+        "fenv" => return env_part(ui, id, rect, s, p, live, false),
+        "aenv" => return env_part(ui, id, rect, s, p, live, true),
+        "lfo" => lfo_part(ui, &painter, rect, s, p),
+        _ => {}
+    }
+    false
+}
+
 pub(crate) fn synth_grid(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, height: f32, mv: Option<&mut super::modulation::ModView>) -> bool {
     sub_grid(ui, id, &SYNTH, p, live, height, mv)
 }

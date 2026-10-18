@@ -57,8 +57,12 @@ fn led(p: &egui::Painter, at: Pos2, label: &str, on: bool, color: Color32) {
 /// accent and slide lights and the wave below. Drag: left and right the
 /// cutoff, up and down the resonance.
 pub(crate) fn bassline_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, height: f32) -> bool {
+    bassline_screen_w(ui, id, p, live, 300.0, height)
+}
+
+/// [`bassline_screen`] `w` wide.
+pub(crate) fn bassline_screen_w(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, w: f32, height: f32) -> bool {
     use krabton_engine::dsp::bassline::*;
-    let w = 300.0;
     let (rect, resp) = ui.allocate_exact_size(vec2(w, height), Sense::click_and_drag());
     let plot = Rect::from_min_max(rect.min + vec2(10.0, 26.0), pos2(rect.right() - 10.0, rect.bottom() - 40.0));
     let (f_lo, f_hi) = (30.0f32, 12000.0f32);
