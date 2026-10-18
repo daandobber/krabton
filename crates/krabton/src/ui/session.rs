@@ -568,6 +568,10 @@ impl App {
                     self.copy_clip_to_arrangement(sel);
                     ui.close();
                 }
+                if kind == TrackKind::Midi && ui.button("Export MIDI File...").clicked() {
+                    self.export_midi_clip(sel);
+                    ui.close();
+                }
                 if kind == TrackKind::Audio {
                     ui.menu_button("Export Audio", |ui| {
                         if ui.button("WAV...").on_hover_text("This clip on its own, as it plays").clicked() {
@@ -593,6 +597,12 @@ impl App {
                 if kind == TrackKind::Midi && ui.button("Insert MIDI Clip").clicked() {
                     self.create_midi_clip(i, s);
                     ui.close();
+                }
+                if kind == TrackKind::Midi && ui.button("Import MIDI File...").clicked() {
+                    ui.close();
+                    if let Some(path) = rfd::FileDialog::new().add_filter("MIDI file", &["mid", "midi", "MID"]).pick_file() {
+                        self.apply_item(&BrowserItem::MidiFile(path), DropTarget::Slot { track: i, scene: s });
+                    }
                 }
                 if ui.button("Stop Track").clicked() {
                     self.cmd(Command::StopTrack { track: track_id });

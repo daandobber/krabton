@@ -80,6 +80,8 @@ pub enum BrowserItem {
     /// An audio effect set to one of its presets.
     EffectPreset(EffectKind, &'static str),
     Sample(PathBuf),
+    /// A Standard MIDI File: its notes become clips.
+    MidiFile(PathBuf),
     Plugin(krabton_clap::PluginInfo),
     /// A CLAP audio effect.
     PluginEffect(krabton_clap::PluginInfo),
@@ -212,6 +214,7 @@ impl BrowserItem {
             BrowserItem::Effect(k) => k.name().into(),
             BrowserItem::EffectPreset(k, p) => format!("{}: {p}", k.name()),
             BrowserItem::Sample(p) => p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default(),
+            BrowserItem::MidiFile(p) => p.file_stem().map(|f| f.to_string_lossy().to_string()).unwrap_or_default(),
             BrowserItem::Plugin(p) | BrowserItem::PluginEffect(p) => p.name.clone(),
             BrowserItem::MidiFx(k) => k.name().into(),
             BrowserItem::MidiPreset(k, p) => format!("{}: {p}", k.name()),
@@ -1293,6 +1296,37 @@ impl App {
                     }
                 }
             }
+            BrowserItem::MidiFile(path) => {
+                let Some(song) = self.read_midi_file(path) else { return };
+                let name = item.label();
+                match (target, target_track) {
+                    (_, Some(t)) if !is_midi(self, t) => self.toast("MIDI files go on MIDI tracks"),
+                    // On a track: all its notes as one clip.
+                    (DropTarget::Slot { track, scene }, _) => {
+                        let clip = self.midi_file_clip(&name, &song.all_notes(), song.clip_length(self.project.beats_per_bar_f()), track);
+                        if let Some(slot) = self.project.tracks[track].slots.get_mut(scene) {
+                            *slot = Some(clip);
+                            self.select_clip(ClipSel::Slot { track, scene });
+                        }
+                    }
+                    (DropTarget::ArrLane { track, beat }, _) => self.midi_file_on_arrangement(&name, &song, track, beat),
+                    (_, Some(track)) if self.view == View::Arrangement => {
+                        let bpb = self.project.beats_per_bar_f();
+                        let beat = (self.engine.status.song_pos.load() / bpb).floor() * bpb;
+                        self.midi_file_on_arrangement(&name, &song, track, beat);
+                    }
+                    (_, Some(track)) => {
+                        let scene = self.sel_scene;
+                        let clip = self.midi_file_clip(&name, &song.all_notes(), song.clip_length(self.project.beats_per_bar_f()), track);
+                        if let Some(slot) = self.project.tracks[track].slots.get_mut(scene) {
+                            *slot = Some(clip);
+                            self.select_clip(ClipSel::Slot { track, scene });
+                        }
+                    }
+                    // Anywhere else: a track for each of its tracks, as Live does.
+                    (_, None) => self.midi_file_tracks(&name, &song, None),
+                }
+            }
             BrowserItem::Sample(path) => {
                 let Some(sample) = self.load_sample(path) else { return };
                 let bpm = self.project.bpm;
@@ -1364,6 +1398,140 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Reads a MIDI file (a toast says why one can't be).
+    pub(crate) fn read_midi_file(&mut self, path: &Path) -> Option<midi_file::MidiSong> {
+        let name = path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+        match std::fs::read(path).map_err(|e| e.to_string()).and_then(|b| midi_file::read(&b)) {
+            Ok(song) if !song.tracks.is_empty() => Some(song),
+            Ok(_) => {
+                self.toast(format!("{name}: there are no notes in it"));
+                None
+            }
+            Err(e) => {
+                self.toast(format!("{name}: {e}"));
+                None
+            }
+        }
+    }
+
+    /// A MIDI clip of `notes`, `length` beats long, in track `track`'s colour.
+    fn midi_file_clip(&mut self, name: &str, notes: &[Note], length: f64, track: usize) -> Clip {
+        let color = self.project.tracks.get(track).map(|t| t.color).unwrap_or_default();
+        let mut clip = Clip::new_midi(self.project.alloc_id(), name, color, length);
+        if let Some(n) = clip.notes_mut() {
+            *n = notes.to_vec();
+        }
+        clip
+    }
+
+    /// All of a MIDI file's notes as one clip on track `track`'s timeline at `beat`.
+    fn midi_file_on_arrangement(&mut self, name: &str, song: &midi_file::MidiSong, track: usize, beat: f64) {
+        let length = song.clip_length(self.project.beats_per_bar_f());
+        let clip = self.midi_file_clip(name, &song.all_notes(), length, track);
+        let id = self.project.alloc_id();
+        self.project.tracks[track].arrangement.push(ArrangementClip::new(id, beat.max(0.0), length, clip));
+        self.select_clip(ClipSel::Arr { track, id });
+    }
+
+    /// A MIDI file's tracks as new MIDI tracks, each with an instrument that
+    /// fits it and its notes as a clip: on the arrangement at `at` (or the
+    /// playhead's bar) in Arrangement view, else in the selected scene.
+    pub(crate) fn midi_file_tracks(&mut self, name: &str, song: &midi_file::MidiSong, at: Option<f64>) {
+        let bpb = self.project.beats_per_bar_f();
+        let length = song.clip_length(bpb);
+        let on_arrangement = at.is_some() || self.view == View::Arrangement;
+        let start = at.unwrap_or_else(|| (self.engine.status.song_pos.load() / bpb).floor() * bpb).max(0.0);
+        let scene = self.sel_scene;
+        let single = song.tracks.len() == 1;
+        let mut first = None;
+        for st in &song.tracks {
+            let t = self.project.add_midi_track(Some(midi_file_instrument(st)));
+            first.get_or_insert(t);
+            let label = if single { name.to_string() } else { st.name.clone() };
+            self.project.tracks[t].name = label.clone();
+            let clip = self.midi_file_clip(&label, &st.notes, length, t);
+            if on_arrangement {
+                let id = self.project.alloc_id();
+                self.project.tracks[t].arrangement.push(ArrangementClip::new(id, start, length, clip));
+            } else if let Some(slot) = self.project.tracks[t].slots.get_mut(scene) {
+                *slot = Some(clip);
+            }
+        }
+        if let Some(t) = first {
+            self.sel_track = TrackSel::Track(t);
+            self.detail = DetailTab::Devices;
+        }
+        let n = song.tracks.len();
+        let bars = (length / bpb).round();
+        let tempo = song.bpm.filter(|b| (b - self.project.bpm).abs() > 0.5).map(|b| format!(" (the file is at {b:.0} BPM)")).unwrap_or_default();
+        self.toast(format!("{name}: {n} track{}, {bars} bar{}{tempo}", if n == 1 { "" } else { "s" }, if bars == 1.0 { "" } else { "s" }));
+    }
+
+    /// Opens a MIDI file from disk onto new tracks.
+    pub fn import_midi_dialog(&mut self) {
+        if let Some(path) = rfd::FileDialog::new().add_filter("MIDI file", &["mid", "midi", "MID"]).pick_file() {
+            self.apply_item(&BrowserItem::MidiFile(path), DropTarget::NewTrack);
+        }
+    }
+
+    /// Saves a MIDI clip's notes as a MIDI file.
+    pub fn export_midi_clip(&mut self, sel: ClipSel) {
+        let Some(clip) = self.clip_ref(sel) else { return };
+        if !clip.is_midi() {
+            return;
+        }
+        let bytes = midi_file::write(clip.notes(), clip.length, &clip.name, self.project.bpm);
+        let file = clip.name.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "-");
+        let Some(path) = rfd::FileDialog::new().add_filter("MIDI file", &["mid"]).set_file_name(format!("{file}.mid")).save_file() else { return };
+        match std::fs::write(&path, bytes) {
+            Ok(()) => self.toast(format!("Saved {}", path.display())),
+            Err(e) => self.toast(format!("Export failed: {e}")),
+        }
+    }
+
+    /// "To Clip": `bars` bars of what a track's sequencer plays, as a clip
+    /// on the track: in the selected scene (or the next free slot, or a new
+    /// scene), or in Arrangement view at the playhead's bar. The sequencer
+    /// turns off, so what plays is the clip.
+    pub fn sequencer_to_clip(&mut self, track: usize, dev_id: u64, bars: u32) {
+        let Some(t) = self.project.tracks.get(track) else { return };
+        let Some(dev) = t.midi_devices.iter().find(|d| d.id == dev_id).cloned() else { return };
+        let bpb = self.project.beats_per_bar_f();
+        let bars = bars.max(1);
+        let beats = bars as f64 * bpb;
+        let kit = t.instrument.as_ref().map(|i| i.drum_notes()).unwrap_or(0);
+        let p = &self.project;
+        let notes = midi_fx::render_notes(dev.kind, &dev.params, &dev.data, beats, p.bpm, p.scale, p.scale_mode, kit);
+        let name = dev.kind.name();
+        let s = if bars == 1 { "" } else { "s" };
+        if notes.is_empty() {
+            self.toast(format!("{name} plays nothing in {bars} bar{s}"));
+            return;
+        }
+        let clip = self.midi_file_clip(name, &notes, beats, track);
+        let place = if self.view == View::Arrangement {
+            let start = (self.engine.status.song_pos.load() / bpb).floor() * bpb;
+            let id = self.project.alloc_id();
+            self.project.tracks[track].arrangement.push(ArrangementClip::new(id, start, beats, clip));
+            self.select_clip(ClipSel::Arr { track, id });
+            "on the arrangement".to_string()
+        } else {
+            let n = self.project.scenes.len();
+            let free = (0..n).map(|k| (self.sel_scene + k) % n).find(|&s| matches!(self.project.tracks[track].slots.get(s), Some(None)));
+            let scene = free.unwrap_or_else(|| {
+                self.project.add_scene(n);
+                n
+            });
+            self.project.tracks[track].slots[scene] = Some(clip);
+            self.select_clip(ClipSel::Slot { track, scene });
+            format!("in scene {}", scene + 1)
+        };
+        if let Some(d) = self.project.tracks[track].midi_devices.iter_mut().find(|d| d.id == dev_id) {
+            d.enabled = false;
+        }
+        self.toast(format!("{name}: {bars} bar{s} as a clip {place}; the sequencer is off now, so you hear the clip"));
     }
 
     // ------------------------------------------------------------------
@@ -2575,6 +2743,16 @@ impl App {
                     }
                 }
                 "arrsplit" => self.arr_split_at_playhead(),
+                // midifile=PATH: a MIDI file as if double-clicked in the browser.
+                "midifile" => self.apply_item(&BrowserItem::MidiFile(PathBuf::from(arg.trim())), DropTarget::NewTrack),
+                // toclip=DEVICE,BARS: the selected track's MIDI device's To Clip.
+                "toclip" if nums.len() == 2 => {
+                    if let TrackSel::Track(t) = self.sel_track {
+                        if let Some(id) = self.project.tracks.get(t).and_then(|tr| tr.midi_devices.get(nums[0])).map(|d| d.id) {
+                            self.sequencer_to_clip(t, id, nums[1] as u32);
+                        }
+                    }
+                }
                 "arroff" => self.arr_toggle_off(),
                 "arrdup" => self.arr_duplicate_selection(),
                 // keepsound=TRACK,SCENE: that clip keeps the track's sound.
@@ -3438,5 +3616,26 @@ impl eframe::App for App {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
         ctx.request_repaint();
+    }
+}
+
+/// An instrument that fits a MIDI file's track: by its channel (10: drums),
+/// its General MIDI program, or its name.
+fn midi_file_instrument(t: &midi_file::MidiSongTrack) -> Instrument {
+    let name = t.name.to_lowercase();
+    let has = |words: &[&str]| words.iter().any(|w| name.contains(w));
+    if t.drums || has(&["drum", "kit", "perc"]) {
+        return Instrument::drums("Studio Kit");
+    }
+    match t.program {
+        Some(0..=7) => Instrument::synth("Keys"),
+        Some(32..=39) => Instrument::guitar("Finger Bass"),
+        Some(40..=51) => Instrument::strings("Bowed"),
+        Some(88..=95) => Instrument::synth("Soft Pad"),
+        _ if has(&["bass"]) => Instrument::guitar("Finger Bass"),
+        _ if has(&["string", "violin", "viola", "cello"]) => Instrument::strings("Bowed"),
+        _ if has(&["pad"]) => Instrument::synth("Soft Pad"),
+        _ if has(&["piano", "keys", "organ"]) => Instrument::synth("Keys"),
+        _ => Instrument::synth("Pluck"),
     }
 }

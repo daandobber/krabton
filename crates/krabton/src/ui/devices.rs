@@ -263,7 +263,7 @@ fn preset_menu(ui: &mut Ui, menu: PresetMenu) {
 
 /// Device frame with a title bar. Returns the body's inner response.
 fn device_frame<R>(ui: &mut Ui, title: &str, info: Option<&str>, enabled: Option<&mut bool>, height: f32, body: impl FnOnce(&mut Ui) -> R) -> (R, Option<ChainActionKind>) {
-    device_frame_presets(ui, title, info, enabled, None, height, body)
+    device_frame_presets(ui, title, info, enabled, None, false, height, body)
 }
 
 /// A small "i" by a device's name: what the device is, on hover, or kept
@@ -309,7 +309,9 @@ pub(crate) fn info_button(ui: &mut Ui, text: &str) -> egui::Response {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn device_frame_presets<R>(ui: &mut Ui, title: &str, info: Option<&str>, enabled: Option<&mut bool>, presets: Option<PresetMenu>, height: f32, body: impl FnOnce(&mut Ui) -> R) -> (R, Option<ChainActionKind>) {
+/// `to_clip`: a sequencer, with its To Clip menu.
+#[allow(clippy::too_many_arguments)]
+fn device_frame_presets<R>(ui: &mut Ui, title: &str, info: Option<&str>, enabled: Option<&mut bool>, presets: Option<PresetMenu>, to_clip: bool, height: f32, body: impl FnOnce(&mut Ui) -> R) -> (R, Option<ChainActionKind>) {
     let mut action = None;
     // In its own look a machine's panel goes under it, drawn when its size is known.
     let skin = crate::skin::current();
@@ -383,6 +385,20 @@ fn device_frame_presets<R>(ui: &mut Ui, title: &str, info: Option<&str>, enabled
                         ui.add_space(8.0);
                         preset_menu(ui, menu);
                     }
+                    if to_clip {
+                        ui.add_space(6.0);
+                        ui.menu_button(RichText::new("To Clip").small(), |ui| {
+                            ui.label(RichText::new("What it plays, as a clip of").small().color(TEXT_DIM));
+                            for bars in [1u32, 2, 4, 8, 16] {
+                                if ui.button(format!("{bars} bar{}", if bars == 1 { "" } else { "s" })).clicked() {
+                                    action = Some(ChainActionKind::ToClip(bars));
+                                    ui.close();
+                                }
+                            }
+                        })
+                        .response
+                        .on_hover_text("Makes a clip of what this sequencer plays, to edit in the piano roll; the sequencer turns off so you hear the clip");
+                    }
                 });
                 body(ui)
             })
@@ -406,6 +422,8 @@ enum ChainActionKind {
     Left,
     Right,
     Duplicate,
+    /// A sequencer's To Clip, this many bars.
+    ToClip(u32),
 }
 
 impl App {
@@ -618,7 +636,7 @@ impl App {
         let on = enabled;
         let menu = PresetMenu { id, list: presets::effect(kind), current: &preset_name, picked: &mut picked };
         let info = if plugin.is_some() { None } else { Some(kind.description()) };
-        let (changed, action) = device_frame_presets(ui, &title, info, Some(&mut enabled), Some(menu), h, |ui| {
+        let (changed, action) = device_frame_presets(ui, &title, info, Some(&mut enabled), Some(menu), false, h, |ui| {
             if let (Some(p), Some(st)) = (&plugin, &plugin_status) {
                 ui.vertical(|ui| {
                     ui.set_min_width(240.0);
@@ -739,11 +757,12 @@ impl App {
             }
             dev.preset = pr.name.to_string();
         }
-        action.map(|a| match a {
-            ChainActionKind::Remove => ChainAction::Remove(d),
-            ChainActionKind::Left => ChainAction::MoveLeft(d),
-            ChainActionKind::Right => ChainAction::MoveRight(d),
-            ChainActionKind::Duplicate => ChainAction::Duplicate(d),
+        action.and_then(|a| match a {
+            ChainActionKind::Remove => Some(ChainAction::Remove(d)),
+            ChainActionKind::Left => Some(ChainAction::MoveLeft(d)),
+            ChainActionKind::Right => Some(ChainAction::MoveRight(d)),
+            ChainActionKind::Duplicate => Some(ChainAction::Duplicate(d)),
+            ChainActionKind::ToClip(_) => None,
         })
     }
 
@@ -767,7 +786,7 @@ impl App {
             let accent = if enabled { accent_now() } else { TEXT_DIM };
             let lane = &mut self.grid.poly_lane;
             let info = format!("Sequencer · {}", dev.kind.description());
-            device_frame_presets(ui, dev.kind.name(), Some(&info), Some(&mut enabled), Some(menu), h, |ui| {
+            device_frame_presets(ui, dev.kind.name(), Some(&info), Some(&mut enabled), Some(menu), true, h, |ui| {
                 ui.horizontal_top(|ui| {
                     let a = super::seq_view::editor(ui, id.with("editor"), dev.kind, &mut params, &mut data, live, lane, accent, h - 32.0);
                     ui.add_space(6.0);
@@ -779,7 +798,7 @@ impl App {
         } else {
             let accent = if enabled { accent_now() } else { TEXT_DIM };
             let info = format!("MIDI effect · {}", dev.kind.description());
-            device_frame_presets(ui, dev.kind.name(), Some(&info), Some(&mut enabled), Some(menu), h, |ui| {
+            device_frame_presets(ui, dev.kind.name(), Some(&info), Some(&mut enabled), Some(menu), false, h, |ui| {
                 param_grid_mod(ui, id, dev.kind.specs(), &mut params, accent, h - 28.0, mv.as_mut())
             })
         };
@@ -797,11 +816,15 @@ impl App {
             }
             target.preset = pr.name.to_string();
         }
-        action.map(|a| match a {
-            ChainActionKind::Remove => ChainAction::Remove(d),
-            ChainActionKind::Left => ChainAction::MoveLeft(d),
-            ChainActionKind::Right => ChainAction::MoveRight(d),
-            ChainActionKind::Duplicate => ChainAction::Duplicate(d),
+        if let Some(ChainActionKind::ToClip(bars)) = action {
+            self.sequencer_to_clip(track, dev.id, bars);
+        }
+        action.and_then(|a| match a {
+            ChainActionKind::Remove => Some(ChainAction::Remove(d)),
+            ChainActionKind::Left => Some(ChainAction::MoveLeft(d)),
+            ChainActionKind::Right => Some(ChainAction::MoveRight(d)),
+            ChainActionKind::Duplicate => Some(ChainAction::Duplicate(d)),
+            ChainActionKind::ToClip(_) => None,
         })
     }
 

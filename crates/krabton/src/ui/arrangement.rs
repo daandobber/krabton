@@ -389,7 +389,17 @@ impl App {
                 rect_line(&p, below, 3.0, 1.0, ACCENT);
             }
             if let Some(item) = drop_payload::<BrowserItem>(&resp) {
-                self.apply_item(&item, DropTarget::NewTrack);
+                match &*item {
+                    // A MIDI file's tracks start on the bar it was dropped at.
+                    BrowserItem::MidiFile(path) => {
+                        let bpb = self.project.beats_per_bar_f();
+                        let at = ui.input(|i| i.pointer.hover_pos()).map(|p| (xb(p.x).max(0.0) / bpb).round() * bpb).unwrap_or(0.0);
+                        if let Some(song) = self.read_midi_file(path) {
+                            self.midi_file_tracks(&item.label(), &song, Some(at));
+                        }
+                    }
+                    _ => self.apply_item(&item, DropTarget::NewTrack),
+                }
             }
         }
 
@@ -883,7 +893,7 @@ impl App {
         }
         if let Some(item) = drop_payload::<BrowserItem>(&lresp) {
             let beat = snap(hover_beat.unwrap_or(0.0), if grid > 0.0 { grid } else { 1.0 }, free);
-            let target = if matches!(&*item, BrowserItem::Sample(_) | BrowserItem::Clip { .. }) { DropTarget::ArrLane { track: i, beat } } else { DropTarget::Track(i) };
+            let target = if matches!(&*item, BrowserItem::Sample(_) | BrowserItem::Clip { .. } | BrowserItem::MidiFile(_)) { DropTarget::ArrLane { track: i, beat } } else { DropTarget::Track(i) };
             self.apply_item(&item, target);
         }
         if let Some(from) = drop_payload::<SlotDrag>(&lresp) {
@@ -1269,6 +1279,10 @@ impl App {
             let scene = self.sel_scene;
             if ui.button(format!("Copy to Session (scene {})", scene + 1)).on_hover_text("Puts a copy in this track's slot of the selected scene").clicked() {
                 self.arr_clip_to_slot((i, cid), (i, scene));
+                ui.close();
+            }
+            if !is_audio && ui.button("Export MIDI File...").clicked() {
+                self.export_midi_clip(sel);
                 ui.close();
             }
             if is_audio {

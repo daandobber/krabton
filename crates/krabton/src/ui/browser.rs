@@ -192,6 +192,8 @@ enum UiAct {
     Toggle(Row),
     Sample(PathBuf),
     Load(BrowserItem),
+    /// Onto the selected track whatever it is (a MIDI file: one clip there).
+    LoadOnTrack(BrowserItem),
     Run(Act),
     Tag(String, String, usize),
     Untag(String),
@@ -278,7 +280,7 @@ fn list_dir(dir: &Path) -> Vec<(PathBuf, bool)> {
                 continue;
             }
             let is_dir = path.is_dir();
-            if is_dir || has_ext(&path, "wav") || has_ext(&path, "flac") || has_ext(&path, "syx") || has_ext(&path, "sfz") {
+            if is_dir || ["wav", "flac", "syx", "sfz", "mid", "midi"].iter().any(|x| has_ext(&path, x)) {
                 v.push((path, is_dir));
             }
         }
@@ -441,6 +443,7 @@ fn devices() -> [Dev; 41] {
 
 const FM_HINT: &str = "FM voice: double-click or drag onto a track";
 const SAMPLE_HINT: &str = "Click to hear it, double-click to load it, or drag it onto a track or slot";
+const MIDI_FILE_HINT: &str = "MIDI file: drag it onto a slot or the arrangement for one clip, or double-click (or drop it below the tracks) for a track per part";
 
 fn fm_voice(bank: &crate::app::FmBank, i: usize, v: &Dx7Voice) -> Node {
     Node::item(format!("inst/FM/{}/{i}", bank.name), v.name(), Icon::Preset, FM_HINT, BrowserItem::FmVoice { bank: bank.name.clone(), voice: v.0.to_vec() })
@@ -932,6 +935,8 @@ impl App {
                         Node::Folder { tag: Some(t.key.clone()), label: t.label, icon: Icon::Bank, hint: p.display().to_string(), load: None, kids: Kids::Syx(p) }
                     } else if has_ext(&p, "sfz") {
                         Node::item(t.key.clone(), t.label, Icon::Device, "SFZ instrument", BrowserItem::SamplerPatch(p))
+                    } else if has_ext(&p, "mid") || has_ext(&p, "midi") {
+                        Node::item(t.key.clone(), t.label, Icon::Clip, MIDI_FILE_HINT, BrowserItem::MidiFile(p))
                     } else {
                         Node::item(t.key.clone(), t.label, Icon::Sample, SAMPLE_HINT, BrowserItem::Sample(p))
                     }
@@ -953,6 +958,8 @@ impl App {
                 out.push(Node::item(file_tag(&path), name, Icon::Sample, SAMPLE_HINT, BrowserItem::Sample(path)));
             } else if has_ext(&path, "sfz") {
                 out.push(Node::item(file_tag(&path), name, Icon::Device, "SFZ instrument: double-click or drag onto a track to play it with the Sampler", BrowserItem::SamplerPatch(path)));
+            } else if !samples_only && (has_ext(&path, "mid") || has_ext(&path, "midi")) {
+                out.push(Node::item(file_tag(&path), name, Icon::Clip, MIDI_FILE_HINT, BrowserItem::MidiFile(path)));
             } else if !samples_only && has_ext(&path, "syx") {
                 out.push(Node::Folder { tag: Some(file_tag(&path)), label: name, icon: Icon::Bank, hint: "DX7 bank: open it for its voices".into(), load: None, kids: Kids::Syx(path) });
             }
@@ -1208,7 +1215,16 @@ impl App {
         if item.is_some() || row.tag.is_some() || dir.is_some() {
             resp.context_menu(|ui| {
                 if let Some(it) = &item {
-                    if ui.button("Load on the selected track").clicked() {
+                    if let BrowserItem::MidiFile(_) = it {
+                        if ui.button("Open as new tracks").clicked() {
+                            acts.push(UiAct::Load(it.clone()));
+                            ui.close();
+                        }
+                        if ui.button("One clip on the selected track").clicked() {
+                            acts.push(UiAct::LoadOnTrack(it.clone()));
+                            ui.close();
+                        }
+                    } else if ui.button("Load on the selected track").clicked() {
                         acts.push(UiAct::Load(it.clone()));
                         ui.close();
                     }
@@ -1294,7 +1310,9 @@ impl App {
             }
             UiAct::Toggle(row) => self.browser_toggle(&row),
             UiAct::Sample(path) => self.browser_sample(&path),
-            UiAct::Load(item) => {
+            // A MIDI file opens as a track per part, as Live does.
+            UiAct::Load(item @ BrowserItem::MidiFile(_)) => self.apply_item(&item, crate::app::DropTarget::NewTrack),
+            UiAct::Load(item) | UiAct::LoadOnTrack(item) => {
                 let target = self.default_target();
                 self.apply_item(&item, target);
             }

@@ -1092,10 +1092,75 @@ fn arp(a: &mut ArpState, p: &[f32], input: &[MidiEvent], out: &mut Vec<MidiEvent
     a.seq = base;
 }
 
+/// What a sequencer plays over its first `beats` beats, as a clip's notes
+/// ("To Clip"): played offline, block by block from the song's start, at
+/// `bpm`, in the project's key (`scale`, `scale_on` as the engine has them)
+/// and for the track's kit (`drum_notes`). Notes still sounding at the end
+/// end there.
+#[allow(clippy::too_many_arguments)]
+pub fn render_notes(kind: MidiFxKind, params: &[f32], data: &[u8], beats: f64, bpm: f64, scale: Scale, scale_on: bool, drum_notes: u128) -> Vec<crate::project::Note> {
+    use crate::project::Note;
+    const SR: f32 = 48_000.0;
+    const BLOCK: usize = 256;
+    let spb = SR as f64 * 60.0 / bpm.clamp(20.0, 999.0);
+    // As in the engine: with the key off, all twelve notes, unless the device keeps a key itself.
+    let scale = if scale_on || kind.keeps_key() { scale } else { Scale::new(scale.root, ScaleKind::Chromatic) };
+    let base = MidiCtx { now: 0, len: BLOCK, samples_per_beat: spb, scale, scale_on, beat: 0.0, playing: true, sr: SR, drum_notes };
+    let mut st = MidiFxState::new(kind);
+    let total = (beats.max(0.0) * spb).ceil() as u64;
+    // Starts and ends land on a 1/960 beat grid, so a step is where it belongs.
+    let snap = |frame: u64| (frame as f64 / spb * 960.0).round() / 960.0;
+    let mut held: Vec<(u8, f64, f32)> = Vec::new();
+    let mut notes = Vec::new();
+    let mut out = Vec::new();
+    let mut frame = 0u64;
+    while frame < total {
+        let len = BLOCK.min((total - frame) as usize);
+        let ctx = MidiCtx { now: frame, len, beat: frame as f64 / spb, ..base };
+        out.clear();
+        st.process(kind, params, data, &[], &mut out, &ctx);
+        out.sort_by_key(|e| (e.offset, e.on));
+        for e in &out {
+            let at = snap(frame + e.offset as u64);
+            // An off ends the note; an on of a note still sounding ends it too.
+            if let Some(i) = held.iter().position(|h| h.0 == e.pitch) {
+                let (pitch, start, vel) = held.swap_remove(i);
+                notes.push(Note::new(pitch, start, (at - start).max(1.0 / 64.0), vel));
+            }
+            if e.on && at < beats {
+                held.push((e.pitch, at, e.vel.clamp(0.0, 1.0)));
+            }
+        }
+        frame += len as u64;
+    }
+    for (pitch, start, vel) in held {
+        notes.push(Note::new(pitch, start, (beats - start).max(1.0 / 64.0), vel));
+    }
+    notes.sort_by(|a, b| a.start.total_cmp(&b.start).then(a.pitch.cmp(&b.pitch)));
+    notes
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::params::defaults;
+
+    #[test]
+    fn a_sequencer_renders_into_notes_inside_the_clip() {
+        let k = MidiFxKind::Step;
+        let p = defaults(k.specs());
+        let data = k.default_data();
+        let render = |beats: f64| render_notes(k, &p, &data, beats, 120.0, Scale::new(0, ScaleKind::Minor), true, 0);
+        let bar = render(4.0);
+        assert!(!bar.is_empty(), "the default pattern plays something");
+        assert!(bar.iter().all(|n| n.start >= 0.0 && n.start < 4.0 && n.length > 0.0 && n.start + n.length <= 4.0 + 1e-9));
+        // The first bar of two is that bar again (tempo does not move a note).
+        let two = render_notes(k, &p, &data, 8.0, 90.0, Scale::new(0, ScaleKind::Minor), true, 0);
+        let first: Vec<(u8, f64)> = two.iter().filter(|n| n.start < 4.0).map(|n| (n.pitch, n.start)).collect();
+        assert_eq!(first, bar.iter().map(|n| (n.pitch, n.start)).collect::<Vec<_>>());
+        // Steps (and the default's one ratchet, two to a step) sit on the grid.
+        assert!(bar.iter().all(|n| (n.start * 8.0 - (n.start * 8.0).round()).abs() < 1e-6), "{:?}", bar.iter().map(|n| n.start).collect::<Vec<_>>());
+    }
 
     fn ctx(now: u64, len: usize) -> MidiCtx {
         MidiCtx { now, len, samples_per_beat: 24000.0, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: 0.0, playing: true, sr: 48000.0, drum_notes: 0 }
