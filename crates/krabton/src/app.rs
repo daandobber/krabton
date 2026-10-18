@@ -82,6 +82,10 @@ pub enum BrowserItem {
     Sample(PathBuf),
     /// A Standard MIDI File: its notes become clips.
     MidiFile(PathBuf),
+    /// The SF2 Player without a bank.
+    Sf2Player,
+    /// A preset of a SoundFont bank on disk.
+    Sf2 { path: PathBuf, bank: u16, patch: u8, name: String },
     Plugin(krabton_clap::PluginInfo),
     /// A CLAP audio effect.
     PluginEffect(krabton_clap::PluginInfo),
@@ -215,6 +219,8 @@ impl BrowserItem {
             BrowserItem::EffectPreset(k, p) => format!("{}: {p}", k.name()),
             BrowserItem::Sample(p) => p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default(),
             BrowserItem::MidiFile(p) => p.file_stem().map(|f| f.to_string_lossy().to_string()).unwrap_or_default(),
+            BrowserItem::Sf2Player => "SF2 Player".into(),
+            BrowserItem::Sf2 { name, .. } => name.clone(),
             BrowserItem::Plugin(p) | BrowserItem::PluginEffect(p) => p.name.clone(),
             BrowserItem::MidiFx(k) => k.name().into(),
             BrowserItem::MidiPreset(k, p) => format!("{}: {p}", k.name()),
@@ -357,6 +363,8 @@ pub struct App {
     pub deferred: Vec<Deferred>,
     pub plugins: PluginManager,
     pub fm_banks: Vec<FmBank>,
+    /// SoundFont banks open (the last few), so picking from one again is instant.
+    pub(crate) sf2_open: Vec<krabton_engine::dsp::sf2::Sf2Ref>,
     /// monome grid/arc and the virtual grid.
     pub grid: crate::grid::GridState,
     /// Modulator in map mode: clicking or dragging knobs connects it.
@@ -549,6 +557,7 @@ impl App {
             deferred: Vec::new(),
             plugins,
             fm_banks: vec![FmBank::factory()],
+            sf2_open: Vec::new(),
             grid: crate::grid::GridState::new(),
             mod_learn: None,
             sel_mod: None,
@@ -1296,6 +1305,35 @@ impl App {
                     }
                 }
             }
+            BrowserItem::Sf2Player | BrowserItem::Sf2 { .. } => {
+                let inst = match item {
+                    BrowserItem::Sf2 { path, bank, patch, .. } => {
+                        let Some(font) = self.sf2_bank(path) else { return };
+                        Instrument::sf2(Some(font), *bank, *patch)
+                    }
+                    _ => Instrument::sf2(None, 0, 0),
+                };
+                match target_track {
+                    Some(t) if is_midi(self, t) => {
+                        let tr = &mut self.project.tracks[t];
+                        let generic = tr.name.ends_with("MIDI") || tr.instrument.as_ref().map(|i| i.track_name() == tr.name || i.display_name() == tr.name).unwrap_or(true);
+                        // Another preset of the same bank keeps the knobs where they are.
+                        let inst = match (&tr.instrument, inst) {
+                            (Some(Instrument::Sf2 { params, font: old, .. }), Instrument::Sf2 { font, bank, patch, preset, .. }) if *old == font => Instrument::Sf2 { params: params.clone(), font, bank, patch, preset },
+                            (_, inst) => inst,
+                        };
+                        if generic {
+                            tr.name = inst.track_name();
+                        }
+                        tr.instrument = Some(inst);
+                        self.sel_track = TrackSel::Track(t);
+                        self.detail = DetailTab::Devices;
+                    }
+                    _ => {
+                        self.add_midi_track(Some(inst));
+                    }
+                }
+            }
             BrowserItem::MidiFile(path) => {
                 let Some(song) = self.read_midi_file(path) else { return };
                 let name = item.label();
@@ -1400,6 +1438,46 @@ impl App {
         }
     }
 
+    /// A SoundFont bank: read once and kept open (the last few), and
+    /// remembered for the browser. A toast says why one can't be read.
+    pub(crate) fn sf2_bank(&mut self, path: &Path) -> Option<krabton_engine::dsp::sf2::Sf2Ref> {
+        match self.sf2_open_bank(path) {
+            Ok(f) => Some(f),
+            Err(e) => {
+                self.toast(e);
+                None
+            }
+        }
+    }
+
+    /// [`App::sf2_bank`], quietly.
+    pub(crate) fn sf2_open_bank(&mut self, path: &Path) -> Result<krabton_engine::dsp::sf2::Sf2Ref, String> {
+        if let Some(f) = self.sf2_open.iter().find(|f| f.path.as_deref() == Some(path)) {
+            return Ok(f.clone());
+        }
+        let f = krabton_engine::dsp::sf2::Sf2Ref::load(path)?;
+        if self.sf2_open.len() >= 4 {
+            self.sf2_open.remove(0);
+        }
+        self.sf2_open.push(f.clone());
+        if !self.prefs.sf2_banks.iter().any(|p| p == path) {
+            self.prefs.sf2_banks.push(path.to_path_buf());
+            self.prefs.save();
+        }
+        Ok(f)
+    }
+
+    /// Opens SoundFont banks from disk into the browser's SF2 Player folder.
+    pub(crate) fn open_sf2_dialog(&mut self) {
+        let Some(files) = rfd::FileDialog::new().add_filter("SoundFont 2 bank", &["sf2", "SF2"]).pick_files() else { return };
+        for f in files {
+            if let Some(bank) = self.sf2_bank(&f) {
+                let gm = if bank.is_gm() { ", a General MIDI set" } else { "" };
+                self.toast(format!("{}: {} presets{gm}", bank.name, bank.presets.len()));
+            }
+        }
+    }
+
     /// Reads a MIDI file (a toast says why one can't be).
     pub(crate) fn read_midi_file(&mut self, path: &Path) -> Option<midi_file::MidiSong> {
         let name = path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
@@ -1439,6 +1517,16 @@ impl App {
     /// fits it and its notes as a clip: on the arrangement at `at` (or the
     /// playhead's bar) in Arrangement view, else in the selected scene.
     pub(crate) fn midi_file_tracks(&mut self, name: &str, song: &midi_file::MidiSong, at: Option<f64>) {
+        // The file's tempo and metre become the song's (undo brings the old ones back).
+        let mut took = Vec::new();
+        if let Some(bpm) = song.bpm.map(|b| (b.clamp(20.0, 999.0) * 100.0).round() / 100.0).filter(|b| (b - self.project.bpm).abs() > 0.004) {
+            self.project.bpm = bpm;
+            took.push(format!("at {} BPM", fmt_bpm(bpm)));
+        }
+        if let Some(n) = song.beats_per_bar.filter(|&n| (1..=16).contains(&n) && n != self.project.beats_per_bar) {
+            self.project.beats_per_bar = n;
+            took.push(format!("in {n}/4"));
+        }
         let bpb = self.project.beats_per_bar_f();
         let length = song.clip_length(bpb);
         let on_arrangement = at.is_some() || self.view == View::Arrangement;
@@ -1446,8 +1534,13 @@ impl App {
         let scene = self.sel_scene;
         let single = song.tracks.len() == 1;
         let mut first = None;
+        let gm = self.prefs.gm_bank.clone().and_then(|p| self.sf2_bank(&p));
         for st in &song.tracks {
-            let t = self.project.add_midi_track(Some(midi_file_instrument(st)));
+            let inst = match &gm {
+                Some(bank) => midi_file_gm(bank, st),
+                None => midi_file_instrument(st),
+            };
+            let t = self.project.add_midi_track(Some(inst));
             first.get_or_insert(t);
             let label = if single { name.to_string() } else { st.name.clone() };
             self.project.tracks[t].name = label.clone();
@@ -1465,7 +1558,7 @@ impl App {
         }
         let n = song.tracks.len();
         let bars = (length / bpb).round();
-        let tempo = song.bpm.filter(|b| (b - self.project.bpm).abs() > 0.5).map(|b| format!(" (the file is at {b:.0} BPM)")).unwrap_or_default();
+        let tempo = if took.is_empty() { String::new() } else { format!("; the song is now {}", took.join(", ")) };
         self.toast(format!("{name}: {n} track{}, {bars} bar{}{tempo}", if n == 1 { "" } else { "s" }, if bars == 1.0 { "" } else { "s" }));
     }
 
@@ -2743,6 +2836,25 @@ impl App {
                     }
                 }
                 "arrsplit" => self.arr_split_at_playhead(),
+                // sf2=PATH: a new track with the bank's first preset; sf2pick=BANK,PROGRAM on
+                // the selected track; gmbank=PATH: MIDI files play with that bank.
+                "sf2" => {
+                    let path = PathBuf::from(arg.trim());
+                    if let Some(f) = self.sf2_bank(&path) {
+                        let (bank, patch) = f.presets.first().map(|p| (p.bank, p.patch)).unwrap_or((0, 0));
+                        self.add_midi_track(Some(Instrument::sf2(Some(f), bank, patch)));
+                    }
+                }
+                "sf2pick" if nums.len() == 2 => {
+                    if let TrackSel::Track(t) = self.sel_track {
+                        if let Some(Instrument::Sf2 { font, bank, patch, preset, .. }) = self.project.tracks.get_mut(t).and_then(|tr| tr.instrument.as_mut()) {
+                            *bank = nums[0] as u16;
+                            *patch = nums[1] as u8;
+                            *preset = font.as_ref().and_then(|f| f.preset(*bank, *patch)).map(|p| p.name.clone()).unwrap_or_default();
+                        }
+                    }
+                }
+                "gmbank" => self.prefs.gm_bank = Some(PathBuf::from(arg.trim())),
                 // midifile=PATH: a MIDI file as if double-clicked in the browser.
                 "midifile" => self.apply_item(&BrowserItem::MidiFile(PathBuf::from(arg.trim())), DropTarget::NewTrack),
                 // toclip=DEVICE,BARS: the selected track's MIDI device's To Clip.
@@ -3637,5 +3749,46 @@ fn midi_file_instrument(t: &midi_file::MidiSongTrack) -> Instrument {
         _ if has(&["pad"]) => Instrument::synth("Soft Pad"),
         _ if has(&["piano", "keys", "organ"]) => Instrument::synth("Keys"),
         _ => Instrument::synth("Pluck"),
+    }
+}
+
+/// A tempo as people write it: 120, 98.5, 133.33.
+fn fmt_bpm(bpm: f64) -> String {
+    let s = format!("{bpm:.2}");
+    s.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
+/// A MIDI file's track on a General MIDI bank: on its program (or one its
+/// name suggests), drums on the bank's first kit.
+fn midi_file_gm(bank: &krabton_engine::dsp::sf2::Sf2Ref, t: &midi_file::MidiSongTrack) -> Instrument {
+    let name = t.name.to_lowercase();
+    let has = |words: &[&str]| words.iter().any(|w| name.contains(w));
+    let drums = t.drums || has(&["drum", "kit", "perc"]);
+    let program = t.program.unwrap_or(if has(&["bass"]) {
+        33
+    } else if has(&["string", "violin", "viola", "cello"]) {
+        48
+    } else if has(&["pad"]) {
+        89
+    } else if has(&["organ"]) {
+        16
+    } else if has(&["guitar"]) {
+        25
+    } else if has(&["brass", "trumpet", "horn"]) {
+        61
+    } else if has(&["sax"]) {
+        65
+    } else if has(&["flute"]) {
+        73
+    } else if has(&["choir", "voice", "vox"]) {
+        52
+    } else if has(&["lead"]) {
+        81
+    } else {
+        0
+    });
+    match bank.gm(program, drums).or_else(|| bank.presets.first()) {
+        Some(p) => Instrument::sf2(Some(bank.clone()), p.bank, p.patch),
+        None => Instrument::sf2(Some(bank.clone()), 0, 0),
     }
 }

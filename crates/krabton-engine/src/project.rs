@@ -773,6 +773,18 @@ pub enum Instrument {
     Facet { preset: String, params: Vec<f32> },
     /// Beads: the wavetable synth of Mutable Instruments Beads, played with keys, with its grains.
     BeadsSynth { preset: String, params: Vec<f32> },
+    /// SF2 Player: a preset (bank, program) of a SoundFont 2 bank (see `dsp::sf2`).
+    Sf2 {
+        params: Vec<f32>,
+        font: Option<crate::dsp::sf2::Sf2Ref>,
+        #[serde(default)]
+        bank: u16,
+        #[serde(default)]
+        patch: u8,
+        /// The preset's name, as the bank calls it.
+        #[serde(default)]
+        preset: String,
+    },
 }
 
 impl Instrument {
@@ -941,6 +953,12 @@ impl Instrument {
         Instrument::Facet { preset: preset.to_string(), params: crate::dsp::facet::preset(preset) }
     }
 
+    /// The SF2 Player on a preset of `font` (its name looked up).
+    pub fn sf2(font: Option<crate::dsp::sf2::Sf2Ref>, bank: u16, patch: u8) -> Self {
+        let preset = font.as_ref().and_then(|f| f.preset(bank, patch)).map(|p| p.name.clone()).unwrap_or_default();
+        Instrument::Sf2 { params: params::defaults(crate::dsp::sf2::SPECS), font, bank, patch, preset }
+    }
+
     pub fn beads_synth(preset: &str) -> Self {
         Instrument::BeadsSynth { preset: preset.to_string(), params: crate::dsp::beads_synth::preset(preset) }
     }
@@ -990,6 +1008,7 @@ impl Instrument {
             Instrument::Quartet { .. } => "Quartet",
             Instrument::Orchestra { params, .. } => crate::orchestra::device_name(params),
             Instrument::Facet { .. } => "Facet",
+            Instrument::Sf2 { .. } => "SF2 Player",
         }
     }
 
@@ -1001,6 +1020,8 @@ impl Instrument {
             Instrument::Sampler { zones, .. } if zones.len() == 1 => zones[0].sample.name.clone(),
             Instrument::Sampler { sample, .. } => sample.as_ref().map(|s| s.name.clone()).unwrap_or_else(|| "Empty".into()),
             Instrument::Plugin(p) => p.name.clone(),
+            Instrument::Sf2 { preset, .. } if !preset.is_empty() => preset.clone(),
+            Instrument::Sf2 { font, .. } => font.as_ref().map(|f| f.name.clone()).unwrap_or_else(|| "Empty".into()),
             Instrument::Fm { voice, .. } => Dx7Voice::from_slice(voice).map(|v| v.name()).unwrap_or_else(|| "FM".into()),
             Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Modular { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } | Instrument::Monk { preset, .. } | Instrument::Piano { preset, .. } | Instrument::Bassline { preset, .. } | Instrument::Mono101 { preset, .. } | Instrument::Drone { preset, .. } | Instrument::Waves { preset, .. } | Instrument::Guitar { preset, .. } | Instrument::WindChimes { preset, .. } | Instrument::Birds { preset, .. } | Instrument::Nature { preset, .. } | Instrument::PanFlute { preset, .. } | Instrument::Melodica { preset, .. } | Instrument::Harmonica { preset, .. } | Instrument::Calculator { preset, .. } | Instrument::Console { preset, .. } | Instrument::Handheld { preset, .. } | Instrument::Micro { preset, .. } | Instrument::Warp { preset, .. } | Instrument::Hybrid { preset, .. } | Instrument::Quartet { preset, .. } | Instrument::ChipFm { preset, .. } | Instrument::V2 { preset, .. } | Instrument::Oidos { preset, .. } | Instrument::Orchestra { preset, .. } | Instrument::Facet { preset, .. } | Instrument::BeadsSynth { preset, .. } => preset.clone(),
         }
@@ -1012,6 +1033,8 @@ impl Instrument {
         match self {
             Instrument::Plugin(p) => p.name.clone(),
             Instrument::Guitar { params, .. } => crate::dsp::guitar::family_name(params).to_string(),
+            // A bank's preset is the instrument (a piano, a kit, a choir).
+            Instrument::Sf2 { preset, .. } if !preset.is_empty() => preset.clone(),
             i => i.kind_name().to_string(),
         }
     }
@@ -1020,6 +1043,7 @@ impl Instrument {
     pub fn drum_notes(&self) -> u128 {
         match self {
             Instrument::Drums { pads, .. } => pads.iter().fold(0, |m, p| m | 1u128 << (p.note & 127)),
+            Instrument::Sf2 { bank, .. } if *bank >= crate::dsp::sf2::DRUM_BANK => crate::dsp::sf2::GM_DRUM_NOTES,
             _ => 0,
         }
     }
@@ -2020,6 +2044,7 @@ impl Project {
                 match &mut *inst {
                     Some(Instrument::Synth { params, .. }) => params::fix_len(params, synth::SPECS),
                     Some(Instrument::Sampler { params, .. }) => params::fix_len(params, sampler::SPECS),
+                    Some(Instrument::Sf2 { params, .. }) => params::fix_len(params, crate::dsp::sf2::SPECS),
                     Some(Instrument::Macro { params, .. }) => params::fix_len(params, macro_osc::SPECS),
                     Some(Instrument::Braids { params, .. }) => params::fix_len(params, braids_synth::SPECS),
                     Some(Instrument::Elements { params, .. }) => params::fix_len(params, elements_synth::SPECS),

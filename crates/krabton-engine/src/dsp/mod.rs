@@ -29,6 +29,7 @@ pub mod real_drums;
 pub mod retro;
 pub mod rings_synth;
 pub mod sampler;
+pub mod sf2;
 pub mod shaker_synth;
 pub mod shakers;
 pub mod stk_mallets;

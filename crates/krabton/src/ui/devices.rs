@@ -1047,6 +1047,7 @@ impl App {
         let live = super::inst_screen::InstLive::read(&status, i);
         let info = match &inst {
             Instrument::Drums { engine, .. } => Some(engine.description()),
+            Instrument::Sf2 { .. } => Some(super::browser::SF2_HINT),
             Instrument::Plugin(_) => None,
             _ => super::browser::instrument_hint(title),
         };
@@ -1117,6 +1118,54 @@ impl App {
                             ui.label(RichText::new("classic analog polysynth").small().color(crate::skin::ink_dim()));
                         });
                         super::inst_screen::analog_grid(ui, Id::new(("analog", track_id)), params, &live, h - 48.0, mv.as_mut());
+                    }
+                    Instrument::Sf2 { params, font, bank, patch, preset } => {
+                        let mut asked = super::faces::sf2::Asked::default();
+                        let for_midi = font.as_ref().and_then(|f| f.path.as_ref()).is_some_and(|p| self.prefs.gm_bank.as_ref() == Some(p));
+                        if crate::skin::current().is_some() {
+                            super::faces::sf2::panel(ui, Id::new(("sf2", track_id)), font.as_ref(), *bank, *patch, params, for_midi, h - 36.0, mv.as_mut(), &mut asked);
+                        } else {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(font.as_ref().map_or("No bank", |f| f.name.as_str())).strong().color(TEXT));
+                                if ui.button("Open...").on_hover_text("Open a SoundFont 2 bank (.sf2)").clicked() {
+                                    asked.open = true;
+                                }
+                                if let Some(f) = font.as_ref() {
+                                    ui.menu_button(if preset.is_empty() { "Presets" } else { preset.as_str() }, |ui| super::faces::sf2::preset_menu(ui, f, *bank, *patch, &mut asked.pick));
+                                    if f.is_gm() && ui.selectable_label(for_midi, "MIDI files").on_hover_text("Play the MIDI files you open with this bank").clicked() {
+                                        asked.midi_files = true;
+                                    }
+                                }
+                            });
+                            param_grid_mod(ui, Id::new(("sf2", track_id)), krabton_engine::dsp::sf2::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
+                        }
+                        // A bank opened or dropped: its preset where this one is, or its first.
+                        let mut new_bank = None;
+                        if asked.open {
+                            if let Some(path) = rfd::FileDialog::new().add_filter("SoundFont 2 bank", &["sf2", "SF2"]).pick_file() {
+                                new_bank = self.sf2_bank(&path).map(|f| (f, None));
+                            }
+                        }
+                        if let Some(BrowserItem::Sf2 { path, bank: b, patch: p, .. }) = asked.dropped.take() {
+                            new_bank = self.sf2_bank(&path).map(|f| (f, Some((b, p))));
+                        }
+                        if let Some((f, at)) = new_bank {
+                            let at = at.or_else(|| f.preset(*bank, *patch).map(|_| (*bank, *patch))).or_else(|| f.presets.first().map(|p| (p.bank, p.patch)));
+                            *font = Some(f);
+                            asked.pick = at;
+                        }
+                        if let Some((b, p)) = asked.pick {
+                            *bank = b;
+                            *patch = p;
+                            *preset = font.as_ref().and_then(|f| f.preset(b, p)).map(|p| p.name.clone()).unwrap_or_default();
+                        }
+                        if asked.midi_files {
+                            let path = font.as_ref().and_then(|f| f.path.clone());
+                            self.prefs.gm_bank = if for_midi { None } else { path };
+                            self.prefs.save();
+                            let name = font.as_ref().map(|f| f.name.clone()).unwrap_or_default();
+                            self.toast(if for_midi { "MIDI files play with Krabton's instruments again".to_string() } else { format!("MIDI files you open play with {name}") });
+                        }
                     }
                     Instrument::Piano { preset, params } => {
                         let faced = crate::skin::current().is_some();
@@ -2285,6 +2334,10 @@ impl App {
         if remove {
             t.instrument = None;
         } else if new_inst != inst {
+            // Another preset of the bank: a name Krabton gave follows it.
+            if matches!(new_inst, Instrument::Sf2 { .. }) && t.name == inst.track_name() {
+                t.name = new_inst.track_name();
+            }
             t.instrument = Some(new_inst);
         }
         if let Some(note) = self.pending_pad_hit.take() {

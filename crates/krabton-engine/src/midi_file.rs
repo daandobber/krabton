@@ -9,7 +9,8 @@ pub struct MidiSong {
     pub tracks: Vec<MidiSongTrack>,
     /// The first tempo in it (beats per minute).
     pub bpm: Option<f64>,
-    /// Beats per bar from its first time signature.
+    /// Beats (quarter notes) per bar from its first time signature, when
+    /// they come out whole (6/8: 3; 7/8: none).
     pub beats_per_bar: Option<u32>,
 }
 
@@ -171,7 +172,12 @@ fn read_track(data: &[u8], tpq: f64, bpm: &mut Option<f64>, bpb: &mut Option<u32
                             *bpm = Some(60_000_000.0 / us as f64);
                         }
                     }
-                    0x58 if !body.is_empty() && bpb.is_none() => *bpb = Some(body[0].max(1) as u32),
+                    0x58 if body.len() >= 2 && bpb.is_none() => {
+                        let (num, unit) = (body[0].max(1) as u32 * 4, 1u32 << body[1].min(6));
+                        if num % unit == 0 {
+                            *bpb = Some(num / unit);
+                        }
+                    }
                     0x2f => break,
                     _ => {}
                 }
@@ -334,11 +340,30 @@ mod tests {
         f.append(&mut trk);
         let song = read(&f).expect("reads");
         assert_eq!(song.tracks[0].program, Some(33));
+        assert_eq!(song.beats_per_bar, None, "no time signature in it");
         assert!((song.length() - 5.0).abs() < 1e-9);
         assert_eq!(song.clip_length(4.0), 8.0);
         assert_eq!(song.clip_length(3.0), 6.0);
         let empty = MidiSong::default();
         assert_eq!(empty.clip_length(4.0), 4.0);
+    }
+
+    #[test]
+    fn a_metre_counts_in_quarter_notes() {
+        let file = |num: u8, pow: u8| {
+            let mut trk = vec![0x00, 0xff, 0x58, 0x04, num, pow, 24, 8, 0x00, 0x90, 60, 100, 0x60, 0x80, 60, 0, 0x00, 0xff, 0x2f, 0x00];
+            let mut f = b"MThd".to_vec();
+            f.extend_from_slice(&6u32.to_be_bytes());
+            f.extend_from_slice(&[0, 0, 0, 1, 0, 96]);
+            f.extend_from_slice(b"MTrk");
+            f.extend_from_slice(&(trk.len() as u32).to_be_bytes());
+            f.append(&mut trk);
+            read(&f).expect("reads").beats_per_bar
+        };
+        assert_eq!(file(3, 2), Some(3), "3/4");
+        assert_eq!(file(6, 3), Some(3), "6/8");
+        assert_eq!(file(4, 2), Some(4), "4/4");
+        assert_eq!(file(7, 3), None, "7/8 is not whole beats");
     }
 
     #[test]

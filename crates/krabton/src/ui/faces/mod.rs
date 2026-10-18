@@ -14,6 +14,7 @@ pub mod modules;
 pub mod organ;
 pub mod piano;
 pub mod plaits;
+pub mod sf2;
 pub mod synth;
 
 use super::modulation::{knob_overlay, slider_overlay, ModView};
@@ -191,7 +192,7 @@ fn value_font(u: f32) -> FontId {
 }
 
 /// Text that fits `w`: smaller (down to 7 points) if it has to.
-fn fit(p: &egui::Painter, text: &str, mut font: FontId, w: f32) -> FontId {
+pub(super) fn fit(p: &egui::Painter, text: &str, mut font: FontId, w: f32) -> FontId {
     let width = p.layout_no_wrap(text.to_owned(), font.clone(), Color32::WHITE).size().x;
     if width > w && width > 0.0 {
         font.size = (font.size * w / width).max(7.0);
@@ -650,7 +651,7 @@ fn lcd(ui: &mut Ui, r: Rect, id: Id, spec: &ParamSpec, v: &mut f32, label: &str,
 }
 
 /// A dark glass, as displays sit in panels.
-fn screen_box(p: &egui::Painter, r: Rect, u: f32) {
+pub(super) fn screen_box(p: &egui::Painter, r: Rect, u: f32) {
     let _ = u;
     p.rect_filled(r.expand(1.5), 3.0, Color32::from_black_alpha(140));
     p.rect_filled(r, 2.0, super::inst_screen::SCREEN_BG);

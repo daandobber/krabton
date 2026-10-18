@@ -214,6 +214,11 @@ thread_local! {
     static MISSING: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
+/// Notes a file a project names that could not be read (a SoundFont bank).
+pub(crate) fn note_missing(e: String) {
+    MISSING.with(|m| m.borrow_mut().push(e));
+}
+
 /// While the returned guard lives, deserializing the same sample path twice
 /// shares one buffer.
 pub(crate) struct LoadCacheGuard;

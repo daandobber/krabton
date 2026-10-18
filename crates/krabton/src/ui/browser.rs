@@ -112,6 +112,7 @@ enum Act {
     AddPluginFolder,
     LoadSyx,
     LoadSyxFolder,
+    LoadSf2,
 }
 
 enum Kids {
@@ -120,6 +121,8 @@ enum Kids {
     Dir { path: PathBuf, samples_only: bool },
     /// The voices in a DX7 .syx file.
     Syx(PathBuf),
+    /// The presets of a SoundFont bank.
+    Sf2(PathBuf),
 }
 
 /// The tree the list is drawn from, built fresh for the selected section.
@@ -213,6 +216,8 @@ pub struct BrowserState {
     /// Folder listings: (path, is a folder).
     dirs: HashMap<PathBuf, Vec<(PathBuf, bool)>>,
     syx: HashMap<PathBuf, Vec<Dx7Voice>>,
+    /// The presets of SoundFont banks opened here (or why one can't be read).
+    sf2: HashMap<PathBuf, Result<Vec<krabton_engine::dsp::sf2::Sf2Preset>, String>>,
     /// The rows drawn last frame, for the keys.
     rows: Vec<Row>,
     /// Keys go to the list (set by clicking in the browser).
@@ -240,6 +245,7 @@ impl BrowserState {
             closed_in_search: HashSet::new(),
             dirs: HashMap::new(),
             syx: HashMap::new(),
+            sf2: HashMap::new(),
             rows: Vec::new(),
             focused: false,
             focus_search: false,
@@ -280,7 +286,7 @@ fn list_dir(dir: &Path) -> Vec<(PathBuf, bool)> {
                 continue;
             }
             let is_dir = path.is_dir();
-            if is_dir || ["wav", "flac", "syx", "sfz", "mid", "midi"].iter().any(|x| has_ext(&path, x)) {
+            if is_dir || ["wav", "flac", "syx", "sfz", "mid", "midi", "sf2"].iter().any(|x| has_ext(&path, x)) {
                 v.push((path, is_dir));
             }
         }
@@ -443,6 +449,7 @@ fn devices() -> [Dev; 41] {
 
 const FM_HINT: &str = "FM voice: double-click or drag onto a track";
 const SAMPLE_HINT: &str = "Click to hear it, double-click to load it, or drag it onto a track or slot";
+pub(crate) const SF2_HINT: &str = "Plays the presets of SoundFont 2 banks (.sf2): pianos, orchestras, General MIDI sets, drum kits";
 const MIDI_FILE_HINT: &str = "MIDI file: drag it onto a slot or the arrangement for one clip, or double-click (or drop it below the tracks) for a track per part";
 
 fn fm_voice(bank: &crate::app::FmBank, i: usize, v: &Dx7Voice) -> Node {
@@ -742,6 +749,7 @@ impl App {
                     all.push((e.name(), e.description(), e.kits().iter().map(|k| (k.to_string(), BrowserItem::Drums(k))).collect()));
                 }
                 all.push(("Sampler", "Plays samples: drop a sample on it afterwards", vec![("Sampler".to_string(), BrowserItem::Sampler)]));
+                all.push(("SF2 Player", SF2_HINT, vec![("SF2 Player".to_string(), BrowserItem::Sf2Player)]));
                 all.sort_by_key(|a| a.0);
                 // Columns of names; each opens its presets.
                 let per = all.len().div_ceil(3);
@@ -826,6 +834,12 @@ impl App {
             kids: Kids::Nodes(fm),
         });
         out.extend(drum_engine_nodes());
+        // The SF2 Player, with the banks opened before.
+        let mut sf2 = vec![Node::Action { label: "Open a SoundFont bank (.sf2)...".into(), hint: "Open .sf2 banks: their presets show here".into(), act: Act::LoadSf2 }];
+        for path in self.prefs.sf2_banks.iter().filter(|p| p.is_file()) {
+            sf2.push(Node::Folder { tag: Some(file_tag(path)), label: file_name(path).trim_end_matches(".sf2").trim_end_matches(".SF2").to_string(), icon: Icon::Bank, hint: path.display().to_string(), load: None, kids: Kids::Sf2(path.clone()) });
+        }
+        out.push(Node::Folder { tag: None, label: "SF2 Player".into(), icon: Icon::Device, hint: SF2_HINT.into(), load: Some(BrowserItem::Sf2Player), kids: Kids::Nodes(sf2) });
         out.push(Node::item("inst/Sampler", "Sampler", Icon::Device, "Plays samples: one across the keyboard, a multi-sampled instrument or SFZ, or slices of a loop", BrowserItem::Sampler));
         out.sort_by(|a, b| a.label().cmp(b.label()));
         out
@@ -933,6 +947,8 @@ impl App {
                 } else if let Some(p) = t.key.strip_prefix("file/").map(PathBuf::from).filter(|p| p.is_file()) {
                     if has_ext(&p, "syx") {
                         Node::Folder { tag: Some(t.key.clone()), label: t.label, icon: Icon::Bank, hint: p.display().to_string(), load: None, kids: Kids::Syx(p) }
+                    } else if has_ext(&p, "sf2") {
+                        Node::Folder { tag: Some(t.key.clone()), label: t.label, icon: Icon::Bank, hint: p.display().to_string(), load: None, kids: Kids::Sf2(p) }
                     } else if has_ext(&p, "sfz") {
                         Node::item(t.key.clone(), t.label, Icon::Device, "SFZ instrument", BrowserItem::SamplerPatch(p))
                     } else if has_ext(&p, "mid") || has_ext(&p, "midi") {
@@ -960,12 +976,59 @@ impl App {
                 out.push(Node::item(file_tag(&path), name, Icon::Device, "SFZ instrument: double-click or drag onto a track to play it with the Sampler", BrowserItem::SamplerPatch(path)));
             } else if !samples_only && (has_ext(&path, "mid") || has_ext(&path, "midi")) {
                 out.push(Node::item(file_tag(&path), name, Icon::Clip, MIDI_FILE_HINT, BrowserItem::MidiFile(path)));
+            } else if !samples_only && has_ext(&path, "sf2") {
+                out.push(Node::Folder { tag: Some(file_tag(&path)), label: name, icon: Icon::Bank, hint: "SoundFont bank: open it for its presets, play one with the SF2 Player".into(), load: None, kids: Kids::Sf2(path) });
             } else if !samples_only && has_ext(&path, "syx") {
                 out.push(Node::Folder { tag: Some(file_tag(&path)), label: name, icon: Icon::Bank, hint: "DX7 bank: open it for its voices".into(), load: None, kids: Kids::Syx(path) });
             }
         }
         if out.is_empty() {
             out.push(Node::Note(if samples_only { "No samples here" } else { "Nothing Krabton can open here" }.into()));
+        }
+        out
+    }
+
+    /// A SoundFont bank's presets: a short list as it is, a long one by bank,
+    /// a General MIDI bank's first bank by family.
+    fn sf2_nodes(&mut self, path: &Path) -> Vec<Node> {
+        use krabton_engine::dsp::sf2;
+        if !self.browser.sf2.contains_key(path) {
+            let read = self.sf2_open_bank(path).map(|f| f.presets.clone());
+            self.browser.sf2.insert(path.to_path_buf(), read);
+        }
+        let presets = match &self.browser.sf2[path] {
+            Ok(p) if p.is_empty() => return vec![Node::Note("No presets in this bank".into())],
+            Ok(p) => p.clone(),
+            Err(e) => return vec![Node::Note(e.clone())],
+        };
+        let node = |p: &sf2::Sf2Preset| {
+            let item = BrowserItem::Sf2 { path: path.to_path_buf(), bank: p.bank, patch: p.patch, name: p.name.clone() };
+            Node::item(format!("sf2/{}/{}/{}", path.display(), p.bank, p.patch), format!("{:03}  {}", p.patch as u32 + 1, p.name), Icon::Preset, SF2_HINT, item)
+        };
+        if presets.len() <= 32 {
+            return presets.iter().map(node).collect();
+        }
+        let gm = presets.iter().filter(|p| p.bank == 0).count() >= 120;
+        let mut banks: Vec<u16> = presets.iter().map(|p| p.bank).collect();
+        banks.dedup();
+        let mut out = Vec::new();
+        for b in banks {
+            let in_bank: Vec<&sf2::Sf2Preset> = presets.iter().filter(|p| p.bank == b).collect();
+            if b == 0 && gm {
+                for (k, family) in sf2::GM_FAMILIES.iter().enumerate() {
+                    let kids: Vec<Node> = in_bank.iter().filter(|p| p.patch as usize / 8 == k).map(|p| node(p)).collect();
+                    if !kids.is_empty() {
+                        out.push(Node::folder(*family, Icon::Folder, kids));
+                    }
+                }
+            } else {
+                let title = match b {
+                    sf2::DRUM_BANK => "Drum Kits".to_string(),
+                    b if b > sf2::DRUM_BANK => format!("Drum Kits {}", b - sf2::DRUM_BANK),
+                    b => format!("Bank {b}"),
+                };
+                out.push(Node::folder(title, Icon::Folder, in_bank.into_iter().map(node).collect()));
+            }
         }
         out
     }
@@ -987,6 +1050,10 @@ impl App {
                 self.dir_nodes(&path, samples_only)
             }
             Kids::Syx(path) => self.syx_nodes(&path),
+            Kids::Sf2(path) => {
+                *budget = budget.saturating_sub(1);
+                self.sf2_nodes(&path)
+            }
         }
     }
 
@@ -1385,6 +1452,10 @@ impl App {
                     }
                     self.plugins.add_folder(dir);
                 }
+            }
+            Act::LoadSf2 => {
+                self.open_sf2_dialog();
+                self.browser.sf2.clear();
             }
             Act::LoadSyx => {
                 if let Some(files) = rfd::FileDialog::new().add_filter("DX7 sysex", &["syx", "SYX"]).pick_files() {

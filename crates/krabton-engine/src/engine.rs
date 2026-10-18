@@ -470,6 +470,7 @@ enum InstState {
     Quartet(Box<QuartetState>),
     Orchestra(Box<OrchestraState>),
     Facet(Box<FacetState>),
+    Sf2(Box<crate::dsp::sf2::Sf2State>),
     Plugin { instance: u64, proc: Option<Box<dyn AudioProcessor>>, pending: Vec<PluginEvent> },
 }
 
@@ -508,6 +509,7 @@ impl InstState {
             InstState::Facet(s) => s.pitch_bend = semis,
             InstState::Voice(s) => s.pitch_bend = semis,
             InstState::Monk(s) => s.pitch_bend = semis,
+            InstState::Sf2(s) => s.pitch_bend = semis,
             _ => {}
         }
     }
@@ -558,6 +560,7 @@ impl InstState {
             Some(Instrument::Quartet { .. }) => InstState::Quartet(Box::new(QuartetState::new(sr))),
             Some(Instrument::Orchestra { .. }) => InstState::Orchestra(Box::new(OrchestraState::new(sr))),
             Some(Instrument::Facet { .. }) => InstState::Facet(Box::new(FacetState::new(sr))),
+            Some(Instrument::Sf2 { font, .. }) => InstState::Sf2(Box::new(crate::dsp::sf2::Sf2State::new(font.as_ref(), sr))),
         }
     }
 
@@ -623,6 +626,8 @@ impl InstState {
                 | (InstState::Orchestra(_), Some(Instrument::Orchestra { .. }))
                 | (InstState::Facet(_), Some(Instrument::Facet { .. }))
         ) || matches!((self, i), (InstState::Plugin { instance, .. }, Some(Instrument::Plugin(p))) if *instance == p.instance)
+            // Another bank needs a player of its own.
+            || matches!((self, i), (InstState::Sf2(s), Some(Instrument::Sf2 { font, .. })) if s.is_for(font.as_ref()))
     }
 
     /// `ov` replaces the instrument's parameters (modulation).
@@ -631,6 +636,7 @@ impl InstState {
             (InstState::Synth(s), Instrument::Synth { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Drums(s), Instrument::Drums { pads, .. }) => s.note_on(pads, pitch, vel, sr),
             (InstState::Sampler(s), Instrument::Sampler { params, sample, zones }) => s.note_on(ov.unwrap_or(params), sample.as_ref(), zones, pitch, vel),
+            (InstState::Sf2(s), Instrument::Sf2 { params, bank, patch, .. }) => s.note_on(ov.unwrap_or(params), *bank, *patch, pitch, vel),
             (st @ InstState::Plugin { .. }, Instrument::Plugin(_)) => st.push_plugin_event(pitch, PluginEventKind::NoteOn { velocity: vel }),
             (InstState::Fm(s), Instrument::Fm { voice, op_mask, params, .. }) => s.note_on(ov.unwrap_or(params), voice, *op_mask, pitch, vel),
             (InstState::Macro(s), Instrument::Macro { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
@@ -679,6 +685,7 @@ impl InstState {
         match (self, inst) {
             (InstState::Synth(s), Instrument::Synth { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Sampler(s), Instrument::Sampler { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Sf2(s), Instrument::Sf2 { .. }) => s.note_off(pitch),
             (st @ InstState::Plugin { .. }, Instrument::Plugin(_)) => st.push_plugin_event(pitch, PluginEventKind::NoteOff),
             (InstState::Fm(s), Instrument::Fm { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Macro(s), Instrument::Macro { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
@@ -728,6 +735,7 @@ impl InstState {
             InstState::Synth(s) => s.all_off(),
             InstState::Drums(s) => s.all_off(),
             InstState::Sampler(s) => s.all_off(),
+            InstState::Sf2(s) => s.all_off(),
             InstState::Plugin { .. } => self.push_plugin_event(0, PluginEventKind::AllNotesOff),
             InstState::Fm(s) => s.all_off(),
             InstState::Macro(s) => s.all_off(),
@@ -817,6 +825,7 @@ impl InstState {
             (InstState::Synth(s), Instrument::Synth { params, .. }) => s.render(ov.unwrap_or(params), l, r, sr),
             (InstState::Drums(s), Instrument::Drums { pads, .. }) => s.render(pads, l, r, sr),
             (InstState::Sampler(s), Instrument::Sampler { params, sample, zones }) => s.render(ov.unwrap_or(params), sample.as_ref(), zones, l, r, sr),
+            (InstState::Sf2(s), Instrument::Sf2 { params, bank, patch, .. }) => s.render(ov.unwrap_or(params), *bank, *patch, l, r),
             (InstState::Fm(s), Instrument::Fm { voice, params, .. }) => s.render(ov.unwrap_or(params), voice, l, r, sr),
             (InstState::Macro(s), Instrument::Macro { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Braids(s), Instrument::Braids { params, .. }) => s.render(ov.unwrap_or(params), l, r),
@@ -1511,11 +1520,11 @@ impl Engine {
                     rt.signal.joy = [x.clamp(-1.0, 1.0), y.clamp(-1.0, 1.0)];
                 }
             }
-            Command::Sustain { track, down } => {
-                if let Some(InstState::Piano(s)) = self.project.track_index(track).and_then(|ti| self.tracks.get_mut(ti)).map(|rt| &mut rt.instrument) {
-                    s.sustain(down);
-                }
-            }
+            Command::Sustain { track, down } => match self.project.track_index(track).and_then(|ti| self.tracks.get_mut(ti)).map(|rt| &mut rt.instrument) {
+                Some(InstState::Piano(s)) => s.sustain(down),
+                Some(InstState::Sf2(s)) => s.set_sustain(down),
+                _ => {}
+            },
             Command::SetPianoLibrary(lib) => {
                 let mut old = Vec::new();
                 for rt in self.tracks.iter_mut() {

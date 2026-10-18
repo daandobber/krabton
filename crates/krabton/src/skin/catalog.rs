@@ -160,6 +160,23 @@ const SAMPLER: Skin = Skin {
     ..BASE
 };
 
+/// A rack sound module: dark grey with its ears' screws, a green display.
+const SF2: Skin = Skin {
+    top: hex(0x3a3d43),
+    bottom: hex(0x24262a),
+    surface: Surface::Grain,
+    screws: true,
+    stripes: &[hex(0x2fb5c8)],
+    accent: hex(0xa6f04d),
+    knob: Knob::Cap,
+    cap: hex(0x2fb5c8),
+    logo: Font::Wide,
+    logo_size: 17.0,
+    logo_case: Case::Upper,
+    groups: Groups::Outline,
+    ..BASE
+};
+
 const PARTICLES: Skin = Skin {
     top: hex(0xc9a56c),
     bottom: hex(0xa4814b),
@@ -909,6 +926,7 @@ pub fn for_instrument(name: &str) -> Option<Skin> {
         "Synth" => SYNTH,
         "FM" => FM,
         "Sampler" => SAMPLER,
+        "SF2 Player" => SF2,
         "Plaits" => Skin { accent: hex(0x2fa84f), heroes: &["Harmonics", "Timbre", "Morph"], ..MODULE },
         "Braids" => Skin { accent: hex(0xe04534), heroes: &["Timbre", "Color"], ..MODULE },
         "Elements" => Skin { accent: hex(0x5a6df0), heroes: &["Geometry", "Brightness"], ..MODULE },

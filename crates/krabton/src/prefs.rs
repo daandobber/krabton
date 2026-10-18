@@ -68,6 +68,10 @@ pub struct Prefs {
     pub plugin_folders: Vec<PathBuf>,
     /// DX7 banks loaded into the FM browser.
     pub fm_banks: Vec<PathBuf>,
+    /// SoundFont banks opened, for the SF2 Player's folder in the browser.
+    pub sf2_banks: Vec<PathBuf>,
+    /// The General MIDI bank MIDI files play with (none: Krabton's instruments).
+    pub gm_bank: Option<PathBuf>,
     /// Hear notes while placing and moving them in the clip editor.
     pub note_preview: bool,
     /// Size of everything (1 = normal; 0 = never set).
