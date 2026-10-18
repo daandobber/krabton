@@ -55,6 +55,16 @@ mod tapedelay2;
 mod totape6;
 mod tube2;
 mod verbity2;
+mod pear2;
+mod isolator3;
+mod hull2;
+mod baxandall2;
+mod cabs;
+mod distance2;
+mod coils2;
+mod fracture2;
+mod ensemble;
+mod infinity2;
 
 /// One parameter. Values are 0..1, as in Airwindows.
 #[derive(Clone, Copy, Debug)]
@@ -104,6 +114,16 @@ pub static EFFECTS: &[EffectInfo] = &[
     capacitor2::INFO,
     derez2::INFO,
     tapedelay2::INFO,
+    pear2::INFO,
+    isolator3::INFO,
+    hull2::INFO,
+    baxandall2::INFO,
+    cabs::INFO,
+    distance2::INFO,
+    coils2::INFO,
+    fracture2::INFO,
+    ensemble::INFO,
+    infinity2::INFO,
 ];
 
 /// Creates the effect with the given [`EffectInfo::id`], or `None` for an
@@ -144,6 +164,16 @@ fn constructor(id: &str) -> Option<(Constructor, usize)> {
         "Capacitor2" => entry::<capacitor2::Capacitor2>(),
         "DeRez2" => entry::<derez2::DeRez2>(),
         "TapeDelay2" => entry::<tapedelay2::TapeDelay2>(),
+        "Pear2" => entry::<pear2::Pear2>(),
+        "Isolator3" => entry::<isolator3::Isolator3>(),
+        "Hull2" => entry::<hull2::Hull2>(),
+        "Baxandall2" => entry::<baxandall2::Baxandall2>(),
+        "Cabs" => entry::<cabs::Cabs>(),
+        "Distance2" => entry::<distance2::Distance2>(),
+        "Coils2" => entry::<coils2::Coils2>(),
+        "Fracture2" => entry::<fracture2::Fracture2>(),
+        "Ensemble" => entry::<ensemble::Ensemble>(),
+        "Infinity2" => entry::<infinity2::Infinity2>(),
         _ => return None,
     })
 }

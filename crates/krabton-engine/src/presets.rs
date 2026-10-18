@@ -112,6 +112,8 @@ pub fn effect(kind: EffectKind) -> &'static [Preset] {
         E::Comb => COMB,
         E::Lattice => LATTICE,
         E::Telephone => TELEPHONE,
+        E::Warps => WARPS_PRESETS,
+        E::VaFilter => VAFILTER_PRESETS,
         E::Slam => SLAM,
         E::Moo => MOO,
         E::AwGalactic => AW_GALACTIC,
@@ -134,6 +136,16 @@ pub fn effect(kind: EffectKind) -> &'static [Preset] {
         E::Convolution => CONVOLUTION,
         E::Snowglobe => SNOWGLOBE,
         E::AwTapeDelay2 => AW_TAPE_DELAY,
+        E::AwPear2 => AW_PEAR2_PRESETS,
+        E::AwIsolator3 => AW_ISOLATOR3_PRESETS,
+        E::AwHull2 => AW_HULL2_PRESETS,
+        E::AwBaxandall2 => AW_BAXANDALL2_PRESETS,
+        E::AwCabs => AW_CABS_PRESETS,
+        E::AwDistance2 => AW_DISTANCE2_PRESETS,
+        E::AwCoils2 => AW_COILS2_PRESETS,
+        E::AwFracture2 => AW_FRACTURE2_PRESETS,
+        E::AwEnsemble => AW_ENSEMBLE_PRESETS,
+        E::AwInfinity2 => AW_INFINITY2_PRESETS,
         _ => &[],
     }
 }
@@ -620,6 +632,32 @@ static LATTICE: &[Preset] = &[
     p("Frozen", &[("Size", N(0.05)), ("Feedback", N(1.0)), ("Mix", N(0.5))]),
 ];
 
+static VAFILTER_PRESETS: &[Preset] = &[
+    p("Warm Ladder", &[("Model", C("Ladder")), ("Cutoff", N(800.0)), ("Resonance", N(0.4)), ("Drive", N(0.3))]),
+    p("Acid Diode", &[("Model", C("Diode Ladder")), ("Cutoff", N(400.0)), ("Resonance", N(0.8)), ("Drive", N(0.5)), ("Env Amount", N(0.7)), ("Env Release", N(120.0))]),
+    p("Scream", &[("Model", C("Scream LP")), ("Cutoff", N(900.0)), ("Resonance", N(0.85)), ("Drive", N(0.6))]),
+    p("Thin Scream", &[("Model", C("Scream HP")), ("Cutoff", N(600.0)), ("Resonance", N(0.5))]),
+    p("Wobble", &[("Model", C("Ladder")), ("Cutoff", N(300.0)), ("Resonance", N(0.6)), ("LFO Amount", N(0.6)), ("LFO Rate", N(2.0))]),
+    p("Envelope Wah", &[("Model", C("Multimode BP")), ("Cutoff", N(500.0)), ("Resonance", N(0.6)), ("Env Amount", N(0.8)), ("Env Release", N(80.0))]),
+    p("Moving Notch", &[("Model", C("Multimode Notch")), ("Cutoff", N(1000.0)), ("Resonance", N(0.3)), ("LFO Amount", N(0.5)), ("LFO Rate", N(0.3)), ("Stereo", N(0.5))]),
+    p("Narrow Band", &[("Model", C("Clean BP")), ("Cutoff", N(1500.0)), ("Resonance", N(0.4))]),
+    p("Random Steps", &[("Model", C("Half Ladder")), ("Cutoff", N(800.0)), ("Resonance", N(0.5)), ("LFO Amount", N(0.5)), ("LFO Rate", N(4.0)), ("LFO Shape", C("Random"))]),
+    p("Slow Sweep", &[("Model", C("Multimode LP")), ("Cutoff", N(200.0)), ("Resonance", N(0.5)), ("LFO Amount", N(0.8)), ("LFO Rate", N(0.1)), ("LFO Shape", C("Saw Up"))]),
+    p("Clean Low Cut", &[("Model", C("Clean HP")), ("Cutoff", N(120.0)), ("Resonance", N(0.1)), ("Drive", N(0.0))]),
+];
+
+static WARPS_PRESETS: &[Preset] = &[
+    p("Fold", &[("Algorithm", N(0.15)), ("Timbre", N(0.6)), ("Drive", N(0.7))]),
+    p("Diode Ring", &[("Algorithm", N(0.25)), ("Timbre", N(0.3)), ("Note", N(55.0))]),
+    p("Digital Ring", &[("Algorithm", N(0.375)), ("Timbre", N(0.2)), ("Note", N(60.0)), ("Shape", C("Triangle"))]),
+    p("Bit Crash", &[("Algorithm", N(0.5)), ("Timbre", N(0.8)), ("Drive", N(0.8))]),
+    p("Comparator", &[("Algorithm", N(0.625)), ("Timbre", N(0.5))]),
+    p("Robot Voice", &[("Algorithm", N(0.8)), ("Timbre", N(0.5)), ("Shape", C("Saw")), ("Note", N(43.0))]),
+    p("Whisper", &[("Algorithm", N(0.8)), ("Timbre", N(0.5)), ("Shape", C("Saw")), ("Note", N(36.0)), ("Drive", N(0.7))]),
+    p("Formant Up", &[("Algorithm", N(0.85)), ("Timbre", N(0.85)), ("Shape", C("Triangle")), ("Note", N(48.0))]),
+    p("Wide Ring", &[("Algorithm", N(0.3)), ("Timbre", N(0.4)), ("Note", N(52.0)), ("Detune", N(20.0))]),
+];
+
 static TELEPHONE: &[Preset] = &[
     p("Old Phone", &[("Band", N(0.5)), ("Squash", N(0.4)), ("Line", N(0.2))]),
     p("Tin Can", &[("Band", N(1.0)), ("Squash", N(0.8)), ("Line", N(0.1))]),
@@ -727,6 +765,16 @@ static AW_AIR: &[Preset] = &[p("Airy", &[("Air", N(0.7))]), p("Darker", &[("Air"
 static AW_CAPACITOR: &[Preset] = &[p("Warm Filter", &[("Lowpass", N(0.6))]), p("Thin", &[("Highpass", N(0.4))])];
 static AW_DEREZ: &[Preset] = &[p("Lo-Fi", &[("Rate", N(0.4)), ("Rez", N(0.5))]), p("Crushed", &[("Rate", N(0.2)), ("Rez", N(0.2))])];
 static AW_TAPE_DELAY: &[Preset] = &[p("Short Tape", &[("Time", N(0.3)), ("Regen", N(0.3)), ("Dry/Wet", N(0.5))]), p("Dub Tape", &[("Time", N(0.7)), ("Regen", N(0.7)), ("Flutter", N(0.4)), ("Dry/Wet", N(0.5))])];
+static AW_PEAR2_PRESETS: &[Preset] = &[p("Soft Low Pass", &[("Freq", N(0.5)), ("Poles", N(0.5))]), p("Steep High Pass", &[("Freq", N(0.4)), ("Poles", N(1.0)), ("Inv/Wet", N(0.0))])];
+static AW_ISOLATOR3_PRESETS: &[Preset] = &[p("Lows Only", &[("Iso", N(0.3))]), p("Highs Only", &[("Iso", N(0.7))]), p("Narrow Band", &[("Iso", N(0.5)), ("Q", N(0.8))])];
+static AW_HULL2_PRESETS: &[Preset] = &[p("Bright", &[("Treble", N(0.7))]), p("Warm", &[("Treble", N(0.4)), ("Bass", N(0.6))])];
+static AW_BAXANDALL2_PRESETS: &[Preset] = &[p("Hi-Fi Smile", &[("Treble", N(0.6)), ("Bass", N(0.6))]), p("Darker", &[("Treble", N(0.35))])];
+static AW_CABS_PRESETS: &[Preset] = &[p("Small Combo", &[("CabType", N(0.1)), ("CabSize", N(0.4))]), p("Big Stack", &[("CabType", N(0.5)), ("CabSize", N(0.9)), ("Intense", N(0.8))]), p("Off Axis", &[("OffAxis", N(0.8))])];
+static AW_DISTANCE2_PRESETS: &[Preset] = &[p("Across The Room", &[("Atmosph", N(0.6)), ("Darken", N(0.4))]), p("Far Away", &[("Atmosph", N(0.95)), ("Darken", N(0.8)), ("Dry/Wet", N(0.9))])];
+static AW_COILS2_PRESETS: &[Preset] = &[p("Iron", &[("Saturate", N(0.3))]), p("Cheap Transformer", &[("Saturate", N(0.5)), ("Cheapness", N(0.7))])];
+static AW_FRACTURE2_PRESETS: &[Preset] = &[p("Folded", &[("Drive", N(0.4)), ("Fractre", N(0.3))]), p("Shattered", &[("Drive", N(0.7)), ("Fractre", N(0.8))])];
+static AW_ENSEMBLE_PRESETS: &[Preset] = &[p("Lush", &[("Ensemble", N(0.6)), ("Fullness", N(0.4)), ("Dry/Wet", N(0.6))]), p("Subtle", &[("Ensemble", N(0.3)), ("Dry/Wet", N(0.4))])];
+static AW_INFINITY2_PRESETS: &[Preset] = &[p("Big Space", &[("Feedback", N(0.7)), ("Dry/Wet", N(0.4))]), p("Endless", &[("Feedback", N(1.0)), ("Dry/Wet", N(0.5))])];
 
 // ---------------------------------------------------------------- MIDI effects
 

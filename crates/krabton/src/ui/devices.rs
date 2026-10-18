@@ -560,6 +560,8 @@ impl App {
                 crate::ui::lens::comp_panel(ui, id, dev_id, &mut params, accent, h, mv.as_mut(), &status, &mut width)
             } else if kind == EffectKind::LensLimiter {
                 crate::ui::lens::limiter_panel(ui, id, dev_id, &mut params, accent, h, mv.as_mut(), &status, &mut width)
+            } else if kind == EffectKind::VaFilter {
+                crate::ui::filter_view::va_filter_panel(ui, id, &mut params, accent, h, mv.as_mut(), &mut width)
             } else if kind == EffectKind::Convolution {
                 let (c, act) = convolution_face(ui, id, &mut params, conv_file.as_ref(), accent, h, mv.as_mut(), &mut width);
                 conv_act = act;

@@ -12,6 +12,7 @@ serde.workspace = true
 serde_json.workspace = true
 crossbeam-channel.workspace = true
 hound.workspace = true
+krabton-warps = { path = "../krabton-warps" }
 # FLAC decoding for samples (pure Rust, Apache-2.0).
 claxon = "0.4.3"
 # Memory-maps the grand piano's samples (MIT or Apache-2.0).

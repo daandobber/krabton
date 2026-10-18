@@ -1688,6 +1688,7 @@ dependencies = [
  "krabton-elements",
  "krabton-rings",
  "krabton-stk",
+ "krabton-warps",
  "memmap2",
  "mi-plaits-dsp",
  "serde",
@@ -1707,6 +1708,10 @@ version = "0.19.0"
 
 [[package]]
 name = "krabton-stk"
+version = "0.19.0"
+
+[[package]]
+name = "krabton-warps"
 version = "0.19.0"
 
 [[package]]

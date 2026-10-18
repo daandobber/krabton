@@ -40,6 +40,9 @@ fn allocations() -> usize {
 
 const RATES: [f32; 2] = [44100.0, 96000.0];
 const CATEGORIES: [&str; 8] = ["Reverb", "Tape", "Saturation", "Dynamics", "EQ", "Lo-Fi", "Delay", "Other"];
+/// Effects that ring forever at their defaults (Infinity2 at full Feedback),
+/// with the parameter index and value the tail test uses instead.
+const ENDLESS: [(&str, usize, f32); 1] = [("Infinity2", 4, 0.5)];
 
 /// Deterministic white noise in -1..1.
 struct Noise(u32);
@@ -179,7 +182,12 @@ fn tails_decay_to_near_silence() {
     for info in EFFECTS {
         for &sr in &RATES {
             let mut fx = create(info.id, sr).unwrap();
-            let params = defaults(info);
+            let mut params = defaults(info);
+            for &(id, index, value) in &ENDLESS {
+                if id == info.id {
+                    params[index] = value;
+                }
+            }
             let (mut l, mut r) = test_signal(sr, 1.0);
             run(fx.as_mut(), &params, &mut l, &mut r);
             // 60 s of silence: Galactic at full size has the longest tail

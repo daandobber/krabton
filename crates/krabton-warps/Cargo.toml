@@ -1,0 +1,10 @@
+[package]
+name = "krabton-warps"
+description = "Rust port of the Mutable Instruments Warps meta-modulator, for Krabton"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license = "MIT"
+authors = ["Krabton contributors", "Emilie Gillet (original Warps code)"]
+
+[dependencies]
