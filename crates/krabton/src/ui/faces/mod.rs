@@ -312,7 +312,7 @@ fn top_label(p: &egui::Painter, r: Rect, label: &str, u: f32) -> Rect {
 fn value_text(p: &egui::Painter, r: Rect, text: &str, u: f32) -> Rect {
     let font = fit(p, text, value_font(u), r.width());
     let h = font.size + 3.0;
-    p.text(pos2(r.center().x, r.bottom() - h * 0.5), Align2::CENTER_CENTER, text, font, crate::skin::ink_dim());
+    tabular_text(p, pos2(r.center().x, r.bottom() - h * 0.5), Align2::CENTER_CENTER, text, font, crate::skin::ink_dim());
     Rect::from_min_max(r.min, pos2(r.right(), r.bottom() - h))
 }
 

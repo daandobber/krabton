@@ -57,6 +57,23 @@ pub fn text(p: &Painter, pos: Pos2, anchor: Align2, s: impl ToString, font: egui
 }
 
 /// Text clipped to `rect`, left-aligned and vertically centered.
+/// Text whose digits all take the same width (as tabular figures do), so a
+/// number that changes does not make its neighbours jump.
+pub fn tabular_text(p: &Painter, pos: Pos2, anchor: Align2, s: &str, font: egui::FontId, c: Color32) -> Rect {
+    let digit = p.layout_no_wrap("0".to_owned(), font.clone(), c).size();
+    let widths: Vec<f32> = s.chars().map(|ch| if ch.is_ascii_digit() { digit.x } else { p.layout_no_wrap(ch.to_string(), font.clone(), c).size().x }).collect();
+    let total: f32 = widths.iter().sum();
+    let rect = anchor.anchor_size(pos, vec2(total, digit.y));
+    let mut x = rect.left();
+    for (ch, w) in s.chars().zip(widths) {
+        if !ch.is_whitespace() {
+            p.text(pos2(x + w * 0.5, rect.center().y), Align2::CENTER_CENTER, ch, font.clone(), c);
+        }
+        x += w;
+    }
+    rect
+}
+
 pub fn text_in(p: &Painter, rect: Rect, s: impl ToString, font: egui::FontId, c: Color32) {
     let p = p.with_clip_rect(rect.intersect(p.clip_rect()));
     p.text(pos2(rect.left() + 4.0, rect.center().y), Align2::LEFT_CENTER, s.to_string(), font, c);
@@ -230,7 +247,7 @@ pub fn param_slider(ui: &mut Ui, rect: Rect, id: Id, spec: &ParamSpec, value: &m
     rect_fill(&p, Rect::from_min_max(pos2(track.left(), y.min(from)), pos2(track.right(), y.max(from))), 2.0, shade(accent, 0.8));
     let thumb = Rect::from_center_size(pos2(track.center().x, y), vec2((rect.width() - 10.0).min(22.0), 8.0));
     rect_fill(&p, thumb, 2.0, if resp.hovered() || resp.dragged() { Color32::WHITE } else { TEXT });
-    p.with_clip_rect(value_rect).text(value_rect.center(), Align2::CENTER_CENTER, spec.format(*value), small(), crate::skin::ink_dim());
+    tabular_text(&p.with_clip_rect(value_rect), value_rect.center(), Align2::CENTER_CENTER, &spec.format(*value), small(), crate::skin::ink_dim());
     resp.on_hover_text(format!("{}: {}\nDrag (Shift: fine), double-click to reset", spec.name, spec.format(*value)));
     (changed, track)
 }
@@ -303,7 +320,7 @@ pub fn param_cell(ui: &mut Ui, rect: Rect, id: Id, spec: &ParamSpec, value: &mut
             resp.on_hover_text(format!("{}: {}\nDrag to change, Shift for fine, double-click to reset", spec.name, spec.format(*value)));
         }
     }
-    p.with_clip_rect(value_rect).text(value_rect.center(), Align2::CENTER_CENTER, spec.format(*value), if hero { body() } else { small() }, if skinned { crate::skin::ink_dim() } else { TEXT });
+    tabular_text(&p.with_clip_rect(value_rect), value_rect.center(), Align2::CENTER_CENTER, &spec.format(*value), if hero { body() } else { small() }, if skinned { crate::skin::ink_dim() } else { TEXT });
     changed
 }
 

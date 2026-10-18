@@ -389,7 +389,7 @@ fn device_frame_presets<R>(ui: &mut Ui, title: &str, info: Option<&str>, enabled
             .inner
         });
     if let Some(s) = &skin {
-        ui.painter().set(bg, crate::skin::panel(r.response.rect, s, crate::skin::track_colour()));
+        ui.painter().set(bg, crate::skin::panel(r.response.rect, s, crate::skin::track_colour(), ui.ctx().pixels_per_point()));
     }
     (r.inner, action)
 }

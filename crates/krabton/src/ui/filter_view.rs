@@ -44,7 +44,7 @@ pub(crate) fn va_filter_panel(ui: &mut Ui, id: Id, params: &mut [f32], accent: C
         p.line_segment([pos2(cx, rect.top() + 18.0), pos2(cx, rect.bottom())], Stroke::new(1.0_f32, accent.gamma_multiply(0.5)));
         let label = if cutoff >= 1000.0 { format!("{:.1} kHz", cutoff / 1000.0) } else { format!("{:.0} Hz", cutoff) };
         p.text(rect.left_top() + vec2(8.0, 6.0), Align2::LEFT_TOP, MODELS[model], FontId::proportional(14.0), TEXT);
-        p.text(rect.right_top() + vec2(-8.0, 8.0), Align2::RIGHT_TOP, format!("{label}  ·  res {:.0}%", res * 100.0), FontId::monospace(10.0), TEXT_DIM);
+        p.text(rect.right_top() + vec2(-8.0, 8.0), Align2::RIGHT_TOP, format!("{label}  ·  res {:>3.0}%", res * 100.0), FontId::monospace(10.0), TEXT_DIM);
         if resp.dragged() {
             let d = resp.drag_delta();
             let f = (cutoff * 2f32.powf(d.x / rect.width() * 10.0)).clamp(20.0, 20000.0);

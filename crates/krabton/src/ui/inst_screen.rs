@@ -1508,9 +1508,9 @@ pub(crate) fn monk_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, h
     let vowel_names = ["u", "o", "a", "e", "i"];
     let vn = vowel_names[((vowel * 4.0).round() as usize).min(4)];
     caption(&painter, rect.left_top() + vec2(8.0, 6.0), Align2::LEFT_TOP, &format!("vowel {vn}"), accent_now());
-    caption(&painter, pos2(rect.right() - 8.0, rect.top() + 6.0), Align2::RIGHT_TOP, &format!("head {:.0}", head * 100.0), TEXT_DIM);
+    caption(&painter, pos2(rect.right() - 8.0, rect.top() + 6.0), Align2::RIGHT_TOP, &format!("head {:>3.0}", head * 100.0), TEXT_DIM);
     if p[GLIDE] > 0.001 {
-        caption(&painter, pos2(rect.right() - 8.0, rect.top() + 20.0), Align2::RIGHT_TOP, &format!("glide {:.0}", p[GLIDE] * 100.0), TEXT_DIM);
+        caption(&painter, pos2(rect.right() - 8.0, rect.top() + 20.0), Align2::RIGHT_TOP, &format!("glide {:>3.0}", p[GLIDE] * 100.0), TEXT_DIM);
     }
     if singing {
         ui.ctx().request_repaint();

@@ -133,11 +133,17 @@ fn screw(c: Pos2, seed: u32, out: &mut Vec<Shape>) {
 }
 
 /// The panel of a device in skin `s`, for the frame at `rect`; `track` is
-/// the colour of its track (a strip on the left edge).
-pub fn panel(rect: Rect, s: &Skin, track: Option<Color32>) -> Shape {
+/// the colour of its track (a strip on the left edge). `ppp` is the screen's
+/// pixels per point: the texture keeps to whole pixels from the panel's
+/// corner and comes from the look, not from where the panel is, so it holds
+/// still while the view moves.
+pub fn panel(rect: Rect, s: &Skin, track: Option<Color32>, ppp: f32) -> Shape {
     let r = 5.0;
     let mut out = Vec::new();
-    let seed = (rect.left() as u32).wrapping_mul(31) ^ (rect.width() as u32);
+    let ppp = ppp.max(0.5);
+    let px = 1.0 / ppp;
+    let snap = |v: f32| (v * ppp).round() / ppp;
+    let seed = hash(u32::from_le_bytes(s.top.to_array()) ^ u32::from_le_bytes(s.bottom.to_array()).rotate_left(11));
     // A shadow under it.
     out.push(Shape::rect_filled(rect.translate(vec2(0.0, 2.0)), r, Color32::from_black_alpha(70)));
     match s.surface {
@@ -145,54 +151,61 @@ pub fn panel(rect: Rect, s: &Skin, track: Option<Color32>) -> Shape {
         _ => out.push(Shape::mesh(gradient(rect, r, s.top, s.bottom))),
     }
     let inner = rect.shrink2(vec2(if s.cheeks.is_some() { CHEEK } else { 2.0 }, 2.0));
+    // Where the texture starts, on a pixel; its size in pixels.
+    let (x0, y0) = (snap(inner.left()), snap(inner.top()));
+    let (w_px, h_px) = ((inner.width() * ppp).max(1.0) as u32, (inner.height() * ppp).max(1.0) as u32);
     match s.surface {
         Surface::Brushed => {
-            let mut y = inner.top();
+            let mut row = 0u32;
             let mut k = 0u32;
-            while y < inner.bottom() {
+            while row < h_px {
                 let h = hash(k ^ seed);
-                let a = 4 + (h % 10) as u8;
-                let c = if h & 32 != 0 { Color32::from_white_alpha(a + 2) } else { Color32::from_black_alpha(a + 6) };
-                out.push(Shape::line_segment([pos2(inner.left(), y), pos2(inner.right(), y)], Stroke::new(1.0_f32, c)));
-                y += 1.6 + (h >> 8 & 3) as f32 * 0.4;
+                let a = 7 + (h % 10) as u8;
+                let c = if h & 32 != 0 { Color32::from_white_alpha(a + 2) } else { Color32::from_black_alpha(a + 8) };
+                let y = y0 + (row as f32 + 0.5) * px;
+                out.push(Shape::line_segment([pos2(x0, y), pos2(inner.right(), y)], Stroke::new(px, c)));
+                row += 2 + (h >> 8 & 1);
                 k += 1;
             }
         }
         Surface::Grain => {
             let mut m = Mesh::default();
-            let n = ((inner.area() / 70.0) as u32).min(6000);
-            for k in 0..n {
-                let h = hash(k.wrapping_mul(2654435761) ^ seed);
-                let x = inner.left() + (h % 10000) as f32 / 10000.0 * inner.width();
-                let y = inner.top() + (h >> 14 & 1023) as f32 / 1023.0 * inner.height();
-                let c = if h & 1 == 0 { Color32::from_white_alpha(10) } else { Color32::from_black_alpha(22) };
-                m.add_colored_rect(Rect::from_min_size(pos2(x, y), vec2(1.2, 1.2)), c);
+            let n = ((w_px as f32 * h_px as f32) / (70.0 * ppp * ppp)) as u32;
+            for k in 0..n.min(6000) {
+                let hx = hash(k.wrapping_mul(2654435761) ^ seed);
+                let hy = hash(hx ^ 0x9e37_79b9);
+                let (dx, dy) = (hx % w_px, hy % h_px);
+                let c = if hx & 1 == 0 { Color32::from_white_alpha(16) } else { Color32::from_black_alpha(34) };
+                m.add_colored_rect(Rect::from_min_size(pos2(x0 + dx as f32 * px, y0 + dy as f32 * px), vec2(px, px)), c);
             }
             out.push(Shape::mesh(m));
         }
         Surface::Carbon => {
             let h = inner.height();
-            let mut x0 = inner.left();
-            let mut k = 0;
-            while x0 < inner.right() + h {
-                // The line x = x0 - (y - top), cut to the panel.
-                let y_a = (inner.top() + x0 - inner.right()).max(inner.top());
-                let y_b = (inner.top() + x0 - inner.left()).min(inner.bottom());
+            let mut k = 0u32;
+            loop {
+                let x = x0 + (k * 3) as f32 * px;
+                if x >= inner.right() + h {
+                    break;
+                }
+                // The line x - (y - top), cut to the panel.
+                let y_a = (y0 + x - inner.right()).max(y0);
+                let y_b = (y0 + x - x0).min(inner.bottom());
                 if y_b > y_a {
-                    let at = |y: f32| pos2(x0 - (y - inner.top()), y);
+                    let at = |y: f32| pos2(x - (y - y0), y);
                     let c = if k % 2 == 0 { Color32::from_black_alpha(55) } else { Color32::from_white_alpha(7) };
                     out.push(Shape::line_segment([at(y_a), at(y_b)], Stroke::new(1.6_f32, c)));
                 }
-                x0 += 2.5;
                 k += 1;
             }
         }
-        Surface::Wood => wood_grain(inner, mix(s.top, s.bottom, 0.5), false, seed, &mut out),
+        Surface::Wood => wood_grain(Rect::from_min_size(pos2(x0, y0), inner.size()), mix(s.top, s.bottom, 0.5), false, seed, &mut out),
         Surface::Scan => {
-            let mut y = inner.top();
-            while y < inner.bottom() {
-                out.push(Shape::line_segment([pos2(inner.left(), y), pos2(inner.right(), y)], Stroke::new(1.0_f32, Color32::from_black_alpha(46))));
-                y += 3.0;
+            let mut row = 0u32;
+            while row < h_px {
+                let y = y0 + (row as f32 + 0.5) * px;
+                out.push(Shape::line_segment([pos2(x0, y), pos2(inner.right(), y)], Stroke::new(px, Color32::from_black_alpha(60))));
+                row += (3.0 * ppp).round().max(2.0) as u32;
             }
         }
         Surface::Gloss => {
@@ -204,7 +217,8 @@ pub fn panel(rect: Rect, s: &Skin, track: Option<Color32>) -> Shape {
     if let Some(wood) = s.cheeks {
         for (k, side) in [Rect::from_min_size(rect.min, vec2(CHEEK, rect.height())), Rect::from_min_size(pos2(rect.right() - CHEEK, rect.top()), vec2(CHEEK, rect.height()))].into_iter().enumerate() {
             out.push(Shape::mesh(gradient(side, if k == 0 { r } else { r }, shade(wood, 1.15), shade(wood, 0.8))));
-            wood_grain(side.shrink2(vec2(0.5, 0.0)), wood, true, seed ^ (k as u32 + 7), &mut out);
+            let side_px = Rect::from_min_size(pos2(snap(side.left() + 0.5), snap(side.top())), vec2(side.width() - 1.0, side.height()));
+            wood_grain(side_px, wood, true, seed ^ (k as u32 + 7), &mut out);
             let edge = if k == 0 { side.right() } else { side.left() };
             out.push(Shape::line_segment([pos2(edge, side.top()), pos2(edge, side.bottom())], Stroke::new(1.0_f32, Color32::from_black_alpha(110))));
         }
@@ -217,7 +231,7 @@ pub fn panel(rect: Rect, s: &Skin, track: Option<Color32>) -> Shape {
         let i = if s.cheeks.is_some() { CHEEK + 6.0 } else { 7.0 };
         let corners = [pos2(rect.left() + i, rect.top() + 7.0), pos2(rect.right() - i, rect.top() + 7.0), pos2(rect.left() + i, rect.bottom() - 7.0), pos2(rect.right() - i, rect.bottom() - 7.0)];
         for (k, c) in corners.into_iter().enumerate() {
-            screw(c, seed ^ k as u32, &mut out);
+            screw(pos2(snap(c.x), snap(c.y)), seed ^ k as u32, &mut out);
         }
     }
     // A bevel: light along the top, dark along the bottom, an outline.

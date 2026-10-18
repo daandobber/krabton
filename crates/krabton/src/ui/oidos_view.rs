@@ -40,9 +40,9 @@ pub(crate) fn oidos_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, 
     let note = if playing { live.vals[2] } else { 60.0 } + get(p, TRANSPOSE).round();
     let parts = oidos::partials(p, note, 48000.0, true);
     let info = if playing {
-        format!("SEED {}  ·  {} VOICES  ·  {} PARTIALS", get(p, SEED).round(), live.vals[0].round(), live.vals[1].round())
+        format!("SEED {:>3.0}  ·  {:>2.0} VOICES  ·  {:>5.0} PARTIALS", get(p, SEED).round(), live.vals[0].round(), live.vals[1].round())
     } else {
-        format!("SEED {}  ·  {} PARTIALS A NOTE", get(p, SEED).round(), parts.len())
+        format!("SEED {:>3.0}  ·  {:>4} PARTIALS A NOTE", get(p, SEED).round(), parts.len())
     };
     painter.text(rect.right_top() + vec2(-10.0, 7.0), Align2::RIGHT_TOP, info, FontId::monospace(9.0), TEXT_DIM);
     // The spectrum: from two octaves below the note to the top of hearing.
@@ -91,7 +91,7 @@ pub(crate) fn oidos_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, 
         painter.line_segment([pos2(a, sr.bottom()), pos2(b, sr.top())], Stroke::new(1.5_f32, YELLOW));
     }
     // Under it: what the drags do.
-    painter.text(pos2(sr.left(), rect.bottom() - 6.0), Align2::LEFT_BOTTOM, format!("OVERTONES {}  ·  HARMONICITY {:+.2}", get(p, OVERTONES).round(), get(p, HARMONICITY)), FontId::monospace(9.0), TEXT_DIM);
+    painter.text(pos2(sr.left(), rect.bottom() - 6.0), Align2::LEFT_BOTTOM, format!("OVERTONES {:>3.0}  ·  HARMONICITY {:+.2}", get(p, OVERTONES).round(), get(p, HARMONICITY)), FontId::monospace(9.0), TEXT_DIM);
     painter.text(pos2(sr.right(), rect.bottom() - 6.0), Align2::RIGHT_BOTTOM, "click: next seed", FontId::proportional(9.5), TEXT_DIM);
     let resp = ui.interact(sr, id.with("spectrum"), Sense::click_and_drag());
     if resp.clicked() {

@@ -230,7 +230,7 @@ pub(crate) fn drone_screen(ui: &mut Ui, id: Id, p: &[f32], live: &InstLive, heig
     }
     let title = if on { format!("{}  ·  {} voice{}", krabton_engine::note_name(v[14].round().clamp(0.0, 127.0) as u8), v[0] as usize, if v[0] as usize == 1 { "" } else { "s" }) } else { "hold a key".to_string() };
     caption(&painter, rect.left_top() + vec2(10.0, 6.0), Align2::LEFT_TOP, &title, accent_now());
-    caption(&painter, pos2(rect.right() - 10.0, rect.top() + 6.0), Align2::RIGHT_TOP, &format!("evolve {:.0}%", p[EVOLVE].clamp(0.0, 1.0) * 100.0), DIM);
+    caption(&painter, pos2(rect.right() - 10.0, rect.top() + 6.0), Align2::RIGHT_TOP, &format!("evolve {:>3.0}%", p[EVOLVE].clamp(0.0, 1.0) * 100.0), DIM);
     if on {
         ui.ctx().request_repaint();
     }
@@ -422,7 +422,7 @@ pub(crate) fn guitar_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive,
     if capo > 0 {
         caption(&painter, pos2(rect.right() - 10.0, rect.top() + 6.0), Align2::RIGHT_TOP, &format!("capo {capo}"), DIM);
     }
-    caption(&painter, pos2(rect.right() - 10.0, rect.bottom() - 6.0), Align2::RIGHT_BOTTOM, &format!("home fret {}", p[POSITION].round()), DIM);
+    caption(&painter, pos2(rect.right() - 10.0, rect.bottom() - 6.0), Align2::RIGHT_BOTTOM, &format!("home fret {:>2.0}", p[POSITION].round()), DIM);
     if any || live.level() > 0.001 {
         ui.ctx().request_repaint();
     }
@@ -465,7 +465,7 @@ pub(crate) fn wind_chimes_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &Inst
     let t = ui.input(|i| i.time) as f32;
     super::chime_view::draw(&painter, rect, &look, &st, t);
     caption(&painter, rect.left_top() + vec2(10.0, 6.0), Align2::LEFT_TOP, &format!("{} · {} tubes", MATERIALS[mat], s.tubes), accent_now());
-    caption(&painter, pos2(rect.right() - 10.0, rect.top() + 6.0), Align2::RIGHT_TOP, &format!("wind {:.0}%", if on { v[2] } else { p[WIND] } * 100.0), DIM);
+    caption(&painter, pos2(rect.right() - 10.0, rect.top() + 6.0), Align2::RIGHT_TOP, &format!("wind {:>3.0}%", if on { v[2] } else { p[WIND] } * 100.0), DIM);
     resp.on_hover_text("Drag left or right: the wind. Every strike is the clapper meeting a tube; play a key to touch one");
     changed
 }

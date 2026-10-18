@@ -258,7 +258,7 @@ pub(crate) fn birds_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, 
     }
     ui.data_mut(|d| d.insert_temp(id, tr));
     caption(&painter, rect.left_top() + vec2(10.0, 6.0), Align2::LEFT_TOP, &if names.is_empty() { "no birds".to_string() } else { names.join(" · ") }, accent);
-    caption(&painter, pos2(rect.right() - 10.0, rect.top() + 6.0), Align2::RIGHT_TOP, &format!("busy {:.0}%", p[BUSY] * 100.0), DIM);
+    caption(&painter, pos2(rect.right() - 10.0, rect.top() + 6.0), Align2::RIGHT_TOP, &format!("busy {:>3.0}%", p[BUSY] * 100.0), DIM);
     ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
     resp.on_hover_text("Drag left or right: how busy they are. Above, the sonogram of what they sing; play a key and the bird whose voice is nearest sings");
     changed
@@ -499,7 +499,7 @@ pub(crate) fn nature_screen(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive,
         parts.push("fire".into());
     }
     caption(&painter, rect.left_top() + vec2(10.0, 6.0), Align2::LEFT_TOP, &parts.join(" · "), accent);
-    caption(&painter, pos2(rect.right() - 10.0, rect.top() + 6.0), Align2::RIGHT_TOP, &format!("wind {:.0}%", wind * 100.0), DIM);
+    caption(&painter, pos2(rect.right() - 10.0, rect.top() + 6.0), Align2::RIGHT_TOP, &format!("wind {:>3.0}%", wind * 100.0), DIM);
     ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
     resp.on_hover_text("Drag left or right: the wind. Play keys and the wind whistles on those notes");
     changed

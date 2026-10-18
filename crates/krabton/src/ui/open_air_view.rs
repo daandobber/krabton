@@ -265,7 +265,7 @@ fn draw(ui: &Ui, id: Id, rect: Rect, p: &[f32], m: &[f32], accent: Color32) {
     // Captions.
     let title = if amb > 0 { format!("{} · {}", PLACES[place], AMBIENCES[amb].to_lowercase()) } else { PLACES[place].to_string() };
     caption(&painter, rect.left_top() + vec2(10.0, 6.0), Align2::LEFT_TOP, &title, accent);
-    caption(&painter, pos2(rect.right() - 10.0, rect.top() + 6.0), Align2::RIGHT_TOP, &format!("{:.0} m away", metres(distance)), DIM);
+    caption(&painter, pos2(rect.right() - 10.0, rect.top() + 6.0), Align2::RIGHT_TOP, &format!("{:>3.0} m away", metres(distance)), DIM);
     if amb > 0 && m[31] < 0.5 {
         caption(&painter, pos2(rect.center().x, rect.bottom() - 6.0), Align2::CENTER_BOTTOM, "the ambience plays while the song plays", DIM);
     }
