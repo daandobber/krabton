@@ -38,6 +38,7 @@ pub mod v2_view;
 pub mod oidos_view;
 pub mod open_air_view;
 pub mod pedal_view;
+pub mod param_tabs;
 pub mod piano_roll;
 pub mod rack;
 pub mod rack_view;

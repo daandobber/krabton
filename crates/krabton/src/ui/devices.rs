@@ -56,6 +56,9 @@ pub(crate) fn param_grid_mod(ui: &mut Ui, id: Id, specs: &[ParamSpec], values: &
 /// [`param_grid_mod`] with a small screen as the first column of the groups
 /// `has_screen` names, `screen_w` wide; `draw` paints it (and may change values).
 #[allow(clippy::too_many_arguments)]
+/// The width of the column of pages beside a device's knobs.
+const TAB_W: f32 = 84.0;
+
 pub(crate) fn param_grid_screens(
     ui: &mut Ui,
     id: Id,
@@ -75,13 +78,37 @@ pub(crate) fn param_grid_screens(
             None => groups.push((s.group, vec![i])),
         }
     }
+    // Devices with many knobs show one page of them at a time.
+    let tabs = super::param_tabs::layout(specs);
+    let tab_key = id.with("param_tab");
+    let mut tab = tabs.map(|t| ui.data(|d| d.get_temp::<usize>(tab_key).unwrap_or(0)).min(t.len() - 1)).unwrap_or(0);
+    if let Some(t) = tabs {
+        groups.retain(|g| super::param_tabs::on_tab(t, tab, g.0));
+    }
+    let tab_w = if tabs.is_some() { TAB_W } else { 0.0 };
     let rows = (((height - 16.0) / CELL_H).floor() as usize).clamp(1, 3);
     let extra = |name: &str| if has_screen(name) { screen_w + 4.0 } else { 0.0 };
     let widths: Vec<f32> = groups.iter().map(|g| g.1.len().div_ceil(rows) as f32 * CELL_W + 10.0 + extra(g.0)).collect();
-    let total: f32 = widths.iter().sum();
+    let total: f32 = widths.iter().sum::<f32>() + tab_w;
     let (rect, _) = ui.allocate_exact_size(vec2(total, rows as f32 * CELL_H + 16.0), Sense::hover());
     let p = ui.painter().clone();
-    let mut x = rect.left();
+    if let Some(t) = tabs {
+        // The pages, one under the other.
+        let h = ((rect.height() - 4.0 - 3.0 * (t.len() - 1) as f32) / t.len() as f32).min(30.0);
+        for (k, (name, _)) in t.iter().enumerate() {
+            let r = Rect::from_min_size(pos2(rect.left(), rect.top() + 2.0 + k as f32 * (h + 3.0)), vec2(tab_w - 8.0, h));
+            let resp = ui.interact(r, id.with(("param_tab", k)), Sense::click());
+            let on = k == tab;
+            p.rect_filled(r, 4.0, if on { accent } else if resp.hovered() { Color32::from_rgb(0x2c, 0x30, 0x3a) } else { Color32::from_rgb(0x1e, 0x21, 0x28) });
+            p.text(r.center(), Align2::CENTER_CENTER, *name, small(), if on { TEXT_DARK } else { TEXT });
+            if resp.clicked() && !on {
+                tab = k;
+                ui.data_mut(|d| d.insert_temp(tab_key, k));
+            }
+        }
+        p.line_segment([pos2(rect.left() + tab_w - 3.0, rect.top() + 2.0), pos2(rect.left() + tab_w - 3.0, rect.bottom() - 2.0)], Stroke::new(1.0_f32, LINE_SOFT));
+    }
+    let mut x = rect.left() + tab_w;
     let mut changed = false;
     for (gi, (name, idxs)) in groups.iter().enumerate() {
         p.text(pos2(x + 5.0, rect.top() + 6.0), Align2::LEFT_CENTER, *name, small(), shade(accent, 0.85));
