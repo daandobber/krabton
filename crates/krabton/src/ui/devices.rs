@@ -1423,6 +1423,44 @@ impl App {
                             param_grid_mod(ui, Id::new(("oidos", track_id)), krabton_engine::dsp::oidos::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
                         });
                     }
+                    Instrument::V2 { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("v2_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in krabton_engine::dsp::v2::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = krabton_engine::dsp::v2::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("click an oscillator for its next mode (right-click: back); drag the filter for VCF 1 cutoff and resonance, click it for its mode; the Matrix knobs send velocity, the mod wheel, the envelopes, the LFOs and the note anywhere").small().color(TEXT_DIM));
+                        });
+                        ui.horizontal_top(|ui| {
+                            super::v2_view::v2_screen(ui, Id::new(("v2_screen", track_id)), params, &live, h - 48.0);
+                            ui.add_space(6.0);
+                            param_grid_mod(ui, Id::new(("v2", track_id)), krabton_engine::dsp::v2::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
+                        });
+                    }
+                    Instrument::ChipFm { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            egui::ComboBox::from_id_salt(("chipfm_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in krabton_engine::dsp::chipfm::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = krabton_engine::dsp::chipfm::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("click the algorithm for the next one (right-click: back), the chip for the other one; every channel lights its four operators as they sound").small().color(TEXT_DIM));
+                        });
+                        ui.horizontal_top(|ui| {
+                            super::chipfm_view::chipfm_screen(ui, Id::new(("chipfm_screen", track_id)), params, &live, h - 48.0);
+                            ui.add_space(6.0);
+                            param_grid_mod(ui, Id::new(("chipfm", track_id)), krabton_engine::dsp::chipfm::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
+                        });
+                    }
                     Instrument::Guitar { preset, params } => {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Preset").small().color(TEXT_DIM));

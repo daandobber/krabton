@@ -40,6 +40,8 @@ impl App {
                         | Instrument::Micro { .. }
                         | Instrument::Warp { .. }
                         | Instrument::Hybrid { .. }
+                        | Instrument::ChipFm { .. }
+                        | Instrument::V2 { .. }
                         | Instrument::Oidos { .. }
                         | Instrument::Quartet { .. }
                         | Instrument::Guitar { .. }
@@ -127,6 +129,12 @@ impl App {
                         }
                         Instrument::Hybrid { .. } => {
                             crate::ui::warp_view::hybrid_screen(ui, id, p, &live, h);
+                        }
+                        Instrument::ChipFm { .. } => {
+                            crate::ui::chipfm_view::chipfm_screen(ui, id, p, &live, h);
+                        }
+                        Instrument::V2 { .. } => {
+                            crate::ui::v2_view::v2_screen(ui, id, p, &live, h);
                         }
                         Instrument::Oidos { .. } => {
                             crate::ui::oidos_view::oidos_screen(ui, id, p, &live, h);
