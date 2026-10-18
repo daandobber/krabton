@@ -64,9 +64,7 @@ fn span(spec: &ParamSpec) -> f32 {
 /// Draws modulation on a cell made by `param_cell`, and handles mapping:
 /// click or drag in map mode, or a dropped modulator chip.
 pub(crate) fn cell_overlay(ui: &mut Ui, cell: Rect, id: Id, spec: &ParamSpec, value: f32, param: usize, mv: &mut ModView) {
-    let ctrl = Rect::from_min_max(pos2(cell.left(), cell.top() + 13.0), pos2(cell.right(), cell.bottom() - 13.0));
-    let size = ctrl.height().min(cell.width()).min(36.0);
-    knob_overlay(ui, cell, Rect::from_center_size(ctrl.center(), vec2(size, size)), id, spec, value, param, mv);
+    knob_overlay(ui, cell, crate::widgets::cell_knob_rect(cell), id, spec, value, param, mv);
 }
 
 /// [`cell_overlay`] for a knob anywhere in `cell` (the area that takes

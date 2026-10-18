@@ -61,6 +61,10 @@ impl AccentScope {
         });
         Self(TRACK_ACCENT.with(|cell| cell.replace(c)))
     }
+    /// While it lives, [`accent_now`] is exactly `c` (a machine's own colour).
+    pub fn exact(c: Color32) -> Self {
+        Self(TRACK_ACCENT.with(|cell| cell.replace(Some(c))))
+    }
 }
 
 impl Drop for AccentScope {

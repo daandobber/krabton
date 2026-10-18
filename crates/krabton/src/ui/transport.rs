@@ -333,6 +333,9 @@ impl App {
                 self.show_settings = true;
                 ui.close();
             }
+            if ui.checkbox(&mut self.prefs.plain_devices, "Plain devices").on_hover_text("Every device in the same flat look, instead of each machine its own panel, knobs and logo").changed() {
+                self.prefs.save();
+            }
             ui.separator();
             ui.label(RichText::new("Size of everything").color(TEXT_DIM).small());
             ui.horizontal(|ui| {

@@ -53,12 +53,79 @@ pub(crate) fn param_grid_mod(ui: &mut Ui, id: Id, specs: &[ParamSpec], values: &
     param_grid_screens(ui, id, specs, values, accent, height, mv, 0.0, &|_| false, |_, _, _, _| false)
 }
 
-/// [`param_grid_mod`] with a small screen as the first column of the groups
-/// `has_screen` names, `screen_w` wide; `draw` paints it (and may change values).
-#[allow(clippy::too_many_arguments)]
 /// The width of the column of pages beside a device's knobs.
 const TAB_W: f32 = 84.0;
 
+/// Where each knob of a group goes: (parameter, column, row, big), and how
+/// many columns it takes. Big knobs take two by two, first; the others fill
+/// in around them, column by column.
+fn pack_cells(idxs: &[usize], big: impl Fn(usize) -> bool, rows: usize) -> (Vec<(usize, usize, usize, bool)>, usize) {
+    let mut used: Vec<[bool; 3]> = Vec::new();
+    let mut out = Vec::with_capacity(idxs.len());
+    let order = idxs.iter().filter(|&&i| big(i)).chain(idxs.iter().filter(|&&i| !big(i)));
+    for &pi in order {
+        let b = big(pi) && rows >= 2;
+        let n = if b { 2 } else { 1 };
+        let mut col = 0;
+        'find: loop {
+            while used.len() < col + n {
+                used.push([false; 3]);
+            }
+            for row in 0..=rows - n {
+                if (col..col + n).all(|c| (row..row + n).all(|r| !used[c][r])) {
+                    for c in col..col + n {
+                        for r in row..row + n {
+                            used[c][r] = true;
+                        }
+                    }
+                    out.push((pi, col, row, b));
+                    break 'find;
+                }
+            }
+            col += 1;
+        }
+    }
+    let cols = used.iter().rposition(|c| c.iter().any(|&u| u)).map_or(0, |c| c + 1);
+    (out, cols)
+}
+
+#[cfg(test)]
+mod pack_tests {
+    use super::pack_cells;
+
+    #[test]
+    fn big_knobs_take_two_by_two_and_nothing_overlaps() {
+        for rows in 1..=3 {
+            let idxs: Vec<usize> = (0..9).collect();
+            let big = |i: usize| i == 2 || i == 5;
+            let (cells, cols) = pack_cells(&idxs, big, rows);
+            assert_eq!(cells.len(), idxs.len());
+            let mut used = vec![[false; 3]; cols];
+            for &(pi, c, r, b) in &cells {
+                assert_eq!(b, big(pi) && rows >= 2);
+                let n = if b { 2 } else { 1 };
+                for cc in c..c + n {
+                    for rr in r..r + n {
+                        assert!(rr < rows && !used[cc][rr], "overlap at {cc},{rr}");
+                        used[cc][rr] = true;
+                    }
+                }
+            }
+            if rows >= 2 {
+                // The big ones come first, side by side.
+                assert_eq!((cells[0].1, cells[0].2), (0, 0));
+                assert_eq!((cells[1].1, cells[1].2), (2, 0));
+            }
+            // As few columns as fit them.
+            let area: usize = cells.iter().map(|c| if c.3 { 4 } else { 1 }).sum();
+            assert!(cols <= area.div_ceil(rows) + 1, "{cols} columns for {area} cells in {rows} rows");
+        }
+    }
+}
+
+/// [`param_grid_mod`] with a small screen as the first column of the groups
+/// `has_screen` names, `screen_w` wide; `draw` paints it (and may change values).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn param_grid_screens(
     ui: &mut Ui,
     id: Id,
@@ -88,7 +155,11 @@ pub(crate) fn param_grid_screens(
     let tab_w = if tabs.is_some() { TAB_W } else { 0.0 };
     let rows = (((height - 16.0) / CELL_H).floor() as usize).clamp(1, 3);
     let extra = |name: &str| if has_screen(name) { screen_w + 4.0 } else { 0.0 };
-    let widths: Vec<f32> = groups.iter().map(|g| g.1.len().div_ceil(rows) as f32 * CELL_W + 10.0 + extra(g.0)).collect();
+    // In a machine's own look its main knobs are big.
+    let skin = crate::skin::current();
+    let big = |i: usize| skin.is_some_and(|s| s.is_hero(specs[i].name)) && !matches!(specs[i].kind, krabton_engine::params::ParamKind::Choice(_) | krabton_engine::params::ParamKind::Toggle);
+    let packed: Vec<(Vec<(usize, usize, usize, bool)>, usize)> = groups.iter().map(|g| pack_cells(&g.1, big, rows)).collect();
+    let widths: Vec<f32> = groups.iter().zip(&packed).map(|(g, (_, cols))| *cols as f32 * CELL_W + 10.0 + extra(g.0)).collect();
     let total: f32 = widths.iter().sum::<f32>() + tab_w;
     let (rect, _) = ui.allocate_exact_size(vec2(total, rows as f32 * CELL_H + 16.0), Sense::hover());
     let p = ui.painter().clone();
@@ -99,30 +170,41 @@ pub(crate) fn param_grid_screens(
             let r = Rect::from_min_size(pos2(rect.left(), rect.top() + 2.0 + k as f32 * (h + 3.0)), vec2(tab_w - 8.0, h));
             let resp = ui.interact(r, id.with(("param_tab", k)), Sense::click());
             let on = k == tab;
-            p.rect_filled(r, 4.0, if on { accent } else if resp.hovered() { Color32::from_rgb(0x2c, 0x30, 0x3a) } else { Color32::from_rgb(0x1e, 0x21, 0x28) });
-            p.text(r.center(), Align2::CENTER_CENTER, *name, small(), if on { TEXT_DARK } else { TEXT });
+            let (off, off_ink) = match skin {
+                Some(s) => (s.well, s.well_ink),
+                None => (Color32::from_rgb(0x1e, 0x21, 0x28), TEXT),
+            };
+            p.rect_filled(r, 4.0, if on { accent } else if resp.hovered() { mix(off, Color32::WHITE, 0.1) } else { off });
+            p.text(r.center(), Align2::CENTER_CENTER, crate::skin::label_text(name), small(), if on { text_on(accent) } else { off_ink });
             if resp.clicked() && !on {
                 tab = k;
                 ui.data_mut(|d| d.insert_temp(tab_key, k));
             }
         }
-        p.line_segment([pos2(rect.left() + tab_w - 3.0, rect.top() + 2.0), pos2(rect.left() + tab_w - 3.0, rect.bottom() - 2.0)], Stroke::new(1.0_f32, LINE_SOFT));
+        if skin.is_none() {
+            p.line_segment([pos2(rect.left() + tab_w - 3.0, rect.top() + 2.0), pos2(rect.left() + tab_w - 3.0, rect.bottom() - 2.0)], Stroke::new(1.0_f32, LINE_SOFT));
+        }
     }
     let mut x = rect.left() + tab_w;
     let mut changed = false;
-    for (gi, (name, idxs)) in groups.iter().enumerate() {
-        p.text(pos2(x + 5.0, rect.top() + 6.0), Align2::LEFT_CENTER, *name, small(), shade(accent, 0.85));
-        if gi > 0 {
-            p.line_segment([pos2(x, rect.top() + 2.0), pos2(x, rect.bottom() - 2.0)], Stroke::new(1.0_f32, LINE_SOFT));
+    for (gi, (name, _)) in groups.iter().enumerate() {
+        match &skin {
+            Some(s) => crate::skin::group_backdrop(&p, Rect::from_min_size(pos2(x, rect.top()), vec2(widths[gi], rect.height())), name, s, gi == 0),
+            None => {
+                p.text(pos2(x + 5.0, rect.top() + 6.0), Align2::LEFT_CENTER, *name, small(), shade(accent, 0.85));
+                if gi > 0 {
+                    p.line_segment([pos2(x, rect.top() + 2.0), pos2(x, rect.bottom() - 2.0)], Stroke::new(1.0_f32, LINE_SOFT));
+                }
+            }
         }
         let shift = extra(name);
         if shift > 0.0 {
             let screen = Rect::from_min_size(pos2(x + 5.0, rect.top() + 14.0), vec2(screen_w, rows as f32 * CELL_H - 4.0));
             changed |= draw(ui, name, screen, values);
         }
-        for (k, &pi) in idxs.iter().enumerate() {
-            let (col, row) = (k / rows, k % rows);
-            let cell = Rect::from_min_size(pos2(x + 5.0 + shift + col as f32 * CELL_W, rect.top() + 14.0 + row as f32 * CELL_H), vec2(CELL_W - 2.0, CELL_H - 2.0));
+        for &(pi, col, row, b) in &packed[gi].0 {
+            let n = if b { 2.0 } else { 1.0 };
+            let cell = Rect::from_min_size(pos2(x + 5.0 + shift + col as f32 * CELL_W, rect.top() + 14.0 + row as f32 * CELL_H), vec2(n * CELL_W - 2.0, n * CELL_H - 2.0));
             if let Some(v) = values.get_mut(pi) {
                 if param_cell(ui, cell, id.with(pi), &specs[pi], v, accent) {
                     changed = true;
@@ -229,12 +311,18 @@ pub(crate) fn info_button(ui: &mut Ui, text: &str) -> egui::Response {
 #[allow(clippy::too_many_arguments)]
 fn device_frame_presets<R>(ui: &mut Ui, title: &str, info: Option<&str>, enabled: Option<&mut bool>, presets: Option<PresetMenu>, height: f32, body: impl FnOnce(&mut Ui) -> R) -> (R, Option<ChainActionKind>) {
     let mut action = None;
-    let r = egui::Frame::new()
-        .fill(PANEL2)
-        .corner_radius(4.0)
-        .stroke(Stroke::new(1.0_f32, LINE_SOFT))
-        .inner_margin(egui::Margin::symmetric(6, 4))
-        .show(ui, |ui| {
+    // In its own look a machine's panel goes under it, drawn when its size is known.
+    let skin = crate::skin::current();
+    let bg = ui.painter().add(egui::Shape::Noop);
+    let frame = match &skin {
+        Some(s) => {
+            let side = if s.cheeks.is_some() { crate::skin::CHEEK as i8 + 6 } else if s.screws { 15 } else { 9 };
+            let top = 5 + (s.stripes.len() as f32 * crate::skin::STRIPE).round() as i8;
+            egui::Frame::new().inner_margin(egui::Margin { left: side, right: side, top, bottom: 5 })
+        }
+        None => egui::Frame::new().fill(PANEL2).corner_radius(4.0).stroke(Stroke::new(1.0_f32, LINE_SOFT)).inner_margin(egui::Margin::symmetric(6, 4)),
+    };
+    let r = frame.show(ui, |ui| {
             ui.set_min_height(height);
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
@@ -247,7 +335,11 @@ fn device_frame_presets<R>(ui: &mut Ui, title: &str, info: Option<&str>, enabled
                         }
                     }
                     // Right-click the name for everything you can do with it.
-                    let name = ui.add(egui::Label::new(RichText::new(title).strong().color(TEXT)).sense(Sense::click())).on_hover_text("Right-click: on/off, duplicate, move, remove");
+                    let name = match &skin {
+                        Some(s) => crate::skin::logo(ui, title, s),
+                        None => ui.add(egui::Label::new(RichText::new(title).strong().color(TEXT)).sense(Sense::click())),
+                    }
+                    .on_hover_text("Right-click: on/off, duplicate, move, remove");
                     name.context_menu(|ui| {
                         if let Some(en) = enabled.as_mut() {
                             if ui.button(if **en { "Turn off" } else { "Turn on" }).clicked() {
@@ -296,6 +388,9 @@ fn device_frame_presets<R>(ui: &mut Ui, title: &str, info: Option<&str>, enabled
             })
             .inner
         });
+    if let Some(s) = &skin {
+        ui.painter().set(bg, crate::skin::panel(r.response.rect, s, crate::skin::track_colour()));
+    }
     (r.inner, action)
 }
 
@@ -497,6 +592,7 @@ impl App {
         let mut children = dev.children.clone();
         let preset_name = dev.preset.clone();
         let conv_file = dev.sample.clone();
+        let _skin = crate::skin::Scope::new(crate::skin::for_effect(kind));
         let mut conv_act = None;
         let mut picked = None;
         let mut glitch_edit = crate::ui::glitch_view::GlitchEdit::default();
@@ -658,6 +754,7 @@ impl App {
         let mut mv = self.mod_view(ModOwner::MidiDevice(dev.id));
         let mut picked = None;
         let menu = PresetMenu { id, list: presets::midi(dev.kind), current: &dev.preset, picked: &mut picked };
+        let _skin = crate::skin::Scope::new(crate::skin::for_midi(dev.kind));
         let (changed, action) = if dev.kind.is_sequencer() {
             // Every sequencer reports its state.
             let status = self.status();
@@ -915,6 +1012,7 @@ impl App {
         let mut new_inst = inst.clone();
         let mut remove = false;
         let title = inst.kind_name();
+        let _skin = crate::skin::Scope::new(crate::skin::for_instrument(title));
         let mut toggle_editor = false;
         let mut open_rack = false;
         let mut mv = self.mod_view(ModOwner::Instrument(track_id));
@@ -935,7 +1033,7 @@ impl App {
                     Instrument::Plugin(p) => {
                         ui.set_min_width(300.0);
                         ui.label(RichText::new(&p.name).strong().size(16.0).color(accent_now()));
-                        ui.label(RichText::new(format!("by {}  -  {}", p.vendor, p.plugin_id)).small().color(TEXT_DIM));
+                        ui.label(RichText::new(format!("by {}  -  {}", p.vendor, p.plugin_id)).small().color(crate::skin::ink_dim()));
                         ui.add_space(6.0);
                         match self.plugins.status(p.instance) {
                             crate::plugins::PluginStatus::Loaded { has_editor, editor_open } => {
@@ -948,11 +1046,11 @@ impl App {
                                     ui.label("This plugin has no editor.");
                                 }
                                 ui.add_space(4.0);
-                                ui.label(RichText::new("Play it like any instrument. Its patch and settings are saved with your set.").small().color(TEXT_DIM));
+                                ui.label(RichText::new("Play it like any instrument. Its patch and settings are saved with your set.").small().color(crate::skin::ink_dim()));
                             }
                             crate::plugins::PluginStatus::Failed(e) => {
                                 ui.label(RichText::new(format!("Could not load the plugin: {e}")).color(REC));
-                                ui.label(RichText::new(p.path.display().to_string()).small().color(TEXT_DIM));
+                                ui.label(RichText::new(p.path.display().to_string()).small().color(crate::skin::ink_dim()));
                             }
                             crate::plugins::PluginStatus::Loading => {
                                 ui.label("Loading...");
@@ -961,7 +1059,7 @@ impl App {
                     }
                     Instrument::Synth { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("synth_preset", track_id)).width(110.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in synth::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -975,7 +1073,7 @@ impl App {
                     }
                     Instrument::Analog { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("analog_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in analog::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -984,13 +1082,13 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("classic analog polysynth").small().color(TEXT_DIM));
+                            ui.label(RichText::new("classic analog polysynth").small().color(crate::skin::ink_dim()));
                         });
                         super::inst_screen::analog_grid(ui, Id::new(("analog", track_id)), params, &live, h - 48.0, mv.as_mut());
                     }
                     Instrument::Piano { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("piano_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in krabton_engine::piano::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -999,7 +1097,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new(krabton_engine::piano::library::CREDIT).small().color(TEXT_DIM));
+                            ui.label(RichText::new(krabton_engine::piano::library::CREDIT).small().color(crate::skin::ink_dim()));
                         });
                         let lib = if krabton_engine::piano::library::shared().is_some() {
                             super::inst_screen::PianoLib::Ready
@@ -1028,7 +1126,7 @@ impl App {
                     }
                     Instrument::Bassline { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("bassline_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in krabton_engine::dsp::bassline::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1037,7 +1135,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("acid bass after Open303: accent at velocity 100+, slide by playing legato").small().color(TEXT_DIM));
+                            ui.label(RichText::new("acid bass after Open303: accent at velocity 100+, slide by playing legato").small().color(crate::skin::ink_dim()));
                         });
                         ui.horizontal_top(|ui| {
                             super::engine_screens::bassline_screen(ui, Id::new(("bassline_screen", track_id)), params, &live, h - 48.0);
@@ -1047,7 +1145,7 @@ impl App {
                     }
                     Instrument::Mono101 { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("mono101_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in krabton_engine::dsp::mono101::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1056,13 +1154,13 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("one oscillator, sub, noise, a ladder that sings; VCA on Gate for the classic bass").small().color(TEXT_DIM));
+                            ui.label(RichText::new("one oscillator, sub, noise, a ladder that sings; VCA on Gate for the classic bass").small().color(crate::skin::ink_dim()));
                         });
                         super::mono101_view::mono101_panel(ui, Id::new(("mono101", track_id)), params, &live, h - 48.0, mv.as_mut());
                     }
                     Instrument::Drone { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("drone_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in krabton_engine::dsp::drone::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1071,7 +1169,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("tanpura, pad, swells and air, slowly evolving: hold a key").small().color(TEXT_DIM));
+                            ui.label(RichText::new("tanpura, pad, swells and air, slowly evolving: hold a key").small().color(crate::skin::ink_dim()));
                         });
                         ui.horizontal_top(|ui| {
                             super::engine_screens::drone_screen(ui, Id::new(("drone_screen", track_id)), params, &live, h - 48.0);
@@ -1081,7 +1179,7 @@ impl App {
                     }
                     Instrument::Waves { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("waves_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in krabton_engine::dsp::waves::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1090,7 +1188,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("wavetables from the Adventure Kid Waveforms (CC0): drag a stack to move through it").small().color(TEXT_DIM));
+                            ui.label(RichText::new("wavetables from the Adventure Kid Waveforms (CC0): drag a stack to move through it").small().color(crate::skin::ink_dim()));
                         });
                         ui.horizontal_top(|ui| {
                             super::engine_screens::waves_screen(ui, Id::new(("waves_screen", track_id)), params, &live, h - 48.0);
@@ -1100,7 +1198,7 @@ impl App {
                     }
                     Instrument::WindChimes { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("wind_chimes_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in krabton_engine::dsp::wind_chimes::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1109,7 +1207,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("plays by itself while the song plays (Blows): drag in the screen for the wind, play a key to touch a tube").small().color(TEXT_DIM));
+                            ui.label(RichText::new("plays by itself while the song plays (Blows): drag in the screen for the wind, play a key to touch a tube").small().color(crate::skin::ink_dim()));
                         });
                         ui.horizontal_top(|ui| {
                             super::engine_screens::wind_chimes_screen(ui, Id::new(("wind_chimes_screen", track_id)), params, &live, h - 48.0);
@@ -1119,7 +1217,7 @@ impl App {
                     }
                     Instrument::BeadsSynth { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("beads_synth_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in krabton_engine::dsp::beads_synth::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1128,7 +1226,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("hold a key: the oscillator sounds and grains are seeded; drag in the screen for the wave and the grains' size").small().color(TEXT_DIM));
+                            ui.label(RichText::new("hold a key: the oscillator sounds and grains are seeded; drag in the screen for the wave and the grains' size").small().color(crate::skin::ink_dim()));
                         });
                         ui.horizontal_top(|ui| {
                             super::beads_view::beads_synth_screen(ui, Id::new(("beads_synth_screen", track_id)), params, &live, h - 48.0);
@@ -1138,7 +1236,7 @@ impl App {
                     }
                     Instrument::Birds { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("birds_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in krabton_engine::dsp::birds::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1147,7 +1245,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("they sing while the song plays (Sings): drag in the screen for how busy, play a key and the nearest voice sings").small().color(TEXT_DIM));
+                            ui.label(RichText::new("they sing while the song plays (Sings): drag in the screen for how busy, play a key and the nearest voice sings").small().color(crate::skin::ink_dim()));
                         });
                         ui.horizontal_top(|ui| {
                             super::nature_view::birds_screen(ui, Id::new(("birds_screen", track_id)), params, &live, h - 48.0);
@@ -1157,7 +1255,7 @@ impl App {
                     }
                     Instrument::Nature { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("nature_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in krabton_engine::dsp::nature::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1166,7 +1264,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("plays while the song plays (Plays): drag in the screen for the wind, play keys and the wind whistles on them").small().color(TEXT_DIM));
+                            ui.label(RichText::new("plays while the song plays (Plays): drag in the screen for the wind, play keys and the wind whistles on them").small().color(crate::skin::ink_dim()));
                         });
                         ui.horizontal_top(|ui| {
                             super::nature_view::nature_screen(ui, Id::new(("nature_screen", track_id)), params, &live, h - 48.0);
@@ -1176,7 +1274,7 @@ impl App {
                     }
                     Instrument::Facet { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("facet_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in krabton_engine::dsp::facet::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1185,7 +1283,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("click the engine's name for the next engine; drag a knob up or down").small().color(TEXT_DIM));
+                            ui.label(RichText::new("click the engine's name for the next engine; drag a knob up or down").small().color(crate::skin::ink_dim()));
                         });
                         ui.horizontal_top(|ui| {
                             super::inst_screen::facet_screen(ui, Id::new(("facet_screen", track_id)), params, &live, h - 48.0);
@@ -1196,7 +1294,7 @@ impl App {
                     }
                     Instrument::PanFlute { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("pan_flute_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in krabton_engine::dsp::pan_flute::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1205,7 +1303,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("drag up or down in the screen for the breath; Mouth plays as a mouth does (the lips on one pipe or two neighbours), Free plays anything").small().color(TEXT_DIM));
+                            ui.label(RichText::new("drag up or down in the screen for the breath; Mouth plays as a mouth does (the lips on one pipe or two neighbours), Free plays anything").small().color(crate::skin::ink_dim()));
                         });
                         ui.horizontal_top(|ui| {
                             super::nature_view::pan_flute_screen(ui, Id::new(("pan_flute_screen", track_id)), params, &live, h - 48.0);
@@ -1215,7 +1313,7 @@ impl App {
                     }
                     Instrument::Melodica { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("melodica_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in krabton_engine::dsp::melodica::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1224,7 +1322,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("drag up or down in the screen for the breath; Mouth: one breath for every key, Free: its own air for each").small().color(TEXT_DIM));
+                            ui.label(RichText::new("drag up or down in the screen for the breath; Mouth: one breath for every key, Free: its own air for each").small().color(crate::skin::ink_dim()));
                         });
                         ui.horizontal_top(|ui| {
                             super::reed_view::melodica_screen(ui, Id::new(("melodica_screen", track_id)), params, &live, h - 48.0);
@@ -1234,7 +1332,7 @@ impl App {
                     }
                     Instrument::Harmonica { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("harmonica_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in krabton_engine::dsp::harmonica::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1243,7 +1341,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("drag up or down in the screen for the hands; Holes: blow, draw, bend and overblow as on a real harp, Free: any note").small().color(TEXT_DIM));
+                            ui.label(RichText::new("drag up or down in the screen for the hands; Holes: blow, draw, bend and overblow as on a real harp, Free: any note").small().color(crate::skin::ink_dim()));
                         });
                         ui.horizontal_top(|ui| {
                             super::reed_view::harmonica_screen(ui, Id::new(("harmonica_screen", track_id)), params, &live, h - 48.0);
@@ -1253,7 +1351,7 @@ impl App {
                     }
                     Instrument::Calculator { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("calculator_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in krabton_engine::dsp::calculator::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1262,7 +1360,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("click a digit for the next (right-click: back): sound, attack, decay, sustain level and time, release, vibrato, tremolo; click the rhythm to change it").small().color(TEXT_DIM));
+                            ui.label(RichText::new("click a digit for the next (right-click: back): sound, attack, decay, sustain level and time, release, vibrato, tremolo; click the rhythm to change it").small().color(crate::skin::ink_dim()));
                         });
                         ui.horizontal_top(|ui| {
                             super::chip_view::calculator_screen(ui, Id::new(("calculator_screen", track_id)), params, &live, h - 48.0);
@@ -1272,7 +1370,7 @@ impl App {
                     }
                     Instrument::Console { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("console_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in krabton_engine::dsp::console::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1281,7 +1379,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("click a wave for the next duty, drag a level; Layer: a chip for every note, Split: a channel for every note, Arpeggio: the chord in turns").small().color(TEXT_DIM));
+                            ui.label(RichText::new("click a wave for the next duty, drag a level; Layer: a chip for every note, Split: a channel for every note, Arpeggio: the chord in turns").small().color(crate::skin::ink_dim()));
                         });
                         ui.horizontal_top(|ui| {
                             super::chip_view::chip_screen(ui, Id::new(("console_screen", track_id)), super::chip_view::Chip::Console, params, &live, h - 48.0);
@@ -1291,7 +1389,7 @@ impl App {
                     }
                     Instrument::Handheld { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("handheld_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in krabton_engine::dsp::handheld::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1300,7 +1398,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("click a wave for the next duty or table, drag a level; Layer: a chip for every note, Split: a channel for every note, Arpeggio: the chord in turns").small().color(TEXT_DIM));
+                            ui.label(RichText::new("click a wave for the next duty or table, drag a level; Layer: a chip for every note, Split: a channel for every note, Arpeggio: the chord in turns").small().color(crate::skin::ink_dim()));
                         });
                         ui.horizontal_top(|ui| {
                             super::chip_view::chip_screen(ui, Id::new(("handheld_screen", track_id)), super::chip_view::Chip::Handheld, params, &live, h - 48.0);
@@ -1310,7 +1408,7 @@ impl App {
                     }
                     Instrument::Micro { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("micro_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in krabton_engine::dsp::micro::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1319,7 +1417,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("click a wave for the next one, drag the filter for cutoff and resonance, click it for its mode; Layer: a chip for every note, Split: a voice for every note, Arpeggio: the chord in turns").small().color(TEXT_DIM));
+                            ui.label(RichText::new("click a wave for the next one, drag the filter for cutoff and resonance, click it for its mode; Layer: a chip for every note, Split: a voice for every note, Arpeggio: the chord in turns").small().color(crate::skin::ink_dim()));
                         });
                         ui.horizontal_top(|ui| {
                             super::chip_view::chip_screen(ui, Id::new(("micro_screen", track_id)), super::chip_view::Chip::Micro, params, &live, h - 48.0);
@@ -1329,7 +1427,7 @@ impl App {
                     }
                     Instrument::Warp { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("warp_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in krabton_engine::dsp::warp::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1338,7 +1436,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("the envelopes: pick one above, drag a point up or down for its level and sideways for its rate, right-click it to hold there (S), double-click it to end there (E); click a wave for the next").small().color(TEXT_DIM));
+                            ui.label(RichText::new("the envelopes: pick one above, drag a point up or down for its level and sideways for its rate, right-click it to hold there (S), double-click it to end there (E); click a wave for the next").small().color(crate::skin::ink_dim()));
                         });
                         ui.horizontal_top(|ui| {
                             super::warp_view::warp_screen(ui, Id::new(("warp_screen", track_id)), params, &live, h - 48.0);
@@ -1348,7 +1446,7 @@ impl App {
                     }
                     Instrument::Hybrid { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("hybrid_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in krabton_engine::dsp::hybrid::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1357,7 +1455,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("click an oscillator for its next engine, the filter for its next kind; drag the filter for cutoff and resonance").small().color(TEXT_DIM));
+                            ui.label(RichText::new("click an oscillator for its next engine, the filter for its next kind; drag the filter for cutoff and resonance").small().color(crate::skin::ink_dim()));
                         });
                         ui.horizontal_top(|ui| {
                             super::warp_view::hybrid_screen(ui, Id::new(("hybrid_screen", track_id)), params, &live, h - 48.0);
@@ -1367,7 +1465,7 @@ impl App {
                     }
                     Instrument::Quartet { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("quartet_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in krabton_engine::dsp::quartet::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1376,7 +1474,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("click an oscillator for its next mode, its wave for the next wave (right-click: back); the Matrix knobs send LFOs, envelopes, velocity, key and chance anywhere").small().color(TEXT_DIM));
+                            ui.label(RichText::new("click an oscillator for its next mode, its wave for the next wave (right-click: back); the Matrix knobs send LFOs, envelopes, velocity, key and chance anywhere").small().color(crate::skin::ink_dim()));
                         });
                         ui.horizontal_top(|ui| {
                             super::warp_view::quartet_screen(ui, Id::new(("quartet_screen", track_id)), params, &live, h - 48.0);
@@ -1387,7 +1485,7 @@ impl App {
                     Instrument::Orchestra { preset, params } => {
                         let inst = (params.first().copied().unwrap_or(0.0).round().max(0.0) as usize).min(krabton_engine::orchestra::INSTRUMENTS.len() - 1);
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Instrument").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Instrument").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("orchestra_preset", track_id)).width(160.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 let mut family = None;
                                 // The orchestra, then the soloists, each by family.
@@ -1399,7 +1497,7 @@ impl App {
                                     if family != Some((solo, d.family)) {
                                         family = Some((solo, d.family));
                                         let head = if solo { format!("Soloists · {:?}", d.family) } else { format!("{:?}", d.family) };
-                                        ui.label(RichText::new(head).small().color(TEXT_DIM));
+                                        ui.label(RichText::new(head).small().color(crate::skin::ink_dim()));
                                     }
                                     let here = krabton_engine::orchestra::library(krabton_engine::orchestra::index_of(d.name).unwrap_or(0)).is_some();
                                     let label = if here { d.name.to_string() } else { format!("{}  ({} MB)", d.name, d.mb) };
@@ -1409,7 +1507,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("click an articulation; drag Dynamics (or give it a modulator) to swell; Legato joins held notes").small().color(TEXT_DIM));
+                            ui.label(RichText::new("click an articulation; drag Dynamics (or give it a modulator) to swell; Legato joins held notes").small().color(crate::skin::ink_dim()));
                         });
                         let lib = if krabton_engine::orchestra::library(inst).is_some() {
                             super::orchestra_view::LibState::Ready
@@ -1435,7 +1533,7 @@ impl App {
                     }
                     Instrument::Oidos { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("oidos_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in krabton_engine::dsp::oidos::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1444,7 +1542,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("click the partials for the next seed (right-click: back); drag sideways for Overtones, up and down for Harmonicity").small().color(TEXT_DIM));
+                            ui.label(RichText::new("click the partials for the next seed (right-click: back); drag sideways for Overtones, up and down for Harmonicity").small().color(crate::skin::ink_dim()));
                         });
                         ui.horizontal_top(|ui| {
                             super::oidos_view::oidos_screen(ui, Id::new(("oidos_screen", track_id)), params, &live, h - 48.0);
@@ -1454,7 +1552,7 @@ impl App {
                     }
                     Instrument::V2 { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("v2_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in krabton_engine::dsp::v2::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1463,7 +1561,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("click an oscillator for its next mode (right-click: back); drag the filter for VCF 1 cutoff and resonance, click it for its mode; the Matrix knobs send velocity, the mod wheel, the envelopes, the LFOs and the note anywhere").small().color(TEXT_DIM));
+                            ui.label(RichText::new("click an oscillator for its next mode (right-click: back); drag the filter for VCF 1 cutoff and resonance, click it for its mode; the Matrix knobs send velocity, the mod wheel, the envelopes, the LFOs and the note anywhere").small().color(crate::skin::ink_dim()));
                         });
                         ui.horizontal_top(|ui| {
                             super::v2_view::v2_screen(ui, Id::new(("v2_screen", track_id)), params, &live, h - 48.0);
@@ -1473,7 +1571,7 @@ impl App {
                     }
                     Instrument::ChipFm { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("chipfm_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in krabton_engine::dsp::chipfm::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1482,7 +1580,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("click the algorithm for the next one (right-click: back), the chip for the other one; every channel lights its four operators as they sound").small().color(TEXT_DIM));
+                            ui.label(RichText::new("click the algorithm for the next one (right-click: back), the chip for the other one; every channel lights its four operators as they sound").small().color(crate::skin::ink_dim()));
                         });
                         ui.horizontal_top(|ui| {
                             super::chipfm_view::chipfm_screen(ui, Id::new(("chipfm_screen", track_id)), params, &live, h - 48.0);
@@ -1492,7 +1590,7 @@ impl App {
                     }
                     Instrument::Guitar { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("guitar_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in krabton_engine::dsp::guitar::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1501,7 +1599,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("six waveguide strings, placed and strummed like a guitarist: put pedals after it").small().color(TEXT_DIM));
+                            ui.label(RichText::new("six waveguide strings, placed and strummed like a guitarist: put pedals after it").small().color(crate::skin::ink_dim()));
                         });
                         ui.horizontal_top(|ui| {
                             super::engine_screens::guitar_screen(ui, Id::new(("guitar_screen", track_id)), params, &live, h - 48.0);
@@ -1511,7 +1609,7 @@ impl App {
                     }
                     Instrument::Monk { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("monk_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in krabton_engine::dsp::monk::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1520,7 +1618,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("chanting monk of FOF grains (after MonkSynth): drag in the screen for vowel and head").small().color(TEXT_DIM));
+                            ui.label(RichText::new("chanting monk of FOF grains (after MonkSynth): drag in the screen for vowel and head").small().color(crate::skin::ink_dim()));
                         });
                         ui.horizontal_top(|ui| {
                             super::inst_screen::monk_screen(ui, Id::new(("monk_screen", track_id)), params, &live, h - 48.0);
@@ -1530,7 +1628,7 @@ impl App {
                     }
                     Instrument::Rings { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("rings_synth_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in rings_synth::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1539,7 +1637,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("struck resonator: modal, strings, FM, chords").small().color(TEXT_DIM));
+                            ui.label(RichText::new("struck resonator: modal, strings, FM, chords").small().color(crate::skin::ink_dim()));
                         });
                         ui.horizontal_top(|ui| {
                             super::inst_screen::rings_screen(ui, params, &live, h - 48.0);
@@ -1549,7 +1647,7 @@ impl App {
                     }
                     Instrument::Organ { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("organ_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in organ::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1558,7 +1656,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("tonewheel organ: drawbars, percussion, vibrato, rotary").small().color(TEXT_DIM));
+                            ui.label(RichText::new("tonewheel organ: drawbars, percussion, vibrato, rotary").small().color(crate::skin::ink_dim()));
                         });
                         ui.horizontal_top(|ui| {
                             super::inst_screen::organ_screen(ui, Id::new(("organ_screen", track_id)), params, &live, h - 48.0);
@@ -1568,7 +1666,7 @@ impl App {
                     }
                     Instrument::Winds { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("stk_winds_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in stk_winds::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1577,13 +1675,13 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("blown physical models (STK)").small().color(TEXT_DIM));
+                            ui.label(RichText::new("blown physical models (STK)").small().color(crate::skin::ink_dim()));
                         });
                         stk_controls(ui, track_id, krabton_engine::dsp::stk_synth::Family::Winds, params, h, mv.as_mut(), &live);
                     }
                     Instrument::Strings { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("stk_strings_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in stk_strings::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1592,13 +1690,13 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("string physical models (STK)").small().color(TEXT_DIM));
+                            ui.label(RichText::new("string physical models (STK)").small().color(crate::skin::ink_dim()));
                         });
                         stk_controls(ui, track_id, krabton_engine::dsp::stk_synth::Family::Strings, params, h, mv.as_mut(), &live);
                     }
                     Instrument::Mallets { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("stk_mallets_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in stk_mallets::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1607,13 +1705,13 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("struck physical models (STK)").small().color(TEXT_DIM));
+                            ui.label(RichText::new("struck physical models (STK)").small().color(crate::skin::ink_dim()));
                         });
                         stk_controls(ui, track_id, krabton_engine::dsp::stk_synth::Family::Mallets, params, h, mv.as_mut(), &live);
                     }
                     Instrument::Voice { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("stk_voice_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in stk_voice::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1622,7 +1720,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("singing voice: vowels, choir, glide, chant with undertones and overtones").small().color(TEXT_DIM));
+                            ui.label(RichText::new("singing voice: vowels, choir, glide, chant with undertones and overtones").small().color(crate::skin::ink_dim()));
                         });
                         ui.horizontal_top(|ui| {
                             super::inst_screen::voice_screen(ui, Id::new(("voice_screen", track_id)), params, &live, h - 48.0);
@@ -1632,7 +1730,7 @@ impl App {
                     }
                     Instrument::Modular { preset, params, patch } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Patch").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Patch").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("modular_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in krabton_engine::modular::presets::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1644,13 +1742,13 @@ impl App {
                             if ui.add(egui::Button::new(RichText::new("Open Rack").color(TEXT_DARK)).fill(accent_now())).on_hover_text("Patch the modules: add, move, turn knobs and draw cables").clicked() {
                                 open_rack = true;
                             }
-                            ui.label(RichText::new(format!("{} modules, {} cables", patch.modules.len(), patch.cables.len())).small().color(TEXT_DIM));
+                            ui.label(RichText::new(format!("{} modules, {} cables", patch.modules.len(), patch.cables.len())).small().color(crate::skin::ink_dim()));
                         });
                         param_grid_mod(ui, Id::new(("modular", track_id)), krabton_engine::modular::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
                     }
                     Instrument::Shakers { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("shakers_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in shaker_synth::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1659,7 +1757,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("shakers, rattles and grains (PhISEM): the key tunes them, Hold keeps shaking").small().color(TEXT_DIM));
+                            ui.label(RichText::new("shakers, rattles and grains (PhISEM): the key tunes them, Hold keeps shaking").small().color(crate::skin::ink_dim()));
                         });
                         ui.horizontal_top(|ui| {
                             super::inst_screen::particles(ui, Id::new(("shakers_screen", track_id)), params, &live, h - 48.0);
@@ -1669,7 +1767,7 @@ impl App {
                     }
                     Instrument::Macro { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("macro_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in macro_osc::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1678,7 +1776,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("models from Mutable Instruments Plaits (MIT)").small().color(TEXT_DIM));
+                            ui.label(RichText::new("models from Mutable Instruments Plaits (MIT)").small().color(crate::skin::ink_dim()));
                         });
                         ui.horizontal_top(|ui| {
                             macro_model_picker(ui, track_id, params, h - 48.0);
@@ -1694,7 +1792,7 @@ impl App {
                     }
                     Instrument::Braids { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("braids_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in braids_synth::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1703,7 +1801,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("shapes from Mutable Instruments Braids (MIT)").small().color(TEXT_DIM));
+                            ui.label(RichText::new("shapes from Mutable Instruments Braids (MIT)").small().color(crate::skin::ink_dim()));
                         });
                         ui.horizontal_top(|ui| {
                             braids_shape_picker(ui, track_id, params, h - 48.0);
@@ -1717,7 +1815,7 @@ impl App {
                     }
                     Instrument::Elements { preset, params } => {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Preset").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("elements_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
                                 for name in elements_synth::preset_names() {
                                     if ui.selectable_label(preset == name, *name).clicked() {
@@ -1726,7 +1824,7 @@ impl App {
                                     }
                                 }
                             });
-                            ui.label(RichText::new("modal synthesis from Mutable Instruments Elements (MIT)").small().color(TEXT_DIM));
+                            ui.label(RichText::new("modal synthesis from Mutable Instruments Elements (MIT)").small().color(crate::skin::ink_dim()));
                         });
                         ui.horizontal_top(|ui| {
                             elements_model_picker(ui, track_id, params, h - 48.0);
@@ -1781,13 +1879,13 @@ impl App {
                             ui.vertical(|ui| {
                                 // Loop mode, next to the editor.
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("Loop").small().color(TEXT_DIM));
+                                    ui.label(RichText::new("Loop").small().color(crate::skin::ink_dim()));
                                     for (k, name) in sampler::LOOP_MODES.iter().enumerate() {
                                         if ui.selectable_label(params[sampler::LOOP].round() as usize == k, *name).clicked() {
                                             params[sampler::LOOP] = k as f32;
                                         }
                                     }
-                                    ui.label(RichText::new("drag S/E and the loop; Ctrl+wheel zooms").small().color(TEXT_DIM));
+                                    ui.label(RichText::new("drag S/E and the loop; Ctrl+wheel zooms").small().color(crate::skin::ink_dim()));
                                 });
                                 let map_h = if zones.is_empty() { 0.0 } else { 84.0 };
                                 let mut ed_w = self.prefs.layout.display("Sampler", 380.0);
@@ -1888,7 +1986,7 @@ impl App {
                     Instrument::Drums { kit, pads, engine } => {
                         let engine = *engine;
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Kit").small().color(TEXT_DIM));
+                            ui.label(RichText::new("Kit").small().color(crate::skin::ink_dim()));
                             egui::ComboBox::from_id_salt(("drum_kit", track_id)).width(130.0).height(360.0).selected_text(kit.as_str()).show_ui(ui, |ui| {
                                 for name in engine.kits() {
                                     if ui.selectable_label(kit == name, *name).clicked() {
@@ -1927,7 +2025,7 @@ impl App {
                                     }
                                     Some(crate::drum_lib::State::Preparing) => {
                                         ui.spinner();
-                                        ui.label(RichText::new(format!("Mixing the microphones of {}...", pack.folder)).small().color(TEXT_DIM));
+                                        ui.label(RichText::new(format!("Mixing the microphones of {}...", pack.folder)).small().color(crate::skin::ink_dim()));
                                         ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
                                     }
                                     Some(crate::drum_lib::State::Failed(e)) => {
@@ -1940,7 +2038,7 @@ impl App {
                                         if ui.add(egui::Button::new(RichText::new(format!("Download the recordings ({} MB)", pack.mb)).color(TEXT_DARK)).fill(accent_now())).on_hover_text(pack.credit).clicked() {
                                             self.start_drum_install(&kit_name);
                                         }
-                                        ui.label(RichText::new("Free. Until then, Krabton's own drums play.").small().color(TEXT_DIM));
+                                        ui.label(RichText::new("Free. Until then, Krabton's own drums play.").small().color(crate::skin::ink_dim()));
                                     }
                                 }
                             });
@@ -1960,8 +2058,12 @@ impl App {
                                 let resp = ui.interact(r, Id::new(("pad", track_id, k)), Sense::click());
                                 let selected = self.sel_pad == k;
                                 let pad = &mut pads[k];
+                                // A drum machine's pads are its step buttons, in their colours.
+                                let own = crate::skin::current().and_then(|s| (!s.pads.is_empty()).then(|| s.pads[col % s.pads.len()]));
                                 let fill = if resp.is_pointer_button_down_on() {
                                     accent_now()
+                                } else if let Some(c) = own {
+                                    if selected { mix(c, Color32::WHITE, 0.25) } else { c }
                                 } else if selected {
                                     PANEL3
                                 } else {
@@ -1972,7 +2074,11 @@ impl App {
                                 if selected {
                                     rect_line(p, r, 3.0, 1.0, accent_now());
                                 }
-                                let tc = if fill == accent_now() { TEXT_DARK } else { TEXT };
+                                if own.is_some() {
+                                    // Lit like a step button when picked.
+                                    p.circle_filled(pos2(r.right() - 7.0, r.top() + 7.0), 3.0, if selected { REC } else { Color32::from_black_alpha(90) });
+                                }
+                                let tc = if fill == accent_now() || own.is_some() { text_on(fill) } else { TEXT };
                                 p.with_clip_rect(r).text(pos2(r.left() + 5.0, r.top() + 10.0), Align2::LEFT_CENTER, &pad.name, small(), tc);
                                 let sub = if !pad.layers.is_empty() { format!("{}  rec", note_name(pad.note)) } else if pad.sample.is_some() { format!("{}  sample", note_name(pad.note)) } else { note_name(pad.note) };
                                 p.text(pos2(r.left() + 5.0, r.bottom() - 9.0), Align2::LEFT_CENTER, sub, small(), shade(tc, 0.7));
@@ -1997,7 +2103,7 @@ impl App {
                                 let k = self.sel_pad.min(pads.len().saturating_sub(1));
                                 if let Some(pad) = pads.get_mut(k) {
                                     ui.horizontal(|ui| {
-                                        ui.label(RichText::new(&pad.name).strong());
+                                        ui.label(RichText::new(&pad.name).strong().color(crate::skin::ink()));
                                         egui::ComboBox::from_id_salt(("pad_voice", track_id, k)).width(96.0).height(420.0).selected_text(pad.voice.name()).show_ui(ui, |ui| {
                                             for &(group, voices) in engine.groups() {
                                                 ui.label(RichText::new(group).small().color(TEXT_DIM));
@@ -2032,7 +2138,7 @@ impl App {
                                         }
                                     });
                                     ui.horizontal(|ui| {
-                                        ui.label(RichText::new("Choke").small().color(TEXT_DIM));
+                                        ui.label(RichText::new("Choke").small().color(crate::skin::ink_dim()));
                                         let label = |g: u8| if g == 0 { "-".to_string() } else { g.to_string() };
                                         egui::ComboBox::from_id_salt(("pad_choke", track_id, k)).width(36.0).selected_text(label(pad.choke)).show_ui(ui, |ui| {
                                             for g in 0..=4u8 {
@@ -2150,8 +2256,8 @@ fn elements_model_picker(ui: &mut Ui, track_id: u64, params: &mut [f32], height:
     let p = ui.painter();
     let mut y = rect.top() + bh * 3.0 + 6.0;
     let line = |y: f32, label: &str, value: &str| {
-        p.text(pos2(rect.left() + 2.0, y), Align2::LEFT_TOP, label, small(), TEXT_DIM);
-        p.text(pos2(rect.right() - 2.0, y), Align2::RIGHT_TOP, value, small(), TEXT);
+        p.text(pos2(rect.left() + 2.0, y), Align2::LEFT_TOP, label, small(), crate::skin::ink_dim());
+        p.text(pos2(rect.right() - 2.0, y), Align2::RIGHT_TOP, value, small(), crate::skin::ink());
     };
     line(y, "Strike", elements_synth::mallet_zone(params[MALLET]));
     y += 14.0;
@@ -2163,10 +2269,10 @@ fn elements_model_picker(ui: &mut Ui, track_id: u64, params: &mut [f32], height:
     for (k, (label, idx)) in [("Bow", BOW), ("Blow", BLOW), ("Strike", STRIKE)].iter().enumerate() {
         let w = (bw - 8.0) / 3.0;
         let r = Rect::from_min_size(pos2(rect.left() + k as f32 * (w + 4.0), my), vec2(w, 6.0));
-        p.rect_filled(r, 2.0, PANEL3);
+        p.rect_filled(r, 2.0, crate::skin::switch_off());
         let v = params[*idx].clamp(0.0, 1.0);
         p.rect_filled(Rect::from_min_size(r.min, vec2(r.width() * v, r.height())), 2.0, accent_now());
-        p.text(pos2(r.center().x, my + 8.0), Align2::CENTER_TOP, *label, small(), TEXT_DIM);
+        p.text(pos2(r.center().x, my + 8.0), Align2::CENTER_TOP, *label, small(), crate::skin::ink_dim());
     }
 }
 
@@ -2200,7 +2306,7 @@ fn stk_controls(ui: &mut Ui, track_id: u64, family: krabton_engine::dsp::stk_syn
     let models = stk::models(family);
     let k = stk::model_of(family, params);
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Model").small().color(TEXT_DIM));
+        ui.label(RichText::new("Model").small().color(crate::skin::ink_dim()));
         egui::ComboBox::from_id_salt(("stk_model", track_id)).width(130.0).selected_text(models[k].name).show_ui(ui, |ui| {
             for (i, m) in models.iter().enumerate() {
                 if ui.selectable_label(i == k, m.name).clicked() && i != k {
@@ -2323,7 +2429,7 @@ fn convolution_face(ui: &mut Ui, id: Id, params: &mut [f32], file: Option<&Sampl
                         }
                     }
                     if let Some(s) = file {
-                        ui.label(RichText::new(&s.name).small().color(TEXT_DIM));
+                        ui.label(RichText::new(&s.name).small().color(crate::skin::ink_dim()));
                         if ui.small_button("x").on_hover_text("Forget the file").clicked() {
                             act = Some(ConvAct::Clear);
                         }
@@ -2579,7 +2685,7 @@ fn zone_editor(ui: &mut Ui, z: &mut krabton_engine::SampleZone, k: usize) {
             *v = n as u8;
         }
     };
-    let dim = |ui: &mut Ui, t: &str| ui.label(RichText::new(t).small().color(TEXT_DIM));
+    let dim = |ui: &mut Ui, t: &str| ui.label(RichText::new(t).small().color(crate::skin::ink_dim()));
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 3.0;
         dim(ui, &format!("Zone {}  keys", k + 1));

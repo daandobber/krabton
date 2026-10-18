@@ -80,15 +80,16 @@ pub fn rec_icon(p: &Painter, center: Pos2, size: f32, c: Color32) {
 pub fn button(ui: &mut Ui, rect: Rect, id: Id, label: &str, on: bool, on_color: Color32) -> Response {
     let resp = ui.interact(rect, id, Sense::click());
     let p = ui.painter();
+    let off = crate::skin::switch_off();
     let fill = if on {
         on_color
     } else if resp.hovered() {
-        shade(PANEL3, 1.3)
+        mix(off, Color32::WHITE, 0.12)
     } else {
-        PANEL3
+        off
     };
     rect_fill(p, rect, 2.0, fill);
-    let tc = if on { text_on(on_color) } else { TEXT };
+    let tc = if on { text_on(on_color) } else { crate::skin::well().1 };
     p.with_clip_rect(rect).text(rect.center(), Align2::CENTER_CENTER, label, small(), tc);
     resp
 }
@@ -167,6 +168,14 @@ pub(crate) const RING_TRACK: Color32 = Color32::from_rgb(0x3a, 0x3a, 0x3f);
 /// Krabton's knob: a thick ring on a dark disc, the value as a light arc
 /// (white under the pointer), and a short tick in the accent colour.
 pub(crate) fn ring_face(p: &Painter, rect: Rect, v: f32, bipolar: bool, color: Color32, hot: bool) {
+    match crate::skin::current() {
+        Some(s) => crate::skin::knob_face(p, rect, v, bipolar, color, hot, &s),
+        None => ring_face_plain(p, rect, v, bipolar, color, hot),
+    }
+}
+
+/// [`ring_face`] in the plain look.
+pub(crate) fn ring_face_plain(p: &Painter, rect: Rect, v: f32, bipolar: bool, color: Color32, hot: bool) {
     let c = rect.center();
     let r = rect.width().min(rect.height()) * 0.5 - 3.0;
     let w = (r * 0.36).clamp(3.0, 5.0);
@@ -188,12 +197,13 @@ pub(crate) fn ring_face(p: &Painter, rect: Rect, v: f32, bipolar: bool, color: C
 pub fn param_slider(ui: &mut Ui, rect: Rect, id: Id, spec: &ParamSpec, value: &mut f32, accent: Color32) -> (bool, Rect) {
     let p = ui.painter().clone();
     let label = Rect::from_min_size(rect.min, vec2(rect.width(), 12.0));
+    let name = crate::skin::label_text(spec.name);
     let mut font = small();
-    let width = p.layout_no_wrap(spec.name.to_string(), font.clone(), TEXT_DIM).size().x;
+    let width = p.layout_no_wrap(name.clone(), font.clone(), TEXT_DIM).size().x;
     if width > rect.width() {
         font.size = (font.size * rect.width() / width).max(8.0);
     }
-    p.with_clip_rect(label).text(label.center(), Align2::CENTER_CENTER, spec.name, font, TEXT_DIM);
+    p.with_clip_rect(label).text(label.center(), Align2::CENTER_CENTER, name, font, crate::skin::ink());
     let value_rect = Rect::from_min_size(pos2(rect.left(), rect.bottom() - 12.0), vec2(rect.width(), 12.0));
     let track = Rect::from_center_size(pos2(rect.center().x, (label.bottom() + value_rect.top()) * 0.5), vec2(4.0, value_rect.top() - label.bottom() - 14.0));
     let hit = Rect::from_min_max(pos2(rect.left(), track.top() - 6.0), pos2(rect.right(), track.bottom() + 6.0));
@@ -220,7 +230,7 @@ pub fn param_slider(ui: &mut Ui, rect: Rect, id: Id, spec: &ParamSpec, value: &m
     rect_fill(&p, Rect::from_min_max(pos2(track.left(), y.min(from)), pos2(track.right(), y.max(from))), 2.0, shade(accent, 0.8));
     let thumb = Rect::from_center_size(pos2(track.center().x, y), vec2((rect.width() - 10.0).min(22.0), 8.0));
     rect_fill(&p, thumb, 2.0, if resp.hovered() || resp.dragged() { Color32::WHITE } else { TEXT });
-    p.with_clip_rect(value_rect).text(value_rect.center(), Align2::CENTER_CENTER, spec.format(*value), small(), TEXT);
+    p.with_clip_rect(value_rect).text(value_rect.center(), Align2::CENTER_CENTER, spec.format(*value), small(), crate::skin::ink_dim());
     resp.on_hover_text(format!("{}: {}\nDrag (Shift: fine), double-click to reset", spec.name, spec.format(*value)));
     (changed, track)
 }
@@ -249,13 +259,16 @@ pub const CELL_H: f32 = 60.0;
 pub fn param_cell(ui: &mut Ui, rect: Rect, id: Id, spec: &ParamSpec, value: &mut f32, accent: Color32) -> bool {
     let p = ui.painter().clone();
     let label_rect = Rect::from_min_size(rect.min, vec2(rect.width(), 12.0));
+    let hero = is_hero_cell(rect);
+    let name = crate::skin::label_text(spec.name);
     // Long names get a smaller font rather than being cut off.
-    let mut font = small();
-    let width = p.layout_no_wrap(spec.name.to_string(), font.clone(), TEXT_DIM).size().x;
+    let mut font = if hero { body() } else { small() };
+    let width = p.layout_no_wrap(name.clone(), font.clone(), TEXT_DIM).size().x;
     if width > rect.width() {
-        font.size = (font.size * rect.width() / width).max(8.0);
+        font.size = (font.size * rect.width() / width).max(if name.chars().any(|c| c.is_lowercase()) { 8.0 } else { 7.0 });
     }
-    p.with_clip_rect(label_rect).text(label_rect.center(), Align2::CENTER_CENTER, spec.name, font, TEXT_DIM);
+    let skinned = crate::skin::current().is_some();
+    p.with_clip_rect(label_rect).text(label_rect.center(), Align2::CENTER_CENTER, name, font, if skinned { crate::skin::ink() } else { TEXT_DIM });
     let value_rect = Rect::from_min_size(pos2(rect.left(), rect.bottom() - 12.0), vec2(rect.width(), 12.0));
     let ctrl = Rect::from_min_max(pos2(rect.left(), label_rect.bottom() + 1.0), pos2(rect.right(), value_rect.top() - 1.0));
     let mut changed = false;
@@ -273,8 +286,7 @@ pub fn param_cell(ui: &mut Ui, rect: Rect, id: Id, spec: &ParamSpec, value: &mut
             }
         }
         _ => {
-            let size = ctrl.height().min(rect.width()).min(36.0);
-            let k = Rect::from_center_size(ctrl.center(), vec2(size, size));
+            let k = cell_knob_rect(rect);
             let bipolar = spec.min < 0.0 && spec.max > 0.0;
             let norm = spec.to_norm(*value);
             // Stepped parameters with few values: about 24 px of drag per step.
@@ -291,8 +303,20 @@ pub fn param_cell(ui: &mut Ui, rect: Rect, id: Id, spec: &ParamSpec, value: &mut
             resp.on_hover_text(format!("{}: {}\nDrag to change, Shift for fine, double-click to reset", spec.name, spec.format(*value)));
         }
     }
-    p.with_clip_rect(value_rect).text(value_rect.center(), Align2::CENTER_CENTER, spec.format(*value), small(), TEXT);
+    p.with_clip_rect(value_rect).text(value_rect.center(), Align2::CENTER_CENTER, spec.format(*value), if hero { body() } else { small() }, if skinned { crate::skin::ink_dim() } else { TEXT });
     changed
+}
+
+/// Whether a cell is a big one (two by two).
+pub fn is_hero_cell(cell: Rect) -> bool {
+    cell.width() > CELL_W * 1.5 && cell.height() > CELL_H * 1.5
+}
+
+/// Where the knob sits in a cell made by [`param_cell`].
+pub fn cell_knob_rect(cell: Rect) -> Rect {
+    let ctrl = Rect::from_min_max(pos2(cell.left(), cell.top() + 13.0), pos2(cell.right(), cell.bottom() - 13.0));
+    let size = ctrl.height().min(cell.width()).min(if is_hero_cell(cell) { 84.0 } else { 36.0 });
+    Rect::from_center_size(ctrl.center(), vec2(size, size))
 }
 
 /// A choice as a horizontal slider: drag left and right through the options
@@ -328,7 +352,8 @@ fn choice_slider(ui: &mut Ui, ctrl: Rect, id: Id, spec: &ParamSpec, opts: &[&str
         changed = true;
     }
     let hot = resp.hovered() || resp.dragged();
-    rect_fill(&p, b, 2.0, if hot { PANEL3 } else { KNOB });
+    let (well, well_ink) = crate::skin::well();
+    rect_fill(&p, b, 2.0, if hot { mix(well, Color32::WHITE, 0.1) } else { well });
     // The track: a notch per option, filled up to this one.
     let track = Rect::from_min_max(pos2(b.left() + 4.0, b.bottom() - 5.0), pos2(b.right() - 4.0, b.bottom() - 3.0));
     let shown = (value.round().max(0.0) as usize).min(n - 1);
@@ -342,7 +367,7 @@ fn choice_slider(ui: &mut Ui, ctrl: Rect, id: Id, spec: &ParamSpec, opts: &[&str
     }
     p.circle_filled(pos2(at(shown), track.center().y), 3.0, if hot { Color32::WHITE } else { TEXT });
     let text_rect = Rect::from_min_max(b.min, pos2(b.right(), track.top() - 1.0));
-    p.with_clip_rect(b).text(text_rect.center(), Align2::CENTER_CENTER, opts.get(shown).copied().unwrap_or("?"), small(), TEXT);
+    p.with_clip_rect(b).text(text_rect.center(), Align2::CENTER_CENTER, opts.get(shown).copied().unwrap_or("?"), small(), well_ink);
     // A click opens the list.
     egui::Popup::menu(&resp).show(|ui| {
         egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {

@@ -491,6 +491,7 @@ pub struct App {
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         theme::apply(&cc.egui_ctx);
+        crate::skin::install_fonts(&cc.egui_ctx);
         // Test windows show widget id clashes in red, as debug builds do.
         if std::env::var_os("KRABTON_TEST_WINDOW").is_some() {
             cc.egui_ctx.options_mut(|o| o.warn_on_id_clash = true);
@@ -2364,6 +2365,8 @@ impl App {
                 "rackview" => self.view = View::Rack,
                 "tapeview" => self.view = View::Tape,
                 "detail" => self.toggle_detail(),
+                // plain[=0]: devices in the flat look (or, with 0, each in its own).
+                "plain" => self.prefs.plain_devices = nums.first() != Some(&0),
                 "envelopes" => {
                     self.env_view = true;
                     self.detail = DetailTab::Clip;
@@ -3023,6 +3026,7 @@ impl eframe::App for App {
     }
 
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        crate::skin::set_enabled(!self.prefs.plain_devices);
         self.engine.collect_garbage();
         self.sync_plugins();
         self.frame += 1;

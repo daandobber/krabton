@@ -79,6 +79,8 @@ pub struct Prefs {
     pub audio_input: Option<String>,
     /// Start in Big Picture (for controllers and touch screens).
     pub big_picture: bool,
+    /// Devices in the flat look instead of each machine's own.
+    pub plain_devices: bool,
 }
 
 impl Prefs {
