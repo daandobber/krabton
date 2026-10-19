@@ -1431,6 +1431,24 @@ impl App {
                             param_grid_mod(ui, Id::new(("pan_flute", track_id)), krabton_engine::dsp::pan_flute::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
                         });
                     }
+                    Instrument::StreetOrgan { preset, params } if crate::skin::current().is_some() => {
+                        super::faces::street_organ::panel(ui, Id::new(("street_organ", track_id)), preset, params, &live, h - 36.0, mv.as_mut());
+                    }
+                    Instrument::StreetOrgan { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
+                            egui::ComboBox::from_id_salt(("street_organ_preset", track_id)).width(140.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in krabton_engine::dsp::street_organ::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = krabton_engine::dsp::street_organ::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("low keys: bass and accompaniment pipes; C1 to F1: the drums").small().color(crate::skin::ink_dim()));
+                        });
+                        param_grid_mod(ui, Id::new(("street_organ", track_id)), krabton_engine::dsp::street_organ::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
+                    }
                     Instrument::Melodica { preset, params } => {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));

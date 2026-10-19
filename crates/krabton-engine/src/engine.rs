@@ -471,6 +471,7 @@ enum InstState {
     Orchestra(Box<OrchestraState>),
     Facet(Box<FacetState>),
     Sf2(Box<crate::dsp::sf2::Sf2State>),
+    StreetOrgan(Box<crate::dsp::street_organ::StreetOrganState>),
     Plugin { instance: u64, proc: Option<Box<dyn AudioProcessor>>, pending: Vec<PluginEvent> },
 }
 
@@ -510,6 +511,7 @@ impl InstState {
             InstState::Voice(s) => s.pitch_bend = semis,
             InstState::Monk(s) => s.pitch_bend = semis,
             InstState::Sf2(s) => s.pitch_bend = semis,
+            InstState::StreetOrgan(s) => s.pitch_bend = semis,
             _ => {}
         }
     }
@@ -561,6 +563,7 @@ impl InstState {
             Some(Instrument::Orchestra { .. }) => InstState::Orchestra(Box::new(OrchestraState::new(sr))),
             Some(Instrument::Facet { .. }) => InstState::Facet(Box::new(FacetState::new(sr))),
             Some(Instrument::Sf2 { font, .. }) => InstState::Sf2(Box::new(crate::dsp::sf2::Sf2State::new(font.as_ref(), sr))),
+            Some(Instrument::StreetOrgan { .. }) => InstState::StreetOrgan(Box::new(crate::dsp::street_organ::StreetOrganState::new(sr))),
         }
     }
 
@@ -625,6 +628,7 @@ impl InstState {
                 | (InstState::Quartet(_), Some(Instrument::Quartet { .. }))
                 | (InstState::Orchestra(_), Some(Instrument::Orchestra { .. }))
                 | (InstState::Facet(_), Some(Instrument::Facet { .. }))
+                | (InstState::StreetOrgan(_), Some(Instrument::StreetOrgan { .. }))
         ) || matches!((self, i), (InstState::Plugin { instance, .. }, Some(Instrument::Plugin(p))) if *instance == p.instance)
             // Another bank needs a player of its own.
             || matches!((self, i), (InstState::Sf2(s), Some(Instrument::Sf2 { font, .. })) if s.is_for(font.as_ref()))
@@ -637,6 +641,7 @@ impl InstState {
             (InstState::Drums(s), Instrument::Drums { pads, .. }) => s.note_on(pads, pitch, vel, sr),
             (InstState::Sampler(s), Instrument::Sampler { params, sample, zones }) => s.note_on(ov.unwrap_or(params), sample.as_ref(), zones, pitch, vel),
             (InstState::Sf2(s), Instrument::Sf2 { params, bank, patch, .. }) => s.note_on(ov.unwrap_or(params), *bank, *patch, pitch, vel),
+            (InstState::StreetOrgan(s), Instrument::StreetOrgan { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (st @ InstState::Plugin { .. }, Instrument::Plugin(_)) => st.push_plugin_event(pitch, PluginEventKind::NoteOn { velocity: vel }),
             (InstState::Fm(s), Instrument::Fm { voice, op_mask, params, .. }) => s.note_on(ov.unwrap_or(params), voice, *op_mask, pitch, vel),
             (InstState::Macro(s), Instrument::Macro { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
@@ -686,6 +691,7 @@ impl InstState {
             (InstState::Synth(s), Instrument::Synth { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Sampler(s), Instrument::Sampler { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Sf2(s), Instrument::Sf2 { .. }) => s.note_off(pitch),
+            (InstState::StreetOrgan(s), Instrument::StreetOrgan { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (st @ InstState::Plugin { .. }, Instrument::Plugin(_)) => st.push_plugin_event(pitch, PluginEventKind::NoteOff),
             (InstState::Fm(s), Instrument::Fm { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Macro(s), Instrument::Macro { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
@@ -736,6 +742,7 @@ impl InstState {
             InstState::Drums(s) => s.all_off(),
             InstState::Sampler(s) => s.all_off(),
             InstState::Sf2(s) => s.all_off(),
+            InstState::StreetOrgan(s) => s.all_off(),
             InstState::Plugin { .. } => self.push_plugin_event(0, PluginEventKind::AllNotesOff),
             InstState::Fm(s) => s.all_off(),
             InstState::Macro(s) => s.all_off(),
@@ -815,6 +822,7 @@ impl InstState {
             InstState::Quartet(s) => s.visual(out),
             InstState::Orchestra(s) => s.visual(out),
             InstState::Facet(s) => s.visual(out),
+            InstState::StreetOrgan(s) => s.visual(out),
             _ => return false,
         }
         true
@@ -826,6 +834,7 @@ impl InstState {
             (InstState::Drums(s), Instrument::Drums { pads, .. }) => s.render(pads, l, r, sr),
             (InstState::Sampler(s), Instrument::Sampler { params, sample, zones }) => s.render(ov.unwrap_or(params), sample.as_ref(), zones, l, r, sr),
             (InstState::Sf2(s), Instrument::Sf2 { params, bank, patch, .. }) => s.render(ov.unwrap_or(params), *bank, *patch, l, r),
+            (InstState::StreetOrgan(s), Instrument::StreetOrgan { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Fm(s), Instrument::Fm { voice, params, .. }) => s.render(ov.unwrap_or(params), voice, l, r, sr),
             (InstState::Macro(s), Instrument::Macro { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Braids(s), Instrument::Braids { params, .. }) => s.render(ov.unwrap_or(params), l, r),
@@ -2123,6 +2132,7 @@ impl Engine {
                 }
                 // The Key drawer moves what it plays into its key (not drums).
                 let melodic = inst.transposes() && !track.key_fixed;
+                let drum_keys = inst.drum_keys();
                 let moved = |p: u8, s: i8| (p as i32 + s as i32).clamp(0, 127) as u8;
                 let mut pos = 0;
                 for ev in events.iter() {
@@ -2136,7 +2146,7 @@ impl Engine {
                     if ev.on {
                         *n = n.saturating_add(1).min(8);
                         let key = if (ev.offset as usize) >= key_at { key_new } else { key_old };
-                        let np = match key.filter(|k| melodic && *k != project.scale) {
+                        let np = match key.filter(|k| melodic && drum_keys & (1u128 << (ev.pitch & 127)) == 0 && *k != project.scale) {
                             Some(key) => crate::scale::convert_pitch(ev.pitch, &project.scale, &key),
                             None => ev.pitch,
                         };

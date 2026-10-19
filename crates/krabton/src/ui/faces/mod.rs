@@ -15,6 +15,7 @@ pub mod organ;
 pub mod piano;
 pub mod plaits;
 pub mod sf2;
+pub mod street_organ;
 pub mod synth;
 
 use super::modulation::{knob_overlay, slider_overlay, ModView};

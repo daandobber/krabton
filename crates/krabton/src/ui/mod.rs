@@ -26,6 +26,7 @@ pub mod modulation;
 pub mod mono101_view;
 pub mod composers_view;
 pub mod masters_view;
+pub mod mechanical_view;
 pub mod minimal_view;
 pub mod nature_view;
 pub mod reed_view;

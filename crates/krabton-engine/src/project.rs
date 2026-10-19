@@ -773,6 +773,8 @@ pub enum Instrument {
     Facet { preset: String, params: Vec<f32> },
     /// Beads: the wavetable synth of Mutable Instruments Beads, played with keys, with its grains.
     BeadsSynth { preset: String, params: Vec<f32> },
+    /// Street Organ: a Dutch street organ's pipes, divisions and drums (see `dsp::street_organ`).
+    StreetOrgan { preset: String, params: Vec<f32> },
     /// SF2 Player: a preset (bank, program) of a SoundFont 2 bank (see `dsp::sf2`).
     Sf2 {
         params: Vec<f32>,
@@ -953,6 +955,11 @@ impl Instrument {
         Instrument::Facet { preset: preset.to_string(), params: crate::dsp::facet::preset(preset) }
     }
 
+    pub fn street_organ(preset: &str) -> Self {
+        crate::dsp::street_organ::warm();
+        Instrument::StreetOrgan { preset: preset.to_string(), params: crate::dsp::street_organ::preset(preset) }
+    }
+
     /// The SF2 Player on a preset of `font` (its name looked up).
     pub fn sf2(font: Option<crate::dsp::sf2::Sf2Ref>, bank: u16, patch: u8) -> Self {
         let preset = font.as_ref().and_then(|f| f.preset(bank, patch)).map(|p| p.name.clone()).unwrap_or_default();
@@ -1009,6 +1016,7 @@ impl Instrument {
             Instrument::Orchestra { params, .. } => crate::orchestra::device_name(params),
             Instrument::Facet { .. } => "Facet",
             Instrument::Sf2 { .. } => "SF2 Player",
+            Instrument::StreetOrgan { .. } => "Street Organ",
         }
     }
 
@@ -1023,7 +1031,7 @@ impl Instrument {
             Instrument::Sf2 { preset, .. } if !preset.is_empty() => preset.clone(),
             Instrument::Sf2 { font, .. } => font.as_ref().map(|f| f.name.clone()).unwrap_or_else(|| "Empty".into()),
             Instrument::Fm { voice, .. } => Dx7Voice::from_slice(voice).map(|v| v.name()).unwrap_or_else(|| "FM".into()),
-            Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Modular { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } | Instrument::Monk { preset, .. } | Instrument::Piano { preset, .. } | Instrument::Bassline { preset, .. } | Instrument::Mono101 { preset, .. } | Instrument::Drone { preset, .. } | Instrument::Waves { preset, .. } | Instrument::Guitar { preset, .. } | Instrument::WindChimes { preset, .. } | Instrument::Birds { preset, .. } | Instrument::Nature { preset, .. } | Instrument::PanFlute { preset, .. } | Instrument::Melodica { preset, .. } | Instrument::Harmonica { preset, .. } | Instrument::Calculator { preset, .. } | Instrument::Console { preset, .. } | Instrument::Handheld { preset, .. } | Instrument::Micro { preset, .. } | Instrument::Warp { preset, .. } | Instrument::Hybrid { preset, .. } | Instrument::Quartet { preset, .. } | Instrument::ChipFm { preset, .. } | Instrument::V2 { preset, .. } | Instrument::Oidos { preset, .. } | Instrument::Orchestra { preset, .. } | Instrument::Facet { preset, .. } | Instrument::BeadsSynth { preset, .. } => preset.clone(),
+            Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Modular { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } | Instrument::Monk { preset, .. } | Instrument::Piano { preset, .. } | Instrument::Bassline { preset, .. } | Instrument::Mono101 { preset, .. } | Instrument::Drone { preset, .. } | Instrument::Waves { preset, .. } | Instrument::Guitar { preset, .. } | Instrument::WindChimes { preset, .. } | Instrument::Birds { preset, .. } | Instrument::Nature { preset, .. } | Instrument::PanFlute { preset, .. } | Instrument::Melodica { preset, .. } | Instrument::Harmonica { preset, .. } | Instrument::Calculator { preset, .. } | Instrument::Console { preset, .. } | Instrument::Handheld { preset, .. } | Instrument::Micro { preset, .. } | Instrument::Warp { preset, .. } | Instrument::Hybrid { preset, .. } | Instrument::Quartet { preset, .. } | Instrument::ChipFm { preset, .. } | Instrument::V2 { preset, .. } | Instrument::Oidos { preset, .. } | Instrument::Orchestra { preset, .. } | Instrument::Facet { preset, .. } | Instrument::BeadsSynth { preset, .. } | Instrument::StreetOrgan { preset, .. } => preset.clone(),
         }
     }
 
@@ -1044,6 +1052,15 @@ impl Instrument {
         match self {
             Instrument::Drums { pads, .. } => pads.iter().fold(0, |m, p| m | 1u128 << (p.note & 127)),
             Instrument::Sf2 { bank, .. } if *bank >= crate::dsp::sf2::DRUM_BANK => crate::dsp::sf2::GM_DRUM_NOTES,
+            _ => 0,
+        }
+    }
+
+    /// The keys of a melodic instrument that play drums (the song's key
+    /// leaves them where they are), a bit each.
+    pub fn drum_keys(&self) -> u128 {
+        match self {
+            Instrument::StreetOrgan { .. } => crate::dsp::street_organ::DRUM_KEYS,
             _ => 0,
         }
     }
@@ -2045,6 +2062,10 @@ impl Project {
                     Some(Instrument::Synth { params, .. }) => params::fix_len(params, synth::SPECS),
                     Some(Instrument::Sampler { params, .. }) => params::fix_len(params, sampler::SPECS),
                     Some(Instrument::Sf2 { params, .. }) => params::fix_len(params, crate::dsp::sf2::SPECS),
+                    Some(Instrument::StreetOrgan { params, .. }) => {
+                        params::fix_len(params, crate::dsp::street_organ::SPECS);
+                        crate::dsp::street_organ::warm();
+                    }
                     Some(Instrument::Macro { params, .. }) => params::fix_len(params, macro_osc::SPECS),
                     Some(Instrument::Braids { params, .. }) => params::fix_len(params, braids_synth::SPECS),
                     Some(Instrument::Elements { params, .. }) => params::fix_len(params, elements_synth::SPECS),

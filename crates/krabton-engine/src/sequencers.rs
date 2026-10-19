@@ -19,6 +19,7 @@ pub mod ambient;
 pub mod minimal;
 pub mod composers;
 pub mod masters;
+pub mod mechanical;
 pub mod strum;
 pub mod drummer;
 pub mod more;
@@ -321,6 +322,7 @@ pub struct SeqState {
     pub(crate) minimal: Box<minimal::Minimal>,
     pub(crate) composers: Box<composers::Composers>,
     pub(crate) masters: Box<masters::Masters>,
+    pub(crate) mechanical: Box<mechanical::Mechanical>,
     pub(crate) drum: drummer::DrummerState,
     pub(crate) map: drum_map::DrumMapState,
     pub(crate) marbles: Box<marbles::MarblesState>,
@@ -365,6 +367,7 @@ impl SeqState {
             minimal: Box::default(),
             composers: Box::default(),
             masters: Box::default(),
+            mechanical: Box::default(),
             drum: drummer::DrummerState::default(),
             map: drum_map::DrumMapState::default(),
             marbles: Box::default(),
@@ -558,6 +561,7 @@ impl SeqState {
                     K::Ligeti => rate_beats(p[0]),
                     K::Cage => rate_beats(p[0]),
                     K::Einaudi => rate_beats(p[0]) / masters::EINAUDI_TICKS,
+                    K::OrganGrinder | K::MusicBox => rate_beats(p[0]) / mechanical::TICKS,
                     _ => 0.25,
                 };
                 let beat0 = ctx.beat;
@@ -613,6 +617,8 @@ impl SeqState {
                             K::Ligeti => self.ligeti(k, p, at, step_frames, out, ctx),
                             K::Cage => self.cage(k, p, at, step_frames, out, ctx),
                             K::Einaudi => self.einaudi(k, p, at, step_frames, out, ctx),
+                            K::OrganGrinder => self.organ_grinder(k, p, at, step_frames, out, ctx),
+                            K::MusicBox => self.music_box(k, p, at, step_frames, out, ctx),
                             _ => {}
                         }
                     }

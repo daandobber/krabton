@@ -160,6 +160,27 @@ const SAMPLER: Skin = Skin {
     ..BASE
 };
 
+/// A street organ's painted front: deep red, gold lines, cream lettering.
+const STREET_ORGAN: Skin = Skin {
+    top: hex(0x8a1e26),
+    bottom: hex(0x561017),
+    surface: Surface::Velvet,
+    cheeks: Some(hex(0xb48a3c)),
+    stripes: &[hex(0xe8c35a), hex(0x2f6b4f)],
+    ink: hex(0xf6e7c8),
+    dim: hex(0xd9c49a),
+    well: hex(0x3a0a0e),
+    well_ink: hex(0xf6e7c8),
+    accent: hex(0xf2c14e),
+    knob: Knob::Cap,
+    cap: hex(0xe0b04a),
+    logo: Font::Script,
+    logo_size: 25.0,
+    logo_ink: hex(0xffe08a),
+    groups: Groups::Outline,
+    ..BASE
+};
+
 /// A rack sound module: dark grey with its ears' screws, a green display.
 const SF2: Skin = Skin {
     top: hex(0x3a3d43),
@@ -927,6 +948,7 @@ pub fn for_instrument(name: &str) -> Option<Skin> {
         "FM" => FM,
         "Sampler" => SAMPLER,
         "SF2 Player" => SF2,
+        "Street Organ" => STREET_ORGAN,
         "Plaits" => Skin { accent: hex(0x2fa84f), heroes: &["Harmonics", "Timbre", "Morph"], ..MODULE },
         "Braids" => Skin { accent: hex(0xe04534), heroes: &["Timbre", "Color"], ..MODULE },
         "Elements" => Skin { accent: hex(0x5a6df0), heroes: &["Geometry", "Brightness"], ..MODULE },

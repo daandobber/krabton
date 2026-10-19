@@ -126,6 +126,8 @@ pub enum MidiFxKind {
     Banjo,
     Section,
     Ukulele,
+    OrganGrinder,
+    MusicBox,
 }
 
 const ARP_STYLES: &[&str] = &["Up", "Down", "Up Down", "Down Up", "Converge", "Diverge", "Random", "Played", "Chord"];
@@ -242,7 +244,7 @@ impl MidiFxKind {
         use MidiFxKind as K;
         match self {
             K::Step | K::Acid | K::DrumGrid | K::Progression | K::Drummer => "Classic",
-            K::GuitarChords | K::Ukulele | K::PianoPlayer | K::BassPlayer | K::Banjo | K::Section => "Players",
+            K::GuitarChords | K::Ukulele | K::PianoPlayer | K::BassPlayer | K::Banjo | K::Section | K::OrganGrinder | K::MusicBox => "Players",
             K::Euclid | K::DrumMap | K::Marbles | K::Chance | K::Bits | K::Percussion => "Rhythm",
             K::Spinner | K::Endless | K::Hands | K::Draw => "Played",
             K::Polymeter | K::Turing | K::Life | K::Drunk | K::Markov | K::Words => "Generative",
@@ -253,7 +255,7 @@ impl MidiFxKind {
         }
     }
 
-    pub const SEQUENCERS: [MidiFxKind; 57] = [
+    pub const SEQUENCERS: [MidiFxKind; 59] = [
         MidiFxKind::Step,
         MidiFxKind::Acid,
         MidiFxKind::DrumGrid,
@@ -311,6 +313,8 @@ impl MidiFxKind {
         MidiFxKind::Banjo,
         MidiFxKind::Section,
         MidiFxKind::Ukulele,
+        MidiFxKind::OrganGrinder,
+        MidiFxKind::MusicBox,
     ];
 
     pub fn is_sequencer(self) -> bool {
@@ -380,6 +384,8 @@ impl MidiFxKind {
             MidiFxKind::Ligeti => "Ligeti",
             MidiFxKind::Cage => "Cage",
             MidiFxKind::Einaudi => "Einaudi",
+            MidiFxKind::OrganGrinder => "Organ Grinder",
+            MidiFxKind::MusicBox => "Music Box",
             MidiFxKind::GuitarChords => "Guitar Chords",
             MidiFxKind::Drummer => "Drummer",
             MidiFxKind::DrumMap => "Drum Map",
@@ -454,6 +460,8 @@ impl MidiFxKind {
             MidiFxKind::Messiaen => "After Olivier Messiaen: chords in his modes of limited transposition with added values, birdsong (a blackbird, a thrush, a nightingale), or rhythmic characters (a palindrome three times: one growing, one shrinking, one staying)",
             MidiFxKind::Ligeti => "After György Ligeti: a hundred metronomes (each at its own tempo, running down one by one), Continuum (two hands as fast as they go round a few notes that change one at a time) or Musica ricercata (one pitch, then two, then three... until all twelve)",
             MidiFxKind::Cage => "After John Cage: chance (coins tossed for a hexagram of the I Ching pick each sound, length and loudness from a chart, some of it silence), a prepared piano (odd sounds in quiet patterns, a square-root form), or 4'33\"",
+            MidiFxKind::OrganGrinder => "A street organ's book: a tune in the song's key over its own chords, as the old dance tunes go (a phrase, again, another, the first once more), with the bass, the oom-pah, a counter melody, grace notes, trills and runs, and the drums on the Street Organ's drum keys; as a waltz, a march, a polka or a foxtrot",
+            MidiFxKind::MusicBox => "A music box: a tune pinned on a cylinder, plucking only the notes of its comb, the melody high over a broken chord, long notes plucked again, and a spring that runs down until it stops and is wound again",
             MidiFxKind::Einaudi => "After Ludovico Einaudi: a broken chord round four chords with a few notes of melody over it, or a pattern that builds layer by layer and falls back",
             MidiFxKind::Feldman => "After Morton Feldman: soft chords, few and far apart, in patterns that come back a few times, each time a little changed",
             MidiFxKind::Riley => "After Terry Riley's In C: players each repeat a short figure as long as they like before moving on, never far apart, over a steady pulse; or a Rainbow of modal loops of different lengths turning against each other",
@@ -534,6 +542,8 @@ impl MidiFxKind {
             MidiFxKind::Ligeti => sequencers::masters::LIGETI,
             MidiFxKind::Cage => sequencers::masters::CAGE,
             MidiFxKind::Einaudi => sequencers::masters::EINAUDI,
+            MidiFxKind::OrganGrinder => sequencers::mechanical::ORGAN,
+            MidiFxKind::MusicBox => sequencers::mechanical::MUSIC_BOX,
             MidiFxKind::GuitarChords => sequencers::strum::SPECS,
             MidiFxKind::Ukulele => sequencers::strum::UKE_SPECS,
             MidiFxKind::Drummer => sequencers::drummer::SPECS,

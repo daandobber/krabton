@@ -208,6 +208,8 @@ pub fn midi(kind: MidiFxKind) -> &'static [Preset] {
         K::Ligeti => LIGETI,
         K::Cage => CAGE,
         K::Einaudi => EINAUDI,
+        K::OrganGrinder => ORGAN_GRINDER,
+        K::MusicBox => MUSIC_BOX,
         K::GuitarChords => GUITAR_CHORDS,
         K::Ukulele => UKULELE,
         K::Drummer => DRUMMER,
@@ -1106,6 +1108,25 @@ static EINAUDI: &[Preset] = &[
     p("Pop Chords", &[("Chords", C("I V vi IV")), ("Pedal", N(0.6))]),
     p("Experience", &[("Style", C("Build")), ("Chords", C("i VI III VII"))]),
     p("Build in Major", &[("Style", C("Build")), ("Chords", C("I V vi IV"))]),
+];
+static ORGAN_GRINDER: &[Preset] = &[
+    p("Waltz", &[]),
+    p("March", &[("Style", C("March")), ("Drums", N(0.8))]),
+    p("Polka", &[("Style", C("Polka")), ("Drums", N(0.8)), ("Tune", N(5.0))]),
+    p("Foxtrot", &[("Style", C("Foxtrot")), ("Tune", N(3.0))]),
+    p("Fancy Book", &[("Ornaments", N(0.9)), ("Counter", N(0.8)), ("Tune", N(12.0))]),
+    p("Plain Tune", &[("Counter", N(0.0)), ("Ornaments", N(0.0))]),
+    p("Fair March", &[("Style", C("March")), ("Drums", N(1.0)), ("Ornaments", N(0.7)), ("Tune", N(7.0))]),
+    p("Quiet Waltz", &[("Drums", N(0.2)), ("Counter", N(0.7)), ("Velocity", N(0.6)), ("Tune", N(21.0))]),
+];
+static MUSIC_BOX: &[Preset] = &[
+    p("Lullaby", &[]),
+    p("Arpeggios", &[("Accomp", C("Arpeggio")), ("Tune", N(4.0))]),
+    p("Alberti", &[("Accomp", C("Alberti")), ("Metre", C("4/4")), ("Tune", N(9.0))]),
+    p("Small Box", &[("Comb", C("18 Notes")), ("Sparkle", N(0.2))]),
+    p("Grand Box", &[("Comb", C("Full")), ("Sparkle", N(0.7)), ("Accomp", C("Arpeggio"))]),
+    p("Running Down", &[("Wind", N(0.9))]),
+    p("Wound Up", &[("Wind", N(0.0))]),
 ];
 static PEDAL: &[Preset] = &[p("Low Drone", &[("Change", C("Never"))]), p("Organ Pedal", &[("Octave", N(1.0)), ("Fifth", N(1.0))]), p("Moving Bass", &[("Change", C("1 Bar")), ("Moves", N(0.7))])];
 static DRUMMER: &[Preset] = &[

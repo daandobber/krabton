@@ -82,6 +82,8 @@ pub enum BrowserItem {
     Sample(PathBuf),
     /// A Standard MIDI File: its notes become clips.
     MidiFile(PathBuf),
+    /// A Street Organ preset.
+    StreetOrgan(&'static str),
     /// The SF2 Player without a bank.
     Sf2Player,
     /// A preset of a SoundFont bank on disk.
@@ -199,6 +201,7 @@ impl BrowserItem {
             BrowserItem::Nature(p) => format!("Nature: {p}"),
             BrowserItem::PanFlute(p) => format!("Pan Flute: {p}"),
             BrowserItem::Melodica(p) => format!("Melodica: {p}"),
+            BrowserItem::StreetOrgan(p) => format!("Street Organ: {p}"),
             BrowserItem::Harmonica(p) => format!("Harmonica: {p}"),
             BrowserItem::Calculator(p) => format!("Calculator: {p}"),
             BrowserItem::Console(p) => format!("Console: {p}"),
@@ -1061,6 +1064,8 @@ impl App {
                             K::Ukulele => Instrument::guitar("Ukulele"),
                             K::Banjo => Instrument::guitar("Banjo"),
                             K::Section => Instrument::strings("Bowed"),
+                            K::OrganGrinder => Instrument::street_organ("Draaiorgel"),
+                            K::MusicBox => self.music_box_sound(),
                             _ => Instrument::synth("Pluck"),
                         };
                         let t = self.add_midi_track(Some(inst));
@@ -1142,7 +1147,7 @@ impl App {
                 }
                 self.toast(format!("Loading {} ...", info.name));
             }
-            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::Harmonica(_) | BrowserItem::Calculator(_) | BrowserItem::Console(_) | BrowserItem::Handheld(_) | BrowserItem::Micro(_) | BrowserItem::Warp(_) | BrowserItem::Hybrid(_) | BrowserItem::Quartet(_) | BrowserItem::ChipFm(_) | BrowserItem::V2(_) | BrowserItem::Oidos(_) | BrowserItem::Orchestra(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) => {
+            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::StreetOrgan(_) | BrowserItem::Harmonica(_) | BrowserItem::Calculator(_) | BrowserItem::Console(_) | BrowserItem::Handheld(_) | BrowserItem::Micro(_) | BrowserItem::Warp(_) | BrowserItem::Hybrid(_) | BrowserItem::Quartet(_) | BrowserItem::ChipFm(_) | BrowserItem::V2(_) | BrowserItem::Oidos(_) | BrowserItem::Orchestra(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) => {
                 let inst = match item {
                     BrowserItem::Synth(p) => Instrument::synth(p),
                     BrowserItem::Macro(p) => Instrument::macro_osc(p),
@@ -1170,6 +1175,7 @@ impl App {
                     BrowserItem::Nature(p) => Instrument::nature(p),
                     BrowserItem::PanFlute(p) => Instrument::pan_flute(p),
                     BrowserItem::Melodica(p) => Instrument::melodica(p),
+                    BrowserItem::StreetOrgan(p) => Instrument::street_organ(p),
                     BrowserItem::Harmonica(p) => Instrument::harmonica(p),
                     BrowserItem::Calculator(p) => Instrument::calculator(p),
                     BrowserItem::Console(p) => Instrument::console(p),
@@ -1474,6 +1480,18 @@ impl App {
             self.prefs.save();
         }
         Ok(f)
+    }
+
+    /// A music box to play the Music Box sequencer: the General MIDI bank's
+    /// music box when there is a bank, else a glockenspiel.
+    fn music_box_sound(&mut self) -> Instrument {
+        match self.default_sf2() {
+            Some(f) if f.is_gm() => match f.gm(10, false).map(|p| (p.bank, p.patch)) {
+                Some((b, p)) => Instrument::sf2(Some(f), b, p),
+                None => Instrument::elements("Glockenspiel"),
+            },
+            _ => Instrument::elements("Glockenspiel"),
+        }
     }
 
     /// Opens SoundFont banks from disk into the browser's SF2 Player folder.
@@ -3158,6 +3176,12 @@ impl App {
                     let names = krabton_engine::dsp::pan_flute::preset_names();
                     let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
                     self.apply_item(&BrowserItem::PanFlute(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "streetorgan" => {
+                    let names = krabton_engine::dsp::street_organ::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::StreetOrgan(p), DropTarget::NewTrack);
                     self.detail = DetailTab::Devices;
                 }
                 "melodica" => {
