@@ -24,6 +24,8 @@ pub(crate) struct Live {
     pub scale: krabton_engine::Scale,
     /// The notes of the track's drum kit (0: no kit).
     pub kit: u128,
+    /// The song's tempo (for how fast a hand turns a crank at it).
+    pub bpm: f64,
 }
 
 impl Live {
@@ -73,8 +75,8 @@ pub(crate) fn editor(ui: &mut Ui, id: Id, kind: MidiFxKind, params: &mut [f32], 
         MidiFxKind::Ligeti => super::masters_view::ligeti(ui, params, live, accent, height),
         MidiFxKind::Cage => super::masters_view::cage(ui, params, live, accent, height),
         MidiFxKind::Einaudi => super::masters_view::einaudi(ui, params, live, accent, height),
-        MidiFxKind::OrganGrinder => super::mechanical_view::organ(ui, params, live, accent, height),
-        MidiFxKind::MusicBox => super::mechanical_view::music_box(ui, params, live, accent, height),
+        MidiFxKind::OrganGrinder => super::mechanical_view::organ(ui, id, params, live, accent, height),
+        MidiFxKind::MusicBox => super::mechanical_view::music_box(ui, id, params, live, accent, height),
         MidiFxKind::GuitarChords | MidiFxKind::Ukulele => super::chords_view::guitar_chords(ui, id, kind, params, data, live, accent, height),
         MidiFxKind::Drummer => super::drummer_view::drummer(ui, id, params, data, live, accent, height),
         MidiFxKind::DrumMap => super::rhythm_view::drum_map(ui, id, params, live, accent, height),
@@ -582,7 +584,7 @@ mod tests {
                     if i == 0 {
                         origin = ui.cursor().min;
                     }
-                    let live = Live { vis: None, playing: false, scale: krabton_engine::Scale::default(), kit: 0 };
+                    let live = Live { vis: None, playing: false, scale: krabton_engine::Scale::default(), kit: 0, bpm: 120.0 };
                     editor(ui, Id::new("t"), kind, params, data, live, lane, accent_now(), 190.0);
                 });
             });

@@ -235,7 +235,7 @@ mod tests {
             let _ = ctx.run(input, |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     origin = ui.cursor().min;
-                    let live = Live { vis: Some([0 | 1 << 8, gs::pack_shape(&[None, Some(3), Some(2), Some(0), Some(1), Some(0)]), 0, 0]), playing: true, scale: krabton_engine::Scale::default(), kit: 0 };
+                    let live = Live { vis: Some([0 | 1 << 8, gs::pack_shape(&[None, Some(3), Some(2), Some(0), Some(1), Some(0)]), 0, 0]), playing: true, scale: krabton_engine::Scale::default(), kit: 0, bpm: 120.0 };
                     super::super::seq_view::editor(ui, Id::new("t"), MidiFxKind::GuitarChords, &mut params, &mut data, live, &mut 0, accent_now(), height);
                     super::super::seq_view::editor(ui, Id::new("u"), MidiFxKind::Ukulele, &mut defaults(MidiFxKind::Ukulele.specs()), &mut gs::strum_default(), live, &mut 0, accent_now(), height);
                 });

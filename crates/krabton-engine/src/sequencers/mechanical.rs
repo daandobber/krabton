@@ -14,13 +14,21 @@
 //!   (the notes come later and softer and some go missing, until it stops
 //!   and is wound again).
 //!
+//! Both turn: the organ's book is pulled through by a crank, the box's
+//! cylinder by a crank or a spring. *Drive* says what turns it: the song
+//! (in its tempo, with a hand's unevenness), a crank (its speed, or yours on
+//! the screen: the book goes as fast as you turn, and the organ, short of
+//! wind, plays softer when you turn slowly) or, for the box, its spring
+//! (wound on the screen, or by Play, it runs at its own pace, slows as it
+//! runs down and stops).
+//!
 //! Every bar is made from the parameters alone (`organ_bar`, `box_bar`), so
 //! what the screens draw is what plays.
 
 use super::minimal::{choose, chord_root, hash, CHORD_AMOUNT, DYNAMICS};
 use super::{SeqState, RATES};
 use crate::midi_fx::{MidiCtx, MidiEvent};
-use crate::params::{ParamSpec, Unit};
+use crate::params::{ParamSpec, Unit, SCREEN_ONLY};
 
 const KEYS: [ParamSpec; 2] = [ParamSpec::toggle("Transpose", "Keys", false), ParamSpec::toggle("Hold", "Keys", false)];
 
@@ -37,6 +45,12 @@ pub const OG_BASE: usize = 6;
 pub const OG_VELOCITY: usize = 7;
 pub const OG_CHORD_AMOUNT: usize = 14;
 pub const ORGAN_STYLES: &[&str] = &["Waltz", "March", "Polka", "Foxtrot"];
+pub const OG_DRIVE: usize = 15;
+pub const OG_CRANK: usize = 16;
+pub const OG_HAND: usize = 17;
+/// Your hand on the crank (the screen sets it while you turn): its speed, 0 when let go.
+pub const OG_TURNING: usize = 18;
+pub const ORGAN_DRIVES: &[&str] = &["Song", "Crank"];
 
 pub static ORGAN: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
@@ -54,6 +68,10 @@ pub static ORGAN: &[ParamSpec] = &[
     DYNAMICS[2],
     DYNAMICS[3],
     CHORD_AMOUNT,
+    ParamSpec::choice("Drive", "Crank", ORGAN_DRIVES, 0),
+    ParamSpec::log("Crank", "Crank", 0.25, 2.0, 1.0, Unit::Ratio),
+    ParamSpec::lin("Hand", "Crank", 0.0, 1.0, 0.25, Unit::Percent),
+    ParamSpec::lin("Turning", SCREEN_ONLY, 0.0, 4.0, 0.0, Unit::Ratio),
 ];
 
 pub const MB_METRE: usize = 1;
@@ -68,6 +86,14 @@ pub const MB_CHORD_AMOUNT: usize = 15;
 pub const BOX_METRES: &[&str] = &["3/4", "4/4"];
 pub const BOX_ACCOMPS: &[&str] = &["Waltz", "Arpeggio", "Alberti"];
 pub const BOX_COMBS: &[&str] = &["18 Notes", "30 Notes", "Full"];
+pub const MB_DRIVE: usize = 16;
+pub const MB_CRANK: usize = 17;
+pub const MB_HAND: usize = 18;
+pub const MB_SPRING: usize = 19;
+pub const MB_TURNING: usize = 20;
+/// How many turns the key has been wound (the screen counts them up).
+pub const MB_WOUND: usize = 21;
+pub const BOX_DRIVES: &[&str] = &["Song", "Spring", "Crank"];
 
 pub static MUSIC_BOX: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
@@ -86,6 +112,12 @@ pub static MUSIC_BOX: &[ParamSpec] = &[
     DYNAMICS[2],
     DYNAMICS[3],
     CHORD_AMOUNT,
+    ParamSpec::choice("Drive", "Turn", BOX_DRIVES, 0),
+    ParamSpec::log("Crank", "Turn", 0.25, 2.0, 1.0, Unit::Ratio),
+    ParamSpec::lin("Hand", "Turn", 0.0, 1.0, 0.2, Unit::Percent),
+    ParamSpec::log("Spring", "Turn", 5.0, 180.0, 40.0, Unit::Sec),
+    ParamSpec::lin("Turning", SCREEN_ONLY, 0.0, 4.0, 0.0, Unit::Ratio),
+    ParamSpec::lin("Wound", SCREEN_ONLY, 0.0, 1_000_000.0, 0.0, Unit::None),
 ];
 
 /// What a hole in the book (or a pin on the cylinder) plays.
@@ -435,17 +467,38 @@ pub struct Mechanical {
     holes: Vec<Hole>,
     hist: u64,
     chords: u64,
+    /// Turned by a crank or a spring: where the book or cylinder is (ticks),
+    /// how fast it goes (1: the song's tempo), how its drive was.
+    pos: f64,
+    speed: f32,
+    drive: usize,
+    /// The spring: how wound (0..1), the winding counted last, whether the song played.
+    tension: f32,
+    wound: f32,
+    was_playing: bool,
 }
 
 impl Default for Mechanical {
     fn default() -> Self {
-        Self { bar: i64::MIN, key: 0, root: 0, holes: Vec::with_capacity(160), hist: 0, chords: 0 }
+        Self { bar: i64::MIN, key: 0, root: 0, holes: Vec::with_capacity(160), hist: 0, chords: 0, pos: 0.0, speed: 0.0, drive: usize::MAX, tension: 0.0, wound: f32::NAN, was_playing: false }
     }
 }
 
 /// What the bar depends on, so a turned knob makes it again.
-fn fingerprint(which: u64, p: &[f32]) -> u64 {
-    p.iter().take(8).chain(p.last()).fold(which, |h, v| h.wrapping_mul(31).wrapping_add((v * 1000.0) as i64 as u64))
+fn fingerprint(which: u64, p: &[f32], chords: usize) -> u64 {
+    p.iter().take(8).chain(p.get(chords)).fold(which, |h, v| h.wrapping_mul(31).wrapping_add((v * 1000.0) as i64 as u64))
+}
+
+/// How fast a spring this wound turns the cylinder: steady, then slowing
+/// as it runs down, stopped when it is.
+pub fn spring_speed(tension: f32) -> f32 {
+    if tension <= 0.0 {
+        0.0
+    } else if tension > 0.25 {
+        1.0 + 0.04 * (tension - 0.25)
+    } else {
+        (tension / 0.25).powf(0.7)
+    }
 }
 
 /// A pitch in `lo..=hi`, moved by octaves.
@@ -461,14 +514,109 @@ fn fit(pitch: i32, lo: i32, hi: i32) -> i32 {
 }
 
 impl SeqState {
+    /// A mechanical sequencer's block: where its own clock (the song's, a
+    /// crank's or a spring's) takes the book or the cylinder, and the ticks
+    /// it passes on the way.
+    pub(crate) fn mechanical_time(&mut self, organ: bool, p: &[f32], out: &mut Vec<MidiEvent>, ctx: &MidiCtx) {
+        let which = if organ { 1 } else { 2 };
+        let tick_beats = super::rate_beats(p[0]) / TICKS;
+        let tick_frames = tick_beats * ctx.samples_per_beat;
+        let tpb = if organ { organ_ticks_per_bar(p) } else { box_ticks_per_bar(p) } as f64;
+        let (di, ci, hi, ti) = if organ { (OG_DRIVE, OG_CRANK, OG_HAND, OG_TURNING) } else { (MB_DRIVE, MB_CRANK, MB_HAND, MB_TURNING) };
+        let get = |i: usize, or: f32| p.get(i).copied().unwrap_or(or);
+        let drive = (get(di, 0.0).round().max(0.0) as usize).min(if organ { 1 } else { 2 });
+        let hand = get(hi, 0.0).clamp(0.0, 1.0) as f64;
+        let turning = get(ti, 0.0).max(0.0);
+        let dt = ctx.len as f32 / ctx.sr.max(1.0);
+        let song_pos = ctx.beat / tick_beats;
+        let started = ctx.playing && !self.mechanical.was_playing;
+        self.mechanical.was_playing = ctx.playing;
+        let m = &mut self.mechanical;
+        if m.drive != drive {
+            // Taken over by another drive: it carries on from where the song is.
+            m.pos = song_pos;
+            m.speed = if drive == 0 { 1.0 } else { 0.0 };
+            m.drive = drive;
+        }
+        // A hand turns unevenly: a little quicker and slower round every turn (a turn a bar).
+        let wobble = |pos: f64| hand * 0.12 * tpb / std::f64::consts::TAU * -(std::f64::consts::TAU * pos / tpb).cos();
+        let (pos0, pos1, breath) = if drive == 0 {
+            if !ctx.playing {
+                return;
+            }
+            let end = song_pos + ctx.len as f64 / tick_frames;
+            let hand_on = if organ { 1.0 } else { 0.0 };
+            m.speed = 1.0;
+            (song_pos + hand_on * wobble(song_pos), end + hand_on * wobble(end), 1.0)
+        } else {
+            let spring = !organ && drive == 1;
+            let target = if spring {
+                // Wound by Play, and by your turns of the key.
+                let wound = get(MB_WOUND, 0.0);
+                if m.wound.is_nan() {
+                    m.wound = wound;
+                } else if wound > m.wound {
+                    m.tension = (m.tension + 0.25 * (wound - m.wound)).min(1.0);
+                    m.wound = wound;
+                } else {
+                    m.wound = wound;
+                }
+                if started {
+                    m.tension = 1.0;
+                }
+                spring_speed(m.tension)
+            } else if turning > 0.01 {
+                turning
+            } else if ctx.playing {
+                get(ci, 1.0).clamp(0.05, 4.0)
+            } else {
+                0.0
+            };
+            // A flywheel under the crank, a governor in the box: the speed follows, not jumps.
+            let tau = if spring { 0.12 } else if turning > 0.01 { 0.15 } else { 0.4 };
+            m.speed += (target - m.speed) * (1.0 - (-dt / tau).exp());
+            if m.speed < 0.003 && target == 0.0 {
+                m.speed = 0.0;
+            }
+            if spring {
+                let secs = get(MB_SPRING, 40.0).clamp(1.0, 600.0);
+                m.tension = (m.tension - dt * m.speed / secs).max(0.0);
+            }
+            let uneven = if spring { 1.0 } else { 1.0 + hand * 0.12 * (std::f64::consts::TAU * m.pos / tpb).sin() };
+            let adv = m.speed as f64 * uneven * ctx.len as f64 / tick_frames;
+            let from = m.pos;
+            m.pos += adv;
+            // Short of wind when the organ is turned slowly: softer.
+            let breath = if organ && !spring { 0.45 + 0.55 * m.speed.min(1.0) } else { 1.0 };
+            (from, m.pos, breath)
+        };
+        let speed = self.mechanical.speed.max(0.08) as f64;
+        if pos1 > pos0 {
+            let mut k = pos0.ceil() as i64;
+            while (k as f64) < pos1 {
+                let frac = (k as f64 - pos0) / (pos1 - pos0);
+                let at = ctx.now + (frac * ctx.len as f64) as u64;
+                self.mechanical_tick(which, k, p, at, tick_frames / speed, breath, drive == 0, out, ctx);
+                k += 1;
+            }
+        }
+        if !ctx.playing {
+            self.flush_pending(ctx, out);
+        }
+        // Where it is, finely, and how fast, how wound (for the screens).
+        let m = &self.mechanical;
+        self.visual[0] = (self.visual[0] & 0xFFFF_FFFF) | ((m.tension.clamp(0.0, 1.0) * 255.0) as u64) << 32 | ((m.speed.clamp(0.0, 2.55) * 100.0) as u64) << 40 | (drive as u64) << 48;
+        self.visual[3] = (pos1.max(0.0) * 16.0) as u64;
+    }
+
     /// One tick of a mechanical sequencer (`which`: 1 the organ, 2 the box).
     #[allow(clippy::too_many_arguments)]
-    fn mechanical(&mut self, which: u64, k: i64, p: &[f32], at: u64, tick_frames: f64, out: &mut Vec<MidiEvent>, ctx: &MidiCtx) {
+    fn mechanical_tick(&mut self, which: u64, k: i64, p: &[f32], at: u64, tick_frames: f64, breath: f32, song: bool, out: &mut Vec<MidiEvent>, ctx: &MidiCtx) {
         let organ = which == 1;
         let tpb = if organ { organ_ticks_per_bar(p) } else { box_ticks_per_bar(p) } as i64;
         let bar = k.div_euclid(tpb);
         let t = k.rem_euclid(tpb) as u16;
-        let key = fingerprint(which, p);
+        let key = fingerprint(which, p, if organ { OG_CHORD_AMOUNT } else { MB_CHORD_AMOUNT });
         let m = &mut self.mechanical;
         if m.bar != bar || m.key != key {
             m.root = if organ { organ_bar(p, bar, &mut m.holes) } else { box_bar(p, bar, &mut m.holes) };
@@ -480,7 +628,8 @@ impl SeqState {
         }
         let base = p[if organ { OG_BASE } else { MB_BASE }];
         let vel = p[if organ { OG_VELOCITY } else { MB_VELOCITY }];
-        let wind = if organ { 0.0 } else { p.get(MB_WIND).copied().unwrap_or(0.0).clamp(0.0, 1.0) };
+        // In the song's time the box's turn slows by Wind; a spring or a crank slows it for real.
+        let wind = if organ || !song { 0.0 } else { p.get(MB_WIND).copied().unwrap_or(0.0).clamp(0.0, 1.0) };
         // The spring: through the cylinder's turn the notes come later and softer.
         let x = if organ { 0.0 } else { (bar.rem_euclid(16) as f32 + t as f32 / tpb as f32) / 16.0 };
         let last_bar = !organ && bar.rem_euclid(16) == 15;
@@ -499,7 +648,7 @@ impl SeqState {
             if h.lane == Lane::Melody {
                 self.mechanical.hist = (self.mechanical.hist << 8) | ((h.deg + 64).clamp(1, 255) as u64);
             }
-            let mut v = vel * h.vel;
+            let mut v = vel * h.vel * breath;
             let mut when = at;
             if wind > 0.0 {
                 let salt = (bar.rem_euclid(16) as u32) * 1024 + i as u32;
@@ -514,18 +663,9 @@ impl SeqState {
             self.mlater(ctx, when, pitch, v, len, out);
         }
         let style = choose(p, 1, if organ { ORGAN_STYLES.len() } else { BOX_METRES.len() }) as u64;
-        self.visual[0] = which | style << 4 | (bar.rem_euclid(64) as u64) << 8 | (t as u64) << 16 | (tpb as u64) << 24;
+        self.visual[0] = (self.visual[0] & !0xFFFF_FFFF) | which | style << 4 | (bar.rem_euclid(64) as u64) << 8 | (t as u64) << 16 | (tpb as u64) << 24;
         self.visual[1] = self.mechanical.hist;
         self.visual[2] = self.mechanical.chords;
-        self.visual[3] = k as u64;
-    }
-
-    pub(crate) fn organ_grinder(&mut self, k: i64, p: &[f32], at: u64, tick_frames: f64, out: &mut Vec<MidiEvent>, ctx: &MidiCtx) {
-        self.mechanical(1, k, p, at, tick_frames, out, ctx);
-    }
-
-    pub(crate) fn music_box(&mut self, k: i64, p: &[f32], at: u64, tick_frames: f64, out: &mut Vec<MidiEvent>, ctx: &MidiCtx) {
-        self.mechanical(2, k, p, at, tick_frames, out, ctx);
     }
 }
 
@@ -579,6 +719,61 @@ mod tests {
         // The bass on every bar's first beat, three beats apart.
         let bass: Vec<f64> = a.iter().filter(|n| (31..48).contains(&n.pitch)).map(|n| n.start).collect();
         assert!(bass.windows(2).all(|w| (w[1] - w[0] - 3.0).abs() < 1e-6), "{bass:?}");
+    }
+
+    /// Runs a sequencer block by block for `secs` seconds at 120 BPM, with
+    /// `turn` setting its parameters before each block; the notes played
+    /// (start in seconds, pitch).
+    fn turn(kind: MidiFxKind, p: &mut Vec<f32>, secs: f64, playing: bool, mut each: impl FnMut(f64, &mut Vec<f32>)) -> Vec<(f64, u8)> {
+        use crate::midi_fx::{MidiCtx, MidiFxState};
+        let sr = 48_000.0f32;
+        let spb = sr as f64 * 0.5;
+        let mut st = MidiFxState::new(kind);
+        let mut out = Vec::new();
+        let mut notes = Vec::new();
+        let block = 256usize;
+        let mut frame = 0u64;
+        while (frame as f64) < secs * sr as f64 {
+            each(frame as f64 / sr as f64, p);
+            let ctx = MidiCtx { now: frame, len: block, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: frame as f64 / spb, playing, sr, drum_notes: 0 };
+            out.clear();
+            st.process(kind, p, &[], &[], &mut out, &ctx);
+            notes.extend(out.iter().filter(|e| e.on).map(|e| ((frame + e.offset as u64) as f64 / sr as f64, e.pitch)));
+            frame += block as u64;
+        }
+        notes
+    }
+
+    #[test]
+    fn the_crank_drives_the_book_as_fast_as_it_is_turned() {
+        let mut p = defaults(ORGAN);
+        p[OG_DRIVE] = 1.0;
+        p[OG_HAND] = 0.0;
+        // Turned at the song's speed, then twice as fast: twice the notes a second.
+        let slow = turn(MidiFxKind::OrganGrinder, &mut p.clone(), 12.0, true, |_, _| {}).iter().filter(|n| n.0 > 3.0).count();
+        p[OG_CRANK] = 2.0;
+        let fast = turn(MidiFxKind::OrganGrinder, &mut p.clone(), 12.0, true, |_, _| {}).iter().filter(|n| n.0 > 3.0).count();
+        assert!(fast as f32 > slow as f32 * 1.6, "{slow} then {fast}");
+        // Stopped, it plays only while a hand turns it, and stops when let go.
+        let mut q = defaults(ORGAN);
+        q[OG_DRIVE] = 1.0;
+        let notes = turn(MidiFxKind::OrganGrinder, &mut q, 8.0, false, |t, p| p[OG_TURNING] = if t < 4.0 { 1.0 } else { 0.0 });
+        assert!(notes.iter().any(|n| n.0 < 4.0), "turning plays it");
+        assert!(notes.iter().all(|n| n.0 < 5.5), "let go, it runs out and stops: {:?}", notes.last());
+    }
+
+    #[test]
+    fn a_wound_spring_plays_the_box_until_it_runs_down() {
+        let mut p = defaults(MUSIC_BOX);
+        p[MB_DRIVE] = 1.0;
+        p[MB_SPRING] = 8.0;
+        // Unwound and stopped: silent. Wound (two turns of the key): it plays, slows and stops.
+        let notes = turn(MidiFxKind::MusicBox, &mut p, 14.0, false, |t, p| p[MB_WOUND] = if t >= 1.0 { 2.0 } else { 0.0 });
+        assert!(notes.iter().all(|n| n.0 >= 1.0), "nothing before it is wound");
+        assert!(notes.iter().any(|n| n.0 < 3.0), "it plays once wound");
+        let last = notes.last().map(|n| n.0).unwrap_or(0.0);
+        assert!(last < 12.0, "and stops when it has run down ({last})");
+        assert!((0.25..0.9).contains(&spring_speed(0.1)) && spring_speed(0.0) == 0.0 && spring_speed(0.8) > 1.0);
     }
 
     #[test]

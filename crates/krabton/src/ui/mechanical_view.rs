@@ -2,46 +2,111 @@
 //! cardboard punched with the holes it plays, sliding past the reading
 //! bar) and the Music Box's cylinder (its pins turning towards the comb).
 //! Both draw the bars the engine makes from the same parameters, so the
-//! holes and pins are the notes to come.
+//! holes and pins are the notes to come. And both turn: grab the crank and
+//! turn it (the book goes as fast as you do; let go and it runs on at the
+//! Crank speed, or stops when the song does), or wind the box's key.
 
 use super::seq_view::Live;
 use crate::theme::*;
 use crate::widgets::*;
-use egui::{pos2, vec2, Align2, Color32, Rect, Sense, Stroke, Ui};
+use egui::{pos2, vec2, Align2, Color32, Id, Pos2, Rect, Sense, Stroke, Ui};
 use krabton_engine::sequencers::mechanical::{self as mech, Hole, Lane};
+use std::f32::consts::TAU;
 
 fn choice(params: &[f32], i: usize, n: usize) -> usize {
     (params[i].round().max(0.0) as usize).min(n - 1)
 }
 
-/// Where the engine is: (bar, tick in it), or the start when stopped.
+/// Where the engine has the book or the cylinder: (bar, tick in it), or the start.
 fn now(live: &Live, tpb: u16) -> (i64, f32) {
-    match live.on() {
-        Some(v) => {
-            let k = v[3] as i64;
-            (k.div_euclid(tpb as i64), k.rem_euclid(tpb as i64) as f32)
+    match live.vis {
+        Some(v) if v[3] > 0 || live.playing => {
+            let pos = v[3] as f64 / 16.0;
+            let bar = (pos / tpb as f64).floor() as i64;
+            (bar, (pos - bar as f64 * tpb as f64) as f32)
         }
-        None => (0, 0.0),
+        _ => (0, 0.0),
     }
 }
 
+/// How fast the engine turns it now (1: the song's tempo) and how wound its spring is.
+fn speed_tension(live: &Live) -> (f32, f32) {
+    match live.vis {
+        Some(v) => (((v[0] >> 40) & 0xff) as f32 / 100.0, ((v[0] >> 32) & 0xff) as f32 / 255.0),
+        None => (0.0, 0.0),
+    }
+}
+
+/// A crank wheel: drawn at the turn `angle`; dragged round, it reports how
+/// fast it is turned (turns a second, smoothed) while held, `Some(0)` the
+/// moment it is let go, `None` otherwise.
+fn crank(ui: &mut Ui, id: Id, r: Rect, angle: f32, accent: Color32) -> Option<f32> {
+    let resp = ui.interact(r, id, Sense::drag()).on_hover_text("Grab the handle and turn: the music goes as fast as you turn");
+    let c = r.center();
+    let rad = r.width().min(r.height()) * 0.42;
+    let p = ui.painter();
+    let iron = Color32::from_rgb(0x3a, 0x3d, 0x44);
+    let gold = Color32::from_rgb(0xd8, 0xb0, 0x4a);
+    let mem = id.with("crank");
+    let mut out = None;
+    let mut shown = angle;
+    if resp.dragged() {
+        if let Some(pt) = ui.input(|i| i.pointer.interact_pos()) {
+            let a = (pt.y - c.y).atan2(pt.x - c.x);
+            let t = ui.input(|i| i.time);
+            let (last_a, last_t, speed) = ui.data(|d| d.get_temp::<(f32, f64, f32)>(mem)).unwrap_or((a, t, 0.0));
+            let mut da = a - last_a;
+            if da > TAU / 2.0 {
+                da -= TAU;
+            } else if da < -TAU / 2.0 {
+                da += TAU;
+            }
+            let dt = (t - last_t).max(1e-3) as f32;
+            // Either way round turns it forward; a still hand holds it.
+            let measured = da.abs() / TAU / dt;
+            let speed = speed + (measured - speed) * (dt / 0.12).min(1.0);
+            ui.data_mut(|d| d.insert_temp(mem, (a, t, speed)));
+            shown = a;
+            out = Some(speed);
+        }
+    } else if resp.drag_stopped() {
+        ui.data_mut(|d| d.remove::<(f32, f64, f32)>(mem));
+        out = Some(0.0);
+    }
+    // The wheel: its rim, four spokes turning, the handle on the rim.
+    p.circle_stroke(c, rad, Stroke::new(3.0_f32, iron));
+    for k in 0..4 {
+        let a = shown + k as f32 * TAU / 4.0;
+        p.line_segment([c, c + vec2(a.cos(), a.sin()) * rad], Stroke::new(2.0_f32, iron));
+    }
+    p.circle_filled(c, rad * 0.16, gold);
+    let h: Pos2 = c + vec2(shown.cos(), shown.sin()) * rad;
+    p.circle_filled(h, rad * 0.22, if resp.dragged() || resp.hovered() { accent } else { gold });
+    p.circle_stroke(h, rad * 0.22, Stroke::new(1.0_f32, Color32::from_black_alpha(160)));
+    out
+}
+
+/// The organ's beats per bar, and the bar's length in beats (for how fast a hand turns at the song's tempo).
+fn bar_beats(params: &[f32], tpb: u16) -> f32 {
+    (krabton_engine::sequencers::rate_beats(params[0]) / mech::TICKS) as f32 * tpb as f32
+}
+
 /// The book: lanes for the drums, the bass, the accompaniment and the tune
-/// (counter melody paler), a fold at every bar, the reading bar a quarter in.
-pub(crate) fn organ(ui: &mut Ui, params: &[f32], live: Live, accent: Color32, height: f32) -> bool {
-    let (rect, _) = ui.allocate_exact_size(vec2(300.0, height), Sense::hover());
+/// (counter melody paler), a fold at every bar, the reading bar a quarter
+/// in; and the crank that pulls it through.
+pub(crate) fn organ(ui: &mut Ui, id: Id, params: &mut [f32], live: Live, accent: Color32, height: f32) -> bool {
+    let (rect, _) = ui.allocate_exact_size(vec2(370.0, height), Sense::hover());
     let p = ui.painter().clone();
     let card = Color32::from_rgb(0xd9, 0xc3, 0x93);
     let ink = Color32::from_rgb(0x3a, 0x2a, 0x18);
     rect_fill(&p, rect, 3.0, KNOB);
-    let book = Rect::from_min_max(pos2(rect.left() + 6.0, rect.top() + 6.0), pos2(rect.right() - 6.0, rect.bottom() - 20.0));
+    let book = Rect::from_min_max(pos2(rect.left() + 6.0, rect.top() + 6.0), pos2(rect.right() - 76.0, rect.bottom() - 20.0));
     p.rect_filled(book, 2.0, card);
     let tpb = mech::organ_ticks_per_bar(params);
     let (bar, tick) = now(&live, tpb);
-    // Three bars in view: a little of the one going, two to come.
     let px = book.width() / (tpb as f32 * 2.6);
     let read_x = book.left() + book.width() * 0.22;
     let x_of = |b: i64, t: f32| read_x + ((b - bar) as f32 * tpb as f32 + t - tick) * px;
-    // The lanes, low to high: drums, bass, accompaniment, tune.
     let lanes = [(Lane::Drum, 0.0, 0.14), (Lane::Bass, 0.14, 0.32), (Lane::Accomp, 0.32, 0.55), (Lane::Melody, 0.55, 1.0)];
     let band = |lane: Lane| lanes.iter().find(|l| l.0 == if lane == Lane::Counter { Lane::Melody } else { lane }).map(|l| (l.1, l.2)).unwrap_or((0.0, 1.0));
     for (_, lo, _) in lanes.iter().skip(1) {
@@ -49,10 +114,10 @@ pub(crate) fn organ(ui: &mut Ui, params: &[f32], live: Live, accent: Color32, he
         p.line_segment([pos2(book.left(), y), pos2(book.right(), y)], Stroke::new(1.0_f32, ink.gamma_multiply(0.25)));
     }
     let clip = p.with_clip_rect(book);
+    let running = live.vis.is_some() && (live.playing || speed_tension(&live).0 > 0.0);
     let mut holes: Vec<Hole> = Vec::with_capacity(160);
     for b in bar..bar + 3 {
         let fx = x_of(b, 0.0);
-        // The fold between pages.
         clip.line_segment([pos2(fx, book.top()), pos2(fx, book.bottom())], Stroke::new(1.0_f32, ink.gamma_multiply(0.4)));
         mech::organ_bar(params, b, &mut holes);
         for h in &holes {
@@ -67,34 +132,95 @@ pub(crate) fn organ(ui: &mut Ui, params: &[f32], live: Live, accent: Color32, he
             let y = book.bottom() - (lo + (hi - lo) * (0.1 + 0.8 * f)) * book.height();
             let x0 = x_of(b, h.at as f32);
             let x1 = x_of(b, (h.at + h.len) as f32) - 1.0;
-            let played = x0 <= read_x && live.on().is_some();
-            let c = if played && x1 >= read_x { accent } else if h.lane == Lane::Counter { ink.gamma_multiply(0.5) } else { ink };
+            let c = if running && x0 <= read_x && x1 >= read_x { accent } else if h.lane == Lane::Counter { ink.gamma_multiply(0.5) } else { ink };
             clip.rect_filled(Rect::from_min_max(pos2(x0, y - 2.0), pos2(x1.max(x0 + 2.0), y + 2.0)), 2.0, c);
         }
     }
-    // The reading bar.
     p.line_segment([pos2(read_x, book.top() - 2.0), pos2(read_x, book.bottom() + 2.0)], Stroke::new(2.0_f32, accent));
+    // The crank: a turn a bar.
+    let wheel = Rect::from_min_max(pos2(book.right() + 6.0, rect.top() + 6.0), pos2(rect.right() - 6.0, rect.bottom() - 20.0));
+    let angle = TAU * ((bar as f32 * tpb as f32 + tick) / tpb as f32);
+    let mut changed = false;
+    if let Some(turns) = crank(ui, id.with("organ_crank"), wheel, angle, accent) {
+        if turns > 0.0 || params[mech::OG_TURNING] > 0.0 {
+            // Turns a second against the song's: a turn a bar.
+            let nominal = (live.bpm as f32 / 60.0) / bar_beats(params, tpb).max(0.1);
+            params[mech::OG_TURNING] = if turns > 0.0 { (turns / nominal.max(0.01)).clamp(0.02, 4.0) } else { 0.0 };
+            // Taking hold of the crank makes it the organ's drive.
+            if turns > 0.0 && params[mech::OG_DRIVE] < 0.5 {
+                params[mech::OG_DRIVE] = 1.0;
+            }
+            changed = true;
+        }
+    }
     let style = mech::ORGAN_STYLES[choice(params, mech::OG_STYLE, mech::ORGAN_STYLES.len())];
     let tune = params[mech::OG_TUNE].round() as i32;
-    text(&p, pos2(rect.left() + 8.0, rect.bottom() - 4.0), Align2::LEFT_BOTTOM, &format!("{style} · book {tune}"), small(), TEXT_DIM);
-    text(&p, pos2(rect.right() - 8.0, rect.bottom() - 4.0), Align2::RIGHT_BOTTOM, &format!("bar {}", bar.rem_euclid(32) + 1), small(), TEXT_DIM);
-    if live.on().is_some() {
+    let drive = mech::ORGAN_DRIVES[choice(params, mech::OG_DRIVE, mech::ORGAN_DRIVES.len())];
+    text(&p, pos2(rect.left() + 8.0, rect.bottom() - 4.0), Align2::LEFT_BOTTOM, &format!("{style} · book {tune} · {drive}"), small(), TEXT_DIM);
+    let (speed, _) = speed_tension(&live);
+    let speed_text = if drive == "Crank" { format!("{:.0}%", speed * 100.0) } else { format!("bar {}", bar.rem_euclid(32) + 1) };
+    text(&p, pos2(rect.right() - 8.0, rect.bottom() - 4.0), Align2::RIGHT_BOTTOM, &speed_text, small(), TEXT_DIM);
+    if running || changed {
         ui.ctx().request_repaint();
     }
-    false
+    changed
+}
+
+/// A winding key: dragged round (clockwise or not) it winds the spring.
+fn key(ui: &mut Ui, id: Id, r: Rect, tension: f32, accent: Color32) -> Option<f32> {
+    let resp = ui.interact(r, id, Sense::drag()).on_hover_text("Wind the spring: turn the key round, four turns and it is wound");
+    let c = r.center() - vec2(0.0, 6.0);
+    let rad = r.width().min(r.height()) * 0.36;
+    let p = ui.painter();
+    let mem = id.with("key");
+    let angle = ui.data(|d| d.get_temp::<f32>(mem.with("shown"))).unwrap_or(0.0);
+    let mut out = None;
+    let mut shown = angle;
+    if resp.dragged() {
+        if let Some(pt) = ui.input(|i| i.pointer.interact_pos()) {
+            let a = (pt.y - c.y).atan2(pt.x - c.x);
+            let last = ui.data(|d| d.get_temp::<f32>(mem)).unwrap_or(a);
+            let mut da = a - last;
+            if da > TAU / 2.0 {
+                da -= TAU;
+            } else if da < -TAU / 2.0 {
+                da += TAU;
+            }
+            ui.data_mut(|d| d.insert_temp(mem, a));
+            shown = angle + da;
+            out = Some(da.abs() / TAU);
+        }
+    } else if resp.drag_stopped() {
+        ui.data_mut(|d| d.remove::<f32>(mem));
+    }
+    ui.data_mut(|d| d.insert_temp(mem.with("shown"), shown));
+    // A butterfly key on its stem.
+    let brass = Color32::from_rgb(0xc9, 0xa2, 0x4c);
+    let dir = vec2(shown.cos(), shown.sin());
+    let side = vec2(-dir.y, dir.x);
+    for s in [-1.0f32, 1.0] {
+        let tip = c + dir * rad * s;
+        p.add(egui::Shape::convex_polygon(vec![c + side * rad * 0.12, tip + side * rad * 0.45, tip - side * rad * 0.45, c - side * rad * 0.12], if resp.dragged() || resp.hovered() { accent } else { brass }, Stroke::new(1.0_f32, Color32::from_black_alpha(140))));
+    }
+    p.circle_filled(c, rad * 0.18, Color32::from_rgb(0x5a, 0x45, 0x1c));
+    // How wound the spring is.
+    let gauge = Rect::from_min_size(pos2(r.left() + 4.0, r.bottom() - 9.0), vec2(r.width() - 8.0, 5.0));
+    p.rect_filled(gauge, 2.0, PANEL3);
+    p.rect_filled(Rect::from_min_size(gauge.min, vec2(gauge.width() * tension.clamp(0.0, 1.0), gauge.height())), 2.0, accent);
+    out
 }
 
 /// The cylinder: its pins coming round towards the comb along the bottom,
-/// a tooth for each note the comb has, lit as it is plucked.
-pub(crate) fn music_box(ui: &mut Ui, params: &[f32], live: Live, accent: Color32, height: f32) -> bool {
-    let (rect, _) = ui.allocate_exact_size(vec2(280.0, height), Sense::hover());
+/// a tooth for each note the comb has, lit as it is plucked; and at its
+/// side the crank, or the spring's key.
+pub(crate) fn music_box(ui: &mut Ui, id: Id, params: &mut [f32], live: Live, accent: Color32, height: f32) -> bool {
+    let (rect, _) = ui.allocate_exact_size(vec2(340.0, height), Sense::hover());
     let p = ui.painter().clone();
     rect_fill(&p, rect, 3.0, KNOB);
     let brass = Color32::from_rgb(0xc9, 0xa2, 0x4c);
     let steel = Color32::from_rgb(0xc8, 0xcc, 0xd2);
     let comb_h = 18.0;
-    let cyl = Rect::from_min_max(pos2(rect.left() + 10.0, rect.top() + 8.0), pos2(rect.right() - 10.0, rect.bottom() - 22.0 - comb_h));
-    // The cylinder, rounder at its edges.
+    let cyl = Rect::from_min_max(pos2(rect.left() + 10.0, rect.top() + 8.0), pos2(rect.right() - 74.0, rect.bottom() - 22.0 - comb_h));
     for i in 0..6 {
         let f = i as f32 / 6.0;
         let band = Rect::from_min_max(pos2(cyl.left(), cyl.top() + f * cyl.height()), pos2(cyl.right(), cyl.top() + (f + 1.0 / 6.0) * cyl.height()));
@@ -107,7 +233,8 @@ pub(crate) fn music_box(ui: &mut Ui, params: &[f32], live: Live, accent: Color32
     let tw = cyl.width() / teeth as f32;
     let tpb = mech::box_ticks_per_bar(params);
     let (bar, tick) = now(&live, tpb);
-    // Two bars of pins above the comb, coming down.
+    let (speed, tension) = speed_tension(&live);
+    let running = live.vis.is_some() && (live.playing || speed > 0.0);
     let py = cyl.height() / (tpb as f32 * 2.0);
     let mut holes: Vec<Hole> = Vec::with_capacity(160);
     let mut plucked = vec![0.0f32; teeth];
@@ -117,36 +244,52 @@ pub(crate) fn music_box(ui: &mut Ui, params: &[f32], live: Live, accent: Color32
         for h in &holes {
             let col = (h.deg - lo).clamp(0, teeth as i32 - 1) as usize;
             let dt = (b - bar) as f32 * tpb as f32 + h.at as f32 - tick;
-            if live.on().is_some() && (-2.0..0.5).contains(&dt) {
+            if running && (-2.0..0.5).contains(&dt) {
                 plucked[col] = plucked[col].max(1.0 - (-dt) / 2.0);
             }
             let y = cyl.bottom() - dt * py;
             let x = cyl.left() + (col as f32 + 0.5) * tw;
             let r = if h.lane == Lane::Melody { 2.2 } else { 1.7 };
-            clip.circle_filled(pos2(x, y), r, if dt < 0.5 && live.on().is_some() { accent } else { Color32::from_rgb(0x2a, 0x22, 0x14) });
+            clip.circle_filled(pos2(x, y), r, if dt < 0.5 && running { accent } else { Color32::from_rgb(0x2a, 0x22, 0x14) });
         }
     }
-    // The comb: a tooth for every note, longer for the low ones.
     let top = cyl.bottom() + 2.0;
     for (i, &pl) in plucked.iter().enumerate() {
         let x = cyl.left() + (i as f32 + 0.5) * tw;
         let len = comb_h * (1.0 - 0.45 * i as f32 / teeth as f32);
-        let c = mix(steel, accent, pl.clamp(0.0, 1.0));
-        p.line_segment([pos2(x, top), pos2(x, top + len)], Stroke::new((tw * 0.55).clamp(1.0, 5.0), c));
+        p.line_segment([pos2(x, top), pos2(x, top + len)], Stroke::new((tw * 0.55).clamp(1.0, 5.0), mix(steel, accent, pl.clamp(0.0, 1.0))));
+    }
+    // At its side: the spring's key, or the crank.
+    let drive = choice(params, mech::MB_DRIVE, mech::BOX_DRIVES.len());
+    let side = Rect::from_min_max(pos2(cyl.right() + 6.0, rect.top() + 6.0), pos2(rect.right() - 6.0, rect.bottom() - 20.0));
+    let mut changed = false;
+    if drive == 1 {
+        if let Some(turns) = key(ui, id.with("box_key"), side, tension, accent) {
+            if turns > 0.0 {
+                params[mech::MB_WOUND] = (params[mech::MB_WOUND] + turns).min(1_000_000.0);
+                changed = true;
+            }
+        }
+    } else {
+        let angle = TAU * ((bar as f32 * tpb as f32 + tick) / tpb as f32);
+        if let Some(turns) = crank(ui, id.with("box_crank"), side, angle, accent) {
+            if turns > 0.0 || params[mech::MB_TURNING] > 0.0 {
+                let nominal = (live.bpm as f32 / 60.0) / bar_beats(params, tpb).max(0.1);
+                params[mech::MB_TURNING] = if turns > 0.0 { (turns / nominal.max(0.01)).clamp(0.02, 4.0) } else { 0.0 };
+                if turns > 0.0 && drive == 0 {
+                    params[mech::MB_DRIVE] = 2.0;
+                }
+                changed = true;
+            }
+        }
     }
     let metre = mech::BOX_METRES[choice(params, mech::MB_METRE, mech::BOX_METRES.len())];
     let tune = params[mech::MB_TUNE].round() as i32;
-    let wind = params[mech::MB_WIND];
+    let drive_name = mech::BOX_DRIVES[drive];
     text(&p, pos2(rect.left() + 8.0, rect.bottom() - 4.0), Align2::LEFT_BOTTOM, &format!("{metre} · tune {tune} · {}", mech::BOX_COMBS[comb]), small(), TEXT_DIM);
-    // How far the spring has run down this turn.
-    if wind > 0.0 {
-        let x = (bar.rem_euclid(16) as f32 + tick / tpb as f32) / 16.0;
-        let spring = Rect::from_min_size(pos2(rect.right() - 58.0, rect.bottom() - 13.0), vec2(48.0, 6.0));
-        p.rect_filled(spring, 3.0, PANEL3);
-        p.rect_filled(Rect::from_min_size(spring.min, vec2(spring.width() * (1.0 - x * wind), spring.height())), 3.0, accent.gamma_multiply(0.8));
-    }
-    if live.on().is_some() {
+    text(&p, pos2(rect.right() - 8.0, rect.bottom() - 4.0), Align2::RIGHT_BOTTOM, drive_name, small(), TEXT_DIM);
+    if running || changed {
         ui.ctx().request_repaint();
     }
-    false
+    changed
 }

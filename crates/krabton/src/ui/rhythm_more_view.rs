@@ -419,7 +419,7 @@ mod tests {
     #[test]
     fn the_screens_draw() {
         let ctx = egui::Context::default();
-        let live = Live { vis: Some([0x0001_0f0f_0123_4567, 0x1ff, 0x0f0f, 0]), playing: true, scale: krabton_engine::Scale::new(0, krabton_engine::ScaleKind::Major), kit: 0 };
+        let live = Live { vis: Some([0x0001_0f0f_0123_4567, 0x1ff, 0x0f0f, 0]), playing: true, scale: krabton_engine::Scale::new(0, krabton_engine::ScaleKind::Major), kit: 0, bpm: 120.0 };
         let mut chance_p = defaults(ch::SPECS);
         let mut chance_d = Vec::new();
         let mut bits_p = defaults(bt::SPECS);

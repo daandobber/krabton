@@ -72,6 +72,7 @@ impl App {
         let area = egui::Area::new(Id::new(("big_rack_screen", key))).order(egui::Order::Middle).fixed_pos(Pos2::ZERO).interactable(false).constrain(false);
         let track = self.project.tracks[t].clone();
         let scale = self.project.scale;
+        let bpm = self.project.bpm;
         let playing = self.is_playing();
         let shown = area.show(ctx, |ui| {
             let id = Id::new(("big_rack_inner", key));
@@ -167,7 +168,7 @@ impl App {
                     let Some(dev) = track.midi_devices.get(k) else { return };
                     let vis = if dev.enabled { status.seqs.read(dev.id) } else { None };
                     let kit = track.instrument.as_ref().map(|i| i.drum_notes()).unwrap_or(0);
-                    let live = crate::ui::seq_view::Live { vis, playing, scale, kit };
+                    let live = crate::ui::seq_view::Live { vis, playing, scale, kit, bpm };
                     let (mut params, mut data, mut lane) = (dev.params.clone(), dev.data.clone(), 0usize);
                     crate::ui::seq_view::editor(ui, id, dev.kind, &mut params, &mut data, live, &mut lane, rgb(track.color), NATURAL_H);
                 }

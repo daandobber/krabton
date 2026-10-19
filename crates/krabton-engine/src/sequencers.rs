@@ -512,7 +512,10 @@ impl SeqState {
             self.bloom_stopped(p, data, out, ctx, fresh);
             self.flush_pending(ctx, out);
         }
-        if ctx.playing && kind == K::Marbles {
+        if matches!(kind, K::OrganGrinder | K::MusicBox) {
+            // Their own clock: the song's, a crank's or a spring's (a hand on the crank plays them stopped too).
+            self.mechanical_time(kind == K::OrganGrinder, p, out, ctx);
+        } else if ctx.playing && kind == K::Marbles {
             // It keeps its own (jittery) clock against the song's.
             self.marbles(p, out, ctx);
         } else if ctx.playing {
@@ -561,7 +564,6 @@ impl SeqState {
                     K::Ligeti => rate_beats(p[0]),
                     K::Cage => rate_beats(p[0]),
                     K::Einaudi => rate_beats(p[0]) / masters::EINAUDI_TICKS,
-                    K::OrganGrinder | K::MusicBox => rate_beats(p[0]) / mechanical::TICKS,
                     _ => 0.25,
                 };
                 let beat0 = ctx.beat;
@@ -617,8 +619,6 @@ impl SeqState {
                             K::Ligeti => self.ligeti(k, p, at, step_frames, out, ctx),
                             K::Cage => self.cage(k, p, at, step_frames, out, ctx),
                             K::Einaudi => self.einaudi(k, p, at, step_frames, out, ctx),
-                            K::OrganGrinder => self.organ_grinder(k, p, at, step_frames, out, ctx),
-                            K::MusicBox => self.music_box(k, p, at, step_frames, out, ctx),
                             _ => {}
                         }
                     }

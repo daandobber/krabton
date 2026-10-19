@@ -293,7 +293,7 @@ mod tests {
     #[test]
     fn the_rhythm_screens_draw() {
         let ctx = egui::Context::default();
-        let live = Live { vis: Some([0x0f0f_00ff_1234, u64::MAX / 3, 0x1234_5678, 0]), playing: true, scale: krabton_engine::Scale::new(0, krabton_engine::ScaleKind::Major), kit: 0 };
+        let live = Live { vis: Some([0x0f0f_00ff_1234, u64::MAX / 3, 0x1234_5678, 0]), playing: true, scale: krabton_engine::Scale::new(0, krabton_engine::ScaleKind::Major), kit: 0, bpm: 120.0 };
         let mut map = defaults(dm::SPECS);
         let mut marb = defaults(mb::SPECS);
         for notes in [0.0, 1.0] {

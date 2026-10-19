@@ -782,7 +782,7 @@ impl App {
             let status = self.status();
             let vis = if enabled { status.seqs.read(dev.id) } else { None };
             let kit = self.project.tracks.get(track).and_then(|t| t.instrument.as_ref()).map(|i| i.drum_notes()).unwrap_or(0);
-            let live = super::seq_view::Live { vis, playing: self.is_playing(), scale: self.project.scale, kit };
+            let live = super::seq_view::Live { vis, playing: self.is_playing(), scale: self.project.scale, kit, bpm: self.project.bpm };
             let accent = if enabled { accent_now() } else { TEXT_DIM };
             let lane = &mut self.grid.poly_lane;
             let info = format!("Sequencer · {}", dev.kind.description());

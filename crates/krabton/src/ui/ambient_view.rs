@@ -536,7 +536,7 @@ mod tests {
             let _ = ctx.run(input, |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     let v = [vis[0].rotate_left(f as u32 * 8), vis[1] + f, vis[2], vis[3]];
-                    let live = Live { vis: Some(v), playing: true, scale: krabton_engine::Scale::default(), kit: 0 };
+                    let live = Live { vis: Some(v), playing: true, scale: krabton_engine::Scale::default(), kit: 0, bpm: 120.0 };
                     super::super::seq_view::editor(ui, Id::new("t"), kind, &mut params, &mut Vec::new(), live, &mut 0, accent_now(), 160.0);
                 });
             });
@@ -561,7 +561,7 @@ mod tests {
             let _ = ctx.run(input, |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     origin = ui.cursor().min;
-                    let live = Live { vis: None, playing: false, scale: krabton_engine::Scale::default(), kit: 0 };
+                    let live = Live { vis: None, playing: false, scale: krabton_engine::Scale::default(), kit: 0, bpm: 120.0 };
                     super::super::seq_view::editor(ui, Id::new("t"), MidiFxKind::Bloom, &mut params, &mut data, live, &mut 0, accent_now(), 160.0);
                 });
             });

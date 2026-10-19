@@ -3697,6 +3697,10 @@ impl eframe::App for App {
         self.engine.collect_garbage();
         self.sync_plugins();
         self.frame += 1;
+        if self.frame == 40 && !self.script.is_empty() {
+            // For scripts: how points map to the pixels of a `shot`.
+            println!("ppp {} screen {:?}", ctx.pixels_per_point(), ctx.screen_rect());
+        }
         self.run_script();
         if let Some(z) = self.script_zoom.take() {
             ctx.set_zoom_factor(z);
