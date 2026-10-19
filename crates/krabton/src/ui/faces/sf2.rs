@@ -1,8 +1,9 @@
 //! The SF2 Player as a sound module: the bank's display with its preset
 //! (step through them, or pick one from the list, a General MIDI bank's by
-//! family), beside the channel's knobs and the playing's.
+//! family), then the channel, how it plays, and the voices' engine: the
+//! envelope, the filter (its cutoff big) with an envelope of its own, the LFOs.
 
-use super::{draw, fit, screen_box, Ctx, Face};
+use super::{draw, fit, screen_box, Ctl, Ctx, Face};
 use crate::app::BrowserItem;
 use crate::theme::*;
 use crate::ui::modulation::ModView;
@@ -28,18 +29,42 @@ pub(crate) enum OfferState {
 }
 
 pub(crate) fn face() -> Face {
-    Face::new(31.2, 12.0)
-        .screen(0.3, 0.3, 14.4, 10.6, "bank")
-        .section(15.0, 0.0, 8.0, 12.0, "Channel")
-        .knob(15.1, 0.3, 3.9, 5.3, "Volume")
-        .knob(19.0, 0.3, 3.9, 5.3, "Pan")
-        .knob(15.1, 5.8, 3.9, 5.3, "Reverb")
-        .knob(19.0, 5.8, 3.9, 5.3, "Chorus")
-        .section(23.2, 0.0, 8.0, 12.0, "Play")
-        .knob(23.3, 0.3, 3.9, 5.3, "Vibrato")
-        .knob(27.2, 0.3, 3.9, 5.3, "Velocity")
-        .knob(23.3, 5.8, 3.9, 5.3, "Bend Range")
-        .knob(27.2, 5.8, 3.9, 5.3, "Transpose")
+    Face::new(54.4, 12.0)
+        .screen(0.3, 0.3, 13.0, 10.6, "bank")
+        .section(13.6, 0.0, 6.6, 12.0, "Channel")
+        .knob(13.7, 0.3, 3.1, 3.6, "Volume")
+        .knob(16.9, 0.3, 3.1, 3.6, "Pan")
+        .knob(13.7, 3.9, 3.1, 3.6, "Reverb")
+        .knob(16.9, 3.9, 3.1, 3.6, "Chorus")
+        .knob(13.7, 7.5, 3.1, 3.6, "Width")
+        .knob(16.9, 7.5, 3.1, 3.6, "Velocity")
+        .section(20.4, 0.0, 6.6, 12.0, "Play")
+        .knob(20.5, 0.3, 3.1, 5.3, "Transpose")
+        .knob(23.6, 0.3, 3.1, 5.3, "Fine")
+        .knob(20.5, 5.8, 3.1, 5.3, "Bend Range")
+        .knob(23.6, 5.8, 3.1, 5.3, "Start")
+        // The voices' engine, moving what the preset sets.
+        .section(27.2, 0.0, 6.6, 12.0, "Envelope")
+        .knob(27.3, 0.3, 3.1, 5.3, "Attack")
+        .knob(30.4, 0.3, 3.1, 5.3, "Decay")
+        .knob(27.3, 5.8, 3.1, 5.3, "Sustain")
+        .knob(30.4, 5.8, 3.1, 5.3, "Release")
+        .section(34.0, 0.0, 6.6, 12.0, "Filter")
+        .knob(34.1, 0.3, 6.4, 7.2, "Cutoff")
+        .knob(34.1, 7.5, 3.2, 3.6, "Resonance")
+        .named(37.3, 7.5, 3.2, 3.6, "Vel > Cutoff", Ctl::Knob, "Velocity")
+        .section(40.8, 0.0, 6.6, 12.0, "Filter Env")
+        .named(40.9, 0.3, 3.1, 5.3, "Env Amount", Ctl::Knob, "Amount")
+        .named(44.0, 0.3, 3.1, 5.3, "Env Attack", Ctl::Knob, "Attack")
+        .named(40.9, 5.8, 3.1, 5.3, "Env Decay", Ctl::Knob, "Decay")
+        .named(44.0, 5.8, 3.1, 5.3, "Env Sustain", Ctl::Knob, "Sustain")
+        .section(47.6, 0.0, 6.6, 12.0, "LFO")
+        .knob(47.7, 0.3, 3.1, 3.6, "Vibrato")
+        .knob(50.8, 0.3, 3.1, 3.6, "Vib Rate")
+        .knob(47.7, 3.9, 3.1, 3.6, "Vib Delay")
+        .knob(50.8, 3.9, 3.1, 3.6, "Tremolo")
+        .knob(47.7, 7.5, 3.1, 3.6, "Wobble")
+        .knob(50.8, 7.5, 3.1, 3.6, "LFO Rate")
 }
 
 /// What the bank's display asks for.

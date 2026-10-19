@@ -6,7 +6,7 @@
 //! nothing while it plays.
 
 use crate::params::{ParamSpec, Unit};
-use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
+use rustysynth::{Shape, SoundFont, Synthesizer, SynthesizerSettings};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -20,17 +20,85 @@ pub const VIBRATO: usize = 4;
 pub const VELOCITY: usize = 5;
 pub const BEND_RANGE: usize = 6;
 pub const TRANSPOSE: usize = 7;
+pub const ATTACK: usize = 8;
+pub const DECAY: usize = 9;
+pub const SUSTAIN: usize = 10;
+pub const RELEASE: usize = 11;
+pub const CUTOFF: usize = 12;
+pub const RESONANCE: usize = 13;
+pub const VEL_CUTOFF: usize = 14;
+pub const ENV_AMOUNT: usize = 15;
+pub const ENV_ATTACK: usize = 16;
+pub const ENV_DECAY: usize = 17;
+pub const ENV_SUSTAIN: usize = 18;
+pub const VIB_RATE: usize = 19;
+pub const VIB_DELAY: usize = 20;
+pub const TREMOLO: usize = 21;
+pub const WOBBLE: usize = 22;
+pub const LFO_RATE: usize = 23;
+pub const FINE: usize = 24;
+pub const WIDTH: usize = 25;
+pub const START: usize = 26;
 
+/// The channel's controllers first, then the voices' engine: its envelope,
+/// filter, filter envelope and LFOs, all moving what the preset sets (at
+/// their defaults the preset sounds as it was made).
 pub static SPECS: &[ParamSpec] = &[
     ParamSpec::lin("Volume", "Channel", -36.0, 6.0, 0.0, Unit::Db),
     ParamSpec::lin("Pan", "Channel", -1.0, 1.0, 0.0, Unit::Pan),
     ParamSpec::lin("Reverb", "Channel", 0.0, 1.0, 0.3, Unit::Percent),
     ParamSpec::lin("Chorus", "Channel", 0.0, 1.0, 0.0, Unit::Percent),
-    ParamSpec::lin("Vibrato", "Play", 0.0, 1.0, 0.0, Unit::Percent),
-    ParamSpec::lin("Velocity", "Play", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Vibrato", "LFO", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Velocity", "Channel", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::int("Bend Range", "Play", 0.0, 24.0, 2.0, Unit::Semi),
     ParamSpec::int("Transpose", "Play", -24.0, 24.0, 0.0, Unit::Semi),
+    // The volume envelope, relative to the preset's: -100% a sixteenth of its times, +100% sixteen times and more.
+    ParamSpec::lin("Attack", "Envelope", -1.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Decay", "Envelope", -1.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Sustain", "Envelope", -1.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Release", "Envelope", -1.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Cutoff", "Filter", -6.0, 6.0, 0.0, Unit::Octaves),
+    ParamSpec::lin("Resonance", "Filter", 0.0, 24.0, 0.0, Unit::Db),
+    ParamSpec::lin("Vel > Cutoff", "Filter", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::lin("Env Amount", "Filter Env", -6.0, 6.0, 0.0, Unit::Octaves),
+    ParamSpec::log("Env Attack", "Filter Env", 0.001, 10.0, 0.005, Unit::Sec),
+    ParamSpec::log("Env Decay", "Filter Env", 0.01, 20.0, 0.6, Unit::Sec),
+    ParamSpec::lin("Env Sustain", "Filter Env", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::log("Vib Rate", "LFO", 0.25, 4.0, 1.0, Unit::Ratio),
+    ParamSpec::lin("Vib Delay", "LFO", 0.0, 4.0, 0.0, Unit::Sec),
+    ParamSpec::lin("Tremolo", "LFO", 0.0, 12.0, 0.0, Unit::Db),
+    ParamSpec::lin("Wobble", "LFO", 0.0, 3.0, 0.0, Unit::Octaves),
+    ParamSpec::log("LFO Rate", "LFO", 0.25, 4.0, 1.0, Unit::Ratio),
+    ParamSpec::lin("Fine", "Play", -100.0, 100.0, 0.0, Unit::Cents),
+    ParamSpec::lin("Width", "Channel", 0.0, 2.0, 1.0, Unit::Percent),
+    ParamSpec::lin("Start", "Play", 0.0, 0.95, 0.0, Unit::Percent),
 ];
+
+/// The voices' shape the parameters ask for.
+pub fn shape(p: &[f32]) -> Shape {
+    let get = |i: usize| p.get(i).copied().unwrap_or(SPECS[i].default);
+    Shape {
+        attack: get(ATTACK),
+        decay: get(DECAY),
+        release: get(RELEASE),
+        sustain: get(SUSTAIN),
+        cutoff: get(CUTOFF) * 1200.0,
+        resonance: get(RESONANCE),
+        env_amount: get(ENV_AMOUNT) * 1200.0,
+        env_attack: get(ENV_ATTACK),
+        env_decay: get(ENV_DECAY),
+        env_sustain: get(ENV_SUSTAIN),
+        vel_cutoff: get(VEL_CUTOFF) * 3600.0,
+        vib_rate: get(VIB_RATE),
+        vib_delay: get(VIB_DELAY),
+        tremolo: get(TREMOLO),
+        wobble: get(WOBBLE) * 1200.0,
+        mod_rate: get(LFO_RATE),
+        fine: get(FINE),
+        width: get(WIDTH),
+        start: get(START),
+    }
+}
 
 /// The sixteen families of General MIDI's 128 programs, eight each.
 pub const GM_FAMILIES: [&str; 16] = [
@@ -216,6 +284,7 @@ pub struct Sf2State {
     /// What the synthesizer was last told: volume, the controllers, the bend.
     volume: f32,
     sent: [i32; 6],
+    shape: Shape,
     pub pitch_bend: f32,
     pub sustain: bool,
     left: Vec<f32>,
@@ -237,7 +306,7 @@ impl Sf2State {
             settings.maximum_polyphony = 128;
             Synthesizer::new(f, &settings).ok()
         });
-        Self { font, synth, keys: [-1; 128], program: None, volume: -1.0, sent: [-1; 6], pitch_bend: 0.0, sustain: false, left: vec![0.0; 1024], right: vec![0.0; 1024] }
+        Self { font, synth, keys: [-1; 128], program: None, volume: -1.0, sent: [-1; 6], shape: Shape::default(), pitch_bend: 0.0, sustain: false, left: vec![0.0; 1024], right: vec![0.0; 1024] }
     }
 
     /// Whether it plays this bank (another bank needs another player).
@@ -258,6 +327,11 @@ impl Sf2State {
             self.program = Some((bank, patch));
         }
         let get = |i: usize| p.get(i).copied().unwrap_or(SPECS[i].default);
+        let shape = shape(p);
+        if shape != self.shape {
+            s.set_shape(0, shape);
+            self.shape = shape;
+        }
         let volume = 0.5 * 10f32.powf(get(VOLUME) / 20.0);
         if volume != self.volume {
             s.set_master_volume(volume);
@@ -492,6 +566,47 @@ mod tests {
         }
         println!("silent at their key: {quiet:?}");
         assert!(quiet.len() * 20 < b.presets.len(), "too many silent presets: {quiet:?}");
+    }
+
+    /// The sound of one note at A4 through `p`, over `frames` after `skip`.
+    fn note(b: &Sf2Ref, p: &[f32], skip: usize, frames: usize) -> f32 {
+        let mut st = Sf2State::new(Some(b), 48_000.0);
+        st.note_on(p, 0, 0, 69, 1.0);
+        if skip > 0 {
+            energy(&mut st, p, 0, 0, skip);
+        }
+        energy(&mut st, p, 0, 0, frames)
+    }
+
+    #[test]
+    fn the_engine_parameters_shape_the_sound() {
+        let b = bank();
+        let mut p = defaults(SPECS);
+        p[REVERB] = 0.0;
+        let plain = note(&b, &p, 4800, 4800);
+        // The filter closed far below the note takes most of it away.
+        let mut dark = p.clone();
+        dark[CUTOFF] = -6.0;
+        assert!(note(&b, &dark, 4800, 4800) < plain * 0.3, "cutoff");
+        // A slow attack starts quietly.
+        let mut slow = p.clone();
+        slow[ATTACK] = 1.0;
+        assert!(note(&b, &slow, 0, 2400) < note(&b, &p, 0, 2400) * 0.2, "attack");
+        // The filter envelope opens a closed filter at the start and closes it again.
+        let mut env = dark.clone();
+        env[ENV_AMOUNT] = 6.0;
+        env[ENV_DECAY] = 0.1;
+        let early = note(&b, &env, 480, 960);
+        let late = note(&b, &env, 48_000, 2400);
+        assert!(early > late * 3.0, "filter envelope: {early} then {late}");
+        // Fine tuning and width leave the loudness about as it was.
+        let mut tuned = p.clone();
+        tuned[FINE] = 50.0;
+        tuned[WIDTH] = 0.0;
+        let t = note(&b, &tuned, 4800, 4800);
+        assert!((t / plain - 1.0).abs() < 0.2, "{t} vs {plain}");
+        // At their defaults the parameters ask for nothing.
+        assert_eq!(shape(&defaults(SPECS)), Shape::default());
     }
 
     #[test]

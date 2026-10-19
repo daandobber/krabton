@@ -2,7 +2,7 @@
 //! two or three pages of what belongs together (the sound, how it moves,
 //! its effects, ...), picked from a narrow column beside the knobs.
 
-use krabton_engine::dsp::{analog, chipfm, handheld, hybrid, micro, quartet, v2, waves};
+use krabton_engine::dsp::{analog, chipfm, handheld, hybrid, micro, quartet, sf2, v2, waves};
 use krabton_engine::params::ParamSpec;
 
 /// A page: its name and the groups on it.
@@ -23,12 +23,13 @@ const MICRO: &[Tab] = &[("Voices", &["Voice 1", "Voice 2", "Voice 3"]), ("Play",
 const WAVES: &[Tab] = &[("Oscillators", &["Osc 1", "Osc 2", "Sub + Noise"]), ("Shape", &["Filter", "Filter Env", "Amp Env", "LFO", "Voice", "Output"])];
 const ANALOG: &[Tab] = &[("Sound", &["Osc 1", "Osc 2", "Mixer", "Filter"]), ("Motion", &["Filter Env", "Amp Env", "LFO", "Voice", "Output"])];
 const HYBRID: &[Tab] = &[("Sound", &["Osc 1", "Osc 2", "Filter 1", "Filter 2"]), ("Motion", &["Amp", "Mod Env", "LFO", "Play"])];
+const SF2: &[Tab] = &[("Sound", &["Channel", "Play"]), ("Shape", &["Envelope", "Filter", "Filter Env", "LFO"])];
 const HANDHELD: &[Tab] = &[("Channels", &["Pulse 1", "Pulse 2", "Wave", "Noise"]), ("Play", &["Play", "Envelope", "Output"])];
 
 /// The tabs of a device's parameters, if it has so many it gets them.
 pub(crate) fn layout(specs: &[ParamSpec]) -> Option<&'static [Tab]> {
     let is = |s: &[ParamSpec]| std::ptr::eq(specs.as_ptr(), s.as_ptr()) && specs.len() == s.len();
-    let pairs: [(&[ParamSpec], &'static [Tab]); 8] = [(v2::SPECS, V2), (quartet::SPECS, QUARTET), (chipfm::SPECS, CHIPFM), (micro::SPECS, MICRO), (waves::SPECS, WAVES), (analog::SPECS, ANALOG), (hybrid::SPECS, HYBRID), (handheld::SPECS, HANDHELD)];
+    let pairs: [(&[ParamSpec], &'static [Tab]); 9] = [(v2::SPECS, V2), (quartet::SPECS, QUARTET), (chipfm::SPECS, CHIPFM), (micro::SPECS, MICRO), (waves::SPECS, WAVES), (analog::SPECS, ANALOG), (hybrid::SPECS, HYBRID), (handheld::SPECS, HANDHELD), (sf2::SPECS, SF2)];
     pairs.iter().find(|(s, _)| is(s)).map(|(_, t)| *t)
 }
 
@@ -46,7 +47,7 @@ mod tests {
 
     #[test]
     fn every_group_of_a_tabbed_device_is_on_one_page() {
-        for specs in [v2::SPECS, quartet::SPECS, chipfm::SPECS, micro::SPECS, waves::SPECS, analog::SPECS, hybrid::SPECS, handheld::SPECS] {
+        for specs in [v2::SPECS, quartet::SPECS, chipfm::SPECS, micro::SPECS, waves::SPECS, analog::SPECS, hybrid::SPECS, handheld::SPECS, sf2::SPECS] {
             let tabs = layout(specs).expect("tabbed");
             assert!(tabs.len() >= 2 && tabs.len() <= 3);
             let mut groups: Vec<&str> = specs.iter().filter(|s| s.shown()).map(|s| s.group).collect();
