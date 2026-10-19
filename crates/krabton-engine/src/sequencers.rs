@@ -514,7 +514,7 @@ impl SeqState {
         }
         if matches!(kind, K::OrganGrinder | K::MusicBox) {
             // Their own clock: the song's, a crank's or a spring's (a hand on the crank plays them stopped too).
-            self.mechanical_time(kind == K::OrganGrinder, p, out, ctx);
+            self.mechanical_time(kind == K::OrganGrinder, p, data, out, ctx);
         } else if ctx.playing && kind == K::Marbles {
             // It keeps its own (jittery) clock against the song's.
             self.marbles(p, out, ctx);

@@ -47,10 +47,21 @@ pub const OG_CHORD_AMOUNT: usize = 14;
 pub const ORGAN_STYLES: &[&str] = &["Waltz", "March", "Polka", "Foxtrot"];
 pub const OG_DRIVE: usize = 15;
 pub const OG_CRANK: usize = 16;
-pub const OG_HAND: usize = 17;
-/// Your hand on the crank (the screen sets it while you turn): its speed, 0 when let go.
+/// How a hand turns the crank: how uneven within a turn, where it pushes,
+/// how much the turns differ, how long a turn is, and whose feel.
+pub const OG_SWING: usize = 17;
+/// Your hand on the crank (the screen sets it while you turn): its speed,
+/// negative turned backwards, 0 when let go.
 pub const OG_TURNING: usize = 18;
+pub const OG_PUSH: usize = 19;
+pub const OG_WANDER: usize = 20;
+pub const OG_TURN: usize = 21;
+pub const OG_FEEL: usize = 22;
 pub const ORGAN_DRIVES: &[&str] = &["Song", "Crank"];
+/// A turn of the crank: a bar, half a bar or a beat (a beat a turn swings the quavers).
+pub const TURNS: &[&str] = &["Bar", "Half Bar", "Beat"];
+/// The feel of the turning: set by Swing and Push, or learned from yours on the screen.
+pub const FEELS: &[&str] = &["Swing", "Yours"];
 
 pub static ORGAN: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
@@ -70,8 +81,12 @@ pub static ORGAN: &[ParamSpec] = &[
     CHORD_AMOUNT,
     ParamSpec::choice("Drive", "Crank", ORGAN_DRIVES, 0),
     ParamSpec::log("Crank", "Crank", 0.25, 2.0, 1.0, Unit::Ratio),
-    ParamSpec::lin("Hand", "Crank", 0.0, 1.0, 0.25, Unit::Percent),
-    ParamSpec::lin("Turning", SCREEN_ONLY, 0.0, 4.0, 0.0, Unit::Ratio),
+    ParamSpec::lin("Swing", "Crank", 0.0, 1.0, 0.3, Unit::Percent),
+    ParamSpec::lin("Turning", SCREEN_ONLY, -4.0, 4.0, 0.0, Unit::Ratio),
+    ParamSpec::int("Push", "Crank", 0.0, 360.0, 90.0, Unit::None),
+    ParamSpec::lin("Wander", "Crank", 0.0, 1.0, 0.3, Unit::Percent),
+    ParamSpec::choice("Turn", "Crank", TURNS, 0),
+    ParamSpec::choice("Feel", "Crank", FEELS, 0),
 ];
 
 pub const MB_METRE: usize = 1;
@@ -88,11 +103,15 @@ pub const BOX_ACCOMPS: &[&str] = &["Waltz", "Arpeggio", "Alberti"];
 pub const BOX_COMBS: &[&str] = &["18 Notes", "30 Notes", "Full"];
 pub const MB_DRIVE: usize = 16;
 pub const MB_CRANK: usize = 17;
-pub const MB_HAND: usize = 18;
+pub const MB_SWING: usize = 18;
 pub const MB_SPRING: usize = 19;
 pub const MB_TURNING: usize = 20;
 /// How many turns the key has been wound (the screen counts them up).
 pub const MB_WOUND: usize = 21;
+pub const MB_PUSH: usize = 22;
+pub const MB_WANDER: usize = 23;
+pub const MB_TURN: usize = 24;
+pub const MB_FEEL: usize = 25;
 pub const BOX_DRIVES: &[&str] = &["Song", "Spring", "Crank"];
 
 pub static MUSIC_BOX: &[ParamSpec] = &[
@@ -114,10 +133,14 @@ pub static MUSIC_BOX: &[ParamSpec] = &[
     CHORD_AMOUNT,
     ParamSpec::choice("Drive", "Turn", BOX_DRIVES, 0),
     ParamSpec::log("Crank", "Turn", 0.25, 2.0, 1.0, Unit::Ratio),
-    ParamSpec::lin("Hand", "Turn", 0.0, 1.0, 0.2, Unit::Percent),
+    ParamSpec::lin("Swing", "Turn", 0.0, 1.0, 0.2, Unit::Percent),
     ParamSpec::log("Spring", "Turn", 5.0, 180.0, 40.0, Unit::Sec),
-    ParamSpec::lin("Turning", SCREEN_ONLY, 0.0, 4.0, 0.0, Unit::Ratio),
+    ParamSpec::lin("Turning", SCREEN_ONLY, -4.0, 4.0, 0.0, Unit::Ratio),
     ParamSpec::lin("Wound", SCREEN_ONLY, 0.0, 1_000_000.0, 0.0, Unit::None),
+    ParamSpec::int("Push", "Turn", 0.0, 360.0, 90.0, Unit::None),
+    ParamSpec::lin("Wander", "Turn", 0.0, 1.0, 0.2, Unit::Percent),
+    ParamSpec::choice("Turn", "Turn", TURNS, 0),
+    ParamSpec::choice("Feel", "Turn", FEELS, 0),
 ];
 
 /// What a hole in the book (or a pin on the cylinder) plays.
@@ -489,6 +512,121 @@ fn fingerprint(which: u64, p: &[f32], chords: usize) -> u64 {
     p.iter().take(8).chain(p.get(chords)).fold(which, |h, v| h.wrapping_mul(31).wrapping_add((v * 1000.0) as i64 as u64))
 }
 
+/// How many parts of a turn a learned feel has.
+pub const FEEL_BINS: usize = 16;
+
+/// A learned feel as a device keeps it: a tag, then a byte for each part of the turn.
+pub fn encode_feel(bins: &[f32; FEEL_BINS]) -> Vec<u8> {
+    let mean = bins.iter().sum::<f32>() / FEEL_BINS as f32;
+    let mut v = vec![b'F'];
+    v.extend(bins.iter().map(|b| (((b / mean.max(1e-3)) - 0.25) / 1.75 * 255.0).round().clamp(0.0, 255.0) as u8));
+    v
+}
+
+/// A learned feel back from a device's data (its speed through a turn, 1 on average).
+pub fn decode_feel(data: &[u8]) -> Option<[f32; FEEL_BINS]> {
+    if data.len() < FEEL_BINS + 1 || data[0] != b'F' {
+        return None;
+    }
+    let mut b = [0.0f32; FEEL_BINS];
+    for (i, x) in b.iter_mut().enumerate() {
+        *x = 0.25 + data[1 + i] as f32 / 255.0 * 1.75;
+    }
+    let mean = b.iter().sum::<f32>() / FEEL_BINS as f32;
+    for x in b.iter_mut() {
+        *x /= mean.max(1e-3);
+    }
+    Some(b)
+}
+
+/// How long a turn of the crank is (ticks).
+pub fn ticks_per_turn(p: &[f32], organ: bool) -> f64 {
+    let tpb = if organ { organ_ticks_per_bar(p) } else { box_ticks_per_bar(p) } as f64;
+    let tick_beats = super::rate_beats(p[0]) / TICKS;
+    let turn = p.get(if organ { OG_TURN } else { MB_TURN }).copied().unwrap_or(0.0).round().max(0.0) as usize;
+    match turn {
+        0 => tpb,
+        1 => tpb / 2.0,
+        _ => 1.0 / tick_beats,
+    }
+}
+
+/// How a hand turns the crank: its speed through a turn (1 on average),
+/// set by Swing (how uneven) and Push (where in the turn it pushes), or
+/// learned from yours; Wander makes every turn a little different.
+pub struct Feel {
+    bins: Option<[f32; FEEL_BINS]>,
+    swing: f64,
+    push: f64,
+    wander: f64,
+}
+
+impl Feel {
+    pub fn of(p: &[f32], data: &[u8], organ: bool) -> Self {
+        let (si, pi, wi, fi) = if organ { (OG_SWING, OG_PUSH, OG_WANDER, OG_FEEL) } else { (MB_SWING, MB_PUSH, MB_WANDER, MB_FEEL) };
+        let get = |i: usize, or: f32| p.get(i).copied().unwrap_or(or);
+        let bins = if get(fi, 0.0) >= 0.5 { decode_feel(data) } else { None };
+        Feel { bins, swing: get(si, 0.0).clamp(0.0, 1.0) as f64, push: (get(pi, 90.0) as f64 / 360.0).rem_euclid(1.0), wander: get(wi, 0.0).clamp(0.0, 1.0) as f64 }
+    }
+
+    /// Whether it is your learned feel.
+    pub fn learned(&self) -> bool {
+        self.bins.is_some()
+    }
+
+    /// How uneven turn `turn` is, against the others.
+    fn depth(&self, turn: i64) -> f64 {
+        1.0 + self.wander * 1.2 * (hash(0xFE11, turn as u32) as f64 - 0.5)
+    }
+
+    /// How fast a whole turn goes against the others (with Wander).
+    pub fn tempo(&self, turn: i64) -> f64 {
+        1.0 + self.wander * 0.08 * (hash(0xFE12, turn as u32) as f64 - 0.5)
+    }
+
+    /// The speed at `phase` (0..1) of turn `turn` (1 an even hand).
+    pub fn speed(&self, phase: f64, turn: i64) -> f64 {
+        let d = self.depth(turn);
+        match &self.bins {
+            Some(b) => (1.0 + d * (b[((phase.rem_euclid(1.0) * FEEL_BINS as f64) as usize).min(FEEL_BINS - 1)] as f64 - 1.0)).max(0.2),
+            None => {
+                let a = self.swing * 0.45 * d;
+                let x = std::f64::consts::TAU * (phase - self.push);
+                (1.0 + a * (x.sin() + 0.3 * (2.0 * x).sin())).max(0.1)
+            }
+        }
+    }
+
+    /// How far ahead of an even hand the book is at `phase` of turn `turn`
+    /// (in turns): none at a turn's start or end, so every turn comes round on time.
+    pub fn offset(&self, phase: f64, turn: i64) -> f64 {
+        let d = self.depth(turn);
+        let ph = phase.clamp(0.0, 1.0);
+        match &self.bins {
+            Some(b) => {
+                let x = ph * FEEL_BINS as f64;
+                let i = (x as usize).min(FEEL_BINS - 1);
+                let mut sum: f64 = b[..i].iter().map(|v| *v as f64 - 1.0).sum();
+                sum += (b[i] as f64 - 1.0) * (x - i as f64);
+                (d * sum / FEEL_BINS as f64).max(-ph + 1e-6)
+            }
+            None => {
+                let a = self.swing * 0.45 * d;
+                let w = std::f64::consts::TAU;
+                let p0 = self.push;
+                a * (((-w * p0).cos() - (w * (ph - p0)).cos()) / w + 0.3 * ((-2.0 * w * p0).cos() - (2.0 * w * (ph - p0)).cos()) / (2.0 * w))
+            }
+        }
+    }
+
+    /// Where the book is when an even clock says `pos` (ticks), turned by this hand.
+    pub fn book(&self, pos: f64, ticks_per_turn: f64) -> f64 {
+        let t = pos / ticks_per_turn;
+        let n = t.floor();
+        pos + self.offset(t - n, n as i64) * ticks_per_turn
+    }
+}
+
 /// How fast a spring this wound turns the cylinder: steady, then slowing
 /// as it runs down, stopped when it is.
 pub fn spring_speed(tension: f32) -> f32 {
@@ -516,17 +654,20 @@ fn fit(pitch: i32, lo: i32, hi: i32) -> i32 {
 impl SeqState {
     /// A mechanical sequencer's block: where its own clock (the song's, a
     /// crank's or a spring's) takes the book or the cylinder, and the ticks
-    /// it passes on the way.
-    pub(crate) fn mechanical_time(&mut self, organ: bool, p: &[f32], out: &mut Vec<MidiEvent>, ctx: &MidiCtx) {
+    /// it passes on the way. A hand on the crank turns it unevenly, as its
+    /// Feel says (`data` holds a feel learned from yours).
+    pub(crate) fn mechanical_time(&mut self, organ: bool, p: &[f32], data: &[u8], out: &mut Vec<MidiEvent>, ctx: &MidiCtx) {
         let which = if organ { 1 } else { 2 };
         let tick_beats = super::rate_beats(p[0]) / TICKS;
         let tick_frames = tick_beats * ctx.samples_per_beat;
-        let tpb = if organ { organ_ticks_per_bar(p) } else { box_ticks_per_bar(p) } as f64;
-        let (di, ci, hi, ti) = if organ { (OG_DRIVE, OG_CRANK, OG_HAND, OG_TURNING) } else { (MB_DRIVE, MB_CRANK, MB_HAND, MB_TURNING) };
+        let (di, ci, ti) = if organ { (OG_DRIVE, OG_CRANK, OG_TURNING) } else { (MB_DRIVE, MB_CRANK, MB_TURNING) };
         let get = |i: usize, or: f32| p.get(i).copied().unwrap_or(or);
         let drive = (get(di, 0.0).round().max(0.0) as usize).min(if organ { 1 } else { 2 });
-        let hand = get(hi, 0.0).clamp(0.0, 1.0) as f64;
-        let turning = get(ti, 0.0).max(0.0);
+        // Your hand: its speed, backwards below 0.
+        let turning = get(ti, 0.0).clamp(-4.0, 4.0);
+        let held = turning.abs() > 0.01;
+        let feel = Feel::of(p, data, organ);
+        let tpt = ticks_per_turn(p, organ).max(1.0);
         let dt = ctx.len as f32 / ctx.sr.max(1.0);
         let song_pos = ctx.beat / tick_beats;
         let started = ctx.playing && !self.mechanical.was_playing;
@@ -538,16 +679,19 @@ impl SeqState {
             m.speed = if drive == 0 { 1.0 } else { 0.0 };
             m.drive = drive;
         }
-        // A hand turns unevenly: a little quicker and slower round every turn (a turn a bar).
-        let wobble = |pos: f64| hand * 0.12 * tpb / std::f64::consts::TAU * -(std::f64::consts::TAU * pos / tpb).cos();
         let (pos0, pos1, breath) = if drive == 0 {
             if !ctx.playing {
                 return;
             }
             let end = song_pos + ctx.len as f64 / tick_frames;
-            let hand_on = if organ { 1.0 } else { 0.0 };
             m.speed = 1.0;
-            (song_pos + hand_on * wobble(song_pos), end + hand_on * wobble(end), 1.0)
+            // The organ's book under a hand in the song's time: uneven within
+            // every turn, on time at the end of each (the box has a governor).
+            if organ {
+                (feel.book(song_pos, tpt), feel.book(end, tpt), 1.0)
+            } else {
+                (song_pos, end, 1.0)
+            }
         } else {
             let spring = !organ && drive == 1;
             let target = if spring {
@@ -565,7 +709,7 @@ impl SeqState {
                     m.tension = 1.0;
                 }
                 spring_speed(m.tension)
-            } else if turning > 0.01 {
+            } else if held {
                 turning
             } else if ctx.playing {
                 get(ci, 1.0).clamp(0.05, 4.0)
@@ -573,31 +717,42 @@ impl SeqState {
                 0.0
             };
             // A flywheel under the crank, a governor in the box: the speed follows, not jumps.
-            let tau = if spring { 0.12 } else if turning > 0.01 { 0.15 } else { 0.4 };
+            let tau = if spring { 0.12 } else if held { 0.15 } else { 0.4 };
             m.speed += (target - m.speed) * (1.0 - (-dt / tau).exp());
-            if m.speed < 0.003 && target == 0.0 {
+            if m.speed.abs() < 0.003 && target == 0.0 {
                 m.speed = 0.0;
             }
             if spring {
                 let secs = get(MB_SPRING, 40.0).clamp(1.0, 600.0);
                 m.tension = (m.tension - dt * m.speed / secs).max(0.0);
             }
-            let uneven = if spring { 1.0 } else { 1.0 + hand * 0.12 * (std::f64::consts::TAU * m.pos / tpb).sin() };
+            // Turned by a hand (not while yours is on it: then it is your speed): uneven within the turn.
+            let turn = (m.pos / tpt).floor();
+            let uneven = if spring || held { 1.0 } else { feel.speed(m.pos / tpt - turn, turn as i64) * feel.tempo(turn as i64) };
             let adv = m.speed as f64 * uneven * ctx.len as f64 / tick_frames;
             let from = m.pos;
             m.pos += adv;
             // Short of wind when the organ is turned slowly: softer.
-            let breath = if organ && !spring { 0.45 + 0.55 * m.speed.min(1.0) } else { 1.0 };
+            let breath = if organ && !spring { 0.45 + 0.55 * m.speed.abs().min(1.0) } else { 1.0 };
             (from, m.pos, breath)
         };
-        let speed = self.mechanical.speed.max(0.08) as f64;
+        let speed = self.mechanical.speed.abs().max(0.08) as f64;
         if pos1 > pos0 {
             let mut k = pos0.ceil() as i64;
             while (k as f64) < pos1 {
                 let frac = (k as f64 - pos0) / (pos1 - pos0);
                 let at = ctx.now + (frac * ctx.len as f64) as u64;
-                self.mechanical_tick(which, k, p, at, tick_frames / speed, breath, drive == 0, out, ctx);
+                self.mechanical_tick(which, k, p, at, tick_frames / speed, breath, drive == 0, false, out, ctx);
                 k += 1;
+            }
+        } else if pos1 < pos0 {
+            // Backwards: the reading bar meets each hole at its end first.
+            let mut k = pos0.floor() as i64;
+            while (k as f64) > pos1 {
+                let frac = (pos0 - k as f64) / (pos0 - pos1);
+                let at = ctx.now + (frac * ctx.len as f64) as u64;
+                self.mechanical_tick(which, k, p, at, tick_frames / speed, breath, false, true, out, ctx);
+                k -= 1;
             }
         }
         if !ctx.playing {
@@ -605,17 +760,21 @@ impl SeqState {
         }
         // Where it is, finely, and how fast, how wound (for the screens).
         let m = &self.mechanical;
-        self.visual[0] = (self.visual[0] & 0xFFFF_FFFF) | ((m.tension.clamp(0.0, 1.0) * 255.0) as u64) << 32 | ((m.speed.clamp(0.0, 2.55) * 100.0) as u64) << 40 | (drive as u64) << 48;
-        self.visual[3] = (pos1.max(0.0) * 16.0) as u64;
+        self.visual[0] = (self.visual[0] & 0xFFFF_FFFF) | ((m.tension.clamp(0.0, 1.0) * 255.0) as u64) << 32 | ((m.speed.abs().min(2.55) * 100.0) as u64) << 40 | (drive as u64) << 48 | ((m.speed < 0.0) as u64) << 56;
+        // Within sixty-four bars (backwards it can go below the start).
+        let tpb = if organ { organ_ticks_per_bar(p) } else { box_ticks_per_bar(p) } as f64;
+        self.visual[3] = (pos1.rem_euclid(tpb * 64.0) * 16.0) as u64;
     }
 
     /// One tick of a mechanical sequencer (`which`: 1 the organ, 2 the box).
     #[allow(clippy::too_many_arguments)]
-    fn mechanical_tick(&mut self, which: u64, k: i64, p: &[f32], at: u64, tick_frames: f64, breath: f32, song: bool, out: &mut Vec<MidiEvent>, ctx: &MidiCtx) {
+    /// Backwards (`back`) it plays the holes that end at `k`, each for as long as it is.
+    fn mechanical_tick(&mut self, which: u64, k: i64, p: &[f32], at: u64, tick_frames: f64, breath: f32, song: bool, back: bool, out: &mut Vec<MidiEvent>, ctx: &MidiCtx) {
         let organ = which == 1;
         let tpb = if organ { organ_ticks_per_bar(p) } else { box_ticks_per_bar(p) } as i64;
-        let bar = k.div_euclid(tpb);
-        let t = k.rem_euclid(tpb) as u16;
+        // A hole ending on a bar line belongs to the bar before it.
+        let bar = if back { (k - 1).div_euclid(tpb) } else { k.div_euclid(tpb) };
+        let t = (k - bar * tpb) as u16;
         let key = fingerprint(which, p, if organ { OG_CHORD_AMOUNT } else { MB_CHORD_AMOUNT });
         let m = &mut self.mechanical;
         if m.bar != bar || m.key != key {
@@ -636,7 +795,7 @@ impl SeqState {
         let n = self.mechanical.holes.len();
         for i in 0..n {
             let h = self.mechanical.holes[i];
-            if h.at != t {
+            if (back && h.at + h.len != t) || (!back && h.at != t) {
                 continue;
             }
             let pitch = match h.lane {
@@ -691,6 +850,8 @@ mod tests {
             let mut p = defaults(ORGAN);
             p[OG_STYLE] = style as f32;
             p[OG_ORNAMENTS] = 0.0;
+            // Every turn the same (with Wander each is a little different, as a hand's are).
+            p[OG_WANDER] = 0.0;
             let bar = organ_ticks_per_bar(&p) as f64 / 8.0;
             let notes = play(MidiFxKind::OrganGrinder, &p, bar * 32.0);
             assert!(!notes.is_empty(), "style {style}");
@@ -748,7 +909,8 @@ mod tests {
     fn the_crank_drives_the_book_as_fast_as_it_is_turned() {
         let mut p = defaults(ORGAN);
         p[OG_DRIVE] = 1.0;
-        p[OG_HAND] = 0.0;
+        p[OG_SWING] = 0.0;
+        p[OG_WANDER] = 0.0;
         // Turned at the song's speed, then twice as fast: twice the notes a second.
         let slow = turn(MidiFxKind::OrganGrinder, &mut p.clone(), 12.0, true, |_, _| {}).iter().filter(|n| n.0 > 3.0).count();
         p[OG_CRANK] = 2.0;
@@ -760,6 +922,69 @@ mod tests {
         let notes = turn(MidiFxKind::OrganGrinder, &mut q, 8.0, false, |t, p| p[OG_TURNING] = if t < 4.0 { 1.0 } else { 0.0 });
         assert!(notes.iter().any(|n| n.0 < 4.0), "turning plays it");
         assert!(notes.iter().all(|n| n.0 < 5.5), "let go, it runs out and stops: {:?}", notes.last());
+    }
+
+    #[test]
+    fn turned_backwards_it_plays_the_book_backwards() {
+        let mut p = defaults(ORGAN);
+        p[OG_DRIVE] = 1.0;
+        p[OG_DRUMS] = 0.0;
+        // Forward for six seconds, then back as fast for six: the melody comes in the opposite order.
+        let notes = turn(MidiFxKind::OrganGrinder, &mut p, 12.0, false, |t, p| p[OG_TURNING] = if t < 6.0 { 1.0 } else { -1.0 });
+        // The tune: the highest note at each moment (the counter melody sounds under it).
+        let tune = |from: f64, to: f64| -> Vec<u8> {
+            let mut v: Vec<(i64, u8)> = Vec::new();
+            for n in notes.iter().filter(|n| n.0 > from && n.0 < to && n.1 >= 60) {
+                let t = (n.0 * 1000.0).round() as i64;
+                match v.last_mut() {
+                    Some(last) if last.0 == t => last.1 = last.1.max(n.1),
+                    _ => v.push((t, n.1)),
+                }
+            }
+            v.into_iter().map(|x| x.1).collect()
+        };
+        let fwd = tune(1.0, 5.0);
+        let back = tune(6.0, 12.0);
+        assert!(fwd.len() > 6 && back.len() > 6, "{} {}", fwd.len(), back.len());
+        // What it played going forward comes back reversed: the last notes forward are the first going back.
+        let tail: Vec<u8> = fwd.iter().rev().take(4).copied().collect();
+        assert!(back.windows(4).any(|w| w == tail.as_slice()), "forward ended {tail:?}, back went {back:?}");
+    }
+
+    #[test]
+    fn a_turn_swings_and_comes_round_on_time() {
+        let mut p = defaults(ORGAN);
+        p[OG_SWING] = 1.0;
+        p[OG_WANDER] = 0.0;
+        p[OG_PUSH] = 0.0;
+        let f = Feel::of(&p, &[], true);
+        assert!(f.offset(0.0, 0).abs() < 1e-9 && f.offset(1.0, 0).abs() < 1e-9, "on time at every turn's end");
+        assert!(f.offset(0.25, 0) > 0.02, "ahead where it pushes");
+        let mean: f64 = (0..1000).map(|i| f.speed(i as f64 / 1000.0, 0)).sum::<f64>() / 1000.0;
+        assert!((mean - 1.0).abs() < 0.01, "the same speed on average ({mean})");
+        // Without swing, even.
+        p[OG_SWING] = 0.0;
+        assert!(Feel::of(&p, &[], true).offset(0.3, 0).abs() < 1e-12);
+        // A learned turn: slow first half, quick second half.
+        let mut bins = [0.6f32; FEEL_BINS];
+        for b in bins.iter_mut().skip(8) {
+            *b = 1.4;
+        }
+        let data = encode_feel(&bins);
+        assert!(decode_feel(&data).is_some_and(|b| (b[0] - 0.6).abs() < 0.02 && (b[15] - 1.4).abs() < 0.02));
+        p[OG_FEEL] = 1.0;
+        let y = Feel::of(&p, &data, true);
+        assert!(y.learned() && y.offset(0.5, 0) < -0.1 && y.offset(1.0, 0).abs() < 1e-6, "{}", y.offset(0.5, 0));
+        // With a turn a beat and swing, the quavers in the song's time come long, short.
+        let mut q = defaults(ORGAN);
+        q[OG_TURN] = 2.0;
+        q[OG_SWING] = 1.0;
+        q[OG_PUSH] = 180.0;
+        q[OG_WANDER] = 0.0;
+        let tpt = ticks_per_turn(&q, true);
+        let fq = Feel::of(&q, &[], true);
+        let half = fq.book(tpt * 0.5, tpt) / tpt;
+        assert!(half < 0.45 && (fq.book(tpt, tpt) / tpt - 1.0).abs() < 1e-9, "the second quaver comes late: {half}");
     }
 
     #[test]
