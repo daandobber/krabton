@@ -420,9 +420,9 @@ cargo test -p krabton-engine -p krabton-monome -p krabton-braids -p krabton-elem
 
 ### Making the installers
 
-The [Release workflow](.github/workflows/release.yml) builds them on GitHub for every version tag (`git tag v0.31.0 && git push origin v0.31.0`) and publishes them as a release; run it by hand under *Actions* to just get the files. To make them yourself:
+The [Release workflow](.github/workflows/release.yml) builds them on GitHub for every version tag (`git tag v0.32.0 && git push origin v0.32.0`) and publishes them as a release; run it by hand under *Actions* to just get the files. To make them yourself:
 
-- **Windows**: `cargo build --release -p krabton`, then compile [`packaging/windows/krabton.iss`](packaging/windows/krabton.iss) with [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`iscc /DMyAppVersion=0.31.0 packaging\windows\krabton.iss`); the installer lands in `dist\`.
+- **Windows**: `cargo build --release -p krabton`, then compile [`packaging/windows/krabton.iss`](packaging/windows/krabton.iss) with [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`iscc /DMyAppVersion=0.32.0 packaging\windows\krabton.iss`); the installer lands in `dist\`.
 - **Linux**: see the AppImage and tarball steps in the workflow; [`packaging/linux`](packaging/linux) has the desktop entry and `install.sh`.
 - **macOS**: see the workflow: a universal binary in `Krabton.app` with [`packaging/macos/Info.plist`](packaging/macos/Info.plist), in a disk image.
 
