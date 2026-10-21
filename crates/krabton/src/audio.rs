@@ -22,13 +22,35 @@ pub fn new_slot() -> EngineSlot {
     Arc::new(Mutex::new(None))
 }
 
-/// The slot's engine into `buf` (interleaved stereo), or silence.
+/// Set when the engine failed while playing (see `engine_failed`).
+static ENGINE_FAILED: AtomicBool = AtomicBool::new(false);
+
+/// Whether the engine failed since the last time this was asked: it was
+/// taken out (the output plays silence) and the app should start a new one.
+pub fn engine_failed() -> bool {
+    ENGINE_FAILED.swap(false, Ordering::Relaxed)
+}
+
+/// The slot's engine into `buf` (interleaved stereo), or silence. An engine
+/// that panics is taken out rather than taking the sound (or, where the
+/// system calls this, the whole program) down with it; the panic is in the
+/// crash log.
 fn render(slot: &EngineSlot, buf: &mut [f32]) {
     match slot.try_lock() {
-        Ok(mut g) => match g.as_mut() {
-            Some(e) => e.process(buf),
-            None => buf.fill(0.0),
-        },
+        Ok(mut g) => {
+            let failed = match g.as_mut() {
+                Some(e) => std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| e.process(buf))).is_err(),
+                None => {
+                    buf.fill(0.0);
+                    false
+                }
+            };
+            if failed {
+                buf.fill(0.0);
+                *g = None;
+                ENGINE_FAILED.store(true, Ordering::Relaxed);
+            }
+        }
         Err(_) => buf.fill(0.0),
     }
 }

@@ -108,6 +108,11 @@ impl Prefs {
         dir.map(|d| d.join("prefs.json"))
     }
 
+    /// Where crashes are written down: beside the settings.
+    pub fn crash_log() -> Option<PathBuf> {
+        Self::path().map(|p| p.with_file_name("crash.log"))
+    }
+
     pub fn load() -> Self {
         Self::path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
     }

@@ -458,6 +458,8 @@ pub struct App {
     /// The voicebanks downloading, by offer (see `singer_lib::OFFERS`), and
     /// the tracks whose Singers asked for them.
     pub(crate) singer_installs: HashMap<usize, (crate::singer_lib::Install, Vec<u64>)>,
+    /// When the sound engine last failed and was restarted.
+    engine_failed_at: Option<std::time::Instant>,
     pub(crate) packs_here: std::collections::HashSet<&'static str>,
 
     pub meters: Vec<(f32, f32)>,
@@ -632,6 +634,7 @@ impl App {
             drum_installs: Default::default(),
             sf2_installs: HashMap::new(),
             singer_installs: HashMap::new(),
+            engine_failed_at: None,
             packs_here: krabton_engine::dsp::real_drums::PACKS.iter().filter(|p| krabton_engine::dsp::real_drums::installed(p)).map(|p| p.folder).collect(),
             meters: Vec::new(),
             return_meters: Vec::new(),
@@ -2083,6 +2086,25 @@ impl App {
         }
     }
 
+    /// The engine failed while playing (the audio output took it out): a new
+    /// one takes over where it was, at most once every ten seconds; if it
+    /// fails again that soon it stays silent until asked.
+    fn recover_engine(&mut self) {
+        if !crate::audio::engine_failed() {
+            return;
+        }
+        let now = std::time::Instant::now();
+        let log = crate::prefs::Prefs::crash_log().map(|p| p.display().to_string()).unwrap_or_else(|| "crash.log".into());
+        if self.engine_failed_at.is_some_and(|t| now.duration_since(t).as_secs_f32() < 10.0) {
+            self.toast(format!("The sound engine failed again; it stays off. Save your set and restart Krabton (what happened is in {log})"));
+            return;
+        }
+        self.engine_failed_at = Some(now);
+        let rate = self.engine.status.sample_rate.load().round() as u32;
+        self.rebuild_engine(rate.max(8000));
+        self.toast(format!("The sound engine hit an error and was restarted (what happened is in {log})"));
+    }
+
     /// A new engine at `rate` in place of the running one: the set, the
     /// transport, plugins (from their current state) and the input go over.
     fn rebuild_engine(&mut self, rate: u32) {
@@ -3214,6 +3236,14 @@ impl App {
                     };
                     self.apply_item(&BrowserItem::Voicebank(path), target);
                 }
+                // singerown: the selected track's Singer sings with its own voice (as its OWN VOICE button).
+                "singerown" => {
+                    if let TrackSel::Track(t) = self.sel_track {
+                        if let Some(Instrument::Singer { bank, .. }) = self.project.tracks.get_mut(t).and_then(|tr| tr.instrument.as_mut()) {
+                            *bank = None;
+                        }
+                    }
+                }
                 // voiceget=N: downloads offered voicebank N for the selected track's Singer.
                 "voiceget" => {
                     let asking = match self.sel_track {
@@ -3970,6 +4000,7 @@ impl eframe::App for App {
         self.poll_drum_install();
         self.poll_sf2_installs();
         self.poll_singer_installs();
+        self.recover_engine();
         self.poll_recording();
         self.tape_frame();
         self.poll_export();

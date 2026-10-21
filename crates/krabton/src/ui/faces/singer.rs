@@ -104,7 +104,13 @@ pub(crate) fn display(ui: &mut Ui, id: Id, r: Rect, bank: Option<&VoicebankRef>,
     // The syllable, big, and the note it is on; or, with no voicebank and
     // nothing sung, the voices to get.
     let sounding = live.vals[2] > 0.001;
-    if bank.is_none() && !sounding && !offers.is_empty() {
+    // Not between two notes: only once it has been quiet a while.
+    let (t, key) = (ui.input(|i| i.time), id.with("last_sung"));
+    if sounding {
+        ui.ctx().memory_mut(|m| m.data.insert_temp(key, t));
+    }
+    let quiet = t - ui.ctx().memory(|m| m.data.get_temp::<f64>(key)).unwrap_or(f64::NEG_INFINITY) > 1.5;
+    if bank.is_none() && quiet && !offers.is_empty() {
         let head = Rect::from_min_size(pos2(inner.left(), inner.top() + u * 1.1), vec2(inner.width(), u * 1.2));
         p.text(head.center(), Align2::CENTER_CENTER, "GET A VOICE", fit(&p, "GET A VOICE", lcd(u * 0.9), head.width()), ink);
         let rows = offers.len() as f32;

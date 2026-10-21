@@ -201,26 +201,39 @@ impl SingerState {
         let prev = if phrase_start { None } else { self.prev_vowel };
         let glide_from = if phrase_start { key as f32 } else { self.last_pitch.unwrap_or(key as f32) };
         let analysis = bank.and_then(|b| b.analysis.get().map(|a| (b, a)));
-        let source = match analysis.and_then(|(b, a)| b.find(lyric, key, prev).map(|e| (b, a, e))) {
-            Some((b, a, e)) if a.get(e.sample).is_some_and(|m| !m.pos.is_empty()) => {
-                let s = &b.samples[e.sample];
-                let ms = s.sr as f64 / 1000.0;
-                let len = s.data.len() as f64;
-                let seg_start = (e.offset as f64 * ms).clamp(0.0, len);
-                let seg_end = if e.cutoff < 0.0 { seg_start - e.cutoff as f64 * ms } else { len - e.cutoff as f64 * ms }.clamp(seg_start + 1.0, len);
-                let cons = if e.consonant > 0.0 { e.consonant as f64 } else { e.preutter.max(0.0) as f64 } * ms;
-                let cons_end = (seg_start + cons).min(seg_end);
-                let vowel = (seg_end - cons_end).max(1.0);
-                Source::Bank { sample: e.sample, seg_start, cons_end, seg_end, loop_lo: cons_end + 0.25 * vowel, loop_hi: seg_end - 0.2 * vowel, overlap: (e.overlap.max(0.0) as f64 / 1000.0 * sr).max(0.012 * sr) }
+        // The recording cut as the oto.ini says; a cut past its recording's end
+        // (or of nothing) is sung with the voice of its own instead.
+        let cut = analysis.and_then(|(b, a)| b.find(lyric, key, prev).map(|e| (b, a, e))).and_then(|(b, a, e)| {
+            let s = b.samples.get(e.sample)?;
+            if !a.get(e.sample).is_some_and(|m| !m.pos.is_empty()) {
+                return None;
             }
-            _ => Source::Own { vowel: kana::vowel_of(&kana::to_kana(lyric)).or_else(|| kana::vowel_of(lyric)).unwrap_or('a'), cons: consonant_of(lyric) },
-        };
+            let ms = s.sr as f64 / 1000.0;
+            let len = s.data.len() as f64;
+            let seg_start = (e.offset as f64 * ms).max(0.0);
+            let seg_end = if e.cutoff < 0.0 { seg_start - e.cutoff as f64 * ms } else { len - e.cutoff as f64 * ms }.min(len);
+            if !(seg_end - seg_start >= 5.0 * ms) {
+                return None;
+            }
+            let cons = if e.consonant > 0.0 { e.consonant as f64 } else { e.preutter.max(0.0) as f64 } * ms;
+            let cons_end = (seg_start + cons).min(seg_end);
+            let vowel = (seg_end - cons_end).max(1.0);
+            Some(Source::Bank { sample: e.sample, seg_start, cons_end, seg_end, loop_lo: cons_end + 0.25 * vowel, loop_hi: seg_end - 0.2 * vowel, overlap: (e.overlap.max(0.0) as f64 / 1000.0 * sr).max(0.012 * sr) })
+        });
+        let source = cut.unwrap_or_else(|| Source::Own { vowel: kana::vowel_of(&kana::to_kana(lyric)).or_else(|| kana::vowel_of(lyric)).unwrap_or('a'), cons: consonant_of(lyric) });
         // Where it starts: the consonant before the beat (as long as the note came early enough).
         let cons_speed = p[CONSONANT].clamp(0.25, 4.0) as f64;
         let (wait, a_pos, sung) = match source {
             Source::Bank { sample, seg_start, .. } => {
                 let e = analysis.and_then(|(b, _)| b.find(lyric, key, prev)).cloned();
-                let sung = Lyric::new(e.as_ref().map_or(lyric, |e| e.alias.as_str()), false);
+                // Shown without the pitch's prefix and suffix ("a かA3": "a か").
+                let (pre, suf) = bank.and_then(|b| b.prefix_map.iter().find(|(n, _, _)| *n == key)).map(|(_, p, s)| (p.as_str(), s.as_str())).unwrap_or(("", ""));
+                let shown = e.as_ref().map_or(lyric, |e| {
+                    let a = e.alias.as_str();
+                    let a = a.strip_prefix(pre).unwrap_or(a);
+                    a.strip_suffix(suf).unwrap_or(a)
+                });
+                let sung = Lyric::new(shown, false);
                 let bank_sr = bank.map(|b| b.samples[sample].sr as f64).unwrap_or(44_100.0);
                 let pre = e.map(|e| e.preutter.max(0.0) as f64 / 1000.0).unwrap_or(0.05) / cons_speed;
                 let before = lead / sr - pre;
@@ -590,6 +603,48 @@ mod tests {
         assert!(x[..quiet as usize].iter().all(|v| v.abs() < 1e-4), "waits for its consonant's start");
         let beat = (LEAD_SECS as f32 * SR) as usize;
         assert!(x[beat..beat + 2400].iter().any(|v| v.abs() > 0.01), "sounds on the beat");
+    }
+
+    /// A second voicebank, unlike the first: two short recordings, another rate.
+    fn other_bank() -> VoicebankRef {
+        let sr = 22_050u32;
+        let mk = |hz: f32, secs: f32| -> Vec<i16> { (0..(sr as f32 * secs) as u32).map(|i| ((TAU * hz * i as f32 / sr as f32).sin() * 9000.0) as i16).collect() };
+        let a = OtoEntry { alias: "- か".into(), sample: 0, offset: 10.0, consonant: 40.0, cutoff: -250.0, preutter: 30.0, overlap: 10.0 };
+        let b = OtoEntry { alias: "a か".into(), sample: 1, offset: 400.0, consonant: 300.0, cutoff: 5.0, preutter: 300.0, overlap: 80.0 };
+        VoicebankRef::from_parts("Other", vec![Sample { name: "k.wav".into(), sr, data: mk(180.0, 0.3) }, Sample { name: "ak.wav".into(), sr, data: mk(300.0, 0.05) }], vec![a, b])
+    }
+
+    #[test]
+    fn switching_voicebanks_while_it_sings_never_breaks() {
+        let banks = [Some(bank()), Some(other_bank()), None];
+        let mut p = defaults(SPECS);
+        let mut st = SingerState::new(SR);
+        let mut rng = Rng::new(7);
+        let lyrics = ["a", "ka", "か", "sa", "", "n", "la", "きょ", "xyz"];
+        let (mut l, mut r) = (vec![0.0; 128], vec![0.0; 128]);
+        let mut held: Vec<u8> = Vec::new();
+        for block in 0..6000 {
+            let bank = banks[(block / 7) % 3].as_ref();
+            let u = (rng.bipolar() + 1.0) * 0.5;
+            if u < 0.2 {
+                let note = 40 + ((rng.bipolar() + 1.0) * 20.0) as u8;
+                st.set_lyric(Lyric::new(lyrics[block % lyrics.len()], block % 3 == 0));
+                st.note_on(&p, bank, note, 0.8);
+                held.push(note);
+            } else if u < 0.35 && !held.is_empty() {
+                st.note_off(&p, held.remove(0));
+            } else if u > 0.995 {
+                st.all_off();
+            }
+            if block % 500 == 0 {
+                p[GENDER] = rng.bipolar();
+                p[CONSONANT] = 0.5 + (rng.bipolar() + 1.0) * 0.75;
+            }
+            l.fill(0.0);
+            r.fill(0.0);
+            st.render(&p, bank, &mut l, &mut r);
+            assert!(l.iter().all(|v| v.is_finite() && v.abs() < 8.0), "block {block}");
+        }
     }
 
     #[test]

@@ -8,6 +8,10 @@
 //! backwards, to and fro or shuffled, and a little different each time round.
 //! A Singer hears its notes early (`MidiCtx::lead`), so its consonants start
 //! before the beat and the vowels land on it, as with a clip's notes.
+//!
+//! Its data is the text, then (after a 0) what was drawn on its sheet: for
+//! each place in the phrase a note (scale steps, for the Drawn melody) and a
+//! length (steps; 0 follows the rhythm).
 
 use super::{rate_beats, SeqState};
 use crate::midi_fx::{Lyric, MidiCtx, MidiEvent};
@@ -27,7 +31,9 @@ pub const GATE: usize = 9;
 pub const VELOCITY: usize = 10;
 
 pub const RHYTHMS: &[&str] = &["Even", "Lilt", "Pop", "Chant", "Free"];
-pub const MELODIES: &[&str] = &["Arch", "Rise", "Fall", "Wave", "Walk", "Repeat", "Free"];
+pub const MELODIES: &[&str] = &["Arch", "Rise", "Fall", "Wave", "Walk", "Repeat", "Free", "Drawn"];
+/// The melody drawn on the sheet.
+pub const DRAWN: usize = 7;
 pub const ORDERS: &[&str] = &["Forward", "Backward", "Ping-Pong", "Shuffle"];
 
 /// At most this many syllables are sung.
@@ -81,9 +87,34 @@ pub struct Plan {
     pub length: u32,
 }
 
+/// The text in its data (before what was drawn).
+pub fn text(data: &[u8]) -> &[u8] {
+    data.split(|&b| b == 0).next().unwrap_or(&[])
+}
+
+/// What was drawn: a (note, length) for each place in the phrase.
+pub fn drawn(data: &[u8]) -> Vec<(i8, u8)> {
+    match data.iter().position(|&b| b == 0) {
+        Some(i) => data[i + 1..].chunks_exact(2).map(|c| (c[0] as i8, c[1])).collect(),
+        None => Vec::new(),
+    }
+}
+
+/// The data for a text and what was drawn for it.
+pub fn with_drawn(text: &[u8], drawn: &[(i8, u8)]) -> Vec<u8> {
+    let mut out = text.iter().copied().filter(|&b| b != 0).collect::<Vec<u8>>();
+    if !drawn.is_empty() {
+        out.push(0);
+        for &(d, l) in drawn {
+            out.extend_from_slice(&[d as u8, l]);
+        }
+    }
+    out
+}
+
 /// The text's words, each as its syllables.
 pub fn words(data: &[u8]) -> Vec<Vec<String>> {
-    let text = String::from_utf8_lossy(data);
+    let text = String::from_utf8_lossy(text(data));
     let mut left = MAX_SYLLABLES;
     let mut out = Vec::new();
     for w in text.split(|c: char| c.is_whitespace() || ",.;:!?/()\"、。！？「」".contains(c)).filter(|w| !w.is_empty()) {
@@ -120,7 +151,9 @@ fn pick(v: f32, n: usize) -> usize {
 /// How pass `pass` through the text goes.
 pub fn plan(p: &[f32], data: &[u8], pass: u64) -> Plan {
     let words = words(data);
-    let seed = fnv(data);
+    // Seeded by the text alone: drawing does not change the rest.
+    let seed = fnv(text(data));
+    let drawn = drawn(data);
     let get = |i: usize, or: f32| p.get(i).copied().unwrap_or(or);
     let rhythm = pick(get(RHYTHM, 0.0), RHYTHMS.len());
     let melody = pick(get(MELODY, 0.0), MELODIES.len());
@@ -166,6 +199,10 @@ pub fn plan(p: &[f32], data: &[u8], pass: u64) -> Plan {
             if k + 1 == run.len() {
                 steps += word_end;
             }
+            // A length drawn on the sheet.
+            if let Some(&(_, l)) = drawn.get(i).filter(|d| d.1 > 0) {
+                steps = l as u32;
+            }
             let t = if n > 1 { i as f32 / (n - 1) as f32 } else { 0.0 };
             let r = range as f32;
             let mut degree = match melody {
@@ -181,6 +218,7 @@ pub fn plan(p: &[f32], data: &[u8], pass: u64) -> Plan {
                     }
                 }
                 6 => (unit(seed ^ 0xF4EE, i as u64) * (r + 1.0)).floor().min(r) as i32,
+                DRAWN => drawn.get(i).map(|d| d.0 as i32).unwrap_or(0),
                 _ => 0,
             };
             if melody == 4 {
@@ -409,6 +447,24 @@ mod tests {
         let p = quiet();
         assert_eq!(plan(&p, b"   ", 0).length, 0);
         assert!(run(&p, b"", 4.0, 0.0).is_empty());
+    }
+
+    #[test]
+    fn a_melody_drawn_on_the_sheet_is_sung() {
+        let mut p = quiet();
+        p[MELODY] = DRAWN as f32;
+        let data = with_drawn(b"la li lo", &[(0, 0), (4, 0), (-2, 3)]);
+        assert_eq!(text(&data), b"la li lo");
+        assert_eq!(drawn(&data), [(0, 0), (4, 0), (-2, 3)]);
+        let plan = plan(&p, &data, 0);
+        assert_eq!(plan.sung.iter().map(|s| s.degree).collect::<Vec<_>>(), [0, 4, -2]);
+        // The last one drawn three long; the others as the rhythm goes (a word's end one longer).
+        assert_eq!(plan.sung.iter().map(|s| s.steps).collect::<Vec<_>>(), [2, 2, 3]);
+        // Another melody leaves the drawn notes be, but keeps the drawn lengths.
+        p[MELODY] = 0.0;
+        assert_eq!(super::plan(&p, &data, 0).sung[2].steps, 3);
+        let ons = run(&p, &data, 2.0, 0.0);
+        assert_eq!(ons.first().map(|o| o.2.as_str()), Some("la"));
     }
 
     #[test]

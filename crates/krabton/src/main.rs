@@ -27,7 +27,28 @@ mod theme;
 mod ui;
 mod widgets;
 
+/// Writes every panic down (Krabton has no console on Windows): when, in
+/// which thread, what and where, and the call stack, appended to crash.log
+/// beside the settings. The default message is still printed too.
+fn log_panics() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        default(info);
+        let Some(path) = prefs::Prefs::crash_log() else { return };
+        let what = info.payload().downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| info.payload().downcast_ref::<String>().cloned()).unwrap_or_default();
+        let at = info.location().map(|l| format!("{}:{}", l.file(), l.line())).unwrap_or_default();
+        let when = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let thread = std::thread::current().name().unwrap_or("unnamed").to_string();
+        let text = format!("Krabton {} ({}), {when} s after 1970, thread {thread}: {what}\n  at {at}\n{}\n\n", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::backtrace::Backtrace::force_capture());
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            use std::io::Write;
+            let _ = f.write_all(text.as_bytes());
+        }
+    }));
+}
+
 fn main() -> eframe::Result<()> {
+    log_panics();
     // The crab, for the title bar and the task bar.
     let icon = egui::IconData { rgba: include_bytes!("../assets/icon-64.rgba").to_vec(), width: 64, height: 64 };
     let mut viewport = egui::ViewportBuilder::default()

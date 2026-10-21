@@ -200,7 +200,8 @@ impl VoicebankRef {
         let d = self.0.clone();
         std::thread::spawn(move || {
             let n = d.samples.len();
-            let threads = std::thread::available_parallelism().map(|t| t.get()).unwrap_or(2).clamp(1, 8);
+            // A core left for the sound (the audio thread must never wait).
+            let threads = std::thread::available_parallelism().map(|t| t.get()).unwrap_or(2).saturating_sub(1).clamp(1, 4);
             let mut out: Vec<Marks> = vec![Marks::default(); n];
             std::thread::scope(|s| {
                 let chunk = n.div_ceil(threads).max(1);
