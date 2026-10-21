@@ -198,6 +198,27 @@ const SF2: Skin = Skin {
     ..BASE
 };
 
+/// A vocal booth: deep indigo lacquer, a pink stripe and pink caps, a cyan display.
+const SINGER: Skin = Skin {
+    top: hex(0x2c2752),
+    bottom: hex(0x181530),
+    surface: Surface::Gloss,
+    stripes: &[hex(0xff7aa8), hex(0x5ad1d6)],
+    ink: hex(0xf1eefa),
+    dim: hex(0xb3acd0),
+    well: hex(0x0f0d1f),
+    well_ink: hex(0xf1eefa),
+    accent: hex(0x7ff0e6),
+    knob: Knob::Cap,
+    cap: hex(0xff7aa8),
+    logo: Font::Future,
+    logo_size: 20.0,
+    logo_ink: hex(0xffd3e3),
+    groups: Groups::Outline,
+    heroes: &["Vibrato"],
+    ..BASE
+};
+
 const PARTICLES: Skin = Skin {
     top: hex(0xc9a56c),
     bottom: hex(0xa4814b),
@@ -948,6 +969,7 @@ pub fn for_instrument(name: &str) -> Option<Skin> {
         "FM" => FM,
         "Sampler" => SAMPLER,
         "SF2 Player" => SF2,
+        "Singer" => SINGER,
         "Street Organ" => STREET_ORGAN,
         "Plaits" => Skin { accent: hex(0x2fa84f), heroes: &["Harmonics", "Timbre", "Morph"], ..MODULE },
         "Braids" => Skin { accent: hex(0xe04534), heroes: &["Timbre", "Color"], ..MODULE },

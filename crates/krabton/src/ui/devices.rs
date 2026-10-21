@@ -1048,6 +1048,7 @@ impl App {
         let info = match &inst {
             Instrument::Drums { engine, .. } => Some(engine.description()),
             Instrument::Sf2 { .. } => Some(super::browser::SF2_HINT),
+            Instrument::Singer { .. } => Some(super::browser::SINGER_HINT),
             Instrument::Plugin(_) => None,
             _ => super::browser::instrument_hint(title),
         };
@@ -1187,6 +1188,50 @@ impl App {
                             self.prefs.save();
                             let name = font.as_ref().map(|f| f.name.clone()).unwrap_or_default();
                             self.toast(if for_midi { "MIDI files play with Krabton's instruments again".to_string() } else { format!("MIDI files you open play with {name}") });
+                        }
+                    }
+                    Instrument::Singer { params, bank } => {
+                        let mut asked = super::faces::singer::Asked::default();
+                        if crate::skin::current().is_some() {
+                            super::faces::singer::panel(ui, Id::new(("singer", track_id)), bank.as_ref(), params, &live, h - 36.0, mv.as_mut(), &mut asked);
+                        } else {
+                            ui.horizontal(|ui| {
+                                let name = match bank {
+                                    Some(b) if b.is_missing() => format!("Missing: {}", b.name),
+                                    Some(b) => b.name.clone(),
+                                    None => "Own voice".into(),
+                                };
+                                ui.label(RichText::new(name).strong().color(TEXT));
+                                if let Some(b) = bank.as_ref().filter(|b| !b.is_missing()) {
+                                    let kind = if b.ready() < 1.0 { format!("listening {:.0}%", b.ready() * 100.0) } else { format!("{} · {} samples", if b.vcv { "VCV" } else { "CV" }, b.entries.len()) };
+                                    ui.label(RichText::new(kind).small().color(crate::skin::ink_dim()));
+                                }
+                                if ui.button("Open...").on_hover_text("Open a UTAU voicebank's folder (the one with its oto.ini)").clicked() {
+                                    asked.open = true;
+                                }
+                                if bank.is_some() && ui.button("Own voice").on_hover_text("Sing with the Singer's own voice, without the voicebank").clicked() {
+                                    asked.own = true;
+                                }
+                                let sung = krabton_engine::singer::sung_of(&live.vals);
+                                if live.vals[2] > 0.001 && !sung.is_empty() {
+                                    ui.label(RichText::new(sung).strong().color(accent_now()));
+                                    ui.ctx().request_repaint();
+                                }
+                            });
+                            param_grid_mod(ui, Id::new(("singer", track_id)), krabton_engine::singer::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
+                        }
+                        if asked.open {
+                            if let Some(b) = self.open_voicebank_dialog() {
+                                *bank = Some(b);
+                            }
+                        }
+                        if let Some(BrowserItem::Voicebank(path)) = asked.dropped.take() {
+                            if let Some(b) = self.singer_bank(&path) {
+                                *bank = Some(b);
+                            }
+                        }
+                        if asked.own {
+                            *bank = None;
                         }
                     }
                     Instrument::Piano { preset, params } => {
@@ -2375,7 +2420,7 @@ impl App {
             t.instrument = None;
         } else if new_inst != inst {
             // Another preset of the bank: a name Krabton gave follows it.
-            if matches!(new_inst, Instrument::Sf2 { .. }) && t.name == inst.track_name() {
+            if matches!(new_inst, Instrument::Sf2 { .. } | Instrument::Singer { .. }) && t.name == inst.track_name() {
                 t.name = new_inst.track_name();
             }
             t.instrument = Some(new_inst);

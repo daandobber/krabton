@@ -70,6 +70,8 @@ pub struct Prefs {
     pub fm_banks: Vec<PathBuf>,
     /// SoundFont banks opened, for the SF2 Player's folder in the browser.
     pub sf2_banks: Vec<PathBuf>,
+    /// UTAU voicebank folders opened, for the Singer's folder in the browser.
+    pub singer_banks: Vec<PathBuf>,
     /// The General MIDI bank MIDI files play with (none: Krabton's instruments).
     pub gm_bank: Option<PathBuf>,
     /// Hear notes while placing and moving them in the clip editor.

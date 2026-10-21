@@ -19,14 +19,53 @@ pub struct MidiEvent {
     pub on: bool,
     pub pitch: u8,
     pub vel: f32,
+    /// What it sings (a clip note's lyric; empty for the rest).
+    pub lyric: Lyric,
 }
 
 impl MidiEvent {
     pub fn on(offset: u32, pitch: u8, vel: f32) -> Self {
-        Self { offset, on: true, pitch, vel }
+        Self { offset, on: true, pitch, vel, lyric: Lyric::default() }
     }
     pub fn off(offset: u32, pitch: u8) -> Self {
-        Self { offset, on: false, pitch, vel: 0.0 }
+        Self { offset, on: false, pitch, vel: 0.0, lyric: Lyric::default() }
+    }
+}
+
+/// A note's lyric carried with it, short and inline so events stay small
+/// and copyable; `early` when the note comes ahead of its time (a clip note
+/// sent to the Singer before the beat, for its consonant).
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub struct Lyric {
+    len: u8,
+    bytes: [u8; 22],
+    pub early: bool,
+}
+
+impl Lyric {
+    pub fn new(s: &str, early: bool) -> Self {
+        let s = s.trim();
+        let mut end = s.len().min(22);
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        let mut bytes = [0u8; 22];
+        bytes[..end].copy_from_slice(&s.as_bytes()[..end]);
+        Self { len: end as u8, bytes, early }
+    }
+
+    pub fn as_str(&self) -> &str {
+        std::str::from_utf8(&self.bytes[..self.len as usize]).unwrap_or("")
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
+impl std::fmt::Debug for Lyric {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}{}", self.as_str(), if self.early { " (early)" } else { "" })
     }
 }
 

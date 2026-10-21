@@ -477,6 +477,10 @@ impl App {
             if n.start >= len {
                 gp.rect_filled(r, 2.0, Color32::from_black_alpha(120));
             }
+            // Its lyric, just above it.
+            if !n.lyric.is_empty() {
+                gp.text(pos2(r.left() + 1.0, r.top() - 1.0), Align2::LEFT_BOTTOM, &n.lyric, egui::FontId::proportional(11.0), if selected { Color32::WHITE } else { TEXT });
+            }
         }
         if let Some(m) = self.piano.marquee {
             gp.rect_filled(m, 0.0, Color32::from_rgba_unmultiplied(160, 216, 255, 30));

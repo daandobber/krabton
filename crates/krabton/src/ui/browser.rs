@@ -113,6 +113,7 @@ enum Act {
     LoadSyx,
     LoadSyxFolder,
     LoadSf2,
+    LoadVoicebank,
     /// Download offered SoundFont bank number n.
     GetSf2(usize),
 }
@@ -452,6 +453,7 @@ fn devices() -> [Dev; 42] {
 
 const FM_HINT: &str = "FM voice: double-click or drag onto a track";
 const SAMPLE_HINT: &str = "Click to hear it, double-click to load it, or drag it onto a track or slot";
+pub(crate) const SINGER_HINT: &str = "Sings the lyrics of its notes with a UTAU voicebank (CV or VCV, Japanese; romaji or kana), the consonant before the beat, the vowel held; without one, a voice of its own. Type lyrics in the clip view";
 pub(crate) const SF2_HINT: &str = "Plays the presets of SoundFont 2 banks (.sf2): pianos, orchestras, General MIDI sets, drum kits";
 const MIDI_FILE_HINT: &str = "MIDI file: drag it onto a slot or the arrangement for one clip, or double-click (or drop it below the tracks) for a track per part";
 
@@ -753,6 +755,7 @@ impl App {
                 }
                 all.push(("Sampler", "Plays samples: drop a sample on it afterwards", vec![("Sampler".to_string(), BrowserItem::Sampler)]));
                 all.push(("SF2 Player", SF2_HINT, vec![("SF2 Player".to_string(), BrowserItem::Sf2Player)]));
+                all.push(("Singer", SINGER_HINT, vec![("Singer".to_string(), BrowserItem::Singer)]));
                 all.sort_by_key(|a| a.0);
                 // Columns of names; each opens its presets.
                 let per = all.len().div_ceil(3);
@@ -860,6 +863,12 @@ impl App {
             sf2.push(Node::Folder { tag: Some(file_tag(path)), label: file_name(path).trim_end_matches(".sf2").trim_end_matches(".SF2").to_string(), icon: Icon::Bank, hint: path.display().to_string(), load: None, kids: Kids::Sf2(path.clone()) });
         }
         out.push(Node::Folder { tag: None, label: "SF2 Player".into(), icon: Icon::Device, hint: SF2_HINT.into(), load: Some(BrowserItem::Sf2Player), kids: Kids::Nodes(sf2) });
+        // The Singer, with the voicebanks opened before.
+        let mut singer = vec![Node::Action { label: "Open a voicebank folder...".into(), hint: "A UTAU voicebank's folder (the one with its oto.ini): CV or VCV, Japanese".into(), act: Act::LoadVoicebank }];
+        for path in self.prefs.singer_banks.iter().filter(|p| p.is_dir()) {
+            singer.push(Node::item(dir_tag(path), file_name(path), Icon::Preset, SINGER_HINT, BrowserItem::Voicebank(path.clone())));
+        }
+        out.push(Node::Folder { tag: None, label: "Singer".into(), icon: Icon::Device, hint: SINGER_HINT.into(), load: Some(BrowserItem::Singer), kids: Kids::Nodes(singer) });
         out.push(Node::item("inst/Sampler", "Sampler", Icon::Device, "Plays samples: one across the keyboard, a multi-sampled instrument or SFZ, or slices of a loop", BrowserItem::Sampler));
         out.sort_by(|a, b| a.label().cmp(b.label()));
         out
@@ -989,7 +998,9 @@ impl App {
         for (path, is_dir) in entries {
             let name = file_name(&path);
             if is_dir {
-                out.push(Node::Folder { tag: Some(dir_tag(&path)), label: name, icon: Icon::Folder, hint: String::new(), load: None, kids: Kids::Dir { path, samples_only } });
+                let voicebank = !samples_only && path.join("oto.ini").is_file();
+                let (icon, hint, load) = if voicebank { (Icon::Device, "UTAU voicebank: double-click or drag onto a track to sing with it".to_string(), Some(BrowserItem::Voicebank(path.clone()))) } else { (Icon::Folder, String::new(), None) };
+                out.push(Node::Folder { tag: Some(dir_tag(&path)), label: name, icon, hint, load, kids: Kids::Dir { path, samples_only } });
             } else if has_ext(&path, "wav") || has_ext(&path, "flac") {
                 out.push(Node::item(file_tag(&path), name, Icon::Sample, SAMPLE_HINT, BrowserItem::Sample(path)));
             } else if has_ext(&path, "sfz") {
@@ -1471,6 +1482,12 @@ impl App {
                         self.prefs.save();
                     }
                     self.plugins.add_folder(dir);
+                }
+            }
+            Act::LoadVoicebank => {
+                if let Some(b) = self.open_voicebank_dialog() {
+                    let kind = if b.vcv { "VCV" } else { "CV" };
+                    self.toast(format!("{}: {} {kind} samples; drag it onto a track or double-click it", b.name, b.entries.len()));
                 }
             }
             Act::LoadSf2 => {

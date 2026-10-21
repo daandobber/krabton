@@ -127,6 +127,9 @@ pub struct Note {
     pub recur_len: u8,
     #[serde(default = "all_bits")]
     pub recur_mask: u8,
+    /// What a Singer sings on it (a syllable, in romaji or kana, or a voicebank's alias).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub lyric: String,
 }
 
 fn one() -> f32 {
@@ -235,7 +238,7 @@ pub fn tidy_notes(notes: &mut Vec<Note>) -> Option<Vec<Option<usize>>> {
 
 impl Note {
     pub fn new(pitch: u8, start: f64, length: f64, velocity: f32) -> Self {
-        Self { pitch, start, length, velocity, chance: 1.0, vel_spread: 0.0, repeats: 1, recur_len: 0, recur_mask: 0xFF }
+        Self { pitch, start, length, velocity, chance: 1.0, vel_spread: 0.0, repeats: 1, recur_len: 0, recur_mask: 0xFF, lyric: String::new() }
     }
 
     pub fn end(&self) -> f64 {
@@ -773,6 +776,11 @@ pub enum Instrument {
     Facet { preset: String, params: Vec<f32> },
     /// Beads: the wavetable synth of Mutable Instruments Beads, played with keys, with its grains.
     BeadsSynth { preset: String, params: Vec<f32> },
+    /// Singer: sings its notes' lyrics with a UTAU voicebank (see `singer`).
+    Singer {
+        params: Vec<f32>,
+        bank: Option<crate::singer::VoicebankRef>,
+    },
     /// Street Organ: a Dutch street organ's pipes, divisions and drums (see `dsp::street_organ`).
     StreetOrgan { preset: String, params: Vec<f32> },
     /// SF2 Player: a preset (bank, program) of a SoundFont 2 bank (see `dsp::sf2`).
@@ -955,6 +963,10 @@ impl Instrument {
         Instrument::Facet { preset: preset.to_string(), params: crate::dsp::facet::preset(preset) }
     }
 
+    pub fn singer(bank: Option<crate::singer::VoicebankRef>) -> Self {
+        Instrument::Singer { params: params::defaults(crate::singer::SPECS), bank }
+    }
+
     pub fn street_organ(preset: &str) -> Self {
         crate::dsp::street_organ::warm();
         Instrument::StreetOrgan { preset: preset.to_string(), params: crate::dsp::street_organ::preset(preset) }
@@ -1017,6 +1029,7 @@ impl Instrument {
             Instrument::Facet { .. } => "Facet",
             Instrument::Sf2 { .. } => "SF2 Player",
             Instrument::StreetOrgan { .. } => "Street Organ",
+            Instrument::Singer { .. } => "Singer",
         }
     }
 
@@ -1030,6 +1043,7 @@ impl Instrument {
             Instrument::Plugin(p) => p.name.clone(),
             Instrument::Sf2 { preset, .. } if !preset.is_empty() => preset.clone(),
             Instrument::Sf2 { font, .. } => font.as_ref().map(|f| f.name.clone()).unwrap_or_else(|| "Empty".into()),
+            Instrument::Singer { bank, .. } => bank.as_ref().map(|b| b.name.clone()).unwrap_or_else(|| "Own voice".into()),
             Instrument::Fm { voice, .. } => Dx7Voice::from_slice(voice).map(|v| v.name()).unwrap_or_else(|| "FM".into()),
             Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Modular { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } | Instrument::Monk { preset, .. } | Instrument::Piano { preset, .. } | Instrument::Bassline { preset, .. } | Instrument::Mono101 { preset, .. } | Instrument::Drone { preset, .. } | Instrument::Waves { preset, .. } | Instrument::Guitar { preset, .. } | Instrument::WindChimes { preset, .. } | Instrument::Birds { preset, .. } | Instrument::Nature { preset, .. } | Instrument::PanFlute { preset, .. } | Instrument::Melodica { preset, .. } | Instrument::Harmonica { preset, .. } | Instrument::Calculator { preset, .. } | Instrument::Console { preset, .. } | Instrument::Handheld { preset, .. } | Instrument::Micro { preset, .. } | Instrument::Warp { preset, .. } | Instrument::Hybrid { preset, .. } | Instrument::Quartet { preset, .. } | Instrument::ChipFm { preset, .. } | Instrument::V2 { preset, .. } | Instrument::Oidos { preset, .. } | Instrument::Orchestra { preset, .. } | Instrument::Facet { preset, .. } | Instrument::BeadsSynth { preset, .. } | Instrument::StreetOrgan { preset, .. } => preset.clone(),
         }
@@ -1043,6 +1057,8 @@ impl Instrument {
             Instrument::Guitar { params, .. } => crate::dsp::guitar::family_name(params).to_string(),
             // A bank's preset is the instrument (a piano, a kit, a choir).
             Instrument::Sf2 { preset, .. } if !preset.is_empty() => preset.clone(),
+            // A voicebank is the singer.
+            Instrument::Singer { bank: Some(b), .. } => b.name.clone(),
             i => i.kind_name().to_string(),
         }
     }
@@ -2062,6 +2078,7 @@ impl Project {
                     Some(Instrument::Synth { params, .. }) => params::fix_len(params, synth::SPECS),
                     Some(Instrument::Sampler { params, .. }) => params::fix_len(params, sampler::SPECS),
                     Some(Instrument::Sf2 { params, .. }) => params::fix_len(params, crate::dsp::sf2::SPECS),
+                    Some(Instrument::Singer { params, .. }) => params::fix_len(params, crate::singer::SPECS),
                     Some(Instrument::StreetOrgan { params, .. }) => {
                         params::fix_len(params, crate::dsp::street_organ::SPECS);
                         crate::dsp::street_organ::warm();

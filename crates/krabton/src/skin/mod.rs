@@ -98,9 +98,34 @@ impl Font {
     }
 }
 
+/// A Japanese font on this computer (for lyrics in kana and voicebanks' names).
+fn system_cjk_font() -> Option<Vec<u8>> {
+    const CANDIDATES: &[&str] = &[
+        "C:/Windows/Fonts/YuGothM.ttc",
+        "C:/Windows/Fonts/YuGothR.ttc",
+        "C:/Windows/Fonts/meiryo.ttc",
+        "C:/Windows/Fonts/msgothic.ttc",
+        "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        "/Library/Fonts/Arial Unicode.ttf",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+    ];
+    CANDIDATES.iter().find_map(|p| std::fs::read(p).ok())
+}
+
 /// Adds the logo fonts (each falls back on Krabton's own for what it lacks).
 pub fn install_fonts(ctx: &egui::Context) {
     let mut defs = egui::FontDefinitions::default();
+    // Kana and kanji from the system's Japanese font, behind everything else.
+    if let Some(cjk) = system_cjk_font() {
+        defs.font_data.insert("cjk".to_owned(), std::sync::Arc::new(egui::FontData::from_owned(cjk)));
+        for fam in [FontFamily::Proportional, FontFamily::Monospace] {
+            defs.families.entry(fam).or_default().push("cjk".to_owned());
+        }
+    }
     let fallback = defs.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
     for (name, data) in FONTS {
         defs.font_data.insert((*name).to_owned(), std::sync::Arc::new(egui::FontData::from_static(data)));

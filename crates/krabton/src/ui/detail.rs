@@ -419,6 +419,19 @@ impl App {
                         self.piano.selected.clear();
                     }
                 });
+                // Lyrics for a Singer: a line, a syllable on each note (the selected ones, or all).
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Lyrics").small().color(TEXT_DIM));
+                    // The box takes what the Sing button leaves.
+                    let w = (ui.available_width() - 44.0).max(60.0);
+                    let resp = ui.add(egui::TextEdit::singleline(&mut self.lyric_text).hint_text("sa ku ra / さくら").desired_width(w));
+                    let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    let tip = "A syllable on each note in time order: on the selected notes, or all of them. Words split on spaces and hyphens, romaji into syllables (sakura: sa ku ra), kana into morae. Nothing typed takes them off";
+                    if ui.small_button("Sing").on_hover_text(tip).clicked() || enter {
+                        let text = self.lyric_text.clone();
+                        self.put_lyrics(sel, &text);
+                    }
+                });
                 ui.label(RichText::new(format!("{} notes, {} selected", notes.len(), self.piano.selected.len())).small().color(TEXT_DIM));
                 let picked: Vec<usize> = self.piano.selected.iter().copied().filter(|&i| i < notes.len()).collect();
                 match picked.first().map(|&i| notes[i].clone()) {

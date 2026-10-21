@@ -212,7 +212,7 @@ pub(crate) fn display(ui: &mut Ui, id: Id, r: Rect, font: Option<&Sf2Ref>, bank:
 }
 
 /// A button printed on the display; lit when `on`.
-fn lcd_button(ui: &mut Ui, p: &egui::Painter, r: Rect, id: Id, text: &str, on: bool, u: f32) -> egui::Response {
+pub(super) fn lcd_button(ui: &mut Ui, p: &egui::Painter, r: Rect, id: Id, text: &str, on: bool, u: f32) -> egui::Response {
     let resp = ui.interact(r, id, Sense::click());
     let ink = accent_now();
     let fill = if on { shade(ink, 0.35) } else if resp.hovered() { Color32::from_white_alpha(18) } else { Color32::TRANSPARENT };

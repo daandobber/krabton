@@ -84,6 +84,10 @@ pub enum BrowserItem {
     MidiFile(PathBuf),
     /// A Street Organ preset.
     StreetOrgan(&'static str),
+    /// The Singer (on the voicebank used last, or its own voice).
+    Singer,
+    /// A UTAU voicebank's folder, for the Singer.
+    Voicebank(PathBuf),
     /// The SF2 Player without a bank.
     Sf2Player,
     /// A preset of a SoundFont bank on disk.
@@ -223,6 +227,8 @@ impl BrowserItem {
             BrowserItem::Sample(p) => p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default(),
             BrowserItem::MidiFile(p) => p.file_stem().map(|f| f.to_string_lossy().to_string()).unwrap_or_default(),
             BrowserItem::Sf2Player => "SF2 Player".into(),
+            BrowserItem::Singer => "Singer".into(),
+            BrowserItem::Voicebank(p) => p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default(),
             BrowserItem::Sf2 { name, .. } => name.clone(),
             BrowserItem::Plugin(p) | BrowserItem::PluginEffect(p) => p.name.clone(),
             BrowserItem::MidiFx(k) => k.name().into(),
@@ -368,6 +374,9 @@ pub struct App {
     pub fm_banks: Vec<FmBank>,
     /// SoundFont banks open (the last few), so picking from one again is instant.
     pub(crate) sf2_open: Vec<krabton_engine::dsp::sf2::Sf2Ref>,
+    /// Voicebanks open (the last few), and the lyrics typed in the clip view.
+    pub(crate) singer_open: Vec<krabton_engine::singer::VoicebankRef>,
+    pub(crate) lyric_text: String,
     /// monome grid/arc and the virtual grid.
     pub grid: crate::grid::GridState,
     /// Modulator in map mode: clicking or dragging knobs connects it.
@@ -563,6 +572,8 @@ impl App {
             plugins,
             fm_banks: vec![FmBank::factory()],
             sf2_open: Vec::new(),
+            singer_open: Vec::new(),
+            lyric_text: String::new(),
             grid: crate::grid::GridState::new(),
             mod_learn: None,
             sel_mod: None,
@@ -1314,6 +1325,48 @@ impl App {
                     }
                 }
             }
+            BrowserItem::Singer | BrowserItem::Voicebank(_) => {
+                let bank = match item {
+                    BrowserItem::Voicebank(path) => match self.singer_bank(path) {
+                        Some(b) => Some(b),
+                        None => return,
+                    },
+                    _ => self.default_singer_bank(),
+                };
+                match target_track {
+                    // A voicebank on a Singer: it sings with it, its knobs as they were.
+                    Some(t) if matches!(self.project.tracks.get(t).and_then(|tr| tr.instrument.as_ref()), Some(Instrument::Singer { .. })) => {
+                        if let Some(Instrument::Singer { bank: b, .. }) = self.project.tracks[t].instrument.as_mut() {
+                            if bank.is_some() {
+                                *b = bank.clone();
+                            }
+                        }
+                        self.sel_track = TrackSel::Track(t);
+                        self.detail = DetailTab::Devices;
+                    }
+                    Some(t) if is_midi(self, t) => {
+                        let tr = &mut self.project.tracks[t];
+                        let generic = tr.name.ends_with("MIDI") || tr.instrument.as_ref().map(|i| i.track_name() == tr.name || i.display_name() == tr.name).unwrap_or(true);
+                        let inst = Instrument::singer(bank.clone());
+                        if generic {
+                            tr.name = bank.as_ref().map(|b| b.name.clone()).unwrap_or_else(|| inst.track_name());
+                        }
+                        tr.instrument = Some(inst);
+                        self.sel_track = TrackSel::Track(t);
+                        self.detail = DetailTab::Devices;
+                    }
+                    _ => {
+                        let t = self.add_midi_track(Some(Instrument::singer(bank.clone())));
+                        if let Some(b) = &bank {
+                            self.project.tracks[t].name = b.name.clone();
+                        }
+                    }
+                }
+                if let Some(b) = &bank {
+                    let kind = if b.vcv { "VCV" } else { "CV" };
+                    self.toast(format!("{}: {} {kind} samples; type lyrics in the clip view", b.name, b.entries.len()));
+                }
+            }
             BrowserItem::Sf2Player | BrowserItem::Sf2 { .. } => {
                 let inst = match item {
                     BrowserItem::Sf2 { path, bank, patch, .. } => {
@@ -1492,6 +1545,67 @@ impl App {
             },
             _ => Instrument::elements("Glockenspiel"),
         }
+    }
+
+    /// A UTAU voicebank: read and kept open (the last few), remembered for the
+    /// browser; its pitch periods are found in the background.
+    pub(crate) fn singer_bank(&mut self, path: &Path) -> Option<krabton_engine::singer::VoicebankRef> {
+        if let Some(b) = self.singer_open.iter().find(|b| b.path.as_deref() == Some(path)) {
+            return Some(b.clone());
+        }
+        match krabton_engine::singer::VoicebankRef::load(path) {
+            Ok(b) => {
+                if self.singer_open.len() >= 3 {
+                    self.singer_open.remove(0);
+                }
+                self.singer_open.push(b.clone());
+                if !self.prefs.singer_banks.iter().any(|p| p == path) {
+                    self.prefs.singer_banks.push(path.to_path_buf());
+                    self.prefs.save();
+                }
+                Some(b)
+            }
+            Err(e) => {
+                self.toast(e);
+                None
+            }
+        }
+    }
+
+    /// The voicebank a new Singer starts on: the last one opened that is still there.
+    pub(crate) fn default_singer_bank(&mut self) -> Option<krabton_engine::singer::VoicebankRef> {
+        let path = self.prefs.singer_banks.iter().rev().find(|p| p.join("oto.ini").is_file() || p.is_dir()).cloned()?;
+        self.singer_bank(&path)
+    }
+
+    /// Opens a voicebank folder for the Singer.
+    pub(crate) fn open_voicebank_dialog(&mut self) -> Option<krabton_engine::singer::VoicebankRef> {
+        let dir = rfd::FileDialog::new().set_title("A UTAU voicebank's folder (with its oto.ini)").pick_folder()?;
+        self.singer_bank(&dir)
+    }
+
+    /// Puts typed lyrics on a clip's notes, a syllable each in time order: on
+    /// the selected notes, or all of them; nothing typed takes them off.
+    pub(crate) fn put_lyrics(&mut self, sel: ClipSel, text: &str) {
+        let syllables = krabton_engine::singer::kana::split_lyrics(text);
+        let picked: Vec<usize> = self.piano.selected.iter().copied().collect();
+        let Some(notes) = self.clip_mut(sel).and_then(|c| c.notes_mut()) else { return };
+        let mut order: Vec<usize> = if picked.is_empty() { (0..notes.len()).collect() } else { picked.into_iter().filter(|&i| i < notes.len()).collect() };
+        // In time order, the highest of notes together first (the tune).
+        order.sort_by(|&a, &b| notes[a].start.total_cmp(&notes[b].start).then(notes[b].pitch.cmp(&notes[a].pitch)));
+        let n = order.len();
+        if syllables.is_empty() {
+            for &i in &order {
+                notes[i].lyric.clear();
+            }
+            self.toast(format!("Lyrics off {n} note{}", if n == 1 { "" } else { "s" }));
+            return;
+        }
+        for (&i, s) in order.iter().zip(&syllables) {
+            notes[i].lyric = s.clone();
+        }
+        let used = syllables.len().min(n);
+        self.toast(format!("{used} syllable{} on {used} note{}{}", if used == 1 { "" } else { "s" }, if used == 1 { "" } else { "s" }, if syllables.len() > n { format!(" ({} left over)", syllables.len() - n) } else { String::new() }));
     }
 
     /// Opens SoundFont banks from disk into the browser's SF2 Player folder.
@@ -2986,6 +3100,35 @@ impl App {
                 // browser (on a bank when there is one); sf2none: one without a bank.
                 "sf2get" => self.start_sf2_install(nums.first().copied().unwrap_or(0)),
                 "sf2empty" => self.apply_item(&BrowserItem::Sf2Player, DropTarget::NewTrack),
+                // singer: a Singer track (on the last voicebank); voicebank=PATH: that voicebank;
+                // lyrics=TEXT: on the selected clip's notes.
+                "singer" => self.apply_item(&BrowserItem::Singer, DropTarget::NewTrack),
+                "voicebank" => {
+                    let path = PathBuf::from(arg.trim());
+                    let target = match self.sel_track {
+                        TrackSel::Track(t) => DropTarget::Track(t),
+                        _ => DropTarget::NewTrack,
+                    };
+                    self.apply_item(&BrowserItem::Voicebank(path), target);
+                }
+                // slot=TRACK,SCENE (or slot=SCENE on the selected track): that clip selected, in the clip view.
+                "slot" => {
+                    let at = match (nums.as_slice(), self.sel_track) {
+                        ([t, s], _) => Some((*t, *s)),
+                        ([s], TrackSel::Track(t)) => Some((t, *s)),
+                        _ => None,
+                    };
+                    if let Some((track, scene)) = at {
+                        self.sel_clip = Some(ClipSel::Slot { track, scene });
+                        self.sel_track = TrackSel::Track(track);
+                        self.detail = DetailTab::Clip;
+                    }
+                }
+                "lyrics" => {
+                    if let Some(sel) = self.sel_clip {
+                        self.put_lyrics(sel, arg);
+                    }
+                }
                 "sf2none" => {
                     self.add_midi_track(Some(Instrument::sf2(None, 0, 0)));
                 }

@@ -472,6 +472,7 @@ enum InstState {
     Facet(Box<FacetState>),
     Sf2(Box<crate::dsp::sf2::Sf2State>),
     StreetOrgan(Box<crate::dsp::street_organ::StreetOrganState>),
+    Singer(Box<crate::singer::SingerState>),
     Plugin { instance: u64, proc: Option<Box<dyn AudioProcessor>>, pending: Vec<PluginEvent> },
 }
 
@@ -512,6 +513,7 @@ impl InstState {
             InstState::Monk(s) => s.pitch_bend = semis,
             InstState::Sf2(s) => s.pitch_bend = semis,
             InstState::StreetOrgan(s) => s.pitch_bend = semis,
+            InstState::Singer(s) => s.pitch_bend = semis,
             _ => {}
         }
     }
@@ -564,6 +566,7 @@ impl InstState {
             Some(Instrument::Facet { .. }) => InstState::Facet(Box::new(FacetState::new(sr))),
             Some(Instrument::Sf2 { font, .. }) => InstState::Sf2(Box::new(crate::dsp::sf2::Sf2State::new(font.as_ref(), sr))),
             Some(Instrument::StreetOrgan { .. }) => InstState::StreetOrgan(Box::new(crate::dsp::street_organ::StreetOrganState::new(sr))),
+            Some(Instrument::Singer { .. }) => InstState::Singer(Box::new(crate::singer::SingerState::new(sr))),
         }
     }
 
@@ -629,6 +632,7 @@ impl InstState {
                 | (InstState::Orchestra(_), Some(Instrument::Orchestra { .. }))
                 | (InstState::Facet(_), Some(Instrument::Facet { .. }))
                 | (InstState::StreetOrgan(_), Some(Instrument::StreetOrgan { .. }))
+                | (InstState::Singer(_), Some(Instrument::Singer { .. }))
         ) || matches!((self, i), (InstState::Plugin { instance, .. }, Some(Instrument::Plugin(p))) if *instance == p.instance)
             // Another bank needs a player of its own.
             || matches!((self, i), (InstState::Sf2(s), Some(Instrument::Sf2 { font, .. })) if s.is_for(font.as_ref()))
@@ -642,6 +646,7 @@ impl InstState {
             (InstState::Sampler(s), Instrument::Sampler { params, sample, zones }) => s.note_on(ov.unwrap_or(params), sample.as_ref(), zones, pitch, vel),
             (InstState::Sf2(s), Instrument::Sf2 { params, bank, patch, .. }) => s.note_on(ov.unwrap_or(params), *bank, *patch, pitch, vel),
             (InstState::StreetOrgan(s), Instrument::StreetOrgan { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Singer(s), Instrument::Singer { params, bank }) => s.note_on(ov.unwrap_or(params), bank.as_ref(), pitch, vel),
             (st @ InstState::Plugin { .. }, Instrument::Plugin(_)) => st.push_plugin_event(pitch, PluginEventKind::NoteOn { velocity: vel }),
             (InstState::Fm(s), Instrument::Fm { voice, op_mask, params, .. }) => s.note_on(ov.unwrap_or(params), voice, *op_mask, pitch, vel),
             (InstState::Macro(s), Instrument::Macro { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
@@ -692,6 +697,7 @@ impl InstState {
             (InstState::Sampler(s), Instrument::Sampler { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Sf2(s), Instrument::Sf2 { .. }) => s.note_off(pitch),
             (InstState::StreetOrgan(s), Instrument::StreetOrgan { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Singer(s), Instrument::Singer { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (st @ InstState::Plugin { .. }, Instrument::Plugin(_)) => st.push_plugin_event(pitch, PluginEventKind::NoteOff),
             (InstState::Fm(s), Instrument::Fm { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Macro(s), Instrument::Macro { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
@@ -743,6 +749,7 @@ impl InstState {
             InstState::Sampler(s) => s.all_off(),
             InstState::Sf2(s) => s.all_off(),
             InstState::StreetOrgan(s) => s.all_off(),
+            InstState::Singer(s) => s.all_off(),
             InstState::Plugin { .. } => self.push_plugin_event(0, PluginEventKind::AllNotesOff),
             InstState::Fm(s) => s.all_off(),
             InstState::Macro(s) => s.all_off(),
@@ -823,6 +830,7 @@ impl InstState {
             InstState::Orchestra(s) => s.visual(out),
             InstState::Facet(s) => s.visual(out),
             InstState::StreetOrgan(s) => s.visual(out),
+            InstState::Singer(s) => s.visual(out),
             _ => return false,
         }
         true
@@ -835,6 +843,7 @@ impl InstState {
             (InstState::Sampler(s), Instrument::Sampler { params, sample, zones }) => s.render(ov.unwrap_or(params), sample.as_ref(), zones, l, r, sr),
             (InstState::Sf2(s), Instrument::Sf2 { params, bank, patch, .. }) => s.render(ov.unwrap_or(params), *bank, *patch, l, r),
             (InstState::StreetOrgan(s), Instrument::StreetOrgan { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Singer(s), Instrument::Singer { params, bank }) => s.render(ov.unwrap_or(params), bank.as_ref(), l, r),
             (InstState::Fm(s), Instrument::Fm { voice, params, .. }) => s.render(ov.unwrap_or(params), voice, l, r, sr),
             (InstState::Macro(s), Instrument::Macro { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Braids(s), Instrument::Braids { params, .. }) => s.render(ov.unwrap_or(params), l, r),
@@ -913,6 +922,9 @@ struct TrackRt {
     fx_sig: u64,
     /// Note-ons minus note-offs the instrument received, per pitch.
     sounding: [u8; 128],
+    /// Where the clip notes sent ahead of their time (to a Singer) reached
+    /// last block; NaN after a stop or a jump, when it catches up.
+    lead_until: f64,
     /// How far the Key drawer moved each pitch (its note-off goes there too).
     shifted: [i8; 128],
     /// Notes and level for the modulators.
@@ -970,6 +982,7 @@ impl TrackRt {
             midi_fx: Vec::new(),
             fx_sig: FX_SIG_EMPTY,
             sounding: [0; 128],
+            lead_until: f64::NAN,
             shifted: [0; 128],
             bend: 0.0,
             signal: TrackSignal::default(),
@@ -1948,7 +1961,12 @@ impl Engine {
             // The modulators move the track's own instrument (a clip's sound
             // is the track's own a moment later).
             let own_sound = rt.sound_from.is_none();
-            let TrackRt { instrument, devices, placer, placer_idle, playing: pc, overridden, offs, events, fx_buf, live, midi_fx, fx_sig, sounding, shifted, signal, bend, l, r, gain_l, gain_r, sends, pre_l, pre_r, post_l, post_r, out_l, out_r, to_master, midi_out, .. } = &mut **rt;
+            // A Singer hears its clip notes early, so its consonants can start before the beat.
+            let lead = if matches!(snd.instrument, Some(Instrument::Singer { .. })) { crate::singer::LEAD_SECS * sr as f64 / spb } else { 0.0 };
+            let TrackRt { instrument, devices, placer, placer_idle, playing: pc, overridden, offs, events, fx_buf, live, midi_fx, fx_sig, sounding, shifted, signal, bend, l, r, gain_l, gain_r, sends, pre_l, pre_r, post_l, post_r, out_l, out_r, to_master, midi_out, lead_until, .. } = &mut **rt;
+            if !playing {
+                *lead_until = f64::NAN;
+            }
             l[..seg].fill(0.0);
             r[..seg].fill(0.0);
             events.clear();
@@ -1958,13 +1976,17 @@ impl Engine {
                 if let Some((clip, start)) = session_clip {
                     match &clip.content {
                         ClipContent::Midi { notes } => {
-                            collect_notes(notes, clip.length, start, start, f64::INFINITY, s0, s1, spb, seg, Clock::Session, events, offs)
+                            let catch_up = (*lead_until - (s0 + lead)).abs() > 1e-6;
+                            collect_notes(notes, clip.length, start, start, f64::INFINITY, s0, s1, spb, seg, Clock::Session, events, offs, (lead, catch_up));
+                            *lead_until = s1 + lead;
                         }
                         ClipContent::Audio(a) => render_audio(clip.length, a, start, start, f64::INFINITY, (0.0, 0.0), s0, spb, seg, l, r),
                     }
                 } else if !*overridden {
+                    let catch_up = (*lead_until - (a0 + lead)).abs() > 1e-6;
+                    *lead_until = a1 + lead;
                     for ac in &track.arrangement {
-                        if ac.muted || ac.start >= a1 || ac.end() <= a0 {
+                        if ac.muted || ac.start >= a1 + lead || ac.end() <= a0 {
                             continue;
                         }
                         let origin = ac.start - ac.offset;
@@ -1982,6 +2004,7 @@ impl Engine {
                                 Clock::Arrangement,
                                 events,
                                 offs,
+                                (lead, catch_up),
                             ),
                             ClipContent::Audio(a) => render_audio(ac.clip.length, a, origin, ac.start, ac.end(), (ac.fade_in, ac.fade_out), a0, spb, seg, l, r),
                         }
@@ -1999,7 +2022,7 @@ impl Engine {
                 };
                 if o.at < c1 || !playing {
                     let at = if o.at <= c0 { 0 } else { ((o.at - c0) * spb) as usize };
-                    events.push(Ev { offset: at.min(seg.saturating_sub(1)) as u32, on: false, pitch: o.pitch, vel: 0.0 });
+                    events.push(Ev::off(at.min(seg.saturating_sub(1)) as u32, o.pitch));
                     offs.swap_remove(i);
                 } else {
                     i += 1;
@@ -2151,6 +2174,9 @@ impl Engine {
                             None => ev.pitch,
                         };
                         shifted[k] = (np as i32 - ev.pitch as i32).clamp(-127, 127) as i8;
+                        if let InstState::Singer(s) = &mut *instrument {
+                            s.set_lyric(ev.lyric);
+                        }
                         instrument.note_on(inst, ov, np, ev.vel, sr);
                     } else {
                         *n = n.saturating_sub(1);
@@ -2524,7 +2550,9 @@ fn apply_gain_ramp(l: &mut [f32], r: &mut [f32], gl: &mut f32, gr: &mut f32, tl:
 }
 
 /// Schedules note-ons (and their note-offs) of a looping MIDI clip that fall
-/// inside the window `[w0, w1)` on the given clock.
+/// inside the window `[w0, w1)` on the given clock. `lead` (beats) sends them
+/// that much early, the window moved ahead (from `w0` itself when it has to
+/// catch up, after a start or a jump); their lyrics go with them.
 #[allow(clippy::too_many_arguments)]
 fn collect_notes(
     notes: &[Note],
@@ -2539,10 +2567,11 @@ fn collect_notes(
     clock: Clock,
     events: &mut Vec<Ev>,
     offs: &mut Vec<PendingOff>,
+    (lead, catch_up): (f64, bool),
 ) {
     let len = len.max(1.0 / 64.0);
-    let lo = w0.max(region_start);
-    let hi = w1.min(region_end);
+    let lo = if lead > 0.0 && !catch_up { w0 + lead } else { w0 }.max(region_start);
+    let hi = (w1 + lead).min(region_end);
     if hi <= lo {
         return;
     }
@@ -2571,11 +2600,11 @@ fn collect_notes(
                 if t < lo || t >= hi {
                     continue;
                 }
-                let at = (((t - w0) * spb) as usize).min(seg.saturating_sub(1));
-                events.push(Ev { offset: at as u32, on: true, pitch: n.pitch, vel });
+                let at = (((t - lead - w0).max(0.0) * spb) as usize).min(seg.saturating_sub(1));
+                events.push(Ev { offset: at as u32, on: true, pitch: n.pitch, vel, lyric: crate::midi_fx::Lyric::new(&n.lyric, lead > 0.0) });
                 let gate = if reps > 1 { step * 0.6 } else { full };
                 let end = (t + gate.max(0.001)).min(region_end);
-                offs.push(PendingOff { at: end, pitch: n.pitch, clock });
+                offs.push(PendingOff { at: end - lead, pitch: n.pitch, clock });
             }
         }
     }
@@ -2652,6 +2681,28 @@ mod tests {
         buf.iter().fold(0.0f32, |m, v| m.max(v.abs()))
     }
 
+    #[test]
+    fn a_singer_hears_its_clip_notes_early_with_their_lyrics() {
+        let mut n = Note::new(60, 1.0, 1.0, 0.8);
+        n.lyric = "ka".into();
+        let (mut events, mut offs) = (Vec::new(), Vec::new());
+        // Half a beat ahead: the window [0.5, 0.75) reaches the note at 1.
+        collect_notes(std::slice::from_ref(&n), 4.0, 0.0, 0.0, 1e9, 0.5, 0.75, 4800.0, 1200, Clock::Session, &mut events, &mut offs, (0.5, false));
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].lyric.as_str(), "ka");
+        assert!(events[0].lyric.early && events[0].offset == 0);
+        assert!((offs[0].at - 1.5).abs() < 1e-9, "its note-off as early");
+        // After a jump it catches up from where the window starts.
+        events.clear();
+        offs.clear();
+        collect_notes(std::slice::from_ref(&n), 4.0, 0.0, 0.0, 1e9, 0.9, 1.0, 4800.0, 480, Clock::Session, &mut events, &mut offs, (0.5, true));
+        assert_eq!(events.len(), 1, "the note at 1 is not lost");
+        // Without a lead nothing changes.
+        events.clear();
+        collect_notes(std::slice::from_ref(&n), 4.0, 0.0, 0.0, 1e9, 0.5, 0.75, 4800.0, 1200, Clock::Session, &mut events, &mut offs, (0.0, false));
+        assert!(events.is_empty());
+    }
+
     /// Note-ons of a one-note clip over `loops` loops.
     fn note_ons(n: Note, loops: i64) -> Vec<(f64, f32)> {
         let len = 1.0;
@@ -2662,7 +2713,7 @@ mod tests {
         let mut t = 0.0;
         while t < loops as f64 * len {
             events.clear();
-            collect_notes(std::slice::from_ref(&n), len, 0.0, 0.0, 1e9, t, t + w, 4800.0, 300, Clock::Session, &mut events, &mut offs);
+            collect_notes(std::slice::from_ref(&n), len, 0.0, 0.0, 1e9, t, t + w, 4800.0, 300, Clock::Session, &mut events, &mut offs, (0.0, false));
             for e in &events {
                 out.push((t + e.offset as f64 / 4800.0, e.vel));
             }
