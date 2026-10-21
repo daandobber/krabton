@@ -19,6 +19,8 @@ egui = "0.32"
 cpal = "0.16"
 midir = "0.10"
 rfd = "0.15"
+# Unpacks the voicebanks the Singer downloads (zip archives).
+miniz_oxide = "0.8"
 # Loads PulseAudio's client library at run time (Linux sound without ALSA plugins).
 libloading = "0.8"
 # Game controllers for Big Picture (Xbox, PlayStation, Steam Deck, generic pads).

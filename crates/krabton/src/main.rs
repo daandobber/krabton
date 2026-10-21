@@ -14,6 +14,7 @@ mod mp3;
 mod drum_lib;
 mod piano_lib;
 mod sf2_lib;
+mod singer_lib;
 mod orchestra_lib;
 mod plugins;
 mod prefs;

@@ -1192,8 +1192,9 @@ impl App {
                     }
                     Instrument::Singer { params, bank } => {
                         let mut asked = super::faces::singer::Asked::default();
+                        let offers = self.singer_offers();
                         if crate::skin::current().is_some() {
-                            super::faces::singer::panel(ui, Id::new(("singer", track_id)), bank.as_ref(), params, &live, h - 36.0, mv.as_mut(), &mut asked);
+                            super::faces::singer::panel(ui, Id::new(("singer", track_id)), bank.as_ref(), params, &live, &offers, h - 36.0, mv.as_mut(), &mut asked);
                         } else {
                             ui.horizontal(|ui| {
                                 let name = match bank {
@@ -1211,6 +1212,23 @@ impl App {
                                 }
                                 if bank.is_some() && ui.button("Own voice").on_hover_text("Sing with the Singer's own voice, without the voicebank").clicked() {
                                     asked.own = true;
+                                }
+                                // No voicebank yet: the free ones Krabton can get.
+                                if bank.is_none() {
+                                    use super::faces::sf2::OfferState;
+                                    for (k, o) in offers.iter().enumerate() {
+                                        let label = match o.state {
+                                            OfferState::Get => format!("Get {} ({} MB)", o.name, o.mb),
+                                            OfferState::Here => o.name.to_string(),
+                                            OfferState::Downloading(f) if f >= 1.0 => format!("{}: unpacking", o.name),
+                                            OfferState::Downloading(f) => format!("{} {:.0}%", o.name, f * 100.0),
+                                            OfferState::Failed => format!("{}: try again", o.name),
+                                        };
+                                        let o = &crate::singer_lib::OFFERS[k];
+                                        if ui.button(label).on_hover_text(format!("{}. {}", o.about, o.terms)).clicked() {
+                                            asked.get = Some(k);
+                                        }
+                                    }
                                 }
                                 let sung = krabton_engine::singer::sung_of(&live.vals);
                                 if live.vals[2] > 0.001 && !sung.is_empty() {
@@ -1232,6 +1250,17 @@ impl App {
                         }
                         if asked.own {
                             *bank = None;
+                        }
+                        // An offered voicebank: sung with when it is here, else fetched (it comes to this Singer when it arrives).
+                        if let Some(k) = asked.get {
+                            match crate::singer_lib::OFFERS.get(k).and_then(crate::singer_lib::installed) {
+                                Some(path) => {
+                                    if let Some(b) = self.singer_bank(&path) {
+                                        *bank = Some(b);
+                                    }
+                                }
+                                None => self.start_singer_install(k, Some(track_id)),
+                            }
                         }
                     }
                     Instrument::Piano { preset, params } => {

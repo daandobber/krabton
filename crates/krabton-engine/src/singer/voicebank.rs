@@ -70,6 +70,9 @@ pub struct VoicebankData {
     pub prefix_map: Vec<(u8, String, String)>,
     /// Whether its aliases run vowel to consonant ("a か", "- か").
     pub vcv: bool,
+    /// What brings its singing to one loudness (voicebanks are recorded at
+    /// very different levels).
+    pub gain: f32,
     /// The pitch periods, once found (in the background).
     pub analysis: OnceLock<Vec<Marks>>,
     pub progress: AtomicU32,
@@ -166,7 +169,8 @@ impl VoicebankRef {
     pub fn from_parts(name: &str, samples: Vec<Sample>, entries: Vec<OtoEntry>) -> Self {
         let aliases = entries.iter().enumerate().map(|(i, e)| (e.alias.clone(), i)).collect::<HashMap<_, _>>();
         let vcv = entries.iter().any(|e| e.alias.starts_with("- "));
-        let d = VoicebankData { name: name.into(), path: None, samples, entries, aliases, prefix_map: Vec::new(), vcv, analysis: OnceLock::new(), progress: AtomicU32::new(0) };
+        let gain = leveling(&samples);
+        let d = VoicebankData { name: name.into(), path: None, samples, entries, aliases, prefix_map: Vec::new(), vcv, gain, analysis: OnceLock::new(), progress: AtomicU32::new(0) };
         let marks = d.samples.iter().map(analyse).collect();
         let _ = d.analysis.set(marks);
         VoicebankRef(Arc::new(d))
@@ -174,7 +178,7 @@ impl VoicebankRef {
 
     /// A voicebank whose folder could not be read: silent, its path kept.
     pub fn missing(name: String, path: Option<PathBuf>) -> Self {
-        let d = VoicebankData { name, path, samples: Vec::new(), entries: Vec::new(), aliases: HashMap::new(), prefix_map: Vec::new(), vcv: false, analysis: OnceLock::new(), progress: AtomicU32::new(0) };
+        let d = VoicebankData { name, path, samples: Vec::new(), entries: Vec::new(), aliases: HashMap::new(), prefix_map: Vec::new(), vcv: false, gain: 1.0, analysis: OnceLock::new(), progress: AtomicU32::new(0) };
         let _ = d.analysis.set(Vec::new());
         VoicebankRef(Arc::new(d))
     }
@@ -304,7 +308,29 @@ fn read(dir: &Path) -> Result<VoicebankData, String> {
         .and_then(|b| decode(&b).lines().find_map(|l| l.strip_prefix("name=").map(|n| n.trim().to_string())))
         .filter(|n| !n.is_empty())
         .unwrap_or_else(|| name_of(dir));
-    Ok(VoicebankData { name, path: Some(dir.to_path_buf()), samples, entries, aliases, prefix_map, vcv, analysis: OnceLock::new(), progress: AtomicU32::new(0) })
+    let gain = leveling(&samples);
+    Ok(VoicebankData { name, path: Some(dir.to_path_buf()), samples, entries, aliases, prefix_map, vcv, gain, analysis: OnceLock::new(), progress: AtomicU32::new(0) })
+}
+
+/// How much to turn a voicebank up or down: its sung parts (the louder 10 ms
+/// stretches of its recordings) brought to about -12 dBFS.
+fn leveling(samples: &[Sample]) -> f32 {
+    let mut windows: Vec<f32> = Vec::new();
+    for s in samples {
+        let w = (s.sr as usize / 100).max(1);
+        for chunk in s.data.chunks(w) {
+            let rms = (chunk.iter().map(|&x| (x as f32 / 32768.0).powi(2)).sum::<f32>() / chunk.len() as f32).sqrt();
+            if rms > 0.003 {
+                windows.push(rms);
+            }
+        }
+    }
+    if windows.is_empty() {
+        return 1.0;
+    }
+    let k = (windows.len() * 4 / 5).min(windows.len() - 1);
+    let (_, loud, _) = windows.select_nth_unstable_by(k, |a, b| a.total_cmp(b));
+    (0.25 / *loud).clamp(0.5, 8.0)
 }
 
 /// A recording, mono, as 16-bit.
@@ -462,6 +488,19 @@ mod tests {
         assert_eq!(decode("か".as_bytes()), "か");
         assert_eq!(note_number("C4"), Some(60));
         assert_eq!(note_number("A#3"), Some(58));
+    }
+
+    #[test]
+    fn quiet_and_loud_voicebanks_sing_as_loud() {
+        let sung = |amp: f32| {
+            let data: Vec<i16> = (0..44_100).map(|i| ((i as f32 * 0.0627).sin() * amp) as i16).collect();
+            let s = Sample { name: "a.wav".into(), sr: 44_100, data };
+            let rms = (s.data.iter().map(|&x| (x as f32 / 32768.0).powi(2)).sum::<f32>() / s.data.len() as f32).sqrt();
+            rms * leveling(&[s])
+        };
+        let (quiet, loud) = (sung(1500.0), sung(16_000.0));
+        assert!((quiet / loud - 1.0).abs() < 0.05, "{quiet} vs {loud}");
+        assert!((0.2..0.3).contains(&loud), "about -12 dBFS: {loud}");
     }
 
     #[test]

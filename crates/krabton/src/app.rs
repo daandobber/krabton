@@ -455,6 +455,9 @@ pub struct App {
     pub(crate) drum_installs: std::collections::HashMap<&'static str, crate::drum_lib::Install>,
     /// The SoundFont banks downloading, by offer (see `sf2_lib::OFFERS`).
     pub(crate) sf2_installs: HashMap<usize, crate::sf2_lib::Install>,
+    /// The voicebanks downloading, by offer (see `singer_lib::OFFERS`), and
+    /// the tracks whose Singers asked for them.
+    pub(crate) singer_installs: HashMap<usize, (crate::singer_lib::Install, Vec<u64>)>,
     pub(crate) packs_here: std::collections::HashSet<&'static str>,
 
     pub meters: Vec<(f32, f32)>,
@@ -628,6 +631,7 @@ impl App {
             orchestra_installs: std::collections::HashMap::new(),
             drum_installs: Default::default(),
             sf2_installs: HashMap::new(),
+            singer_installs: HashMap::new(),
             packs_here: krabton_engine::dsp::real_drums::PACKS.iter().filter(|p| krabton_engine::dsp::real_drums::installed(p)).map(|p| p.folder).collect(),
             meters: Vec::new(),
             return_meters: Vec::new(),
@@ -1572,10 +1576,102 @@ impl App {
         }
     }
 
-    /// The voicebank a new Singer starts on: the last one opened that is still there.
+    /// The voicebank a new Singer starts on: the last one opened (or
+    /// downloaded) that is still there.
     pub(crate) fn default_singer_bank(&mut self) -> Option<krabton_engine::singer::VoicebankRef> {
-        let path = self.prefs.singer_banks.iter().rev().find(|p| p.join("oto.ini").is_file() || p.is_dir()).cloned()?;
+        let mut paths: Vec<PathBuf> = self.prefs.singer_banks.iter().rev().cloned().collect();
+        paths.extend(crate::singer_lib::all_installed());
+        let path = paths.into_iter().find(|p| p.is_dir())?;
         self.singer_bank(&path)
+    }
+
+    /// Downloads an offered voicebank (unless it is here or on its way); the
+    /// Singer on track `asking` gets it when it arrives.
+    pub(crate) fn start_singer_install(&mut self, i: usize, asking: Option<u64>) {
+        let Some(offer) = crate::singer_lib::OFFERS.get(i) else { return };
+        if let Some((_, tracks)) = self.singer_installs.get_mut(&i) {
+            if let Some(t) = asking {
+                tracks.push(t);
+            }
+            let busy = self.singer_installs.get(&i).and_then(|(s, _)| s.lock().ok().map(|s| matches!(*s, crate::singer_lib::State::Downloading { .. } | crate::singer_lib::State::Unpacking))).unwrap_or(false);
+            if busy {
+                return;
+            }
+        }
+        if crate::singer_lib::installed(offer).is_some() {
+            return;
+        }
+        self.singer_installs.insert(i, (crate::singer_lib::start(i), asking.into_iter().collect()));
+        self.toast(format!("Downloading {} ({} MB)...", offer.name, offer.bytes / 1_000_000));
+    }
+
+    /// What the Singer's display offers to get, and how far each is (1.0: unpacking).
+    pub(crate) fn singer_offers(&self) -> Vec<crate::ui::faces::sf2::OfferView> {
+        use crate::ui::faces::sf2::{OfferState, OfferView};
+        crate::singer_lib::OFFERS
+            .iter()
+            .enumerate()
+            .map(|(i, o)| {
+                let state = match self.singer_installs.get(&i).and_then(|(s, _)| s.lock().ok().map(|s| s.clone())) {
+                    Some(crate::singer_lib::State::Downloading { bytes }) => OfferState::Downloading((bytes as f32 / o.bytes.max(1) as f32).min(0.99)),
+                    Some(crate::singer_lib::State::Unpacking) => OfferState::Downloading(1.0),
+                    Some(crate::singer_lib::State::Failed(_)) => OfferState::Failed,
+                    _ if crate::singer_lib::installed(o).is_some() => OfferState::Here,
+                    _ => OfferState::Get,
+                };
+                OfferView { name: o.name, mb: o.bytes / 1_000_000, state }
+            })
+            .collect()
+    }
+
+    /// A voicebank arrived: the Singers that asked for it (and still have
+    /// none) sing with it, and the browser keeps it.
+    fn poll_singer_installs(&mut self) {
+        let mut done = Vec::new();
+        for (&i, (s, _)) in &self.singer_installs {
+            match s.lock().map(|s| s.clone()) {
+                Ok(crate::singer_lib::State::Ready(bank)) => done.push((i, Ok(bank))),
+                Ok(crate::singer_lib::State::Failed(e)) if !e.is_empty() => done.push((i, Err(e))),
+                _ => {}
+            }
+        }
+        for (i, result) in done {
+            match result {
+                Ok(bank) => {
+                    let asking = self.singer_installs.remove(&i).map(|(_, t)| t).unwrap_or_default();
+                    let Some(path) = bank.path.clone() else { continue };
+                    if self.singer_open.len() >= 3 {
+                        self.singer_open.remove(0);
+                    }
+                    self.singer_open.push(bank.clone());
+                    if !self.prefs.singer_banks.contains(&path) {
+                        self.prefs.singer_banks.push(path);
+                        self.prefs.save();
+                    }
+                    for t in self.project.tracks.iter_mut().filter(|t| asking.contains(&t.id)) {
+                        if let Some(Instrument::Singer { bank: b, .. }) = t.instrument.as_mut() {
+                            if b.as_ref().is_none_or(|b| b.is_missing()) {
+                                *b = Some(bank.clone());
+                                if t.name == "Singer" {
+                                    t.name = bank.name.clone();
+                                }
+                            }
+                        }
+                    }
+                    let kind = if bank.vcv { "VCV" } else { "CV" };
+                    self.toast(format!("{} is here: {} {kind} samples", bank.name, bank.entries.len()));
+                }
+                // The display shows it failed (and offers it again); say why once.
+                Err(e) => {
+                    if let Some((s, _)) = self.singer_installs.get(&i) {
+                        if let Ok(mut st) = s.lock() {
+                            *st = crate::singer_lib::State::Failed(String::new());
+                        }
+                    }
+                    self.toast(e);
+                }
+            }
+        }
     }
 
     /// Opens a voicebank folder for the Singer.
@@ -3100,9 +3196,15 @@ impl App {
                 // browser (on a bank when there is one); sf2none: one without a bank.
                 "sf2get" => self.start_sf2_install(nums.first().copied().unwrap_or(0)),
                 "sf2empty" => self.apply_item(&BrowserItem::Sf2Player, DropTarget::NewTrack),
-                // singer: a Singer track (on the last voicebank); voicebank=PATH: that voicebank;
+                // singer: a Singer on the selected track (on the last voicebank); voicebank=PATH: that voicebank there;
                 // lyrics=TEXT: on the selected clip's notes.
-                "singer" => self.apply_item(&BrowserItem::Singer, DropTarget::NewTrack),
+                "singer" => {
+                    let target = match self.sel_track {
+                        TrackSel::Track(t) => DropTarget::Track(t),
+                        _ => DropTarget::NewTrack,
+                    };
+                    self.apply_item(&BrowserItem::Singer, target);
+                }
                 "voicebank" => {
                     let path = PathBuf::from(arg.trim());
                     let target = match self.sel_track {
@@ -3110,6 +3212,14 @@ impl App {
                         _ => DropTarget::NewTrack,
                     };
                     self.apply_item(&BrowserItem::Voicebank(path), target);
+                }
+                // voiceget=N: downloads offered voicebank N for the selected track's Singer.
+                "voiceget" => {
+                    let asking = match self.sel_track {
+                        TrackSel::Track(t) => self.project.tracks.get(t).map(|t| t.id),
+                        _ => None,
+                    };
+                    self.start_singer_install(nums.first().copied().unwrap_or(0), asking);
                 }
                 // slot=TRACK,SCENE (or slot=SCENE on the selected track): that clip selected, in the clip view.
                 "slot" => {
@@ -3858,6 +3968,7 @@ impl eframe::App for App {
         self.poll_orchestra_installs();
         self.poll_drum_install();
         self.poll_sf2_installs();
+        self.poll_singer_installs();
         self.poll_recording();
         self.tape_frame();
         self.poll_export();

@@ -373,6 +373,7 @@ impl SingerState {
                             continue;
                         };
                         let rate = s.sr as f64 / sr as f64;
+                        let level_in = b.gain / 32768.0;
                         // Through the consonant as recorded, then the vowel, back and forth while held.
                         if v.a_pos < cons_end {
                             v.a_pos += rate * cons_speed;
@@ -414,7 +415,7 @@ impl SingerState {
                                 let fr = (src - i0 as f64) as f32;
                                 let x = s.data[i0] as f32 + (s.data[i0 + 1] as f32 - s.data[i0] as f32) * fr;
                                 let w = 0.5 - 0.5 * (TAU * k as f32 / len as f32).cos();
-                                v.ring[(at as usize) % RING] += x / 32768.0 * w * level;
+                                v.ring[(at as usize) % RING] += x * level_in * w * level;
                             }
                             v.next_mark += period_out.max(8.0);
                         }

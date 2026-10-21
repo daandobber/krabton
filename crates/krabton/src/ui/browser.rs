@@ -114,6 +114,7 @@ enum Act {
     LoadSyxFolder,
     LoadSf2,
     LoadVoicebank,
+    GetVoicebank(usize),
     /// Download offered SoundFont bank number n.
     GetSf2(usize),
 }
@@ -865,7 +866,26 @@ impl App {
         out.push(Node::Folder { tag: None, label: "SF2 Player".into(), icon: Icon::Device, hint: SF2_HINT.into(), load: Some(BrowserItem::Sf2Player), kids: Kids::Nodes(sf2) });
         // The Singer, with the voicebanks opened before.
         let mut singer = vec![Node::Action { label: "Open a voicebank folder...".into(), hint: "A UTAU voicebank's folder (the one with its oto.ini): CV or VCV, Japanese".into(), act: Act::LoadVoicebank }];
-        for path in self.prefs.singer_banks.iter().filter(|p| p.is_dir()) {
+        // The free voices Krabton can get, until they are here.
+        for (i, o) in self.singer_offers().iter().enumerate() {
+            use crate::ui::faces::sf2::OfferState;
+            let label = match o.state {
+                OfferState::Here => continue,
+                OfferState::Get => format!("Download {} ({} MB)", o.name, o.mb),
+                OfferState::Downloading(f) if f >= 1.0 => format!("{}: unpacking", o.name),
+                OfferState::Downloading(f) => format!("{}: downloading {:.0}%", o.name, f * 100.0),
+                OfferState::Failed => format!("{}: download failed, try again", o.name),
+            };
+            let offer = &crate::singer_lib::OFFERS[i];
+            singer.push(Node::Action { label, hint: format!("{}. {}", offer.about, offer.terms), act: Act::GetVoicebank(i) });
+        }
+        let mut banks: Vec<PathBuf> = crate::singer_lib::all_installed();
+        for p in &self.prefs.singer_banks {
+            if !banks.contains(p) {
+                banks.push(p.clone());
+            }
+        }
+        for path in banks.iter().filter(|p| p.is_dir()) {
             singer.push(Node::item(dir_tag(path), file_name(path), Icon::Preset, SINGER_HINT, BrowserItem::Voicebank(path.clone())));
         }
         out.push(Node::Folder { tag: None, label: "Singer".into(), icon: Icon::Device, hint: SINGER_HINT.into(), load: Some(BrowserItem::Singer), kids: Kids::Nodes(singer) });
@@ -1484,6 +1504,7 @@ impl App {
                     self.plugins.add_folder(dir);
                 }
             }
+            Act::GetVoicebank(i) => self.start_singer_install(i, None),
             Act::LoadVoicebank => {
                 if let Some(b) = self.open_voicebank_dialog() {
                     let kind = if b.vcv { "VCV" } else { "CV" };
