@@ -60,6 +60,8 @@ pub(crate) fn face() -> Face {
 pub(crate) struct Asked {
     /// Open a firmware file.
     pub open: bool,
+    /// Look through a folder for one.
+    pub search: bool,
     /// Play this factory preset (bank, program).
     pub pick: Option<(u16, u16)>,
     /// Something dropped on it from the browser.
@@ -173,11 +175,15 @@ pub(crate) fn display(ui: &mut Ui, id: Id, r: Rect, fw: Option<&FirmwareRef>, st
         }
     }
 
-    // Along the bottom: open a firmware.
+    // Along the bottom: open a firmware, or look for one in a folder.
     let bh = u * 1.7;
-    let open_r = Rect::from_min_size(pos2(inner.left(), inner.bottom() - bh), vec2(u * 6.4, bh));
-    if lcd_button(ui, &p, open_r, id.with("open"), "FIRMWARE", false, u).on_hover_text("Open a Virus firmware: a Virus TI's (.bin), or a Virus A, B or C operating system. It stays where it is; Krabton keeps the path").clicked() {
+    let open_r = Rect::from_min_size(pos2(inner.left(), inner.bottom() - bh), vec2(u * 6.0, bh));
+    if lcd_button(ui, &p, open_r, id.with("open"), "FIRMWARE", false, u).on_hover_text("Open a Virus firmware file: a Virus TI's (Access's container, 6 to 9 MB, whatever it is called), or a Virus A, B or C operating system. It stays where it is; Krabton keeps the path").clicked() {
         asked.open = true;
+    }
+    let find_r = Rect::from_min_size(pos2(open_r.right() + u * 0.4, open_r.top()), vec2(u * 6.0, bh));
+    if lcd_button(ui, &p, find_r, id.with("search"), "SEARCH", false, u).on_hover_text("Look through a folder (and the folders in it) for a Virus TI firmware: where Access's Virus TI software was unpacked or installed").clicked() {
+        asked.search = true;
     }
 }
 

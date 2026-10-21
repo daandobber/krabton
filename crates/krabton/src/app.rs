@@ -1771,11 +1771,12 @@ impl App {
         ];
         for dir in dirs {
             let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+            // .bin and .mid files, and a TI firmware whatever it is called.
             let mut files: Vec<PathBuf> = rd
                 .flatten()
                 .map(|e| e.path())
-                .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("bin") || e.eq_ignore_ascii_case("mid")))
-                .filter(|p| std::fs::metadata(p).map(|m| m.len() >= 100_000).unwrap_or(false))
+                .filter(|p| p.is_file())
+                .filter(|p| (p.extension().is_some_and(|e| e.eq_ignore_ascii_case("bin") || e.eq_ignore_ascii_case("mid")) && std::fs::metadata(p).map(|m| m.len() >= 100_000).unwrap_or(false)) || krabton_engine::hyper::looks_like_ti_firmware(p))
                 .collect();
             files.sort();
             for f in files {
@@ -1803,11 +1804,36 @@ impl App {
         None
     }
 
-    /// Opens a Virus firmware for Hyper.
+    /// Opens a Virus firmware for Hyper (a TI's whatever the file is called).
     pub(crate) fn open_firmware_dialog(&mut self) -> Option<krabton_engine::hyper::FirmwareRef> {
-        let path = rfd::FileDialog::new().set_title("A Virus firmware: a Virus TI's (.bin), or an A, B or C operating system (.bin, .mid)").add_filter("Virus firmware", &["bin", "BIN", "mid", "MID"]).pick_file()?;
+        let path = rfd::FileDialog::new()
+            .set_title("A Virus firmware: a Virus TI's (Access's container, 6 to 9 MB, often firmware.bin or firmware_bin), or an A, B or C operating system (.bin, .mid)")
+            .add_filter("All files", &["*"])
+            .add_filter("Virus firmware", &["bin", "BIN", "mid", "MID"])
+            .pick_file()?;
         *self.hyper_found.borrow_mut() = None;
         self.hyper_firmware(&path)
+    }
+
+    /// Looks through a folder (and the folders in it) for a Virus TI's
+    /// firmware: where Access's installer was unpacked or installed.
+    pub(crate) fn find_firmware_dialog(&mut self) -> Option<krabton_engine::hyper::FirmwareRef> {
+        let dir = rfd::FileDialog::new().set_title("A folder to look in for a Virus TI firmware (where Access's Virus TI software was unpacked or installed)").pick_folder()?;
+        let found = krabton_engine::hyper::find_ti_firmware(&dir);
+        if found.is_empty() {
+            self.toast(format!("No Virus TI firmware in {} (a file of 6 to 9 MB that starts with FORM)", dir.display()));
+            return None;
+        }
+        *self.hyper_found.borrow_mut() = None;
+        let mut last_err = String::new();
+        for path in &found {
+            match krabton_engine::hyper::FirmwareRef::load(path) {
+                Ok(_) => return self.hyper_firmware(path),
+                Err(e) => last_err = e,
+            }
+        }
+        self.toast(format!("Found {} file(s) like a Virus TI firmware, but none could be read: {last_err}", found.len()));
+        None
     }
 
     /// Every Hyper with a firmware gets a device booted from it (on a thread

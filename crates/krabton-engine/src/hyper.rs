@@ -10,6 +10,8 @@
 
 use crate::params::{ParamSpec, Unit};
 use krabton_virus::{Rom, Synth};
+/// Finding a Virus TI's firmware: by its contents, whatever the file is called.
+pub use krabton_virus::{find_ti_firmware, looks_like_ti_firmware};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::path::{Path, PathBuf};

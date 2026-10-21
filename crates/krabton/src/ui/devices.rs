@@ -1207,8 +1207,11 @@ impl App {
                                     (Some(f), _) => format!("{} ({})", f.name, f.model),
                                 };
                                 ui.label(RichText::new(name).strong().color(TEXT));
-                                if ui.button("Firmware...").on_hover_text("Open a Virus firmware: a Virus TI's (.bin), or a Virus A, B or C operating system").clicked() {
+                                if ui.button("Firmware...").on_hover_text("Open a Virus firmware: a Virus TI's (Access's container, whatever it is called), or a Virus A, B or C operating system").clicked() {
                                     asked.open = true;
+                                }
+                                if ui.button("Search folder...").on_hover_text("Look through a folder for a Virus TI firmware: where Access's Virus TI software was unpacked or installed").clicked() {
+                                    asked.search = true;
                                 }
                                 if let Some(f) = firmware.as_ref().filter(|f| !f.is_missing()) {
                                     ui.menu_button(if preset.is_empty() { "Presets" } else { preset.as_str() }, |ui| super::faces::hyper::preset_menu(ui, f, (*bank, *program), &mut asked.pick));
@@ -1226,6 +1229,9 @@ impl App {
                         let mut new_fw = None;
                         if asked.open {
                             new_fw = self.open_firmware_dialog();
+                        }
+                        if asked.search {
+                            new_fw = self.find_firmware_dialog();
                         }
                         if let Some(path) = asked.firmware.take() {
                             new_fw = self.hyper_firmware(&path);

@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "baseLib/filesystem.h"
 #include "synthLib/plugin.h"
 #include "virusLib/device.h"
 #include "virusLib/microcontroller.h"
@@ -33,6 +34,28 @@ namespace
 	{
 		putError(_out, _len, _s);
 		return static_cast<int>(_s.size());
+	}
+
+	// Whether the bytes are Access's firmware container as the unpacker expects it: "FORM", then
+	// chunks that each fit in what is left, the first the file table ("TABL"). The unpacker itself
+	// trusts all of that, and reads past its data where it is not so.
+	bool isPlausibleContainer(const std::vector<uint8_t>& _d)
+	{
+		if(_d.size() < 16 || std::memcmp(_d.data(), "FORM", 4) != 0)
+			return false;
+		size_t at = 8;
+		size_t chunks = 0;
+		while(at + 8 <= _d.size())
+		{
+			const uint32_t size = (uint32_t(_d[at + 4]) << 24) | (uint32_t(_d[at + 5]) << 16) | (uint32_t(_d[at + 6]) << 8) | uint32_t(_d[at + 7]);
+			if(chunks == 0 && (std::memcmp(&_d[at], "TABL", 4) != 0 || size == 0))
+				return false;
+			if(size > _d.size() - at - 8)
+				return false;
+			at += 8 + size;
+			++chunks;
+		}
+		return chunks >= 2;
 	}
 }
 
@@ -58,6 +81,22 @@ extern "C"
 		try
 		{
 			const std::string path(_path ? _path : "");
+			// A Virus TI's firmware is Access's "FORM" container, whatever the file is called
+			// (in Access's installer it is "firmware_bin", for one).
+			std::vector<uint8_t> data;
+			if(baseLib::filesystem::readFile(data, path) && data.size() >= 4 && std::memcmp(data.data(), "FORM", 4) == 0)
+			{
+				if(!isPlausibleContainer(data))
+				{
+					putError(_err, _errLen, "it starts as a Virus TI firmware container, but it is not a whole one");
+					return nullptr;
+				}
+				virusLib::ROMFile ti(data, path, virusLib::DeviceModel::TI2);
+				if(ti.isValid())
+					return new KvRom{std::move(ti)};
+				putError(_err, _errLen, "a Virus TI firmware container, but the firmware in it could not be unpacked");
+				return nullptr;
+			}
 			auto rom = virusLib::ROMLoader::findROM(path, virusLib::DeviceModel::TI2);
 			if(!rom.isValid())
 				rom = virusLib::ROMLoader::findROM(path, virusLib::DeviceModel::ABC);

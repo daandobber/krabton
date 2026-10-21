@@ -47,6 +47,44 @@ fn text(buf: &[u8]) -> String {
     String::from_utf8_lossy(&buf[..end]).into_owned()
 }
 
+/// Whether a file looks like a Virus TI's firmware: Access's container
+/// ("FORM" first), 6 to 9 MB, whatever it is called.
+pub fn looks_like_ti_firmware(path: &Path) -> bool {
+    use std::io::Read;
+    let Ok(meta) = std::fs::metadata(path) else { return false };
+    if !(6 * 1024 * 1024..=9 * 1024 * 1024).contains(&meta.len()) {
+        return false;
+    }
+    let mut magic = [0u8; 4];
+    std::fs::File::open(path).and_then(|mut f| f.read_exact(&mut magic)).is_ok() && &magic == b"FORM"
+}
+
+/// The Virus TI firmware in a folder and its folders (a few levels down):
+/// where Access's installer was unpacked or installed, say.
+pub fn find_ti_firmware(dir: &Path) -> Vec<std::path::PathBuf> {
+    fn walk(dir: &Path, depth: u32, seen: &mut u32, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        let mut entries: Vec<std::path::PathBuf> = rd.flatten().map(|e| e.path()).collect();
+        entries.sort();
+        for p in entries {
+            *seen += 1;
+            if *seen > 50_000 {
+                return;
+            }
+            if p.is_dir() {
+                if depth < 8 {
+                    walk(&p, depth + 1, seen, out);
+                }
+            } else if looks_like_ti_firmware(&p) {
+                out.push(p);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(dir, 0, &mut 0, &mut out);
+    out
+}
+
 /// A Virus model, as its firmware says.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Model {
@@ -196,6 +234,31 @@ mod tests {
         std::fs::write(&f, vec![0u8; 4096]).unwrap();
         let err = Rom::open(&f).err().expect("refused");
         assert!(!err.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_broken_firmware_container_is_refused_not_crashed_on() {
+        let dir = std::env::temp_dir().join(format!("krabton-virus-form-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // "FORM" and nothing sensible after it, of a TI firmware's size, under any name.
+        let mut zeros = b"FORM".to_vec();
+        zeros.resize(7 * 1024 * 1024, 0);
+        let f = dir.join("firmware_bin");
+        std::fs::write(&f, &zeros).unwrap();
+        assert!(looks_like_ti_firmware(&f));
+        assert_eq!(find_ti_firmware(&dir), vec![f.clone()]);
+        assert!(Rom::open(&f).is_err());
+        // A file table, then a chunk that claims more than there is.
+        let mut lying = b"FORM".to_vec();
+        lying.extend_from_slice(&[0, 0, 0, 0]);
+        lying.extend_from_slice(b"TABL");
+        lying.extend_from_slice(&[0, 0, 0, 2, 1, 97]);
+        lying.extend_from_slice(b"BIG ");
+        lying.extend_from_slice(&[0x7f, 0xff, 0xff, 0xff]);
+        lying.resize(7 * 1024 * 1024, 7);
+        std::fs::write(&f, &lying).unwrap();
+        assert!(Rom::open(&f).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -115,6 +115,7 @@ enum Act {
     LoadSf2,
     LoadVoicebank,
     LoadFirmware,
+    FindFirmware,
     GetVoicebank(usize),
     /// Download offered SoundFont bank number n.
     GetSf2(usize),
@@ -893,7 +894,10 @@ impl App {
         }
         out.push(Node::Folder { tag: None, label: "Singer".into(), icon: Icon::Device, hint: SINGER_HINT.into(), load: Some(BrowserItem::Singer), kids: Kids::Nodes(singer) });
         // Hyper, with the firmware opened before or found on this computer.
-        let mut hyper = vec![Node::Action { label: "Open a Virus firmware...".into(), hint: "A Virus TI's firmware (.bin), or a Virus A, B or C operating system: it stays where it is".into(), act: Act::LoadFirmware }];
+        let mut hyper = vec![
+            Node::Action { label: "Open a Virus firmware...".into(), hint: "A Virus TI's firmware (Access's container, 6 to 9 MB, whatever it is called), or a Virus A, B or C operating system: it stays where it is".into(), act: Act::LoadFirmware },
+            Node::Action { label: "Search a folder for a firmware...".into(), hint: "Looks through a folder and the folders in it for a Virus TI firmware: where Access's Virus TI software was unpacked or installed".into(), act: Act::FindFirmware },
+        ];
         for path in self.hyper_found() {
             hyper.push(Node::item(file_tag(&path), file_name(&path), Icon::Preset, HYPER_HINT, BrowserItem::HyperFirmware(path.clone())));
         }
@@ -1514,6 +1518,11 @@ impl App {
                 }
             }
             Act::GetVoicebank(i) => self.start_singer_install(i, None),
+            Act::FindFirmware => {
+                if let Some(f) = self.find_firmware_dialog() {
+                    self.toast(format!("Found {} ({}): drag it onto a track or double-click it", f.name, f.model));
+                }
+            }
             Act::LoadFirmware => {
                 if let Some(f) = self.open_firmware_dialog() {
                     self.toast(format!("{} ({}): drag it onto a track or double-click it", f.name, f.model));
