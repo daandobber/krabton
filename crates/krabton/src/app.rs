@@ -1785,6 +1785,25 @@ impl App {
                 }
             }
         }
+        // Where Access's own Virus TI software puts the firmware when it is installed.
+        let mut installed: Vec<PathBuf> = Vec::new();
+        if cfg!(windows) {
+            for var in ["CommonProgramFiles", "CommonProgramFiles(x86)", "CommonProgramW6432", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"] {
+                if let Some(d) = std::env::var_os(var) {
+                    installed.push(PathBuf::from(d).join("Access Music"));
+                }
+            }
+        } else if cfg!(target_os = "macos") {
+            installed.push(PathBuf::from("/Library/Application Support/Access Music"));
+            installed.push(home.join("Library/Application Support/Access Music"));
+        }
+        for dir in installed.iter().filter(|d| d.is_dir()) {
+            for f in krabton_engine::hyper::find_ti_firmware(dir) {
+                if !found.contains(&f) {
+                    found.push(f);
+                }
+            }
+        }
         *self.hyper_found.borrow_mut() = Some((std::time::Instant::now(), found.clone()));
         found
     }
