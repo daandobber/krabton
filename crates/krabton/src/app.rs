@@ -1081,6 +1081,7 @@ impl App {
                             K::Section => Instrument::strings("Bowed"),
                             K::OrganGrinder => Instrument::street_organ("Draaiorgel"),
                             K::MusicBox => self.music_box_sound(),
+                            K::Sing => Instrument::singer(self.default_singer_bank()),
                             _ => Instrument::synth("Pluck"),
                         };
                         let t = self.add_midi_track(Some(inst));

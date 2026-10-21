@@ -2057,7 +2057,9 @@ impl Engine {
             // MIDI effects transform the events before the instrument hears them.
             if snd.midi_devices.iter().any(|d| d.enabled) {
                 let drum_notes = snd.instrument.map(|i| i.drum_notes()).unwrap_or(0);
-                let ctx = MidiCtx { now: clock, len: seg, samples_per_beat: spb, scale: project.scale, scale_on: project.scale_mode, beat: s0, playing, sr, drum_notes };
+                // A Singer hears what a sequencer sings early (its consonants before the beat).
+                let lead = if matches!(snd.instrument, Some(Instrument::Singer { .. })) { crate::singer::LEAD_SECS } else { 0.0 };
+                let ctx = MidiCtx { now: clock, len: seg, samples_per_beat: spb, scale: project.scale, scale_on: project.scale_mode, beat: s0, playing, sr, drum_notes, lead };
                 // All notes free (scale mode off): the twelve of them, but for
                 // what is in a key by nature.
                 let free = MidiCtx { scale: crate::scale::Scale::new(project.scale.root, crate::scale::ScaleKind::Chromatic), ..ctx };

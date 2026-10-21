@@ -479,7 +479,8 @@ impl App {
             }
             // Its lyric, just above it.
             if !n.lyric.is_empty() {
-                gp.text(pos2(r.left() + 1.0, r.top() - 1.0), Align2::LEFT_BOTTOM, &n.lyric, egui::FontId::proportional(11.0), if selected { Color32::WHITE } else { TEXT });
+                let lyric: String = n.lyric.chars().filter(|c| !krabton_engine::singer::kana::invisible(*c)).collect();
+                gp.text(pos2(r.left() + 1.0, r.top() - 1.0), Align2::LEFT_BOTTOM, lyric, egui::FontId::proportional(11.0), if selected { Color32::WHITE } else { TEXT });
             }
         }
         if let Some(m) = self.piano.marquee {

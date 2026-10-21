@@ -403,7 +403,7 @@ mod tests {
     use crate::scale::Scale;
 
     fn ctx(now: u64, beat: f64) -> MidiCtx {
-        MidiCtx { now, len: 512, samples_per_beat: 24000.0, scale: Scale::default(), scale_on: false, beat, playing: true, sr: 48000.0, drum_notes: 0 }
+        MidiCtx { now, len: 512, samples_per_beat: 24000.0, scale: Scale::default(), scale_on: false, beat, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0 }
     }
 
     /// Runs `kind` for `beats`, playing `keys` into it at the start; returns the note-ons.

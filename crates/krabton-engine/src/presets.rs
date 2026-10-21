@@ -185,6 +185,7 @@ pub fn midi(kind: MidiFxKind) -> &'static [Preset] {
         K::Markov => MARKOV,
         K::Rain => RAIN,
         K::Words => WORDS,
+        K::Sing => SING,
         K::Lorenz => LORENZ,
         K::Loops => LOOPS,
         K::Bloom => BLOOM,
@@ -975,6 +976,16 @@ static ANT: &[Preset] = &[p("One Ant", &[("Ants", N(1.0))]), p("Colony", &[("Ant
 static PONG: &[Preset] = &[p("Rally", &[("Speed", N(1.0))]), p("Fast Game", &[("Speed", N(2.5)), ("Balls", N(2.0))]), p("Lob", &[("Speed", N(0.5)), ("Angle", N(60.0))])];
 static MARKOV: &[Preset] = &[p("Singer", &[("Step", N(0.7)), ("Leap", N(0.1))]), p("Leaper", &[("Leap", N(0.6)), ("Step", N(0.3))]), p("Stammer", &[("Repeat", N(0.6))]), p("Falling", &[("Up/Down", N(-0.6))])];
 static RAIN: &[Preset] = &[p("Drizzle", &[("Density", N(1.0)), ("Storm", N(0.1))]), p("Storm", &[("Density", N(8.0)), ("Storm", N(0.8))]), p("On the Grid", &[("Sync", C("1/16")), ("Density", N(4.0))])];
+static SING: &[Preset] = &[
+    pd("Sakura", &[], crate::sequencers::sing::default_text),
+    pd("La La La", &[("Rhythm", C("Lilt")), ("Melody", C("Wave"))], || b"la la la li la lo".to_vec()),
+    pd("Doo Wop", &[("Rhythm", C("Pop")), ("Melody", C("Walk")), ("Range", N(4.0))], || b"du du wa sha la la".to_vec()),
+    pd("Hallelujah", &[("Rhythm", C("Chant")), ("Melody", C("Arch")), ("Range", N(4.0)), ("Word End", N(2.0))], || b"ha re ru ya".to_vec()),
+    pd("Lullaby", &[("Rate", C("1/4")), ("Melody", C("Fall")), ("Breaths", N(0.7))], || b"nen nen ko ro ri yo".to_vec()),
+    pd("Scat", &[("Rate", C("1/16")), ("Rhythm", C("Free")), ("Melody", C("Free")), ("Range", N(7.0)), ("Variation", N(0.6)), ("Word End", N(0.0))], || b"shu bi du ba da ba".to_vec()),
+    pd("Chant", &[("Rhythm", C("Chant")), ("Melody", C("Repeat")), ("Range", N(2.0)), ("Breaths", N(0.0))], || b"o u a o u e".to_vec()),
+    pd("Backwards", &[("Order", C("Backward"))], || b"konnichiwa sekai".to_vec()),
+];
 static WORDS: &[Preset] = &[
     pd("Hello", &[], || b"hello world".to_vec()),
     pd("Morse SOS", &[("Mode", C("Morse"))], || b"sos".to_vec()),

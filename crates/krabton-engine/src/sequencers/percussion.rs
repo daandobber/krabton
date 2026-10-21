@@ -323,7 +323,7 @@ mod tests {
         let mut frame = 0;
         while frame < bars * 4 * 24_000 {
             let mut out = Vec::new();
-            let ctx = MidiCtx { now: frame as u64, len: block, samples_per_beat: 24_000.0, scale: Scale::new(0, ScaleKind::Major), scale_on: false, beat: frame as f64 / 24_000.0, playing: true, sr: 48_000.0, drum_notes: 0 };
+            let ctx = MidiCtx { now: frame as u64, len: block, samples_per_beat: 24_000.0, scale: Scale::new(0, ScaleKind::Major), scale_on: false, beat: frame as f64 / 24_000.0, playing: true, sr: 48_000.0, drum_notes: 0, lead: 0.0 };
             s.process(MidiFxKind::Percussion, p, &[], &mut out, &ctx);
             for e in out.iter().filter(|e| e.on) {
                 notes.push(((frame + e.offset as usize) as f64 / 24_000.0, e.pitch));

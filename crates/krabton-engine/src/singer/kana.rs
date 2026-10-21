@@ -76,12 +76,20 @@ fn romaji_syllables(word: &str) -> Option<Vec<String>> {
     Some(out)
 }
 
+/// Characters that show as nothing (or as a box): zero-width spaces and
+/// joiners, soft hyphens, byte order marks, control characters. Text copied
+/// from a web page often carries them.
+pub fn invisible(c: char) -> bool {
+    c.is_control() || matches!(c, '\u{00AD}' | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2064}' | '\u{FEFF}')
+}
+
 /// Lyrics typed as a line, a syllable each: words split on spaces and
 /// hyphens ("hap-py"), romaji words into their syllables, kana into their
 /// morae (small kana and the long vowel mark staying with the one before);
-/// a word that is neither stays whole.
+/// a word that is neither stays whole. Invisible characters are left out.
 pub fn split_lyrics(text: &str) -> Vec<String> {
     let small = "ゃゅょぁぃぅぇぉゎャュョァィゥェォヮー";
+    let text: String = text.chars().filter(|c| !invisible(*c)).collect();
     let mut out: Vec<String> = Vec::new();
     for word in text.split(|c: char| c.is_whitespace() || c == '-' || c == '/' || c == ',').filter(|w| !w.is_empty()) {
         if word.is_ascii() {
@@ -162,5 +170,7 @@ mod tests {
         assert_eq!(split_lyrics("kitte"), ["ki", "te"]);
         assert_eq!(split_lyrics("きょうはー"), ["きょ", "う", "はー"]);
         assert_eq!(split_lyrics("la la  world"), ["la", "la", "world"]);
+        // Copied from a web page: no boxes for the invisible characters, no syllables of them.
+        assert_eq!(split_lyrics("\u{feff}さ\u{200b}く ra\u{a0}la"), ["さ", "く", "ra", "la"]);
     }
 }
