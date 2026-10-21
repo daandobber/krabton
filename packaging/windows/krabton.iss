@@ -27,7 +27,7 @@ OutputBaseFilename=Krabton-Setup-{#MyAppVersion}
 SetupIconFile=..\..\crates\krabton\assets\icon.ico
 UninstallDisplayIcon={app}\krabton.ico
 UninstallDisplayName=Krabton
-LicenseFile=..\..\LICENSE
+LicenseFile=..\..\COPYING
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -43,6 +43,7 @@ Name: "krabfiles"; Description: "Open .krab sets with Krabton"; GroupDescription
 Source: "..\..\target\release\krabton.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\crates\krabton\assets\icon.ico"; DestDir: "{app}"; DestName: "krabton.ico"; Flags: ignoreversion
 Source: "..\..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
+Source: "..\..\COPYING"; DestDir: "{app}"; DestName: "COPYING.txt"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\Krabton"; Filename: "{app}\krabton.exe"; IconFilename: "{app}\krabton.ico"; Comment: "Make music"

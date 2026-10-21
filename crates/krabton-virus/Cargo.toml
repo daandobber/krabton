@@ -1,0 +1,16 @@
+[package]
+name = "krabton-virus"
+description = "The Virus emulation of gearmulator (The Usual Suspects' DSP56300 emulator and virusLib) compiled into Krabton"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license = "GPL-3.0-only"
+authors = ["The Usual Suspects (gearmulator, dsp56300)", "Krabton contributors"]
+build = "build.rs"
+links = "krabton_virus"
+
+[lib]
+path = "src/lib.rs"
+
+[build-dependencies]
+cc = { version = "1", features = ["parallel"] }

@@ -781,6 +781,21 @@ pub enum Instrument {
         params: Vec<f32>,
         bank: Option<crate::singer::VoicebankRef>,
     },
+    /// Hyper: a Virus emulated by its own firmware, which the player brings
+    /// (see `hyper`): a factory preset (bank, program) and the knobs.
+    Hyper {
+        params: Vec<f32>,
+        firmware: Option<crate::hyper::FirmwareRef>,
+        #[serde(default)]
+        bank: u16,
+        #[serde(default)]
+        program: u16,
+        #[serde(default)]
+        preset: String,
+        /// The device booted from the firmware (not saved: it boots again).
+        #[serde(skip)]
+        engine: crate::hyper::HyperRef,
+    },
     /// Street Organ: a Dutch street organ's pipes, divisions and drums (see `dsp::street_organ`).
     StreetOrgan { preset: String, params: Vec<f32> },
     /// SF2 Player: a preset (bank, program) of a SoundFont 2 bank (see `dsp::sf2`).
@@ -967,6 +982,19 @@ impl Instrument {
         Instrument::Singer { params: params::defaults(crate::singer::SPECS), bank }
     }
 
+    /// Hyper on a firmware's first preset, its knobs as the preset has them.
+    pub fn hyper(firmware: Option<crate::hyper::FirmwareRef>) -> Self {
+        let first = firmware.as_ref().and_then(|f| f.preset(0, 0)).cloned();
+        Instrument::Hyper {
+            params: first.as_ref().map(|p| p.knobs()).unwrap_or_else(|| params::defaults(crate::hyper::SPECS)),
+            firmware,
+            bank: 0,
+            program: 0,
+            preset: first.map(|p| p.name).unwrap_or_default(),
+            engine: crate::hyper::HyperRef::fresh(),
+        }
+    }
+
     pub fn street_organ(preset: &str) -> Self {
         crate::dsp::street_organ::warm();
         Instrument::StreetOrgan { preset: preset.to_string(), params: crate::dsp::street_organ::preset(preset) }
@@ -1030,6 +1058,7 @@ impl Instrument {
             Instrument::Sf2 { .. } => "SF2 Player",
             Instrument::StreetOrgan { .. } => "Street Organ",
             Instrument::Singer { .. } => "Singer",
+            Instrument::Hyper { .. } => "Hyper",
         }
     }
 
@@ -1044,6 +1073,8 @@ impl Instrument {
             Instrument::Sf2 { preset, .. } if !preset.is_empty() => preset.clone(),
             Instrument::Sf2 { font, .. } => font.as_ref().map(|f| f.name.clone()).unwrap_or_else(|| "Empty".into()),
             Instrument::Singer { bank, .. } => bank.as_ref().map(|b| b.name.clone()).unwrap_or_else(|| "Own voice".into()),
+            Instrument::Hyper { preset, .. } if !preset.is_empty() => preset.clone(),
+            Instrument::Hyper { .. } => "No firmware".into(),
             Instrument::Fm { voice, .. } => Dx7Voice::from_slice(voice).map(|v| v.name()).unwrap_or_else(|| "FM".into()),
             Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Modular { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } | Instrument::Monk { preset, .. } | Instrument::Piano { preset, .. } | Instrument::Bassline { preset, .. } | Instrument::Mono101 { preset, .. } | Instrument::Drone { preset, .. } | Instrument::Waves { preset, .. } | Instrument::Guitar { preset, .. } | Instrument::WindChimes { preset, .. } | Instrument::Birds { preset, .. } | Instrument::Nature { preset, .. } | Instrument::PanFlute { preset, .. } | Instrument::Melodica { preset, .. } | Instrument::Harmonica { preset, .. } | Instrument::Calculator { preset, .. } | Instrument::Console { preset, .. } | Instrument::Handheld { preset, .. } | Instrument::Micro { preset, .. } | Instrument::Warp { preset, .. } | Instrument::Hybrid { preset, .. } | Instrument::Quartet { preset, .. } | Instrument::ChipFm { preset, .. } | Instrument::V2 { preset, .. } | Instrument::Oidos { preset, .. } | Instrument::Orchestra { preset, .. } | Instrument::Facet { preset, .. } | Instrument::BeadsSynth { preset, .. } | Instrument::StreetOrgan { preset, .. } => preset.clone(),
         }
@@ -1917,6 +1948,10 @@ impl Project {
         if let Some(Instrument::Plugin(p)) = &mut t.instrument {
             p.instance = self.alloc_id();
         }
+        // A device of its own (it boots again).
+        if let Some(Instrument::Hyper { engine, .. }) = &mut t.instrument {
+            *engine = crate::hyper::HyperRef::fresh();
+        }
         for c in t.slots.iter_mut().flatten() {
             c.id = self.alloc_id();
         }
@@ -2079,6 +2114,7 @@ impl Project {
                     Some(Instrument::Sampler { params, .. }) => params::fix_len(params, sampler::SPECS),
                     Some(Instrument::Sf2 { params, .. }) => params::fix_len(params, crate::dsp::sf2::SPECS),
                     Some(Instrument::Singer { params, .. }) => params::fix_len(params, crate::singer::SPECS),
+                    Some(Instrument::Hyper { params, .. }) => params::fix_len(params, crate::hyper::SPECS),
                     Some(Instrument::StreetOrgan { params, .. }) => {
                         params::fix_len(params, crate::dsp::street_organ::SPECS);
                         crate::dsp::street_organ::warm();

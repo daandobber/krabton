@@ -7,7 +7,7 @@ pkgrel=1
 pkgdesc="An open-source, Live-inspired DAW written in Rust"
 arch=('x86_64' 'aarch64')
 url="https://github.com/daandobber/krabton"
-license=('MIT')
+license=('MIT' 'GPL-3.0-only')
 depends=('alsa-lib' 'libxkbcommon' 'libglvnd' 'hicolor-icon-theme')
 optdepends=('libpulse: sound through PulseAudio or PipeWire (pipewire-pulse)')
 makedepends=('cargo' 'git')
@@ -41,4 +41,5 @@ package() {
     install -Dm644 packaging/linux/krabton.desktop "$pkgdir/usr/share/applications/krabton.desktop"
     install -Dm644 crates/krabton/assets/icon-256.png "$pkgdir/usr/share/icons/hicolor/256x256/apps/krabton.png"
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    install -Dm644 COPYING "$pkgdir/usr/share/licenses/$pkgname/COPYING"
 }

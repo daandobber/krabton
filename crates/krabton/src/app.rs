@@ -86,6 +86,10 @@ pub enum BrowserItem {
     StreetOrgan(&'static str),
     /// The Singer (on the voicebank used last, or its own voice).
     Singer,
+    /// Hyper (on the firmware used last).
+    Hyper,
+    /// A Virus firmware file, for Hyper.
+    HyperFirmware(PathBuf),
     /// A UTAU voicebank's folder, for the Singer.
     Voicebank(PathBuf),
     /// The SF2 Player without a bank.
@@ -228,6 +232,8 @@ impl BrowserItem {
             BrowserItem::MidiFile(p) => p.file_stem().map(|f| f.to_string_lossy().to_string()).unwrap_or_default(),
             BrowserItem::Sf2Player => "SF2 Player".into(),
             BrowserItem::Singer => "Singer".into(),
+            BrowserItem::Hyper => "Hyper".into(),
+            BrowserItem::HyperFirmware(p) => p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default(),
             BrowserItem::Voicebank(p) => p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default(),
             BrowserItem::Sf2 { name, .. } => name.clone(),
             BrowserItem::Plugin(p) | BrowserItem::PluginEffect(p) => p.name.clone(),
@@ -376,6 +382,9 @@ pub struct App {
     pub(crate) sf2_open: Vec<krabton_engine::dsp::sf2::Sf2Ref>,
     /// Voicebanks open (the last few), and the lyrics typed in the clip view.
     pub(crate) singer_open: Vec<krabton_engine::singer::VoicebankRef>,
+    /// Virus firmware read (the last few), and the files found on this computer (looked for now and then).
+    pub(crate) hyper_open: Vec<krabton_engine::hyper::FirmwareRef>,
+    hyper_found: std::cell::RefCell<Option<(std::time::Instant, Vec<PathBuf>)>>,
     pub(crate) lyric_text: String,
     /// monome grid/arc and the virtual grid.
     pub grid: crate::grid::GridState,
@@ -578,6 +587,8 @@ impl App {
             fm_banks: vec![FmBank::factory()],
             sf2_open: Vec::new(),
             singer_open: Vec::new(),
+            hyper_open: Vec::new(),
+            hyper_found: std::cell::RefCell::new(None),
             lyric_text: String::new(),
             grid: crate::grid::GridState::new(),
             mod_learn: None,
@@ -1333,6 +1344,46 @@ impl App {
                     }
                 }
             }
+            BrowserItem::Hyper | BrowserItem::HyperFirmware(_) => {
+                let fw = match item {
+                    BrowserItem::HyperFirmware(path) => match self.hyper_firmware(path) {
+                        Some(f) => Some(f),
+                        None => return,
+                    },
+                    _ => self.default_hyper_firmware(),
+                };
+                match target_track {
+                    // A firmware on a Hyper: it plays it, from its first preset.
+                    Some(t) if matches!(self.project.tracks.get(t).and_then(|tr| tr.instrument.as_ref()), Some(Instrument::Hyper { .. })) => {
+                        if let (Some(f), Some(Instrument::Hyper { params, firmware, bank, program, preset, .. })) = (fw.clone(), self.project.tracks[t].instrument.as_mut()) {
+                            let first = f.preset(0, 0).cloned();
+                            *firmware = Some(f);
+                            (*bank, *program) = (0, 0);
+                            if let Some(pr) = first {
+                                *preset = pr.name.clone();
+                                *params = pr.knobs();
+                            }
+                        }
+                        self.sel_track = TrackSel::Track(t);
+                        self.detail = DetailTab::Devices;
+                    }
+                    Some(t) if is_midi(self, t) => {
+                        self.project.tracks[t].instrument = Some(Instrument::hyper(fw.clone()));
+                        self.sel_track = TrackSel::Track(t);
+                        self.detail = DetailTab::Devices;
+                    }
+                    _ => {
+                        self.add_midi_track(Some(Instrument::hyper(fw.clone())));
+                    }
+                }
+                match &fw {
+                    Some(f) => {
+                        let n: usize = f.banks.iter().map(Vec::len).sum();
+                        self.toast(format!("Hyper: {} ({}), {n} presets; it boots in a few seconds", f.name, f.model));
+                    }
+                    None => self.toast("Hyper needs a Virus firmware: open one on its display (a Virus TI's .bin, or an A, B or C operating system)"),
+                }
+            }
             BrowserItem::Singer | BrowserItem::Voicebank(_) => {
                 let bank = match item {
                     BrowserItem::Voicebank(path) => match self.singer_bank(path) {
@@ -1673,6 +1724,105 @@ impl App {
                         }
                     }
                     self.toast(e);
+                }
+            }
+        }
+    }
+
+    /// A Virus firmware: read and kept open (the last few), remembered.
+    pub(crate) fn hyper_firmware(&mut self, path: &Path) -> Option<krabton_engine::hyper::FirmwareRef> {
+        if let Some(f) = self.hyper_open.iter().find(|f| f.path.as_deref() == Some(path)) {
+            return Some(f.clone());
+        }
+        match krabton_engine::hyper::FirmwareRef::load(path) {
+            Ok(f) => {
+                if self.hyper_open.len() >= 3 {
+                    self.hyper_open.remove(0);
+                }
+                self.hyper_open.push(f.clone());
+                if !self.prefs.hyper_firmware.iter().any(|p| p == path) {
+                    self.prefs.hyper_firmware.push(path.to_path_buf());
+                    self.prefs.save();
+                }
+                Some(f)
+            }
+            Err(e) => {
+                self.toast(format!("{}: {e}", path.display()));
+                None
+            }
+        }
+    }
+
+    /// Where Virus firmware may be: the ones opened before, and the folders
+    /// the emulator's own plugins and Krabton's library keep them in.
+    pub(crate) fn hyper_found(&self) -> Vec<PathBuf> {
+        if let Some((at, found)) = &*self.hyper_found.borrow() {
+            if at.elapsed().as_secs_f32() < 5.0 {
+                return found.clone();
+            }
+        }
+        let mut found: Vec<PathBuf> = self.prefs.hyper_firmware.iter().rev().filter(|p| p.is_file()).cloned().collect();
+        let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(PathBuf::from).unwrap_or_default();
+        let docs = if cfg!(any(windows, target_os = "macos")) { home.join("Documents") } else { std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).unwrap_or_else(|| home.join(".local/share")) };
+        let dirs = [
+            docs.join("The Usual Suspects").join("OsTIrus").join("roms"),
+            docs.join("The Usual Suspects").join("Osirus").join("roms"),
+            crate::piano_lib::library_dir().parent().map(Path::to_path_buf).unwrap_or_default().join("Firmware"),
+        ];
+        for dir in dirs {
+            let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+            let mut files: Vec<PathBuf> = rd
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("bin") || e.eq_ignore_ascii_case("mid")))
+                .filter(|p| std::fs::metadata(p).map(|m| m.len() >= 100_000).unwrap_or(false))
+                .collect();
+            files.sort();
+            for f in files {
+                if !found.contains(&f) {
+                    found.push(f);
+                }
+            }
+        }
+        *self.hyper_found.borrow_mut() = Some((std::time::Instant::now(), found.clone()));
+        found
+    }
+
+    /// The firmware a new Hyper starts on: the last one opened, or one found.
+    pub(crate) fn default_hyper_firmware(&mut self) -> Option<krabton_engine::hyper::FirmwareRef> {
+        if let Some(f) = self.hyper_open.last() {
+            return Some(f.clone());
+        }
+        let found = self.hyper_found();
+        for path in found {
+            if let Ok(f) = krabton_engine::hyper::FirmwareRef::load(&path) {
+                self.hyper_open.push(f.clone());
+                return Some(f);
+            }
+        }
+        None
+    }
+
+    /// Opens a Virus firmware for Hyper.
+    pub(crate) fn open_firmware_dialog(&mut self) -> Option<krabton_engine::hyper::FirmwareRef> {
+        let path = rfd::FileDialog::new().set_title("A Virus firmware: a Virus TI's (.bin), or an A, B or C operating system (.bin, .mid)").add_filter("Virus firmware", &["bin", "BIN", "mid", "MID"]).pick_file()?;
+        *self.hyper_found.borrow_mut() = None;
+        self.hyper_firmware(&path)
+    }
+
+    /// Every Hyper with a firmware gets a device booted from it (on a thread
+    /// of its own); one without lets its device go.
+    fn boot_hypers(&mut self) {
+        let rate = self.engine.status.sample_rate.load();
+        if rate < 8000.0 {
+            return;
+        }
+        for t in &self.project.tracks {
+            if let Some(Instrument::Hyper { firmware, engine, .. }) = &t.instrument {
+                match firmware.as_ref().filter(|f| !f.is_missing()) {
+                    Some(f) => engine.boot(f, rate),
+                    None if engine.status() != krabton_engine::hyper::Status::Off => engine.stop(),
+                    None => {}
                 }
             }
         }
@@ -3221,6 +3371,15 @@ impl App {
                 "sf2empty" => self.apply_item(&BrowserItem::Sf2Player, DropTarget::NewTrack),
                 // singer: a Singer on the selected track (on the last voicebank); voicebank=PATH: that voicebank there;
                 // lyrics=TEXT: on the selected clip's notes.
+                // hyper: Hyper on the selected track (on the last firmware); firmware=PATH: that firmware there.
+                "hyper" | "firmware" => {
+                    let target = match self.sel_track {
+                        TrackSel::Track(t) => DropTarget::Track(t),
+                        _ => DropTarget::NewTrack,
+                    };
+                    let item = if name == "hyper" { BrowserItem::Hyper } else { BrowserItem::HyperFirmware(PathBuf::from(arg.trim())) };
+                    self.apply_item(&item, target);
+                }
                 "singer" => {
                     let target = match self.sel_track {
                         TrackSel::Track(t) => DropTarget::Track(t),
@@ -4000,6 +4159,7 @@ impl eframe::App for App {
         self.poll_drum_install();
         self.poll_sf2_installs();
         self.poll_singer_installs();
+        self.boot_hypers();
         self.recover_engine();
         self.poll_recording();
         self.tape_frame();

@@ -219,6 +219,28 @@ const SINGER: Skin = Skin {
     ..BASE
 };
 
+/// A red desktop synth: dark red lacquer, black knobs, a pale blue display.
+const HYPER: Skin = Skin {
+    top: hex(0x8c1219),
+    bottom: hex(0x4a080d),
+    surface: Surface::Gloss,
+    stripes: &[hex(0xd02a33)],
+    ink: hex(0xf3e9e9),
+    dim: hex(0xd7b9b9),
+    well: hex(0x1a0507),
+    well_ink: hex(0xf3e9e9),
+    accent: hex(0x8fd8ff),
+    knob: Knob::Cap,
+    cap: hex(0x1b1b1d),
+    logo: Font::Future,
+    logo_size: 20.0,
+    logo_ink: hex(0xffffff),
+    logo_case: Case::Upper,
+    groups: Groups::Outline,
+    heroes: &["Cutoff"],
+    ..BASE
+};
+
 const PARTICLES: Skin = Skin {
     top: hex(0xc9a56c),
     bottom: hex(0xa4814b),
@@ -970,6 +992,7 @@ pub fn for_instrument(name: &str) -> Option<Skin> {
         "Sampler" => SAMPLER,
         "SF2 Player" => SF2,
         "Singer" => SINGER,
+        "Hyper" => HYPER,
         "Street Organ" => STREET_ORGAN,
         "Plaits" => Skin { accent: hex(0x2fa84f), heroes: &["Harmonics", "Timbre", "Morph"], ..MODULE },
         "Braids" => Skin { accent: hex(0xe04534), heroes: &["Timbre", "Color"], ..MODULE },

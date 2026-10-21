@@ -1711,6 +1711,7 @@ dependencies = [
  "krabton-rings",
  "krabton-sf2",
  "krabton-stk",
+ "krabton-virus",
  "krabton-warps",
  "memmap2",
  "mi-plaits-dsp",
@@ -1736,6 +1737,13 @@ version = "0.39.0"
 [[package]]
 name = "krabton-stk"
 version = "0.39.0"
+
+[[package]]
+name = "krabton-virus"
+version = "0.39.0"
+dependencies = [
+ "cc",
+]
 
 [[package]]
 name = "krabton-warps"

@@ -473,6 +473,7 @@ enum InstState {
     Sf2(Box<crate::dsp::sf2::Sf2State>),
     StreetOrgan(Box<crate::dsp::street_organ::StreetOrganState>),
     Singer(Box<crate::singer::SingerState>),
+    Hyper(Box<crate::hyper::HyperState>),
     Plugin { instance: u64, proc: Option<Box<dyn AudioProcessor>>, pending: Vec<PluginEvent> },
 }
 
@@ -514,6 +515,7 @@ impl InstState {
             InstState::Sf2(s) => s.pitch_bend = semis,
             InstState::StreetOrgan(s) => s.pitch_bend = semis,
             InstState::Singer(s) => s.pitch_bend = semis,
+            InstState::Hyper(s) => s.pitch_bend = semis,
             _ => {}
         }
     }
@@ -567,6 +569,7 @@ impl InstState {
             Some(Instrument::Sf2 { font, .. }) => InstState::Sf2(Box::new(crate::dsp::sf2::Sf2State::new(font.as_ref(), sr))),
             Some(Instrument::StreetOrgan { .. }) => InstState::StreetOrgan(Box::new(crate::dsp::street_organ::StreetOrganState::new(sr))),
             Some(Instrument::Singer { .. }) => InstState::Singer(Box::new(crate::singer::SingerState::new(sr))),
+            Some(Instrument::Hyper { engine, .. }) => InstState::Hyper(Box::new(crate::hyper::HyperState::new(engine))),
         }
     }
 
@@ -636,6 +639,8 @@ impl InstState {
         ) || matches!((self, i), (InstState::Plugin { instance, .. }, Some(Instrument::Plugin(p))) if *instance == p.instance)
             // Another bank needs a player of its own.
             || matches!((self, i), (InstState::Sf2(s), Some(Instrument::Sf2 { font, .. })) if s.is_for(font.as_ref()))
+            // Another device (a duplicated track's) a state of its own.
+            || matches!((self, i), (InstState::Hyper(s), Some(Instrument::Hyper { engine, .. })) if s.is(engine))
     }
 
     /// `ov` replaces the instrument's parameters (modulation).
@@ -647,6 +652,7 @@ impl InstState {
             (InstState::Sf2(s), Instrument::Sf2 { params, bank, patch, .. }) => s.note_on(ov.unwrap_or(params), *bank, *patch, pitch, vel),
             (InstState::StreetOrgan(s), Instrument::StreetOrgan { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Singer(s), Instrument::Singer { params, bank }) => s.note_on(ov.unwrap_or(params), bank.as_ref(), pitch, vel),
+            (InstState::Hyper(s), Instrument::Hyper { params, bank, program, .. }) => s.note_on(ov.unwrap_or(params), (*bank, *program), pitch, vel),
             (st @ InstState::Plugin { .. }, Instrument::Plugin(_)) => st.push_plugin_event(pitch, PluginEventKind::NoteOn { velocity: vel }),
             (InstState::Fm(s), Instrument::Fm { voice, op_mask, params, .. }) => s.note_on(ov.unwrap_or(params), voice, *op_mask, pitch, vel),
             (InstState::Macro(s), Instrument::Macro { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
@@ -698,6 +704,7 @@ impl InstState {
             (InstState::Sf2(s), Instrument::Sf2 { .. }) => s.note_off(pitch),
             (InstState::StreetOrgan(s), Instrument::StreetOrgan { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Singer(s), Instrument::Singer { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Hyper(s), Instrument::Hyper { .. }) => s.note_off(pitch),
             (st @ InstState::Plugin { .. }, Instrument::Plugin(_)) => st.push_plugin_event(pitch, PluginEventKind::NoteOff),
             (InstState::Fm(s), Instrument::Fm { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Macro(s), Instrument::Macro { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
@@ -750,6 +757,7 @@ impl InstState {
             InstState::Sf2(s) => s.all_off(),
             InstState::StreetOrgan(s) => s.all_off(),
             InstState::Singer(s) => s.all_off(),
+            InstState::Hyper(s) => s.all_off(),
             InstState::Plugin { .. } => self.push_plugin_event(0, PluginEventKind::AllNotesOff),
             InstState::Fm(s) => s.all_off(),
             InstState::Macro(s) => s.all_off(),
@@ -831,6 +839,7 @@ impl InstState {
             InstState::Facet(s) => s.visual(out),
             InstState::StreetOrgan(s) => s.visual(out),
             InstState::Singer(s) => s.visual(out),
+            InstState::Hyper(s) => s.visual(out),
             _ => return false,
         }
         true
@@ -844,6 +853,7 @@ impl InstState {
             (InstState::Sf2(s), Instrument::Sf2 { params, bank, patch, .. }) => s.render(ov.unwrap_or(params), *bank, *patch, l, r),
             (InstState::StreetOrgan(s), Instrument::StreetOrgan { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Singer(s), Instrument::Singer { params, bank }) => s.render(ov.unwrap_or(params), bank.as_ref(), l, r),
+            (InstState::Hyper(s), Instrument::Hyper { params, bank, program, .. }) => s.render(ov.unwrap_or(params), (*bank, *program), l, r),
             (InstState::Fm(s), Instrument::Fm { voice, params, .. }) => s.render(ov.unwrap_or(params), voice, l, r, sr),
             (InstState::Macro(s), Instrument::Macro { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Braids(s), Instrument::Braids { params, .. }) => s.render(ov.unwrap_or(params), l, r),

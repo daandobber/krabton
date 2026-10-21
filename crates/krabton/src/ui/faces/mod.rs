@@ -16,6 +16,7 @@ pub mod piano;
 pub mod plaits;
 pub mod sf2;
 pub mod singer;
+pub mod hyper;
 pub mod street_organ;
 pub mod synth;
 

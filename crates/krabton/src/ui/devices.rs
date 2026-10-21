@@ -1049,6 +1049,7 @@ impl App {
             Instrument::Drums { engine, .. } => Some(engine.description()),
             Instrument::Sf2 { .. } => Some(super::browser::SF2_HINT),
             Instrument::Singer { .. } => Some(super::browser::SINGER_HINT),
+            Instrument::Hyper { .. } => Some(super::browser::HYPER_HINT),
             Instrument::Plugin(_) => None,
             _ => super::browser::instrument_hint(title),
         };
@@ -1188,6 +1189,62 @@ impl App {
                             self.prefs.save();
                             let name = font.as_ref().map(|f| f.name.clone()).unwrap_or_default();
                             self.toast(if for_midi { "MIDI files play with Krabton's instruments again".to_string() } else { format!("MIDI files you open play with {name}") });
+                        }
+                    }
+                    Instrument::Hyper { params, firmware, bank, program, preset, engine } => {
+                        let mut asked = super::faces::hyper::Asked::default();
+                        let found = self.hyper_found();
+                        let status = engine.status();
+                        if crate::skin::current().is_some() {
+                            super::faces::hyper::panel(ui, Id::new(("hyper", track_id)), firmware.as_ref(), &status, (*bank, *program), &found, params, &live, h - 36.0, mv.as_mut(), &mut asked);
+                        } else {
+                            ui.horizontal(|ui| {
+                                let name = match (firmware.as_ref(), &status) {
+                                    (None, _) => "No firmware".to_string(),
+                                    (Some(f), _) if f.is_missing() => format!("Missing: {}", f.name),
+                                    (Some(f), krabton_engine::hyper::Status::Booting) => format!("{} ({}), booting", f.name, f.model),
+                                    (Some(f), krabton_engine::hyper::Status::Failed(e)) => format!("{}: {e}", f.name),
+                                    (Some(f), _) => format!("{} ({})", f.name, f.model),
+                                };
+                                ui.label(RichText::new(name).strong().color(TEXT));
+                                if ui.button("Firmware...").on_hover_text("Open a Virus firmware: a Virus TI's (.bin), or a Virus A, B or C operating system").clicked() {
+                                    asked.open = true;
+                                }
+                                if let Some(f) = firmware.as_ref().filter(|f| !f.is_missing()) {
+                                    ui.menu_button(if preset.is_empty() { "Presets" } else { preset.as_str() }, |ui| super::faces::hyper::preset_menu(ui, f, (*bank, *program), &mut asked.pick));
+                                } else {
+                                    for path in found.iter().take(3) {
+                                        if ui.button(path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()).on_hover_text(path.display().to_string()).clicked() {
+                                            asked.firmware = Some(path.clone());
+                                        }
+                                    }
+                                }
+                            });
+                            param_grid_mod(ui, Id::new(("hyper", track_id)), krabton_engine::hyper::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
+                        }
+                        // A firmware opened, found or dropped: its first preset.
+                        let mut new_fw = None;
+                        if asked.open {
+                            new_fw = self.open_firmware_dialog();
+                        }
+                        if let Some(path) = asked.firmware.take() {
+                            new_fw = self.hyper_firmware(&path);
+                        }
+                        if let Some(BrowserItem::HyperFirmware(path)) = asked.dropped.take() {
+                            new_fw = self.hyper_firmware(&path);
+                        }
+                        if let Some(f) = new_fw {
+                            *firmware = Some(f);
+                            asked.pick = Some((0, 0));
+                        }
+                        // A preset: its knobs as it has them.
+                        if let Some((b, p)) = asked.pick {
+                            *bank = b;
+                            *program = p;
+                            if let Some(pr) = firmware.as_ref().and_then(|f| f.preset(b, p)) {
+                                *preset = pr.name.clone();
+                                *params = pr.knobs();
+                            }
                         }
                     }
                     Instrument::Singer { params, bank } => {
@@ -2449,7 +2506,7 @@ impl App {
             t.instrument = None;
         } else if new_inst != inst {
             // Another preset of the bank: a name Krabton gave follows it.
-            if matches!(new_inst, Instrument::Sf2 { .. } | Instrument::Singer { .. }) && t.name == inst.track_name() {
+            if matches!(new_inst, Instrument::Sf2 { .. } | Instrument::Singer { .. } | Instrument::Hyper { .. }) && t.name == inst.track_name() {
                 t.name = new_inst.track_name();
             }
             t.instrument = Some(new_inst);

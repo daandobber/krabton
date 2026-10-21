@@ -114,6 +114,7 @@ enum Act {
     LoadSyxFolder,
     LoadSf2,
     LoadVoicebank,
+    LoadFirmware,
     GetVoicebank(usize),
     /// Download offered SoundFont bank number n.
     GetSf2(usize),
@@ -454,6 +455,7 @@ fn devices() -> [Dev; 42] {
 
 const FM_HINT: &str = "FM voice: double-click or drag onto a track";
 const SAMPLE_HINT: &str = "Click to hear it, double-click to load it, or drag it onto a track or slot";
+pub(crate) const HYPER_HINT: &str = "A Virus emulated by its own firmware (The Usual Suspects' DSP56300 emulator, as in their OsTIrus and Osirus): bring a Virus TI's firmware, or an A, B or C operating system. Its factory presets, and knobs that move the Virus's own controllers";
 pub(crate) const SINGER_HINT: &str = "Sings the lyrics of its notes with a UTAU voicebank (CV or VCV, Japanese; romaji or kana), the consonant before the beat, the vowel held; without one, a voice of its own. Type lyrics in the clip view";
 pub(crate) const SF2_HINT: &str = "Plays the presets of SoundFont 2 banks (.sf2): pianos, orchestras, General MIDI sets, drum kits";
 const MIDI_FILE_HINT: &str = "MIDI file: drag it onto a slot or the arrangement for one clip, or double-click (or drop it below the tracks) for a track per part";
@@ -757,6 +759,7 @@ impl App {
                 all.push(("Sampler", "Plays samples: drop a sample on it afterwards", vec![("Sampler".to_string(), BrowserItem::Sampler)]));
                 all.push(("SF2 Player", SF2_HINT, vec![("SF2 Player".to_string(), BrowserItem::Sf2Player)]));
                 all.push(("Singer", SINGER_HINT, vec![("Singer".to_string(), BrowserItem::Singer)]));
+                all.push(("Hyper", HYPER_HINT, vec![("Hyper".to_string(), BrowserItem::Hyper)]));
                 all.sort_by_key(|a| a.0);
                 // Columns of names; each opens its presets.
                 let per = all.len().div_ceil(3);
@@ -889,6 +892,12 @@ impl App {
             singer.push(Node::item(dir_tag(path), file_name(path), Icon::Preset, SINGER_HINT, BrowserItem::Voicebank(path.clone())));
         }
         out.push(Node::Folder { tag: None, label: "Singer".into(), icon: Icon::Device, hint: SINGER_HINT.into(), load: Some(BrowserItem::Singer), kids: Kids::Nodes(singer) });
+        // Hyper, with the firmware opened before or found on this computer.
+        let mut hyper = vec![Node::Action { label: "Open a Virus firmware...".into(), hint: "A Virus TI's firmware (.bin), or a Virus A, B or C operating system: it stays where it is".into(), act: Act::LoadFirmware }];
+        for path in self.hyper_found() {
+            hyper.push(Node::item(file_tag(&path), file_name(&path), Icon::Preset, HYPER_HINT, BrowserItem::HyperFirmware(path.clone())));
+        }
+        out.push(Node::Folder { tag: None, label: "Hyper".into(), icon: Icon::Device, hint: HYPER_HINT.into(), load: Some(BrowserItem::Hyper), kids: Kids::Nodes(hyper) });
         out.push(Node::item("inst/Sampler", "Sampler", Icon::Device, "Plays samples: one across the keyboard, a multi-sampled instrument or SFZ, or slices of a loop", BrowserItem::Sampler));
         out.sort_by(|a, b| a.label().cmp(b.label()));
         out
@@ -1505,6 +1514,11 @@ impl App {
                 }
             }
             Act::GetVoicebank(i) => self.start_singer_install(i, None),
+            Act::LoadFirmware => {
+                if let Some(f) = self.open_firmware_dialog() {
+                    self.toast(format!("{} ({}): drag it onto a track or double-click it", f.name, f.model));
+                }
+            }
             Act::LoadVoicebank => {
                 if let Some(b) = self.open_voicebank_dialog() {
                     let kind = if b.vcv { "VCV" } else { "CV" };

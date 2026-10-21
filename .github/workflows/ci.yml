@@ -4,6 +4,10 @@ on:
   push:
   pull_request:
 
+# Hyper's emulator is C++ and uses std::filesystem: built for macOS 11, Krabton's minimum.
+env:
+  MACOSX_DEPLOYMENT_TARGET: "11.0"
+
 jobs:
   engine-tests:
     name: Engine tests (${{ matrix.os }})
@@ -21,7 +25,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          cargo test -p krabton-engine -p krabton-monome -p krabton-braids -p krabton-elements -p krabton-rings -p krabton-clouds -p krabton-beads -p krabton-stk -p krabton-airwindows -p krabton-warps 2>&1 | tee test.log && exit 0
+          cargo test -p krabton-engine -p krabton-monome -p krabton-braids -p krabton-elements -p krabton-rings -p krabton-clouds -p krabton-beads -p krabton-stk -p krabton-airwindows -p krabton-warps -p krabton-virus 2>&1 | tee test.log && exit 0
           # The failing tests and their messages as an annotation on the run.
           msg=$( { grep -E "^test .* FAILED$" test.log; grep -A3 "panicked at" test.log; } | head -60 | sed -e 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g' ) || true
           echo "::error title=Failing tests::${msg}"

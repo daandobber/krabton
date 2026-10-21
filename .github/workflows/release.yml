@@ -11,6 +11,10 @@ on:
 permissions:
   contents: write
 
+# Hyper's emulator is C++ and uses std::filesystem: built for macOS 11, Krabton's minimum.
+env:
+  MACOSX_DEPLOYMENT_TARGET: "11.0"
+
 jobs:
   windows:
     name: Windows installer
@@ -34,6 +38,7 @@ jobs:
           New-Item -ItemType Directory -Force dist\Krabton | Out-Null
           Copy-Item target\release\krabton.exe dist\Krabton\
           Copy-Item LICENSE dist\Krabton\LICENSE.txt
+          Copy-Item COPYING dist\Krabton\COPYING.txt
           Compress-Archive -Path dist\Krabton -DestinationPath "dist\Krabton-$env:VERSION-windows-portable.zip"
       - uses: actions/upload-artifact@v4
         with:
@@ -74,7 +79,7 @@ jobs:
       - name: Tarball
         run: |
           mkdir -p "krabton-$VERSION"
-          cp target/release/krabton packaging/linux/krabton.desktop packaging/linux/install.sh LICENSE "krabton-$VERSION/"
+          cp target/release/krabton packaging/linux/krabton.desktop packaging/linux/install.sh LICENSE COPYING "krabton-$VERSION/"
           cp crates/krabton/assets/icon-256.png "krabton-$VERSION/krabton.png"
           chmod +x "krabton-$VERSION/install.sh"
           tar czf "dist/krabton-$VERSION-linux-x86_64.tar.gz" "krabton-$VERSION"
@@ -114,7 +119,7 @@ jobs:
       - name: Tarball
         run: |
           mkdir -p "krabton-$VERSION"
-          cp target/release/krabton packaging/linux/krabton.desktop packaging/linux/install.sh LICENSE "krabton-$VERSION/"
+          cp target/release/krabton packaging/linux/krabton.desktop packaging/linux/install.sh LICENSE COPYING "krabton-$VERSION/"
           cp crates/krabton/assets/icon-256.png "krabton-$VERSION/krabton.png"
           chmod +x "krabton-$VERSION/install.sh"
           tar czf "dist/krabton-$VERSION-linux-aarch64.tar.gz" "krabton-$VERSION"

@@ -72,6 +72,8 @@ pub struct Prefs {
     pub sf2_banks: Vec<PathBuf>,
     /// UTAU voicebank folders opened, for the Singer's folder in the browser.
     pub singer_banks: Vec<PathBuf>,
+    /// Virus firmware files opened, for Hyper (they stay where they are).
+    pub hyper_firmware: Vec<PathBuf>,
     /// The General MIDI bank MIDI files play with (none: Krabton's instruments).
     pub gm_bank: Option<PathBuf>,
     /// Hear notes while placing and moving them in the clip editor.
