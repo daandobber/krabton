@@ -26,20 +26,31 @@
 //! where along the plates the hand is, an LFO, a drawn shape, the XY pad's X
 //! and Y, an envelope (once, held, or cycling) and each plate's own value.
 //!
+//! The plates can also be the Tonnetz (the *Tonnetz* layout): the lattice of
+//! notes a fifth apart along it and a major third apart up it, where every
+//! triangle is a major or a minor triad and the triangles beside it share two
+//! of its notes (P, L and R: the parallel, the leading-tone exchange, the
+//! relative). A triangle pressed is its three notes pressed together (its
+//! root last): one touch, a chord the pulser pulses whole. The sequence's
+//! steps are then triangles too: each plays its triad around the root of the
+//! triangle held (or the base note with Run), each note in the octave
+//! nearest it, so a walk across the lattice moves as little as it can.
+//!
 //! Each step lasts one to eight pulses and its gate decides what they play:
 //! the first pulse (Single), every one (Every), one note held over them all
 //! (Hold), none (Rest), the last, every other one, or more notes on each
 //! pulse (Roll); a ratchet splits each note into one to eight. Steps can be
 //! skipped.
 //!
-//! Its data (version 3): a version byte, sixteen steps of six bytes (note i8,
+//! Its data (version 4): a version byte, sixteen steps of six bytes (note i8,
 //! value, chance, ratchet - 1, pulses - 1, flags: the gate in the low three
 //! bits, then tie, accent, skip), eight patch points (the instrument's
 //! parameters the Touch view shows, u16 little-endian, 0xFFFF: none), the
-//! shape's 32 points and each plate's value (24). The first version (five
-//! steps of two bytes and six patch points) and the second (steps of four
-//! bytes: ratchets up to four and a rest, with or without the plates'
-//! values) are read too.
+//! shape's 32 points, each plate's value (24) and each step's triangle (16:
+//! a + 8 in the low four bits, b + 4 in the next three, minor in the top
+//! one). The first version (five steps of two bytes and six patch points),
+//! the second (steps of four bytes: ratchets up to four and a rest, with or
+//! without the plates' values) and the third (no triangles) are read too.
 
 use super::SeqState;
 use crate::midi_fx::{MidiCtx, MidiEvent};
@@ -108,7 +119,9 @@ pub const ARP_ORDERS: &[&str] = &["Up", "Down", "Up-Down", "Random", "As Played"
 pub const LFO_SHAPES: &[&str] = &["Sine", "Triangle", "Saw", "Square", "S&H"];
 pub const SLOW_RATES: &[&str] = &["1/16", "1/8", "1/4", "1/2", "1 Bar", "2 Bars", "4 Bars", "8 Bars"];
 const SLOW_BEATS: [f64; 8] = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0];
-pub const LAYOUTS: &[&str] = &["Row", "Wide", "Grid"];
+pub const LAYOUTS: &[&str] = &["Row", "Wide", "Grid", "Tonnetz"];
+/// The layout that makes the plates the Tonnetz.
+pub const TONNETZ_LAYOUT: usize = 3;
 pub const NOTE_SETS: &[&str] = &["Key", "Pentatonic", "Chromatic"];
 /// What the Touch modulators can take from it (the first six kept their places).
 pub const OUTPUTS: &[&str] = &["Pressure", "Pulse", "Steps", "Random", "Drift", "Position", "LFO", "Shape", "X", "Y", "Env", "Plate"];
@@ -126,13 +139,16 @@ const MAX_SOUNDING: usize = 48;
 pub const MAX_RATCHET: u8 = 8;
 pub const MAX_PULSES: u8 = 8;
 
-const VERSION: u8 = 3;
+const VERSION: u8 = 4;
 const STEP_BYTES: usize = 6;
 const STEP_AT: usize = 1;
 const PATCH_AT: usize = STEP_AT + N_STEPS * STEP_BYTES;
 const SHAPE_AT: usize = PATCH_AT + N_PATCH * 2;
 const PLATES_AT: usize = SHAPE_AT + N_SHAPE;
-const LEN: usize = PLATES_AT + N_PLATES;
+const TRI_AT: usize = PLATES_AT + N_PLATES;
+const LEN: usize = TRI_AT + N_STEPS;
+/// The third version: the same without the triangles.
+const V3_LEN: usize = TRI_AT;
 /// The second version: steps of four bytes, with the plates' values or (an
 /// older one) without.
 const V2_PATCH_AT: usize = STEP_AT + N_STEPS * 4;
@@ -181,6 +197,97 @@ pub static TOUCH: &[ParamSpec] = &[
     ParamSpec::int("Random Steps", "Motion", 0.0, 12.0, 0.0, Unit::None),
     ParamSpec::toggle("Slide", "Plates", true),
 ];
+
+/// A triangle of the Tonnetz. Its corners are points (a, b) of the lattice,
+/// `a` fifths to the right and `b` major thirds up and to the right from the
+/// middle (the plate's note): the upward triangle (a, b), (a + 1, b),
+/// (a, b + 1) is a major triad, the downward one (a + 1, b), (a, b + 1),
+/// (a + 1, b + 1) a minor triad. The lattice repeats every three thirds up
+/// and every four fifths less a third along.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct Tri {
+    pub a: i8,
+    pub b: i8,
+    pub minor: bool,
+}
+
+/// The neighbours across a triangle's sides: the parallel (C to Cm), the
+/// leading-tone exchange (C to Em) and the relative (C to Am).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Turn {
+    P,
+    L,
+    R,
+}
+
+impl Tri {
+    pub const fn new(a: i8, b: i8, minor: bool) -> Self {
+        Self { a, b, minor }
+    }
+
+    /// Semitones from the middle to its corner (a, b).
+    fn corner(self) -> i32 {
+        7 * self.a as i32 + 4 * self.b as i32
+    }
+
+    /// Its root, in semitones above the middle (0..12).
+    pub fn root(self) -> i32 {
+        (self.corner() + if self.minor { 4 } else { 0 }).rem_euclid(12)
+    }
+
+    /// Its three notes, in semitones above the middle (0..12), root first.
+    pub fn classes(self) -> [i32; 3] {
+        let r = self.root();
+        let third = if self.minor { 3 } else { 4 };
+        [r, (r + third) % 12, (r + 7) % 12]
+    }
+
+    /// The triangle across one of its sides, the same chord moved back near
+    /// the middle when it walks off the lattice shown.
+    pub fn turn(self, t: Turn) -> Tri {
+        let (a, b) = (self.a as i32, self.b as i32);
+        let (a, b) = match (self.minor, t) {
+            (false, Turn::P) => (a, b - 1),
+            (false, Turn::L) => (a, b),
+            (false, Turn::R) => (a - 1, b),
+            (true, Turn::P) => (a, b + 1),
+            (true, Turn::L) => (a, b),
+            (true, Turn::R) => (a + 1, b),
+        };
+        let (a, b) = if (-4..=3).contains(&a) && (-2..=1).contains(&b) { (a, b) } else { fold(a, b) };
+        Tri::new(a as i8, b as i8, !self.minor)
+    }
+
+    fn byte(self) -> u8 {
+        ((self.a.clamp(-8, 7) + 8) as u8) | ((self.b.clamp(-4, 3) + 4) as u8) << 4 | (self.minor as u8) << 7
+    }
+
+    fn from_byte(v: u8) -> Tri {
+        Tri::new((v & 15) as i8 - 8, ((v >> 4) & 7) as i8 - 4, v & 128 != 0)
+    }
+}
+
+/// A point of the lattice moved to the same note near the middle.
+fn fold(mut a: i32, mut b: i32) -> (i32, i32) {
+    while a > 1 {
+        a -= 4;
+        b += 1;
+    }
+    while a < -2 {
+        a += 4;
+        b -= 1;
+    }
+    (a, (b + 1).rem_euclid(3) - 1)
+}
+
+/// The notes of triangle `t` around `center` (the plate's note), each in the
+/// octave nearest it, low to high: triangles side by side share two notes
+/// and keep them where they are.
+pub fn triad(center: u8, t: Tri) -> [u8; 3] {
+    let mut n = t.classes().map(|c| (center as i32 + (c + 6).rem_euclid(12) - 6).clamp(0, 127) as u8);
+    n.sort_unstable();
+    n
+}
 
 /// What a step plays on its pulses (in the order of `GATES`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -238,11 +345,13 @@ pub struct Step {
     pub accent: bool,
     /// Passed over.
     pub skip: bool,
+    /// Its triangle of the Tonnetz (with Tonnetz on, the triad it plays).
+    pub tri: Tri,
 }
 
 impl Default for Step {
     fn default() -> Self {
-        Self { note: 0, value: 0.0, chance: 1.0, ratchet: 1, pulses: 1, gate: Gate::Single, tie: false, accent: false, skip: false }
+        Self { note: 0, value: 0.0, chance: 1.0, ratchet: 1, pulses: 1, gate: Gate::Single, tie: false, accent: false, skip: false, tri: Tri::default() }
     }
 }
 
@@ -267,6 +376,7 @@ fn step_bytes(s: &Step) -> [u8; STEP_BYTES] {
 fn write_step(data: &mut [u8], i: usize, s: &Step) {
     let at = STEP_AT + i * STEP_BYTES;
     data[at..at + STEP_BYTES].copy_from_slice(&step_bytes(s));
+    data[TRI_AT + i] = s.tri.byte();
 }
 
 fn write_patch(data: &mut [u8], k: usize, param: Option<u16>) {
@@ -281,7 +391,8 @@ fn is_current(data: &[u8]) -> bool {
 /// the second or third version: (version, patch points, shape, plates).
 fn layout(data: &[u8]) -> Option<(u8, usize, usize, Option<usize>)> {
     match (data.first().copied(), data.len()) {
-        (Some(VERSION), LEN) => Some((3, PATCH_AT, SHAPE_AT, Some(PLATES_AT))),
+        (Some(VERSION), LEN) => Some((4, PATCH_AT, SHAPE_AT, Some(PLATES_AT))),
+        (Some(3), V3_LEN) => Some((3, PATCH_AT, SHAPE_AT, Some(PLATES_AT))),
         (Some(2), V2_LEN) => Some((2, V2_PATCH_AT, V2_PATCH_AT + N_PATCH * 2, Some(V2_PLATES_AT))),
         (Some(2), V2_PLATES_AT) => Some((2, V2_PATCH_AT, V2_PATCH_AT + N_PATCH * 2, None)),
         _ => None,
@@ -338,10 +449,12 @@ pub fn notes(ns: &[i32]) -> Vec<u8> {
     pattern(&steps)
 }
 
-/// What it starts with: a little tune, accents on the ones.
+/// What it starts with: a little tune, accents on the ones; on the Tonnetz
+/// I, vi, IV and V over and over.
 pub fn default_data() -> Vec<u8> {
     let ns = [0, 2, 4, 2, 7, 4, 2, -1, 0, 4, 2, 5, 4, 2, 0, -3];
-    let steps: Vec<Step> = ns.iter().enumerate().map(|(i, &n)| Step { note: n, value: ((i * 5) % 16) as f32 / 15.0, accent: i % 8 == 0, ..Step::default() }).collect();
+    let tris = [Tri::new(0, 0, false), Tri::new(-1, 0, true), Tri::new(-1, 0, false), Tri::new(1, 0, false)];
+    let steps: Vec<Step> = ns.iter().enumerate().map(|(i, &n)| Step { note: n, value: ((i * 5) % 16) as f32 / 15.0, accent: i % 8 == 0, tri: tris[i % 4], ..Step::default() }).collect();
     pattern(&steps)
 }
 
@@ -372,9 +485,10 @@ pub fn whole(data: &mut Vec<u8>) {
 /// Step `i` (of any version's data).
 pub fn step(data: &[u8], i: usize) -> Step {
     match layout(data) {
-        Some((3, ..)) if i < N_STEPS => {
+        Some((v @ (3 | 4), ..)) if i < N_STEPS => {
             let b = &data[STEP_AT + i * STEP_BYTES..STEP_AT + (i + 1) * STEP_BYTES];
             Step {
+                tri: if v == 4 { Tri::from_byte(data[TRI_AT + i]) } else { Tri::default() },
                 note: ((b[0] as i8) as i32).clamp(-14, 14),
                 value: b[1] as f32 / 255.0,
                 chance: b[2] as f32 / 255.0,
@@ -695,12 +809,38 @@ pub fn plays(st: &Step, k: u8) -> (u8, bool) {
     gates_of(st, k, st.pulses.clamp(1, MAX_PULSES)).map(|g| (g.ratchet, g.hold)).unwrap_or((0, false))
 }
 
+/// The touches among the plates pressed in a block: each plate its own, or
+/// (on the Tonnetz, a triangle's notes come together) all of them one, as
+/// loud as the loudest.
+fn touches(presses: &[(u8, f32)], together: bool) -> ([(Notes<MAX_HELD>, f32); MAX_HELD], usize) {
+    let one = |ps: &[(u8, f32)]| {
+        let mut n: Notes<MAX_HELD> = Notes::default();
+        ps.iter().for_each(|&(pl, _)| n.push(pl));
+        (n, ps.iter().map(|x| x.1).fold(0.0f32, f32::max))
+    };
+    let mut out = [(Notes::default(), 0.0); MAX_HELD];
+    if together && !presses.is_empty() {
+        out[0] = one(presses);
+        return (out, 1);
+    }
+    let n = presses.len().min(MAX_HELD);
+    for (k, x) in presses[..n].iter().enumerate() {
+        out[k] = one(std::slice::from_ref(x));
+    }
+    (out, n)
+}
+
 fn param(p: &[f32], i: usize, or: f32) -> f32 {
     p.get(i).copied().unwrap_or(or)
 }
 
 fn choice(p: &[f32], i: usize, n: usize) -> usize {
     (param(p, i, 0.0).round().max(0.0) as usize).min(n - 1)
+}
+
+/// Whether the plates are the Tonnetz.
+fn tonnetz(p: &[f32]) -> bool {
+    choice(p, LAYOUT, LAYOUTS.len()) == TONNETZ_LAYOUT
 }
 
 fn rate_beats(p: &[f32]) -> f64 {
@@ -785,12 +925,15 @@ impl SeqState {
             }
             self.touch_end_all(&ending, out);
             // Each touch plays (and moves the sequence a step).
-            for &(plate, vel) in &presses[..n_press] {
+            let (groups, n_groups) = touches(&presses[..n_press], tonnetz(p));
+            for &(plates, vel) in &groups[..n_groups] {
                 let mut hits = Hits::new();
-                self.touch_trigger(p, data, ctx, ctx.now, plate, vel_of(vel), 1e12, false, &mut hits);
+                let last = plates.last().unwrap_or(0);
+                self.touch_trigger(p, data, ctx, ctx.now, plates.as_slice(), vel_of(vel), 1e12, false, &mut hits);
                 for h in &hits.v[..hits.n] {
                     if h.len >= 1e11 {
-                        self.touch.remember(plate, h.note);
+                        // Its own plate's note, or (a chord made from it) the touch's last plate's.
+                        self.touch.remember(if plates.contains(h.note) { h.note } else { last }, h.note);
                     }
                     self.touch_play(ctx, *h, out);
                 }
@@ -805,9 +948,10 @@ impl SeqState {
             self.touch_end_all(&ending, out);
             // A touch plays at once (an arpeggio waits for its clock).
             if !arp {
-                for &(plate, vel) in &presses[..n_press] {
+                let (groups, n_groups) = touches(&presses[..n_press], tonnetz(p));
+                for &(plates, vel) in &groups[..n_groups] {
                     let mut hits = Hits::new();
-                    self.touch_trigger(p, data, ctx, ctx.now, plate, vel_of(vel), interval * gate(p), true, &mut hits);
+                    self.touch_trigger(p, data, ctx, ctx.now, plates.as_slice(), vel_of(vel), interval * gate(p), true, &mut hits);
                     for h in &hits.v[..hits.n] {
                         self.touch_play(ctx, *h, out);
                     }
@@ -910,18 +1054,29 @@ impl SeqState {
         if arp {
             self.touch_arp(p, data, ctx, at, plate, vel, len, latch, run, &mut hits);
         } else {
-            self.touch_trigger(p, data, ctx, at, plate, vel, len, true, &mut hits);
+            // On the Tonnetz the chord held (or latched) pulses whole.
+            let mut plates: Notes<MAX_HELD> = Notes::default();
+            if tonnetz(p) && self.touch.held.n > 0 {
+                plates = self.touch.held;
+            } else if tonnetz(p) && latch && self.touch.latched.n > 0 {
+                plates = self.touch.latched;
+            } else {
+                plates.push(plate);
+            }
+            self.touch_trigger(p, data, ctx, at, plates.as_slice(), vel, len, true, &mut hits);
         }
         for h in &hits.v[..hits.n] {
             self.touch_play(ctx, *h, out);
         }
     }
 
-    /// What a touch or a pulse plays from one plate: the step decides (rest,
-    /// chance, ratchets, accent, tie), the voicing makes it a chord, the play
-    /// mode strums it or adds echoes.
+    /// What a touch or a pulse plays from its plates (one, or a triangle's
+    /// three on the Tonnetz, the last the one that counts): the step decides
+    /// (rest, chance, ratchets, accent, tie), the voicing (or the step's
+    /// triangle) makes it a chord, the play mode strums it or adds echoes.
     #[allow(clippy::too_many_arguments)]
-    fn touch_trigger(&mut self, p: &[f32], data: &[u8], ctx: &MidiCtx, at: u64, plate: u8, vel: f32, len: f64, clocked: bool, hits: &mut Hits) {
+    fn touch_trigger(&mut self, p: &[f32], data: &[u8], ctx: &MidiCtx, at: u64, plates: &[u8], vel: f32, len: f64, clocked: bool, hits: &mut Hits) {
+        let Some(&plate) = plates.last() else { return };
         let interval = rate_beats(p) * ctx.samples_per_beat;
         let st = self.touch_step(p, data);
         self.touch_outputs();
@@ -933,7 +1088,7 @@ impl SeqState {
         let sub = interval / ratchet as f64;
         let rlen = if ratchet > 1 { (sub * gate(p)).min(len) } else { len };
         let shift = self.touch_shift(p, st.map(|s| s.0));
-        let voicing = VOICING_NOTES[choice(p, VOICING, VOICING_NOTES.len())];
+        let chord = self.touch_chord(ctx, p, plates, shift, st.map(|s| s.0));
         let play = choice(p, PLAY, PLAYS.len());
         let strum = (param(p, STRUM, 0.04).clamp(0.005, 0.25) * ctx.sr) as u64;
         self.touch.strum_up = !self.touch.strum_up;
@@ -942,11 +1097,10 @@ impl SeqState {
         let feedback = param(p, FEEDBACK, 0.6).clamp(0.1, 0.95);
         // Bounce: the first bounce a pulse later, each one after three quarters of the last.
         let bounce_gaps = |e: u32| (0..e).fold(0.0f64, |a, j| a + interval * 0.75f64.powi(j as i32));
-        let n = voicing.len();
+        let n = chord.n;
         for r in 0..ratchet {
             let rat = at + (r as f64 * sub) as u64;
-            for (j, &(steps, octs)) in voicing.iter().enumerate() {
-                let note = self.touch_pitch(ctx, plate, shift + steps, octs);
+            for (j, &note) in chord.as_slice().iter().enumerate() {
                 // Strum: one after the other, up and down in turn.
                 let k = if up { j } else { n - 1 - j } as u64;
                 let start = if play == 2 { rat + k * strum } else { rat };
@@ -965,7 +1119,33 @@ impl SeqState {
                 }
             }
         }
-        self.touch.last_note = self.touch_pitch(ctx, plate, shift, 0);
+        self.touch.last_note = chord.as_slice().first().copied().unwrap_or(plate);
+    }
+
+    /// The notes a touch's plates play on a step: the last plate's voicing in
+    /// the key, moved by the step. On the Tonnetz the plates themselves (a
+    /// triangle), or with the sequence moving the notes its step's triad
+    /// around the last plate (the triangle's root).
+    fn touch_chord(&self, ctx: &MidiCtx, p: &[f32], plates: &[u8], shift: i32, st: Option<Step>) -> Notes<MAX_SOUNDING> {
+        let mut chord: Notes<MAX_SOUNDING> = Notes::default();
+        let Some(&plate) = plates.last() else { return chord };
+        if tonnetz(p) {
+            match st.filter(|_| param(p, PITCH, 1.0) >= 0.5) {
+                Some(s) => triad(plate, s.tri).into_iter().for_each(|n| chord.push(n)),
+                None => {
+                    let mut own = [0u8; MAX_HELD];
+                    let k = plates.len().min(MAX_HELD);
+                    own[..k].copy_from_slice(&plates[..k]);
+                    own[..k].sort_unstable();
+                    own[..k].iter().for_each(|&n| chord.push(n));
+                }
+            }
+            return chord;
+        }
+        for &(steps, octs) in VOICING_NOTES[choice(p, VOICING, VOICING_NOTES.len())] {
+            chord.push(self.touch_pitch(ctx, plate, shift + steps, octs));
+        }
+        chord
     }
 
     /// An arpeggio's next note from the plates held (or latched): their
@@ -976,7 +1156,6 @@ impl SeqState {
         self.touch_outputs();
         let Some(g) = self.touch_gates(p, st) else { return };
         let shift = self.touch_shift(p, st.map(|s| s.0));
-        let voicing = VOICING_NOTES[choice(p, VOICING, VOICING_NOTES.len())];
         let octaves = param(p, OCTAVES, 1.0).round().clamp(1.0, 4.0) as i32;
         let plates = if self.touch.held.n > 0 {
             self.touch.held
@@ -989,13 +1168,15 @@ impl SeqState {
             }
             one
         };
-        // The pool: every note of every plate, in the octaves above.
+        // The pool: every note of every plate (on the Tonnetz: of the triangle), in the octaves above.
         let order = choice(p, ARP_ORDER, ARP_ORDERS.len());
         let mut pool: Notes<MAX_SOUNDING> = Notes::default();
+        let whole = tonnetz(p);
         for o in 0..octaves {
-            for &pl in plates.as_slice() {
-                for &(steps, octs) in voicing {
-                    pool.push(self.touch_pitch(ctx, pl, shift + steps, octs + o));
+            for c in 0..if whole { 1 } else { plates.n } {
+                let these = if whole { plates.as_slice() } else { &plates.as_slice()[c..c + 1] };
+                for &note in self.touch_chord(ctx, p, these, shift, st.map(|s| s.0)).as_slice() {
+                    pool.push((note as i32 + 12 * o).clamp(0, 127) as u8);
                 }
             }
         }
@@ -1220,6 +1401,95 @@ mod tests {
     }
 
     #[test]
+    fn the_tonnetz_triangles_are_triads_and_their_neighbours_share_two_notes() {
+        let c = Tri::default();
+        assert_eq!((c.root(), c.minor, c.classes()), (0, false, [0, 4, 7]), "C");
+        assert_eq!(Tri::new(0, 0, true).classes(), [4, 7, 11], "Em: the triangle beside C");
+        assert_eq!(Tri::new(-1, 0, true).classes(), [9, 0, 4], "Am");
+        assert_eq!(Tri::new(-1, 0, false).root(), 5, "F");
+        // P, L and R: each shares two notes, and going back undoes it.
+        for t in [c, Tri::new(1, -1, true), Tri::new(-3, 1, false)] {
+            for turn in [Turn::P, Turn::L, Turn::R] {
+                let u = t.turn(turn);
+                assert_ne!(u.minor, t.minor);
+                let shared = u.classes().iter().filter(|x| t.classes().contains(x)).count();
+                assert_eq!(shared, 2, "{t:?} {turn:?} {u:?}");
+                assert_eq!(u.turn(turn).classes(), t.classes(), "{turn:?} twice");
+            }
+        }
+        assert_eq!((c.turn(Turn::P).root(), c.turn(Turn::L).root(), c.turn(Turn::R).root()), (0, 4, 9), "Cm, Em, Am");
+        // A long walk stays near the middle.
+        let mut t = c;
+        for k in 0..200 {
+            t = t.turn([Turn::P, Turn::L, Turn::R, Turn::L][k % 4]);
+            assert!((-4..=3).contains(&t.a) && (-2..=1).contains(&t.b), "{t:?}");
+        }
+        // Around a plate: the nearest octave, so C to Am keeps C and E.
+        assert_eq!(triad(60, c), [55, 60, 64]);
+        assert_eq!(triad(60, Tri::new(-1, 0, true)), [57, 60, 64]);
+        for v in 0..=255u8 {
+            let t = Tri::from_byte(v);
+            assert_eq!(Tri::from_byte(t.byte()), t);
+        }
+    }
+
+    #[test]
+    fn with_tonnetz_on_the_steps_play_their_triads() {
+        let mut p = defaults(TOUCH);
+        (p[SEQ], p[LAYOUT], p[STEPS]) = (1.0, TONNETZ_LAYOUT as f32, 4.0);
+        let data = default_data();
+        // Four touches: I, vi, IV, V around C4.
+        let plates: Vec<(u64, u8, bool)> = (0..4).flat_map(|k| [(2 + k * 10, 60, true), (7 + k * 10, 60, false)]).collect();
+        let (evs, _) = run(&p, &data, 50, &plates, false);
+        let on = ons(&evs);
+        let chords: Vec<Vec<u8>> = (0..4)
+            .map(|k| {
+                let at = (2 + k * 10) * 256;
+                let mut c: Vec<u8> = on.iter().filter(|e| e.0 == at).map(|e| e.1).collect();
+                c.sort_unstable();
+                c
+            })
+            .collect();
+        assert_eq!(chords, vec![vec![55, 60, 64], vec![57, 60, 64], vec![57, 60, 65], vec![55, 59, 62]]);
+        // A triangle pressed (its three notes together, the root last) is one touch: one step further, around its root.
+        let plates = [(2, 64, true), (2, 67, true), (2, 60, true), (8, 64, false), (8, 67, false), (8, 60, false), (12, 69, true), (12, 72, true), (12, 65, true), (18, 69, false), (18, 72, false), (18, 65, false)];
+        let (evs, _) = run(&p, &data, 30, &plates, false);
+        let on = ons(&evs);
+        let at = |b: u64| {
+            let mut c: Vec<u8> = on.iter().filter(|e| e.0 == b * 256).map(|e| e.1).collect();
+            c.sort_unstable();
+            c
+        };
+        assert_eq!((at(2), at(12)), (vec![55, 60, 64], vec![62, 65, 69]), "I around C, then vi around F: Dm");
+        // Without the sequence a triangle plays itself, and the pulser pulses it whole.
+        let mut q = defaults(TOUCH);
+        (q[LAYOUT], q[PULSE], q[RATE]) = (TONNETZ_LAYOUT as f32, 1.0, 0.0);
+        let held = [(2, 64, true), (2, 67, true), (2, 60, true), (60, 64, false), (60, 67, false), (60, 60, false)];
+        let (evs, _) = run(&q, &data, 70, &held, false);
+        let on = ons(&evs);
+        let pulses: Vec<u64> = {
+            let mut t: Vec<u64> = on.iter().map(|e| e.0).collect();
+            t.dedup();
+            t
+        };
+        assert!(pulses.len() >= 4, "{pulses:?}");
+        for t in pulses {
+            let mut c: Vec<u8> = on.iter().filter(|e| e.0 == t).map(|e| e.1).collect();
+            c.sort_unstable();
+            assert_eq!(c, vec![60, 64, 67], "the whole chord at {t}");
+        }
+        // Older data (the third version) reads with every triangle on I.
+        let mut old = data.clone();
+        old.truncate(V3_LEN);
+        old[0] = 3;
+        assert_eq!(step(&old, 1).tri, Tri::default());
+        assert_eq!(step(&old, 1).note, step(&data, 1).note);
+        let mut grown = old.clone();
+        whole(&mut grown);
+        assert_eq!(grown.len(), LEN);
+    }
+
+    #[test]
     fn a_plate_plays_while_it_is_held() {
         let p = defaults(TOUCH);
         let (evs, _) = run(&p, &default_data(), 40, &[(2, 60, true), (30, 60, false)], false);
@@ -1433,12 +1703,12 @@ mod tests {
     #[test]
     fn data_keeps_steps_patch_points_and_shape_and_reads_the_first_version() {
         let mut d = default_data();
-        let s = Step { note: -5, value: 0.5, chance: 0.25, ratchet: 7, pulses: 5, gate: Gate::Roll, tie: true, accent: true, skip: true };
+        let s = Step { note: -5, value: 0.5, chance: 0.25, ratchet: 7, pulses: 5, gate: Gate::Roll, tie: true, accent: true, skip: true, tri: Tri::new(-3, 1, true) };
         set_step(&mut d, 11, s);
         set_patch(&mut d, 7, Some(17));
         set_shape(&mut d, 3, 1.0);
         let back = step(&d, 11);
-        assert_eq!((back.note, back.ratchet, back.pulses, back.gate, back.tie, back.accent, back.skip), (-5, 7, 5, Gate::Roll, true, true, true));
+        assert_eq!((back.note, back.ratchet, back.pulses, back.gate, back.tie, back.accent, back.skip, back.tri), (-5, 7, 5, Gate::Roll, true, true, true, Tri::new(-3, 1, true)));
         assert_eq!(step(&d, 10).gate, Gate::Single);
         assert!((back.value - 0.5).abs() < 0.01 && (back.chance - 0.25).abs() < 0.01);
         assert_eq!((patch(&d, 7), patch(&d, 0)), (Some(17), None));

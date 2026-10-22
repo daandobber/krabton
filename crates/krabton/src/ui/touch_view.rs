@@ -5,12 +5,14 @@
 //! (switched on and off, Trigger and Pitch apart; each step a note, one to
 //! eight pulses and a gate for what they play, a value, chance or ratchet,
 //! tie, accent and skip; the note and the value drawn, the rest clicked
-//! (a click one further, a right-click one back, dragged across: copied), with
+//! (a click one further, a right-click one back, dragged across: copied);
+//! with
 //! dice, mutate, shift, reverse, clear and a recorder that writes the plates
 //! played into the steps), and the patch bay:
 //! cables from ten outputs to eight of the instrument's knobs, each with its
 //! amount. Along the bottom the plates (a row, wide, or a grid of rows a
-//! fourth apart; in the key, pentatonic or chromatic): higher up a plate
+//! fourth apart; in the key, pentatonic or chromatic; or the Tonnetz, its
+//! triangles chords to press and the steps' chords): higher up a plate
 //! presses harder, the letter keys and fingers on a touch screen press them
 //! too; with Slide on, a plate pressed and the finger moved along bends its
 //! note smoothly to wherever the finger is (otherwise dragging across plays
@@ -38,7 +40,7 @@ use krabton_engine::modulation::{instrument_specs, ModKind, ModOwner, ModTarget,
 use krabton_engine::params::{ParamKind, ParamSpec};
 use krabton_engine::project::TrackKind;
 use krabton_engine::{Clip, Note};
-use krabton_engine::sequencers::touch::{self, Gate, Step, MAX_PULSES, MAX_RATCHET, N_OUT, N_PATCH, N_SHAPE, N_STEPS, OUTPUTS};
+use krabton_engine::sequencers::touch::{self, Gate, Step, Tri, Turn, MAX_PULSES, MAX_RATCHET, N_OUT, N_PATCH, N_SHAPE, N_STEPS, OUTPUTS};
 
 /// The colours of the outputs, and of their cables.
 pub(crate) const OUT_COLORS: [Color32; N_OUT] = [
@@ -109,6 +111,38 @@ pub struct TouchViewState {
     /// song's clock (the transport going) or on one of their own.
     played: Vec<Played>,
     played_on_song: bool,
+    /// The Tonnetz's triangle pressed last (Rec writes a new one into the steps).
+    tri_down: Option<Tri>,
+}
+
+/// The notes' names, from C.
+const PITCH_NAMES: [&str; 12] = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
+
+/// A triangle's chord, its root `base` (a note) plus its own.
+fn chord_name(base: i32, t: Tri) -> String {
+    format!("{}{}", PITCH_NAMES[(base + t.root()).rem_euclid(12) as usize], if t.minor { "m" } else { "" })
+}
+
+/// Whether `pt` is inside the triangle `c`.
+fn inside(pt: Pos2, c: &[Pos2; 3]) -> bool {
+    let side = |a: Pos2, b: Pos2| (b.x - a.x) * (pt.y - a.y) - (b.y - a.y) * (pt.x - a.x);
+    let (d0, d1, d2) = (side(c[0], c[1]), side(c[1], c[2]), side(c[2], c[0]));
+    !((d0 < 0.0 || d1 < 0.0 || d2 < 0.0) && (d0 > 0.0 || d1 > 0.0 || d2 > 0.0))
+}
+
+/// A walk across the Tonnetz from `from`: each triangle beside the one
+/// before (P, L or R, never straight back).
+fn tonnetz_walk(from: Tri, n: usize, seed: f64) -> Vec<Tri> {
+    let mut r = Dice::new(seed);
+    let mut out = vec![from];
+    let mut last: Option<Turn> = None;
+    while out.len() < n {
+        let turns: Vec<Turn> = [Turn::P, Turn::L, Turn::R].into_iter().filter(|&t| Some(t) != last).collect();
+        let t = turns[((r.unit() * turns.len() as f32) as usize).min(turns.len() - 1)];
+        out.push(out[out.len() - 1].turn(t));
+        last = Some(t);
+    }
+    out
 }
 
 /// A note the plates played: when (in beats), how long (`end` None while
@@ -554,6 +588,7 @@ impl Dice {
 fn dice(data: &mut Vec<u8>, n: usize, seed: f64) {
     let mut r = Dice::new(seed);
     let mut note = 0i32;
+    let tris = tonnetz_walk(Tri::default(), n, seed * 1.7 + 0.3);
     for i in 0..n {
         let u = r.unit();
         let mv = if u < 0.3 { 0 } else if u < 0.7 { 1 } else if u < 0.9 { 2 } else { 4 };
@@ -584,6 +619,7 @@ fn dice(data: &mut Vec<u8>, n: usize, seed: f64) {
             tie: r.unit() < 0.06,
             accent: i % 4 == 0 && r.unit() < 0.6,
             skip: false,
+            tri: tris[i],
         };
         touch::set_step(data, i, s);
     }
@@ -595,7 +631,8 @@ fn mutate(data: &mut Vec<u8>, n: usize, seed: f64) {
     for _ in 0..(1 + n / 5) {
         let i = ((r.unit() * n as f32) as usize).min(n - 1);
         let mut s = touch::step(data, i);
-        match (r.unit() * 6.0) as u32 {
+        match (r.unit() * 7.0) as u32 {
+            6 => s.tri = s.tri.turn([Turn::P, Turn::L, Turn::R][((r.unit() * 3.0) as usize).min(2)]),
             0 => s.note = (s.note + if r.unit() < 0.5 { 1 } else { -1 }).clamp(-14, 14),
             1 => s.note = (s.note + if r.unit() < 0.5 { 2 } else { -2 }).clamp(-14, 14),
             2 => s.gate = if s.rests() { Gate::Single } else { Gate::Rest },
@@ -793,6 +830,182 @@ impl App {
         self.toast(format!("Captured {n} note{} into a clip of {bars} bar{}", if n == 1 { "" } else { "s" }, if bars == 1 { "" } else { "s" }));
     }
 
+    /// The Tonnetz in place of the plates: the lattice of notes a fifth apart
+    /// along it and a major third apart up it (the middle the base note),
+    /// every triangle a triad. A triangle pressed plays its chord (its notes
+    /// asked for, the root last; where a finger is higher up, harder), and
+    /// with Rec on goes into the steps; moving onto the triangle beside it
+    /// keeps the two notes they share. The notes sounding light up wherever
+    /// they are on it; with the sequence on, its steps' chords are marked
+    /// (around the middle) and joined in their order, the one playing lit.
+    #[allow(clippy::too_many_arguments)]
+    fn tonnetz_plates(&mut self, ui: &mut Ui, area: Rect, ti: usize, di: usize, playing: Option<usize>, sounding: u128, tcol: Color32) -> Vec<(u8, f32, f32)> {
+        let p = ui.painter().clone();
+        let accent = accent_now();
+        let tid = self.project.tracks[ti].id;
+        let dev = &self.project.tracks[ti].midi_devices[di];
+        let n_on = (dev.params[touch::STEPS].round() as usize).clamp(1, N_STEPS);
+        let seq = dev.params[touch::SEQ] >= 0.5 && dev.params[touch::PITCH] >= 0.5;
+        let base = dev.params[touch::BASE].round() as i32;
+        let steps: Vec<Step> = (0..n_on).map(|i| touch::step(&dev.data, i)).collect();
+        // Five and a half triangles along at the most, at least four rows (up to eight).
+        let h3 = 3f32.sqrt() * 0.5;
+        let side = (area.height() / 4.0 / h3).min(area.width() / 5.5).max(12.0);
+        let th = side * h3;
+        let rows = ((area.height() / th).floor() as i8).clamp(4, 8);
+        let (low, high) = (-(rows / 2), rows - rows / 2 - 1);
+        let mid = pos2(area.center().x, area.center().y + (low + high + 1) as f32 * 0.5 * th);
+        let point = |a: i32, b: i32| pos2(mid.x + (a as f32 + b as f32 * 0.5) * side, mid.y - b as f32 * th);
+        let corners = |t: Tri| -> [Pos2; 3] {
+            let (a, b) = (t.a as i32, t.b as i32);
+            if t.minor {
+                [point(a + 1, b), point(a, b + 1), point(a + 1, b + 1)]
+            } else {
+                [point(a, b), point(a + 1, b), point(a, b + 1)]
+            }
+        };
+        let centre = |c: &[Pos2; 3]| pos2((c[0].x + c[1].x + c[2].x) / 3.0, (c[0].y + c[1].y + c[2].y) / 3.0);
+        let room = area.expand(1.0);
+        let mut tris: Vec<(Tri, [Pos2; 3])> = Vec::new();
+        for b in low..=high {
+            for a in -8..=7i8 {
+                for minor in [false, true] {
+                    let t = Tri::new(a, b, minor);
+                    let c = corners(t);
+                    if c.iter().all(|q| room.contains(*q)) {
+                        tris.push((t, c));
+                    }
+                }
+            }
+        }
+        let tri_at = |pt: Pos2| tris.iter().find(|(_, c)| inside(pt, c)).copied();
+        // Where it is pressed: fingers, or the pointer.
+        let resp = ui.interact(area, Id::new(("tonnetz", tid)), Sense::click_and_drag());
+        for ev in ui.input(|i| i.events.clone()) {
+            if let egui::Event::Touch { id, phase, pos, force, .. } = ev {
+                let fid = id.0.wrapping_add(1);
+                let fingers = &mut self.touch_view.fingers;
+                match phase {
+                    egui::TouchPhase::Start if area.contains(pos) => fingers.push((fid, pos, force)),
+                    egui::TouchPhase::Move => {
+                        if let Some(f) = fingers.iter_mut().find(|f| f.0 == fid) {
+                            (f.1, f.2) = (pos, force);
+                        }
+                    }
+                    egui::TouchPhase::End | egui::TouchPhase::Cancel => fingers.retain(|f| f.0 != fid),
+                    _ => {}
+                }
+            }
+        }
+        let touching = !self.touch_view.fingers.is_empty() || ui.input(|i| i.any_touches());
+        let mut contacts: Vec<(Pos2, Option<f32>)> = self.touch_view.fingers.iter().map(|f| (f.1, f.2)).collect();
+        if let Some(pt) = resp.interact_pointer_pos().filter(|_| resp.is_pointer_button_down_on() && !touching) {
+            contacts.push((pt, None));
+            ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+        }
+        let mut want: Vec<(u8, f32, f32)> = Vec::new();
+        let mut pressed: Vec<Tri> = Vec::new();
+        for (pt, force) in contacts {
+            let Some((t, c)) = tri_at(pt) else { continue };
+            let top = c.iter().map(|q| q.y).fold(f32::MAX, f32::min);
+            let pressure = force.filter(|f| *f > 0.0).map(|f| f.clamp(0.05, 1.0)).unwrap_or(((1.0 - (pt.y - top) / th) * 0.8 + 0.2).clamp(0.05, 1.0));
+            let along = ((pt.x - area.left()) / area.width()).clamp(0.0, 1.0);
+            // Its notes around the middle, the root last.
+            let root = (base + t.root()).rem_euclid(12);
+            let mut notes = touch::triad(base.clamp(0, 127) as u8, t);
+            notes.sort_by_key(|&n| (n as i32 - root).rem_euclid(12) == 0);
+            for n in notes {
+                want.push((n, pressure, along));
+            }
+            pressed.push(t);
+        }
+        // Another triangle with the sequence moving the chords: all its notes anew (the root counts).
+        let first = pressed.first().copied();
+        if first.is_some() && first != self.touch_view.tri_down {
+            if seq && self.touch_view.tri_down.is_some() {
+                for (pitch, t) in std::mem::take(&mut self.touch_view.held) {
+                    self.touch_note_off(t, pitch);
+                }
+            }
+            if let (Some(at), Some(t)) = (self.touch_view.rec, first) {
+                // Rec: into the step it is at, and on to the next.
+                let dev = &mut self.project.tracks[ti].midi_devices[di];
+                let s = touch::step(&dev.data, at);
+                let gate = if s.rests() { Gate::Single } else { s.gate };
+                touch::set_step(&mut dev.data, at, Step { tri: t, gate, ..s });
+                dev.params[touch::SEQ] = 1.0;
+                dev.params[touch::PITCH] = 1.0;
+                dev.preset.clear();
+                self.touch_view.rec = Some((at + 1) % n_on);
+            }
+        }
+        self.touch_view.tri_down = first;
+        // The steps' chords around the middle (where each is, or the same chord elsewhere on it).
+        let shown: Vec<Option<Tri>> = steps.iter().map(|s| tris.iter().find(|x| x.0 == s.tri).or_else(|| tris.iter().find(|x| x.0.classes() == s.tri.classes())).map(|x| x.0)).collect();
+        let now = playing.filter(|_| seq).and_then(|i| shown.get(i).copied().flatten());
+        let hover = resp.hover_pos().and_then(|pt| tri_at(pt)).map(|x| x.0);
+        for (t, c) in &tris {
+            let used = seq && shown.contains(&Some(*t));
+            let mut fill = if t.minor { Color32::from_rgb(0x1e, 0x1e, 0x23) } else { Color32::from_rgb(0x2b, 0x2b, 0x31) };
+            if used {
+                fill = mix(fill, accent, 0.22);
+            }
+            if now == Some(*t) {
+                fill = mix(fill, accent, 0.7);
+            }
+            if pressed.contains(t) {
+                fill = mix(tcol, Color32::WHITE, 0.15);
+            } else if hover == Some(*t) {
+                fill = mix(fill, TEXT, 0.1);
+            }
+            p.add(egui::Shape::convex_polygon(c.to_vec(), fill, Stroke::new(1.0_f32, LINE)));
+            let size = (side * 0.2).clamp(8.0, 14.0);
+            let lit = pressed.contains(t) || now == Some(*t);
+            p.text(centre(c) + vec2(0.0, if t.minor { -th * 0.06 } else { th * 0.06 }), Align2::CENTER_CENTER, chord_name(base, *t), FontId::proportional(size), if lit { TEXT } else if used { mix(TEXT_DIM, TEXT, 0.5) } else { TEXT_DIM });
+        }
+        // The notes at the corners, lit while they sound.
+        let classes_sounding: Vec<i32> = (0..128).filter(|n| sounding >> n & 1 == 1).map(|n: i32| n.rem_euclid(12)).collect();
+        for b in low as i32..=high as i32 + 1 {
+            for a in -9..=8 {
+                let q = point(a, b);
+                if !room.contains(q) {
+                    continue;
+                }
+                let pc = (base + 7 * a + 4 * b).rem_euclid(12);
+                let on = classes_sounding.contains(&pc);
+                let rr = (side * 0.14).clamp(6.0, 11.0);
+                p.circle_filled(q, rr, if on { tcol } else if a == 0 && b == 0 { mix(PANEL, accent, 0.35) } else { PANEL });
+                p.circle_stroke(q, rr, Stroke::new(1.0_f32, if on { mix(tcol, Color32::WHITE, 0.4) } else { LINE }));
+                p.text(q, Align2::CENTER_CENTER, PITCH_NAMES[pc as usize], FontId::proportional(rr * 1.05), if on { text_on(tcol) } else { TEXT });
+            }
+        }
+        // The sequence's path and its steps' numbers.
+        if seq {
+            let at_of = |t: Tri| tris.iter().find(|x| x.0 == t).map(|x| centre(&x.1));
+            let path: Vec<Pos2> = shown.iter().filter_map(|t| t.and_then(at_of)).collect();
+            if path.len() > 1 {
+                p.add(egui::Shape::line(path, Stroke::new(1.5_f32, shade(accent, 0.75))));
+            }
+            let mut labels: Vec<(Pos2, String)> = Vec::new();
+            for (i, t) in shown.iter().enumerate() {
+                let Some(c) = t.and_then(at_of) else { continue };
+                match labels.iter_mut().find(|l| l.0 == c) {
+                    Some(l) => l.1 = format!("{} {}", l.1, i + 1),
+                    None => labels.push((c, (i + 1).to_string())),
+                }
+            }
+            for (c, text) in labels {
+                let font = fitted(&p, &text, 9.5, side * 0.6);
+                p.text(c + vec2(0.0, th * 0.24), Align2::CENTER_CENTER, text, font, accent);
+            }
+        }
+        if let Some(t) = hover {
+            let rec = self.touch_view.rec.map(|i| format!("; Rec writes it into step {}", i + 1)).unwrap_or_default();
+            resp.on_hover_text(format!("{}: press to play it{rec}", chord_name(base, t)));
+        }
+        want
+    }
+
     /// The track bent by sliding back to its notes.
     fn unbend(&mut self) {
         if let Some((t, b)) = self.touch_view.bend_sent.take() {
@@ -982,7 +1195,7 @@ impl App {
         for (k, label, tip) in [
             (touch::SEQ, "On", "The sequencer on: each pulse (or each touch, without the pulser) a step further"),
             (touch::TRIGGER, "Trigger", "The steps decide which notes play: each step's gate over its pulses, its chance, ratchets, accents, ties"),
-            (touch::PITCH, "Pitch", "The steps move the notes through the key (the Note lane)"),
+            (touch::PITCH, "Pitch", "The steps move the notes: through the key (the Note lane), or on the Tonnetz to their chords (the Chord lane)"),
         ] {
             let on = dev.params[k] >= 0.5;
             let lit = if k == touch::SEQ { on } else { on && seq_on };
@@ -992,6 +1205,7 @@ impl App {
             }
             x += tbw + 4.0;
         }
+        let tonnetz = dev.params[touch::LAYOUT].round() as usize == touch::TONNETZ_LAYOUT;
         let n_on = (dev.params[touch::STEPS].round() as usize).clamp(1, N_STEPS);
         // The tools.
         let tools = Rect::from_min_size(inner.min, vec2(inner.width(), 22.0));
@@ -1072,7 +1286,11 @@ impl App {
             "How many notes each of the step's notes is split into, one to eight (with Trigger and the pulser). Click: one more, right-click: one fewer; drag across to copy",
         ];
         let tips = [
-            "Each step's note, up and down through the key (drag across to draw; double-click: back to the base; right-click: a rest)",
+            if tonnetz {
+                "Each step's chord, a triangle of the Tonnetz: click a step and Rec writes the triangles you press from there; right-click: a rest"
+            } else {
+                "Each step's note, up and down through the key (drag across to draw; double-click: back to the base; right-click: a rest)"
+            },
             "How many pulses each step lasts, one to eight. Click: one more (after eight: one), right-click: one fewer; drag across to copy",
             tab_tips[tab],
             "What each step plays on its pulses (with Trigger): Single (the first), Every (each one), Hold (one note over them all), Rest, Last, Alternate (every other one), Roll (one more note each pulse). Click: the next, right-click: the one before; drag across to copy",
@@ -1113,7 +1331,8 @@ impl App {
                     self.touch_view.lane_tab = (tab + 2) % 3;
                 }
             } else {
-                p.text(pos2(lanes.left(), lr.center().y), Align2::LEFT_CENTER, lane_names[k], FontId::proportional(if lr.height() < 12.0 { 8.5 } else { 10.0 }), TEXT_DIM);
+                let name = if k == 0 && tonnetz { "Chord" } else { lane_names[k] };
+                p.text(pos2(lanes.left(), lr.center().y), Align2::LEFT_CENTER, name, FontId::proportional(if lr.height() < 12.0 { 8.5 } else { 10.0 }), TEXT_DIM);
             }
             let col_of = |x: f32| (((x - lr.left()) / col_w).floor().max(0.0) as usize).min(N_STEPS - 1);
             // The Gate lane says what the step under the pointer does.
@@ -1147,6 +1366,11 @@ impl App {
                         touch::set_step(&mut dev.data, i, to);
                         changed = true;
                     }
+                }
+            } else if k == 0 && tonnetz {
+                // A step's chord: click it, and the triangles pressed go in from there.
+                if let Some(pt) = resp.interact_pointer_pos().filter(|_| resp.clicked()) {
+                    self.touch_view.rec = Some(col_of(pt.x));
                 }
             } else if let Some(pt) = resp.interact_pointer_pos().filter(|_| resp.dragged() || resp.clicked()) {
                 let i = col_of(pt.x);
@@ -1185,6 +1409,17 @@ impl App {
                 let under = clicked_lane(k) && hovered == Some(i);
                 p.rect_filled(c, 2.0, if under { mix(SLOT, TEXT, 0.12) } else { SLOT });
                 match k {
+                    0 if tonnetz => {
+                        // Its chord's name; the step a triangle goes into marked.
+                        let name = chord_name(base_note, s.tri);
+                        let tc = if s.rests() || !active { TEXT_DIM } else { col(TEXT) };
+                        if active && s.tri.minor {
+                            p.rect_filled(c.shrink(1.0), 2.0, mix(SLOT, OUT_COLORS[5], 0.12));
+                        } else if active {
+                            p.rect_filled(c.shrink(1.0), 2.0, mix(SLOT, OUT_COLORS[0], 0.12));
+                        }
+                        p.text(c.center(), Align2::CENTER_CENTER, &name, fitted(&p, &name, 11.0, c.width() - 2.0), tc);
+                    }
                     0 => {
                         let mid = c.center().y;
                         let yv = mid - s.note as f32 / 14.0 * c.height() * 0.5;
@@ -1517,11 +1752,12 @@ impl App {
 
         // ---------------------------------------------------------------- the plates
         let dev = &mut self.project.tracks[ti].midi_devices[di];
+        let on_tonnetz = dev.params[touch::LAYOUT].round() as usize == touch::TONNETZ_LAYOUT;
         let layout = (dev.params[touch::LAYOUT].round().max(0.0) as usize).min(2);
         let set = (dev.params[touch::NOTES].round().max(0.0) as usize).min(2);
         p.rect_filled(plates_r, 6.0, PANEL);
         let bar = Rect::from_min_size(plates_r.min + vec2(10.0, 6.0), vec2(plates_r.width() - 20.0, 20.0));
-        p.text(bar.left_center(), Align2::LEFT_CENTER, "PLATES", FontId::proportional(11.0), TEXT_DIM);
+        p.text(bar.left_center(), Align2::LEFT_CENTER, if on_tonnetz { "TONNETZ" } else { "PLATES" }, FontId::proportional(11.0), TEXT_DIM);
         // From the right: the octave, Slide and Values; the two choices share what is left.
         let base_txt = format!("from {}", krabton_engine::note_name(base_note.clamp(0, 127) as u8));
         let base_w = p.layout_no_wrap(base_txt.clone(), FontId::proportional(11.0), TEXT).size().x;
@@ -1529,22 +1765,60 @@ impl App {
         let values_r = Rect::from_min_size(pos2(slide_r.left() - 4.0 - 66.0, bar.top()), vec2(66.0, 20.0));
         let cw = ((values_r.left() - 8.0 - bar.left() - 60.0 - 4.0 - 20.0) / 2.0).clamp(70.0, 128.0);
         changed |= choice(ui, Rect::from_min_size(pos2(bar.left() + 60.0, bar.top()), vec2(cw, 20.0)), Id::new(("touch_layout", tid)), &specs[touch::LAYOUT], &mut dev.params[touch::LAYOUT]);
-        changed |= choice(ui, Rect::from_min_size(pos2(bar.left() + 64.0 + cw, bar.top()), vec2(cw + 20.0, 20.0)), Id::new(("touch_notes", tid)), &specs[touch::NOTES], &mut dev.params[touch::NOTES]);
-        let values_on = self.touch_view.values;
-        if toggle(ui, values_r, Id::new(("touch_values", tid)), "Values", values_on, None, "Each plate's own value, the Plate output: on, drag a plate up or down to set it (it plays again when you switch this off)") {
-            self.touch_view.values = !values_on;
-        }
-        let slide = dev.params.get(touch::SLIDE).copied().unwrap_or(1.0) >= 0.5;
-        if toggle(ui, slide_r, Id::new(("touch_slide", tid)), "Slide", slide, None, "Slide: press a plate and move along the plates, and its note bends smoothly to wherever you are (in tune around a plate's middle). Off: moving across plays plate after plate") {
-            if let Some(v) = dev.params.get_mut(touch::SLIDE) {
-                *v = if slide { 0.0 } else { 1.0 };
+        let values_on = self.touch_view.values && !on_tonnetz;
+        let slide = dev.params.get(touch::SLIDE).copied().unwrap_or(1.0) >= 0.5 && !on_tonnetz;
+        if on_tonnetz {
+            // P, L and R: the chord beside the step before, into the step Rec is at (Rec goes on); Walk: a walk over every step.
+            let n_on = (dev.params[touch::STEPS].round() as usize).clamp(1, N_STEPS);
+            let at = self.touch_view.rec.unwrap_or(0).min(n_on - 1);
+            let before = touch::step(&dev.data, (at + n_on - 1) % n_on).tri;
+            let mut x = bar.left() + 64.0 + cw;
+            for (k, (label, turn, tip)) in [
+                ("P", Turn::P, "Parallel: the step before's chord, major made minor or minor major (C to Cm)"),
+                ("L", Turn::L, "Leading-tone exchange: the step before's chord, one note a half step away (C to Em)"),
+                ("R", Turn::R, "Relative: the step before's chord, one note a whole step away (C to Am)"),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let br = Rect::from_min_size(pos2(x, bar.top()), vec2(28.0, 20.0));
+                if button(ui, br, Id::new(("tonnetz_turn", tid, k)), label, &format!("{tip}, into step {} (Rec)", at + 1)) {
+                    let s = touch::step(&dev.data, at);
+                    let gate = if s.rests() { Gate::Single } else { s.gate };
+                    touch::set_step(&mut dev.data, at, Step { tri: before.turn(turn), gate, ..s });
+                    dev.params[touch::SEQ] = 1.0;
+                    dev.params[touch::PITCH] = 1.0;
+                    self.touch_view.rec = Some((at + 1) % n_on);
+                    changed = true;
+                }
+                x += 31.0;
             }
-            changed = true;
+            if button(ui, Rect::from_min_size(pos2(x + 4.0, bar.top()), vec2(50.0, 20.0)), Id::new(("tonnetz_walk", tid)), "Walk", "A walk across the Tonnetz over every step, from the first step's chord: each chord beside the one before") {
+                let walk = tonnetz_walk(touch::step(&dev.data, 0).tri, n_on, ui.input(|i| i.time));
+                for (i, t) in walk.into_iter().enumerate() {
+                    let s = touch::step(&dev.data, i);
+                    touch::set_step(&mut dev.data, i, Step { tri: t, ..s });
+                }
+                dev.params[touch::SEQ] = 1.0;
+                dev.params[touch::PITCH] = 1.0;
+                changed = true;
+            }
+        } else {
+            changed |= choice(ui, Rect::from_min_size(pos2(bar.left() + 64.0 + cw, bar.top()), vec2(cw + 20.0, 20.0)), Id::new(("touch_notes", tid)), &specs[touch::NOTES], &mut dev.params[touch::NOTES]);
+            if toggle(ui, values_r, Id::new(("touch_values", tid)), "Values", values_on, None, "Each plate's own value, the Plate output: on, drag a plate up or down to set it (it plays again when you switch this off)") {
+                self.touch_view.values = !values_on;
+            }
+            if toggle(ui, slide_r, Id::new(("touch_slide", tid)), "Slide", slide, None, "Slide: press a plate and move along the plates, and its note bends smoothly to wherever you are (in tune around a plate's middle). Off: moving across plays plate after plate") {
+                if let Some(v) = dev.params.get_mut(touch::SLIDE) {
+                    *v = if slide { 0.0 } else { 1.0 };
+                }
+                changed = true;
+            }
         }
         p.text(pos2(bar.right() - 46.0, bar.center().y), Align2::RIGHT_CENTER, base_txt, FontId::proportional(11.0), TEXT);
         for (dir, glyph, x) in [(-1, "◀", bar.right() - 34.0), (1, "▶", bar.right() - 10.0)] {
             let br = Rect::from_center_size(pos2(x, bar.center().y), vec2(18.0, 18.0));
-            let r2 = ui.interact(br, Id::new(("touch_oct", tid, dir)), Sense::click()).on_hover_text(if dir < 0 { "The plates an octave lower" } else { "The plates an octave higher" });
+            let r2 = ui.interact(br, Id::new(("touch_oct", tid, dir)), Sense::click()).on_hover_text(if dir < 0 { "The plates (or the Tonnetz's middle) an octave lower" } else { "The plates (or the Tonnetz's middle) an octave higher" });
             p.text(br.center(), Align2::CENTER_CENTER, glyph, FontId::proportional(12.0), if r2.hovered() { TEXT } else { TEXT_DIM });
             if r2.clicked() {
                 dev.params[touch::BASE] = (dev.params[touch::BASE] + 12.0 * dir as f32).clamp(24.0, 84.0);
@@ -1552,159 +1826,166 @@ impl App {
             }
         }
         let area = Rect::from_min_max(pos2(plates_r.left() + 10.0, bar.bottom() + 8.0), plates_r.max - vec2(10.0, 8.0));
-        let per = per_octave(&key, base_note, set);
-        // The plates: rows of columns, each row a fourth (or so) above the one under it.
-        let (cols, rows, step_up) = match layout {
-            1 => ((per + 1) as usize, 1usize, 0),
-            2 => ((per + 1) as usize, 3usize, if set == 2 { 5 } else if set == 1 { 2 } else { 3 }),
-            _ => ((per * 2 + 1).min(((area.width() / 24.0) as i32).max(8)) as usize, 1usize, 0),
-        };
-        let gap = 5.0;
-        let pw = (area.width() - gap * (cols as f32 - 1.0)) / cols as f32;
-        let ph = (area.height() - gap * (rows as f32 - 1.0)) / rows as f32;
-        let mut plates: Vec<(Rect, u8)> = Vec::with_capacity(cols * rows);
-        let mut plate_index: Vec<usize> = Vec::with_capacity(cols * rows);
-        for row in 0..rows {
-            for c in 0..cols {
-                let pr = Rect::from_min_size(pos2(area.left() + c as f32 * (pw + gap), area.bottom() - (row + 1) as f32 * ph - row as f32 * gap), vec2(pw, ph));
-                let idx = c + row * step_up as usize;
-                plates.push((pr, plate_pitch(&key, base_note, set, idx as i32)));
-                plate_index.push(idx);
-            }
-        }
-        let resp = ui.interact(area, Id::new(("touch_plates", tid)), Sense::click_and_drag());
-        let plate_of = |pt: Pos2| plates.iter().position(|(r, _)| r.expand(gap * 0.5).contains(pt));
-        let press_of = |pt: Pos2, r: Rect| (1.0 - (pt.y - r.top()) / r.height()).clamp(0.05, 1.0);
-        let along = |pt: Pos2| ((pt.x - area.left()) / area.width()).clamp(0.0, 1.0);
-        for ev in ui.input(|i| i.events.clone()) {
-            if let egui::Event::Touch { id, phase, pos, force, .. } = ev {
-                let fid = id.0.wrapping_add(1);
-                let fingers = &mut self.touch_view.fingers;
-                match phase {
-                    egui::TouchPhase::Start if area.contains(pos) => fingers.push((fid, pos, force)),
-                    egui::TouchPhase::Move => {
-                        if let Some(f) = fingers.iter_mut().find(|f| f.0 == fid) {
-                            (f.1, f.2) = (pos, force);
-                        }
-                    }
-                    egui::TouchPhase::End | egui::TouchPhase::Cancel => fingers.retain(|f| f.0 != fid),
-                    _ => {}
-                }
-            }
-        }
-        let mut want: Vec<(u8, f32, f32)> = Vec::new();
-        let mut pressed_plate: Option<usize> = None;
-        // Sliding: where the bend is going, and the plate under the finger (lit).
-        let mut bend_to: Option<f32> = None;
-        let mut slid: Option<(Pos2, u8, f32)> = None;
-        if values_on {
-            // Setting the plates' values: a drag sets the one under it.
-            if let Some(pt) = resp.interact_pointer_pos().filter(|_| resp.is_pointer_button_down_on()) {
-                if let Some(i) = plate_of(pt) {
-                    touch::set_plate_value(&mut dev.data, plate_index[i], press_of(pt, plates[i].0));
-                    changed = true;
-                }
-                ui.ctx().set_cursor_icon(CursorIcon::ResizeVertical);
-            }
-            self.touch_view.fingers.clear();
-        } else if slide {
-            // One contact (the first finger, or the pointer): its note pressed
-            // first, bent to where it is now.
-            let touching = !self.touch_view.fingers.is_empty() || ui.input(|i| i.any_touches());
-            let mouse = resp.interact_pointer_pos().filter(|_| resp.is_pointer_button_down_on() && !touching).map(|pt| (pt, None));
-            let contact = self.touch_view.fingers.first().map(|f| (f.1, f.2)).or(mouse);
-            match contact {
-                Some((pt, force)) => {
-                    let under = plate_of(pt);
-                    if self.touch_view.slide_from.is_none() {
-                        if let Some(i) = under {
-                            self.touch_view.slide_from = Some(plates[i].1);
-                            pressed_plate = Some(plate_index[i]);
-                        }
-                    }
-                    if let Some(from) = self.touch_view.slide_from {
-                        let r = under.map(|i| plates[i].0).unwrap_or(area);
-                        let pressure = force.filter(|f| *f > 0.0).map(|f| f.clamp(0.05, 1.0)).unwrap_or_else(|| press_of(pt, r));
-                        want.push((from, pressure, along(pt)));
-                        let to = slide_pitch(&plates, pt).unwrap_or(from as f32);
-                        bend_to = Some(to - from as f32);
-                        slid = Some((pt, under.map(|i| plates[i].1).unwrap_or(from), to));
-                    }
-                    if mouse.is_some() {
-                        ui.ctx().set_cursor_icon(CursorIcon::ResizeHorizontal);
-                    }
-                }
-                None => self.touch_view.slide_from = None,
-            }
-        } else {
+        let (want, pressed_plate, bend_to, keys_down) = if on_tonnetz {
             self.touch_view.slide_from = None;
-            for &(_, pt, force) in &self.touch_view.fingers {
-                if let Some(i) = plate_of(pt) {
-                    want.push((plates[i].1, force.filter(|f| *f > 0.0).map(|f| f.clamp(0.05, 1.0)).unwrap_or_else(|| press_of(pt, plates[i].0)), along(pt)));
-                    pressed_plate = Some(plate_index[i]);
+            let want = self.tonnetz_plates(ui, area, ti, di, seq_on.then_some(seen.step), held_notes, tcol);
+            (want, None, None, self.held_keys.values().any(|(_, ids)| ids.contains(&tid)))
+        } else {
+            let per = per_octave(&key, base_note, set);
+            // The plates: rows of columns, each row a fourth (or so) above the one under it.
+            let (cols, rows, step_up) = match layout {
+                1 => ((per + 1) as usize, 1usize, 0),
+                2 => ((per + 1) as usize, 3usize, if set == 2 { 5 } else if set == 1 { 2 } else { 3 }),
+                _ => ((per * 2 + 1).min(((area.width() / 24.0) as i32).max(8)) as usize, 1usize, 0),
+            };
+            let gap = 5.0;
+            let pw = (area.width() - gap * (cols as f32 - 1.0)) / cols as f32;
+            let ph = (area.height() - gap * (rows as f32 - 1.0)) / rows as f32;
+            let mut plates: Vec<(Rect, u8)> = Vec::with_capacity(cols * rows);
+            let mut plate_index: Vec<usize> = Vec::with_capacity(cols * rows);
+            for row in 0..rows {
+                for c in 0..cols {
+                    let pr = Rect::from_min_size(pos2(area.left() + c as f32 * (pw + gap), area.bottom() - (row + 1) as f32 * ph - row as f32 * gap), vec2(pw, ph));
+                    let idx = c + row * step_up as usize;
+                    plates.push((pr, plate_pitch(&key, base_note, set, idx as i32)));
+                    plate_index.push(idx);
                 }
             }
-            let touching = !self.touch_view.fingers.is_empty() || ui.input(|i| i.any_touches());
-            if let Some(pt) = resp.interact_pointer_pos().filter(|_| resp.is_pointer_button_down_on() && !touching) {
-                if let Some(i) = plate_of(pt) {
-                    want.push((plates[i].1, press_of(pt, plates[i].0), along(pt)));
-                    pressed_plate = Some(plate_index[i]);
+            let resp = ui.interact(area, Id::new(("touch_plates", tid)), Sense::click_and_drag());
+            let plate_of = |pt: Pos2| plates.iter().position(|(r, _)| r.expand(gap * 0.5).contains(pt));
+            let press_of = |pt: Pos2, r: Rect| (1.0 - (pt.y - r.top()) / r.height()).clamp(0.05, 1.0);
+            let along = |pt: Pos2| ((pt.x - area.left()) / area.width()).clamp(0.0, 1.0);
+            for ev in ui.input(|i| i.events.clone()) {
+                if let egui::Event::Touch { id, phase, pos, force, .. } = ev {
+                    let fid = id.0.wrapping_add(1);
+                    let fingers = &mut self.touch_view.fingers;
+                    match phase {
+                        egui::TouchPhase::Start if area.contains(pos) => fingers.push((fid, pos, force)),
+                        egui::TouchPhase::Move => {
+                            if let Some(f) = fingers.iter_mut().find(|f| f.0 == fid) {
+                                (f.1, f.2) = (pos, force);
+                            }
+                        }
+                        egui::TouchPhase::End | egui::TouchPhase::Cancel => fingers.retain(|f| f.0 != fid),
+                        _ => {}
+                    }
                 }
-                ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
             }
-        }
-        let keys_down = self.held_keys.values().any(|(_, ids)| ids.contains(&tid));
-        let root = key.root as i32;
-        let lit: Vec<(u8, f32)> = match slid {
-            Some((_, under, _)) => want.iter().map(|w| (under, w.1)).collect(),
-            None => want.iter().map(|w| (w.0, w.1)).collect(),
-        };
-        for (n, &(pr, pitch)) in plates.iter().enumerate() {
-            let value = touch::plate_value(&dev.data, plate_index[n]);
-            let sounding = held_notes >> pitch & 1 == 1 && slid.is_none();
-            let held = lit.iter().any(|w| w.0 == pitch) || self.held_keys.values().any(|(pp, ids)| *pp == pitch && ids.contains(&tid));
-            let is_root = (pitch as i32 - root).rem_euclid(12) == 0;
-            gradient(&p, pr, Color32::from_rgb(0x2e, 0x2e, 0x34), Color32::from_rgb(0x1c, 0x1c, 0x20));
-            // How hard: the plate fills up to it.
-            if let Some(&(_, pressure)) = lit.iter().find(|w| w.0 == pitch) {
-                let fill = Rect::from_min_max(pos2(pr.left(), pr.bottom() - pressure * pr.height()), pr.max);
-                gradient(&p, fill, mix(tcol, Color32::WHITE, 0.25), shade(tcol, 0.6));
-            } else if held {
-                gradient(&p, pr, shade(tcol, 0.8), shade(tcol, 0.4));
-            }
-            if sounding {
-                p.rect_filled(pr, 5.0, Color32::from_rgba_unmultiplied(tcol.r(), tcol.g(), tcol.b(), 60));
-                p.rect_stroke(pr, 5.0, Stroke::new(2.0_f32, mix(tcol, Color32::WHITE, 0.35)), egui::StrokeKind::Inside);
-            } else {
-                p.rect_stroke(pr, 5.0, Stroke::new(1.0_f32, LINE), egui::StrokeKind::Inside);
-            }
-            // Its own value: a column up its side (the whole plate while setting them).
+            let mut want: Vec<(u8, f32, f32)> = Vec::new();
+            let mut pressed_plate: Option<usize> = None;
+            // Sliding: where the bend is going, and the plate under the finger (lit).
+            let mut bend_to: Option<f32> = None;
+            let mut slid: Option<(Pos2, u8, f32)> = None;
             if values_on {
-                let fill = Rect::from_min_max(pos2(pr.left() + 2.0, pr.bottom() - value * pr.height()), pr.max - vec2(2.0, 0.0));
-                p.rect_filled(fill, 3.0, shade(OUT_COLORS[11], 0.55));
-                p.line_segment([pos2(pr.left() + 2.0, fill.top()), pos2(pr.right() - 2.0, fill.top())], Stroke::new(2.0_f32, OUT_COLORS[11]));
+                // Setting the plates' values: a drag sets the one under it.
+                if let Some(pt) = resp.interact_pointer_pos().filter(|_| resp.is_pointer_button_down_on()) {
+                    if let Some(i) = plate_of(pt) {
+                        touch::set_plate_value(&mut dev.data, plate_index[i], press_of(pt, plates[i].0));
+                        changed = true;
+                    }
+                    ui.ctx().set_cursor_icon(CursorIcon::ResizeVertical);
+                }
+                self.touch_view.fingers.clear();
+            } else if slide {
+                // One contact (the first finger, or the pointer): its note pressed
+                // first, bent to where it is now.
+                let touching = !self.touch_view.fingers.is_empty() || ui.input(|i| i.any_touches());
+                let mouse = resp.interact_pointer_pos().filter(|_| resp.is_pointer_button_down_on() && !touching).map(|pt| (pt, None));
+                let contact = self.touch_view.fingers.first().map(|f| (f.1, f.2)).or(mouse);
+                match contact {
+                    Some((pt, force)) => {
+                        let under = plate_of(pt);
+                        if self.touch_view.slide_from.is_none() {
+                            if let Some(i) = under {
+                                self.touch_view.slide_from = Some(plates[i].1);
+                                pressed_plate = Some(plate_index[i]);
+                            }
+                        }
+                        if let Some(from) = self.touch_view.slide_from {
+                            let r = under.map(|i| plates[i].0).unwrap_or(area);
+                            let pressure = force.filter(|f| *f > 0.0).map(|f| f.clamp(0.05, 1.0)).unwrap_or_else(|| press_of(pt, r));
+                            want.push((from, pressure, along(pt)));
+                            let to = slide_pitch(&plates, pt).unwrap_or(from as f32);
+                            bend_to = Some(to - from as f32);
+                            slid = Some((pt, under.map(|i| plates[i].1).unwrap_or(from), to));
+                        }
+                        if mouse.is_some() {
+                            ui.ctx().set_cursor_icon(CursorIcon::ResizeHorizontal);
+                        }
+                    }
+                    None => self.touch_view.slide_from = None,
+                }
             } else {
-                let tick = Rect::from_min_max(pos2(pr.right() - 4.0, pr.bottom() - value * (pr.height() - 10.0) - 4.0), pos2(pr.right() - 2.0, pr.bottom() - 4.0));
-                p.rect_filled(tick, 1.0, shade(OUT_COLORS[11], 0.7));
+                self.touch_view.slide_from = None;
+                for &(_, pt, force) in &self.touch_view.fingers {
+                    if let Some(i) = plate_of(pt) {
+                        want.push((plates[i].1, force.filter(|f| *f > 0.0).map(|f| f.clamp(0.05, 1.0)).unwrap_or_else(|| press_of(pt, plates[i].0)), along(pt)));
+                        pressed_plate = Some(plate_index[i]);
+                    }
+                }
+                let touching = !self.touch_view.fingers.is_empty() || ui.input(|i| i.any_touches());
+                if let Some(pt) = resp.interact_pointer_pos().filter(|_| resp.is_pointer_button_down_on() && !touching) {
+                    if let Some(i) = plate_of(pt) {
+                        want.push((plates[i].1, press_of(pt, plates[i].0), along(pt)));
+                        pressed_plate = Some(plate_index[i]);
+                    }
+                    ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+                }
             }
-            // Its edge: the key's root bright.
-            let edge = Rect::from_min_size(pr.min + vec2(4.0, 3.0), vec2(pr.width() - 8.0, 3.0));
-            p.rect_filled(edge, 1.5, if is_root { accent } else { shade(tcol, 0.55) });
-            if pr.height() > 26.0 {
-                p.text(pos2(pr.center().x, pr.bottom() - 4.0), Align2::CENTER_BOTTOM, krabton_engine::note_name(pitch), FontId::proportional(if pw > 34.0 { 10.5 } else { 9.0 }), if sounding || held { TEXT } else { TEXT_DIM });
+            let keys_down = self.held_keys.values().any(|(_, ids)| ids.contains(&tid));
+            let root = key.root as i32;
+            let lit: Vec<(u8, f32)> = match slid {
+                Some((_, under, _)) => want.iter().map(|w| (under, w.1)).collect(),
+                None => want.iter().map(|w| (w.0, w.1)).collect(),
+            };
+            for (n, &(pr, pitch)) in plates.iter().enumerate() {
+                let value = touch::plate_value(&dev.data, plate_index[n]);
+                let sounding = held_notes >> pitch & 1 == 1 && slid.is_none();
+                let held = lit.iter().any(|w| w.0 == pitch) || self.held_keys.values().any(|(pp, ids)| *pp == pitch && ids.contains(&tid));
+                let is_root = (pitch as i32 - root).rem_euclid(12) == 0;
+                gradient(&p, pr, Color32::from_rgb(0x2e, 0x2e, 0x34), Color32::from_rgb(0x1c, 0x1c, 0x20));
+                // How hard: the plate fills up to it.
+                if let Some(&(_, pressure)) = lit.iter().find(|w| w.0 == pitch) {
+                    let fill = Rect::from_min_max(pos2(pr.left(), pr.bottom() - pressure * pr.height()), pr.max);
+                    gradient(&p, fill, mix(tcol, Color32::WHITE, 0.25), shade(tcol, 0.6));
+                } else if held {
+                    gradient(&p, pr, shade(tcol, 0.8), shade(tcol, 0.4));
+                }
+                if sounding {
+                    p.rect_filled(pr, 5.0, Color32::from_rgba_unmultiplied(tcol.r(), tcol.g(), tcol.b(), 60));
+                    p.rect_stroke(pr, 5.0, Stroke::new(2.0_f32, mix(tcol, Color32::WHITE, 0.35)), egui::StrokeKind::Inside);
+                } else {
+                    p.rect_stroke(pr, 5.0, Stroke::new(1.0_f32, LINE), egui::StrokeKind::Inside);
+                }
+                // Its own value: a column up its side (the whole plate while setting them).
+                if values_on {
+                    let fill = Rect::from_min_max(pos2(pr.left() + 2.0, pr.bottom() - value * pr.height()), pr.max - vec2(2.0, 0.0));
+                    p.rect_filled(fill, 3.0, shade(OUT_COLORS[11], 0.55));
+                    p.line_segment([pos2(pr.left() + 2.0, fill.top()), pos2(pr.right() - 2.0, fill.top())], Stroke::new(2.0_f32, OUT_COLORS[11]));
+                } else {
+                    let tick = Rect::from_min_max(pos2(pr.right() - 4.0, pr.bottom() - value * (pr.height() - 10.0) - 4.0), pos2(pr.right() - 2.0, pr.bottom() - 4.0));
+                    p.rect_filled(tick, 1.0, shade(OUT_COLORS[11], 0.7));
+                }
+                // Its edge: the key's root bright.
+                let edge = Rect::from_min_size(pr.min + vec2(4.0, 3.0), vec2(pr.width() - 8.0, 3.0));
+                p.rect_filled(edge, 1.5, if is_root { accent } else { shade(tcol, 0.55) });
+                if pr.height() > 26.0 {
+                    p.text(pos2(pr.center().x, pr.bottom() - 4.0), Align2::CENTER_BOTTOM, krabton_engine::note_name(pitch), FontId::proportional(if pw > 34.0 { 10.5 } else { 9.0 }), if sounding || held { TEXT } else { TEXT_DIM });
+                }
             }
-        }
-        // Sliding: a line where the finger is, the note it is at above it.
-        if let Some((pt, _, to)) = slid {
-            let x = pt.x.clamp(area.left(), area.right());
-            p.line_segment([pos2(x, area.top()), pos2(x, area.bottom())], Stroke::new(2.0_f32, mix(tcol, Color32::WHITE, 0.5)));
-            let near = to.round();
-            let cents = ((to - near) * 100.0).round() as i32;
-            let label = if cents == 0 { krabton_engine::note_name(near.clamp(0.0, 127.0) as u8) } else { format!("{} {cents:+}", krabton_engine::note_name(near.clamp(0.0, 127.0) as u8)) };
-            let lr = Rect::from_center_size(pos2(x.clamp(area.left() + 30.0, area.right() - 30.0), area.top() + 10.0), vec2(58.0, 18.0));
-            p.rect_filled(lr, 4.0, shade(tcol, 0.45));
-            p.text(lr.center(), Align2::CENTER_CENTER, label, FontId::proportional(11.0), TEXT);
-        }
+            // Sliding: a line where the finger is, the note it is at above it.
+            if let Some((pt, _, to)) = slid {
+                let x = pt.x.clamp(area.left(), area.right());
+                p.line_segment([pos2(x, area.top()), pos2(x, area.bottom())], Stroke::new(2.0_f32, mix(tcol, Color32::WHITE, 0.5)));
+                let near = to.round();
+                let cents = ((to - near) * 100.0).round() as i32;
+                let label = if cents == 0 { krabton_engine::note_name(near.clamp(0.0, 127.0) as u8) } else { format!("{} {cents:+}", krabton_engine::note_name(near.clamp(0.0, 127.0) as u8)) };
+                let lr = Rect::from_center_size(pos2(x.clamp(area.left() + 30.0, area.right() - 30.0), area.top() + 10.0), vec2(58.0, 18.0));
+                p.rect_filled(lr, 4.0, shade(tcol, 0.45));
+                p.text(lr.center(), Align2::CENTER_CENTER, label, FontId::proportional(11.0), TEXT);
+            }
+            (want, pressed_plate, bend_to, keys_down)
+        };
 
         // ---------------------------------------------------------------- what was asked
         let (pressure, position) = match want.iter().fold(None::<(f32, f32)>, |a, w| Some((a.map_or(w.1, |a| a.0.max(w.1)), w.2))) {
@@ -1732,7 +2013,9 @@ impl App {
                 }
                 self.cmd(Command::Touch { track: tid, pressure: pressure.max(pr), position: po });
                 self.touch_note_on(ti, pitch, pr);
-                self.touch_record(ti, di, pitch);
+                if !on_tonnetz {
+                    self.touch_record(ti, di, pitch);
+                }
             }
             now_held.push((pitch, tid));
         }
@@ -2041,6 +2324,20 @@ mod tests {
         assert_eq!(len, 64.0);
         assert_eq!(notes.len(), 64);
         assert!(captured(&[], 0.0, 4.0, true, true).is_none());
+    }
+
+    #[test]
+    fn a_walk_on_the_tonnetz_moves_to_a_neighbour_each_step() {
+        let w = tonnetz_walk(Tri::default(), 16, 3.25);
+        assert_eq!((w.len(), w[0]), (16, Tri::default()));
+        for p in w.windows(2) {
+            let shared = p[1].classes().iter().filter(|c| p[0].classes().contains(c)).count();
+            assert_eq!(shared, 2, "{p:?}");
+        }
+        assert_eq!(chord_name(60, Tri::default()), "C");
+        assert_eq!(chord_name(57, Tri::new(0, 0, true)), "C#m", "A's L: C#m");
+        let tri = [pos2(0.0, 10.0), pos2(10.0, 10.0), pos2(5.0, 0.0)];
+        assert!(inside(pos2(5.0, 6.0), &tri) && !inside(pos2(0.0, 0.0), &tri));
     }
 
     #[test]
