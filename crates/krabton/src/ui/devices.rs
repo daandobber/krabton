@@ -1529,6 +1529,25 @@ impl App {
                             param_grid_mod(ui, Id::new(("nature", track_id)), krabton_engine::dsp::nature::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
                         });
                     }
+                    Instrument::Coast { preset, params } => {
+                        if crate::skin::current().is_some() {
+                            super::faces::coast::panel(ui, Id::new(("coast", track_id)), preset, params, &live, h - 36.0, mv.as_mut());
+                        } else {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
+                                egui::ComboBox::from_id_salt(("coast_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                    for name in krabton_engine::dsp::coast::preset_names() {
+                                        if ui.selectable_label(preset == name, *name).clicked() {
+                                            *preset = name.to_string();
+                                            *params = krabton_engine::dsp::coast::preset(name);
+                                        }
+                                    }
+                                });
+                                ui.label(RichText::new("strike it: the low pass gate rings out; play it with Touch").small().color(crate::skin::ink_dim()));
+                            });
+                            param_grid_mod(ui, Id::new(("coast", track_id)), krabton_engine::dsp::coast::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
+                        }
+                    }
                     Instrument::Facet { preset, params } => {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));

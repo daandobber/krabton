@@ -165,6 +165,8 @@ pub enum BrowserItem {
     Orchestra(&'static str),
     /// A Facet preset.
     Facet(&'static str),
+    /// A Coast preset.
+    Coast(&'static str),
     /// A Beads (instrument) preset.
     BeadsSynth(&'static str),
     /// A Grand Piano preset.
@@ -225,6 +227,7 @@ impl BrowserItem {
             BrowserItem::Quartet(p) => format!("Quartet: {p}"),
             BrowserItem::Orchestra(p) => format!("{}: {p}", if krabton_engine::orchestra::SOLOIST_NAMES.contains(p) { "Soloists" } else { "Orchestra" }),
             BrowserItem::Facet(p) => format!("Facet: {p}"),
+            BrowserItem::Coast(p) => format!("Coast: {p}"),
             BrowserItem::Piano(p) => format!("Grand Piano: {p}"),
             BrowserItem::Drums(k) => k.to_string(),
             BrowserItem::Sampler => "Sampler".into(),
@@ -1182,7 +1185,7 @@ impl App {
                 }
                 self.toast(format!("Loading {} ...", info.name));
             }
-            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::StreetOrgan(_) | BrowserItem::Harmonica(_) | BrowserItem::Calculator(_) | BrowserItem::Console(_) | BrowserItem::Handheld(_) | BrowserItem::Micro(_) | BrowserItem::Warp(_) | BrowserItem::Hybrid(_) | BrowserItem::Quartet(_) | BrowserItem::ChipFm(_) | BrowserItem::V2(_) | BrowserItem::Oidos(_) | BrowserItem::Orchestra(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) => {
+            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::StreetOrgan(_) | BrowserItem::Harmonica(_) | BrowserItem::Calculator(_) | BrowserItem::Console(_) | BrowserItem::Handheld(_) | BrowserItem::Micro(_) | BrowserItem::Warp(_) | BrowserItem::Hybrid(_) | BrowserItem::Quartet(_) | BrowserItem::ChipFm(_) | BrowserItem::V2(_) | BrowserItem::Oidos(_) | BrowserItem::Orchestra(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) | BrowserItem::Coast(_) => {
                 let inst = match item {
                     BrowserItem::Synth(p) => Instrument::synth(p),
                     BrowserItem::Macro(p) => Instrument::macro_osc(p),
@@ -1224,6 +1227,7 @@ impl App {
                     BrowserItem::Quartet(p) => Instrument::quartet(p),
                     BrowserItem::Orchestra(p) => Instrument::orchestra(p),
                     BrowserItem::Facet(p) => Instrument::facet(p),
+                    BrowserItem::Coast(p) => Instrument::coast(p),
                     BrowserItem::Drums(k) => Instrument::drums(k),
                     _ => Instrument::sampler(None),
                 };
@@ -3783,6 +3787,12 @@ impl App {
                     let names = krabton_engine::dsp::chipfm::preset_names();
                     let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
                     self.apply_item(&BrowserItem::ChipFm(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "coast" => {
+                    let names = krabton_engine::dsp::coast::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Coast(p), DropTarget::NewTrack);
                     self.detail = DetailTab::Devices;
                 }
                 "facet" => {

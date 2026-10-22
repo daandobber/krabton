@@ -4,7 +4,8 @@
 //!
 //! - *Play*: as they are (Notes), arpeggiated (Arp: six orders over one to
 //!   four octaves), strummed (Strum: the chord's notes one after the other,
-//!   down and up in turn), or with echoes that fade (Echo).
+//!   down and up in turn), with echoes that fade (Echo), or bouncing like a
+//!   ball dropped, each bounce sooner and softer (Bounce).
 //! - *Voicing*: a plate plays one note or a chord built in the key (a third,
 //!   a fifth, an octave, a triad, a seventh, a ninth, sus4, power, a cluster,
 //!   an open voicing).
@@ -21,14 +22,16 @@
 //!
 //! What it makes is patched to the instrument's knobs through Touch
 //! modulators (`ModKind::Touch`): the pressure, the pulse, the steps' values,
-//! a stepped and a drifting random, where along the plates the hand is, an
-//! LFO, a drawn shape, and the XY pad's X and Y.
+//! a stepped random (quantized to a few levels, or not) and a drifting one,
+//! where along the plates the hand is, an LFO, a drawn shape, the XY pad's X
+//! and Y, an envelope (once, held, or cycling) and each plate's own value.
 //!
 //! Its data (version 2): a version byte, sixteen steps of four bytes (note
 //! i8, value, chance, flags: ratchet - 1 in the low two bits, then rest, tie,
 //! accent), eight patch points (the instrument's parameters the Touch view
-//! shows, u16 little-endian, 0xFFFF: none) and the shape's 32 points. The
-//! first version (five steps of two bytes and six patch points) is read too.
+//! shows, u16 little-endian, 0xFFFF: none), the shape's 32 points and each
+//! plate's value (24). The first version (five steps of two bytes and six
+//! patch points), and the second without the plates' values, are read too.
 
 use super::SeqState;
 use crate::midi_fx::{MidiCtx, MidiEvent};
@@ -63,11 +66,16 @@ pub const NOTES: usize = 29;
 pub const SPRING: usize = 30;
 pub const SEQ: usize = 31;
 pub const TRIGGER: usize = 32;
+pub const ENV_MODE: usize = 33;
+pub const ENV_ATTACK: usize = 34;
+pub const ENV_DECAY: usize = 35;
+pub const RANDOM_STEPS: usize = 36;
 
 pub const RATES: &[&str] = &["1/32", "1/16 T", "1/16", "1/8 T", "1/8", "1/4 T", "1/4", "1/2", "1 Bar"];
 const RATE_BEATS: [f64; 9] = [0.125, 1.0 / 6.0, 0.25, 1.0 / 3.0, 0.5, 2.0 / 3.0, 1.0, 2.0, 4.0];
 pub const ORDERS: &[&str] = &["Forward", "Pendulum", "Random", "Backward", "Drunk", "Every 3rd", "Every 5th"];
-pub const PLAYS: &[&str] = &["Notes", "Arp", "Strum", "Echo"];
+pub const PLAYS: &[&str] = &["Notes", "Arp", "Strum", "Echo", "Bounce"];
+pub const ENV_MODES: &[&str] = &["Transient", "Sustained", "Cycle"];
 pub const VOICINGS: &[&str] = &["Single", "+3rd", "+5th", "+Octave", "Triad", "Seventh", "Ninth", "Sus4", "Power", "Cluster", "Open"];
 /// Each voicing's notes: (scale steps up, octaves up).
 const VOICING_NOTES: [&[(i32, i32)]; 11] = [
@@ -90,8 +98,10 @@ const SLOW_BEATS: [f64; 8] = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0];
 pub const LAYOUTS: &[&str] = &["Row", "Wide", "Grid"];
 pub const NOTE_SETS: &[&str] = &["Key", "Pentatonic", "Chromatic"];
 /// What the Touch modulators can take from it (the first six kept their places).
-pub const OUTPUTS: &[&str] = &["Pressure", "Pulse", "Steps", "Random", "Drift", "Position", "LFO", "Shape", "X", "Y"];
-pub const N_OUT: usize = 10;
+pub const OUTPUTS: &[&str] = &["Pressure", "Pulse", "Steps", "Random", "Drift", "Position", "LFO", "Shape", "X", "Y", "Env", "Plate"];
+pub const N_OUT: usize = 12;
+/// Plates with a value of their own.
+pub const N_PLATES: usize = 24;
 pub const N_STEPS: usize = 16;
 pub const N_PATCH: usize = 8;
 pub const N_SHAPE: usize = 32;
@@ -103,7 +113,10 @@ const VERSION: u8 = 2;
 const STEP_AT: usize = 1;
 const PATCH_AT: usize = STEP_AT + N_STEPS * 4;
 const SHAPE_AT: usize = PATCH_AT + N_PATCH * 2;
-const LEN: usize = SHAPE_AT + N_SHAPE;
+const PLATES_AT: usize = SHAPE_AT + N_SHAPE;
+const LEN: usize = PLATES_AT + N_PLATES;
+/// The second version's length (no plate values).
+const V2_LEN: usize = PLATES_AT;
 /// The first version's length (five steps of two bytes, six patch points).
 const V1_LEN: usize = 22;
 
@@ -130,8 +143,8 @@ pub static TOUCH: &[ParamSpec] = &[
     ParamSpec::choice("Arp Order", "Play", ARP_ORDERS, 0),
     ParamSpec::int("Octaves", "Play", 1.0, 4.0, 1.0, Unit::None),
     ParamSpec::log("Strum", "Play", 0.005, 0.25, 0.04, Unit::Sec),
-    ParamSpec::int("Echoes", "Play", 1.0, 8.0, 3.0, Unit::None),
-    ParamSpec::lin("Feedback", "Play", 0.1, 0.95, 0.6, Unit::Percent),
+    ParamSpec::int("Repeats", "Play", 1.0, 8.0, 3.0, Unit::None),
+    ParamSpec::lin("Fade", "Play", 0.1, 0.95, 0.6, Unit::Percent),
     ParamSpec::toggle("Run", "Play", false),
     ParamSpec::choice("LFO Shape", "Motion", LFO_SHAPES, 0),
     ParamSpec::choice("LFO Rate", "Motion", SLOW_RATES, 4),
@@ -141,6 +154,10 @@ pub static TOUCH: &[ParamSpec] = &[
     ParamSpec::toggle("Spring", "Motion", true),
     ParamSpec::toggle("Sequencer", "Sequence", false),
     ParamSpec::toggle("Trigger", "Sequence", true),
+    ParamSpec::choice("Env Mode", "Motion", ENV_MODES, 0),
+    ParamSpec::log("Env Attack", "Motion", 0.001, 4.0, 0.01, Unit::Sec),
+    ParamSpec::log("Env Decay", "Motion", 0.005, 8.0, 0.5, Unit::Sec),
+    ParamSpec::int("Random Steps", "Motion", 0.0, 12.0, 0.0, Unit::None),
 ];
 
 /// One step of the sequence.
@@ -171,8 +188,9 @@ fn step_bytes(s: &Step) -> [u8; 4] {
     [s.note.clamp(-14, 14) as i8 as u8, (s.value.clamp(0.0, 1.0) * 255.0).round() as u8, (s.chance.clamp(0.0, 1.0) * 255.0).round() as u8, flags]
 }
 
+/// The second version, with the plates' values or (an older one) without.
 fn is_v2(data: &[u8]) -> bool {
-    data.len() == LEN && data[0] == VERSION
+    (data.len() == LEN || data.len() == V2_LEN) && data[0] == VERSION
 }
 
 /// A pattern's data from its steps (the rest of the sixteen plain), no patch
@@ -190,7 +208,30 @@ pub fn pattern(steps: &[Step]) -> Vec<u8> {
     for j in 0..N_SHAPE {
         d[SHAPE_AT + j] = default_shape(j);
     }
+    for k in 0..N_PLATES {
+        d[PLATES_AT + k] = default_plate(k);
+    }
     d
+}
+
+/// The plates' values at first: rising along them, an octave's worth at a time.
+fn default_plate(k: usize) -> u8 {
+    ((k % 8) as f32 / 7.0 * 255.0).round() as u8
+}
+
+/// Plate `k`'s value (0..1).
+pub fn plate_value(data: &[u8], k: usize) -> f32 {
+    let k = k % N_PLATES;
+    if data.len() == LEN && data[0] == VERSION {
+        data[PLATES_AT + k] as f32 / 255.0
+    } else {
+        default_plate(k) as f32 / 255.0
+    }
+}
+
+pub fn set_plate_value(data: &mut Vec<u8>, k: usize, v: f32) {
+    whole(data);
+    data[PLATES_AT + k % N_PLATES] = (v.clamp(0.0, 1.0) * 255.0).round() as u8;
 }
 
 fn default_shape(j: usize) -> u8 {
@@ -213,7 +254,14 @@ pub fn default_data() -> Vec<u8> {
 
 /// Data of any version made the current one, keeping what it had.
 pub fn whole(data: &mut Vec<u8>) {
-    if is_v2(data) {
+    if data.len() == LEN && data[0] == VERSION {
+        return;
+    }
+    if data.len() == V2_LEN && data[0] == VERSION {
+        // The second version without the plates' values: theirs at first.
+        for k in 0..N_PLATES {
+            data.push(default_plate(k));
+        }
         return;
     }
     let old = std::mem::take(data);
@@ -386,6 +434,9 @@ pub struct TouchState {
     drift_wait: f32,
     hold: f32,
     hold_cycle: i64,
+    /// The envelope: its level, and rising (or not).
+    env2: f32,
+    env2_up: bool,
     /// The pressure the last note was played with (a latched plate keeps it).
     pressure: f32,
     pulses: u32,
@@ -413,6 +464,8 @@ impl Default for TouchState {
             drift_wait: 0.0,
             hold: 0.0,
             hold_cycle: i64::MIN,
+            env2: 0.0,
+            env2_up: false,
             pressure: 0.0,
             pulses: 0,
             last_note: 0,
@@ -647,12 +700,31 @@ impl SeqState {
         let steps = (param(p, STEPS, 8.0).round() as usize).clamp(1, N_STEPS);
         let shown = self.touch.step.min(steps - 1);
         let value = if seq { step(data, shown).value } else { 0.0 };
-        let outs = [pressure, self.touch.env, value, self.touch.random, self.touch.drift, ctx.touch[1].clamp(0.0, 1.0), lfo, drawn, ctx.touch[2].clamp(0.0, 1.0), ctx.touch[3].clamp(0.0, 1.0)];
+        // The envelope: once (Transient), held while a plate is (Sustained), or round and round (Cycle).
+        let mode = choice(p, ENV_MODE, ENV_MODES.len());
+        let rise = secs / param(p, ENV_ATTACK, 0.01).max(0.001);
+        let fall = (-4.6 * secs / param(p, ENV_DECAY, 0.5).max(0.005)).exp();
+        let t = &mut self.touch;
+        if t.env2_up {
+            t.env2 = (t.env2 + rise).min(1.0);
+            if t.env2 >= 1.0 && !(mode == 1 && t.held.n > 0) {
+                t.env2_up = false;
+            }
+        } else {
+            t.env2 *= fall;
+            if mode == 2 && t.env2 < 0.01 {
+                t.env2_up = true;
+            }
+        }
+        // Random Steps: the random on that many levels (0: as it comes).
+        let levels = param(p, RANDOM_STEPS, 0.0).round().clamp(0.0, 12.0);
+        let random = if levels >= 2.0 { (t.random * levels).floor().min(levels - 1.0) / (levels - 1.0) } else { t.random };
+        let outs = [pressure, t.env, value, random, t.drift, ctx.touch[1].clamp(0.0, 1.0), lfo, drawn, ctx.touch[2].clamp(0.0, 1.0), ctx.touch[3].clamp(0.0, 1.0), t.env2, ctx.touch[4].clamp(0.0, 1.0)];
         self.touch_out = outs;
         let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u64;
         self.visual[0] = shown as u64 | (steps as u64) << 8 | ((self.touch.pulses & 0xFFFF) as u64) << 16 | ((self.touch.last_note & 0x7F) as u64) << 32 | (seq as u64) << 40;
         self.visual[1] = (0..8).fold(0u64, |a, k| a | byte(outs[k]) << (k * 8));
-        self.visual[2] = byte(outs[8]) | byte(outs[9]) << 8;
+        self.visual[2] = (8..N_OUT).fold(0u64, |a, k| a | byte(outs[k]) << ((k - 8) * 8));
     }
 
     /// A pulse: what plays (the plate held last, the latched one, or with Run
@@ -707,6 +779,8 @@ impl SeqState {
         let up = self.touch.strum_up;
         let echoes = param(p, ECHOES, 3.0).round().clamp(1.0, 8.0) as u32;
         let feedback = param(p, FEEDBACK, 0.6).clamp(0.1, 0.95);
+        // Bounce: the first bounce a pulse later, each one after three quarters of the last.
+        let bounce_gaps = |e: u32| (0..e).fold(0.0f64, |a, j| a + interval * 0.75f64.powi(j as i32));
         let n = voicing.len();
         for r in 0..ratchet {
             let rat = at + (r as f64 * sub) as u64;
@@ -720,6 +794,12 @@ impl SeqState {
                     // Echo: again on the following pulses, fainter each time.
                     for e in 1..=echoes {
                         hits.push(Hit { at: start + (e as f64 * interval) as u64, note, vel: vel * feedback.powi(e as i32), len: (interval * gate(p)).min(len) });
+                    }
+                } else if play == 4 {
+                    // Bounce: sooner and softer each time, like a ball dropped.
+                    for e in 1..=echoes + 3 {
+                        let gap = interval * 0.75f64.powi(e as i32 - 1);
+                        hits.push(Hit { at: start + bounce_gaps(e) as u64, note, vel: vel * feedback.powi(e as i32), len: (gap * gate(p)).min(len) });
                     }
                 }
             }
@@ -849,6 +929,7 @@ impl SeqState {
     /// A pulse (or a touch): the envelope again, a new random.
     fn touch_outputs(&mut self) {
         self.touch.env = 1.0;
+        self.touch.env2_up = true;
         self.touch.random = unit(&mut self.rng);
         self.touch.drift_to = unit(&mut self.rng);
         self.touch.pulses = self.touch.pulses.wrapping_add(1);
@@ -934,7 +1015,7 @@ mod tests {
     const SPB: f64 = 24_000.0;
 
     fn ctx(now: u64, playing: bool, pressure: f32) -> MidiCtx {
-        MidiCtx { now, len: 256, samples_per_beat: SPB, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / SPB, playing, sr: 48_000.0, drum_notes: 0, lead: 0.0, touch: [pressure, 0.5, 0.25, 0.75] }
+        MidiCtx { now, len: 256, samples_per_beat: SPB, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / SPB, playing, sr: 48_000.0, drum_notes: 0, lead: 0.0, touch: [pressure, 0.5, 0.25, 0.75, 0.4] }
     }
 
     /// Runs `blocks` blocks with plate events at given blocks: (block, pitch, on).
@@ -1077,6 +1158,75 @@ mod tests {
         assert_eq!(hits.len(), 3, "{hits:?}");
         assert!(hits[1].1 < hits[0].1 && hits[2].1 < hits[1].1);
         assert_eq!(hits[1].0, 256 + 24_000);
+    }
+
+    #[test]
+    fn bounce_comes_back_sooner_and_softer() {
+        let mut p = defaults(TOUCH);
+        p[PLAY] = 4.0;
+        p[ECHOES] = 2.0;
+        p[RATE] = 6.0;
+        let (evs, _) = run(&p, &default_data(), beats(4.0), &[(1, 60, true)], false);
+        let hits: Vec<(u64, f32)> = evs.iter().filter(|e| e.2).map(|e| (e.0, e.3)).collect();
+        assert_eq!(hits.len(), 6, "{hits:?}");
+        let gaps: Vec<u64> = hits.windows(2).map(|w| w[1].0 - w[0].0).collect();
+        assert!(gaps.windows(2).all(|g| g[1] < g[0]), "sooner each time: {gaps:?}");
+        assert!(hits.windows(2).all(|w| w[1].1 < w[0].1), "softer each time");
+    }
+
+    #[test]
+    fn the_envelope_rises_falls_holds_and_cycles() {
+        let mut p = defaults(TOUCH);
+        p[ENV_ATTACK] = 0.01;
+        p[ENV_DECAY] = 0.1;
+        let env_after = |p: &[f32], blocks: u64, release: Option<u64>| {
+            let mut plates = vec![(1, 60, true)];
+            if let Some(b) = release {
+                plates.push((b, 60, false));
+            }
+            let (_, st) = run(p, &default_data(), blocks, &plates, false);
+            st.touch_out().unwrap()[10]
+        };
+        // Transient: up and down, held or not.
+        assert!(env_after(&p, 4, None) > 0.5);
+        assert!(env_after(&p, 120, None) < 0.05);
+        // Sustained: up while held, down after.
+        p[ENV_MODE] = 1.0;
+        assert!(env_after(&p, 120, None) > 0.99);
+        assert!(env_after(&p, 240, Some(100)) < 0.05);
+        // Cycle: round and round.
+        p[ENV_MODE] = 2.0;
+        let (_, st) = run(&p, &default_data(), 600, &[(1, 60, true), (2, 60, false)], false);
+        let mut highs = 0;
+        let mut st = st;
+        for b in 600..1200u64 {
+            let mut out = Vec::with_capacity(8);
+            st.process(MidiFxKind::Touch, &p, &default_data(), &[], &mut out, &ctx(b * 256, false, 0.0));
+            if st.touch_out().unwrap()[10] > 0.95 {
+                highs += 1;
+            }
+        }
+        assert!(highs > 0, "it rises again by itself");
+    }
+
+    #[test]
+    fn random_steps_quantize_and_the_plate_value_comes_through() {
+        let mut p = defaults(TOUCH);
+        p[PULSE] = 1.0;
+        p[RANDOM_STEPS] = 3.0;
+        let (_, st) = run(&p, &default_data(), 200, &[(1, 60, true)], false);
+        let o = st.touch_out().unwrap();
+        assert!([0.0, 0.5, 1.0].iter().any(|l| (o[3] - l).abs() < 1e-4), "three levels: {}", o[3]);
+        assert!((o[11] - 0.4).abs() < 1e-4, "the plate's value");
+        let mut d = default_data();
+        assert!((plate_value(&d, 7) - 1.0).abs() < 1e-3 && plate_value(&d, 0) == 0.0);
+        set_plate_value(&mut d, 30, 0.5);
+        assert!((plate_value(&d, 6) - 0.5).abs() < 0.01, "plates wrap");
+        // The second version without plate values grows them.
+        let mut v2 = d[..super::V2_LEN].to_vec();
+        assert!((step(&v2, 0).note, patch(&v2, 0)) == (step(&d, 0).note, patch(&d, 0)));
+        whole(&mut v2);
+        assert_eq!(v2.len(), d.len());
     }
 
     #[test]

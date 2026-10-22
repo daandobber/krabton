@@ -41,6 +41,8 @@ pub(crate) const OUT_COLORS: [Color32; N_OUT] = [
     Color32::from_rgb(0xf0, 0xf0, 0xf4),
     Color32::from_rgb(0x3c, 0xe0, 0xc8),
     Color32::from_rgb(0xff, 0x6a, 0xe0),
+    Color32::from_rgb(0xff, 0xc8, 0x8a),
+    Color32::from_rgb(0x8a, 0xb4, 0xff),
 ];
 
 /// What the outputs are, for their tooltips.
@@ -55,6 +57,8 @@ const OUT_HELP: [&str; N_OUT] = [
     "The shape drawn under Motion, looping at its rate",
     "The XY pad, left to right",
     "The XY pad, bottom to top",
+    "The envelope: once on every touch or pulse (Transient), held while a plate is (Sustained), or round and round (Cycle)",
+    "The value of the plate pressed (set each plate's with Values)",
 ];
 
 /// What the view keeps between frames.
@@ -80,6 +84,8 @@ pub struct TouchViewState {
     shape_rec: bool,
     /// A lane being painted: what a toggle lane is set to.
     paint: Option<bool>,
+    /// The plates' values are being set (dragging sets them instead of playing).
+    values: bool,
 }
 
 /// A track's Touch modulator for one output.
@@ -175,8 +181,13 @@ fn section(p: &egui::Painter, r: Rect, title: &str) -> Rect {
 
 /// A knob for one of Touch's parameters, its name above and value below.
 fn knob_param(ui: &mut Ui, r: Rect, id: Id, spec: &ParamSpec, value: &mut f32, color: Color32) -> bool {
+    knob_named(ui, r, id, spec, spec.name, value, color)
+}
+
+/// [`knob_param`] with a shorter name shown.
+fn knob_named(ui: &mut Ui, r: Rect, id: Id, spec: &ParamSpec, name: &str, value: &mut f32, color: Color32) -> bool {
     let p = ui.painter().clone();
-    p.text(pos2(r.center().x, r.top()), Align2::CENTER_TOP, spec.name, FontId::proportional(10.5), TEXT_DIM);
+    p.text(pos2(r.center().x, r.top()), Align2::CENTER_TOP, name, FontId::proportional(10.5), TEXT_DIM);
     let side = (r.height() - 28.0).min(r.width() - 6.0).max(18.0);
     let k = Rect::from_center_size(pos2(r.center().x, r.top() + 13.0 + side * 0.5), vec2(side, side));
     let (resp, new) = knob(ui, k, id, spec.to_norm(*value), spec.to_norm(spec.default), false, color);
@@ -405,6 +416,8 @@ impl App {
         let pitch = plate_pitch(&self.project.sounding_key(), base, set, step);
         let id = self.project.tracks[ti].id;
         let vel = self.kb_velocity;
+        let value = touch::plate_value(&self.project.tracks[ti].midi_devices[di].data, step.max(0) as usize);
+        self.cmd(Command::TouchPlate { track: id, value });
         self.touch_record(ti, di, pitch);
         self.cmd(Command::Touch { track: id, pressure: vel, position: 0.5 });
         self.cmd(Command::NoteOn { track: id, pitch, velocity: vel });
@@ -469,7 +482,7 @@ impl App {
         let patch_w = (w * 0.30).clamp(260.0, 380.0);
         let patch_r = Rect::from_min_max(pos2(top.right() - patch_w, top.top()), top.max);
         let seq_r = Rect::from_min_max(pos2(play_r.right() + 10.0, top.top()), pos2(patch_r.left() - 10.0, top.bottom()));
-        let motion_w = (bottom.width() * 0.27).clamp(250.0, 340.0);
+        let motion_w = (bottom.width() * 0.40).clamp(330.0, 480.0);
         let motion_r = Rect::from_min_max(pos2(bottom.right() - motion_w, bottom.top()), bottom.max);
         let plates_r = Rect::from_min_max(bottom.min, pos2(motion_r.left() - 10.0, bottom.bottom()));
         let p = ui.painter().clone();
@@ -552,7 +565,7 @@ impl App {
         let extra: [usize; 2] = match mode {
             1 => [touch::ARP_ORDER, touch::OCTAVES],
             2 => [touch::STRUM, touch::PRESS_VEL],
-            3 => [touch::ECHOES, touch::FEEDBACK],
+            3 | 4 => [touch::ECHOES, touch::FEEDBACK],
             _ => [touch::PRESS_VEL, touch::DECAY],
         };
         let cells = [touch::GATE, touch::SWING, touch::CHANCE, touch::WANDER, extra[0], extra[1]];
@@ -930,7 +943,7 @@ impl App {
         // ---------------------------------------------------------------- motion
         let inner = section(&p, motion_r, "MOTION");
         let dev = &mut self.project.tracks[ti].midi_devices[di];
-        let side = inner.height().min(inner.width() * 0.55);
+        let side = inner.height().min(inner.width() * 0.36);
         let pad = Rect::from_min_size(inner.min, vec2(side, side));
         let spring = dev.params[touch::SPRING] >= 0.5;
         let pad_resp = ui.interact(pad, Id::new(("touch_xy", tid)), Sense::click_and_drag()).on_hover_text("The XY pad: its X and Y are outputs to patch. With Spring it goes back to the middle when you let go");
@@ -956,7 +969,9 @@ impl App {
         p.circle_stroke(dot, 8.0, Stroke::new(2.0_f32, accent));
         p.rect_stroke(pad, 6.0, Stroke::new(1.0_f32, LINE), egui::StrokeKind::Inside);
         // Beside it: the LFO and the shape.
-        let colr = Rect::from_min_max(pos2(pad.right() + 8.0, inner.top()), inner.max);
+        let col_w = (inner.width() - side - 16.0) * 0.56;
+        let colr = Rect::from_min_max(pos2(pad.right() + 8.0, inner.top()), pos2(pad.right() + 8.0 + col_w, inner.bottom()));
+        let envr = Rect::from_min_max(pos2(colr.right() + 8.0, inner.top()), inner.max);
         let ch = 20.0;
         let hw2 = (colr.width() - 4.0) / 2.0;
         p.text(pos2(colr.left(), colr.top() + 6.0), Align2::LEFT_CENTER, "LFO", FontId::proportional(10.0), TEXT_DIM);
@@ -993,6 +1008,19 @@ impl App {
             flip(&mut dev.params[touch::SPRING]);
             changed = true;
         }
+        // The envelope: its mode, its meter, attack and decay; and how many levels the random has.
+        p.text(pos2(envr.left(), envr.top() + 6.0), Align2::LEFT_CENTER, "ENV", FontId::proportional(10.0), TEXT_DIM);
+        changed |= choice(ui, Rect::from_min_size(pos2(envr.left(), envr.top() + 13.0), vec2(envr.width(), ch)), Id::new(("touch_env_mode", tid)), &specs[touch::ENV_MODE], &mut dev.params[touch::ENV_MODE]);
+        let env_m = Rect::from_min_size(pos2(envr.left(), envr.top() + 13.0 + ch + 4.0), vec2(envr.width(), 4.0));
+        p.rect_filled(env_m, 2.0, SLOT);
+        p.rect_filled(Rect::from_min_size(env_m.min, vec2(env_m.width() * outs[10], 4.0)), 2.0, OUT_COLORS[10]);
+        let kn = Rect::from_min_max(pos2(envr.left(), env_m.bottom() + 8.0), envr.max);
+        let kw = kn.width() / 3.0;
+        for (n, (k, name)) in [(touch::ENV_ATTACK, "Rise"), (touch::ENV_DECAY, "Fall"), (touch::RANDOM_STEPS, "Levels")].into_iter().enumerate() {
+            let cell = Rect::from_min_size(pos2(kn.left() + n as f32 * kw, kn.top()), vec2(kw, kn.height().min(84.0)));
+            let color = if n < 2 { OUT_COLORS[10] } else { OUT_COLORS[3] };
+            changed |= knob_named(ui, cell.shrink(1.0), Id::new(("touch_env_knob", tid, k)), &specs[k], name, &mut dev.params[k], color);
+        }
         // Recording the shape: the pad's height where the shape is now.
         if self.touch_view.shape_rec && pad_down {
             let beats = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0][(dev.params[touch::SHAPE_RATE].round().max(0.0) as usize).min(7)];
@@ -1012,6 +1040,10 @@ impl App {
         let cw = 128.0;
         changed |= choice(ui, Rect::from_min_size(pos2(bar.left() + 60.0, bar.top()), vec2(cw, 20.0)), Id::new(("touch_layout", tid)), &specs[touch::LAYOUT], &mut dev.params[touch::LAYOUT]);
         changed |= choice(ui, Rect::from_min_size(pos2(bar.left() + 64.0 + cw, bar.top()), vec2(cw + 20.0, 20.0)), Id::new(("touch_notes", tid)), &specs[touch::NOTES], &mut dev.params[touch::NOTES]);
+        let values_on = self.touch_view.values;
+        if toggle(ui, Rect::from_min_size(pos2(bar.left() + 70.0 + 2.0 * cw + 20.0, bar.top()), vec2(70.0, 20.0)), Id::new(("touch_values", tid)), "Values", values_on, None, "Each plate's own value, the Plate output: on, drag a plate up or down to set it (it plays again when you switch this off)") {
+            self.touch_view.values = !values_on;
+        }
         let base_txt = format!("from {}", krabton_engine::note_name(base_note.clamp(0, 127) as u8));
         p.text(pos2(bar.right() - 46.0, bar.center().y), Align2::RIGHT_CENTER, base_txt, FontId::proportional(11.0), TEXT);
         for (dir, glyph, x) in [(-1, "◀", bar.right() - 34.0), (1, "▶", bar.right() - 10.0)] {
@@ -1035,10 +1067,13 @@ impl App {
         let pw = (area.width() - gap * (cols as f32 - 1.0)) / cols as f32;
         let ph = (area.height() - gap * (rows as f32 - 1.0)) / rows as f32;
         let mut plates: Vec<(Rect, u8)> = Vec::with_capacity(cols * rows);
+        let mut plate_index: Vec<usize> = Vec::with_capacity(cols * rows);
         for row in 0..rows {
             for c in 0..cols {
                 let pr = Rect::from_min_size(pos2(area.left() + c as f32 * (pw + gap), area.bottom() - (row + 1) as f32 * ph - row as f32 * gap), vec2(pw, ph));
-                plates.push((pr, plate_pitch(&key, base_note, set, c as i32 + row as i32 * step_up)));
+                let idx = c + row * step_up as usize;
+                plates.push((pr, plate_pitch(&key, base_note, set, idx as i32)));
+                plate_index.push(idx);
             }
         }
         let resp = ui.interact(area, Id::new(("touch_plates", tid)), Sense::click_and_drag());
@@ -1061,25 +1096,38 @@ impl App {
                 }
             }
         }
-        let mut want: Vec<(u8, f32, f32)> = self
-            .touch_view
-            .fingers
-            .iter()
-            .filter_map(|&(_, pt, force)| {
-                let i = plate_of(pt)?;
-                Some((plates[i].1, force.filter(|f| *f > 0.0).map(|f| f.clamp(0.05, 1.0)).unwrap_or_else(|| press_of(pt, plates[i].0)), along(pt)))
-            })
-            .collect();
-        let touching = !self.touch_view.fingers.is_empty() || ui.input(|i| i.any_touches());
-        if let Some(pt) = resp.interact_pointer_pos().filter(|_| resp.is_pointer_button_down_on() && !touching) {
-            if let Some(i) = plate_of(pt) {
-                want.push((plates[i].1, press_of(pt, plates[i].0), along(pt)));
+        let mut want: Vec<(u8, f32, f32)> = Vec::new();
+        let mut pressed_plate: Option<usize> = None;
+        if values_on {
+            // Setting the plates' values: a drag sets the one under it.
+            if let Some(pt) = resp.interact_pointer_pos().filter(|_| resp.is_pointer_button_down_on()) {
+                if let Some(i) = plate_of(pt) {
+                    touch::set_plate_value(&mut dev.data, plate_index[i], press_of(pt, plates[i].0));
+                    changed = true;
+                }
+                ui.ctx().set_cursor_icon(CursorIcon::ResizeVertical);
             }
-            ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+            self.touch_view.fingers.clear();
+        } else {
+            for &(_, pt, force) in &self.touch_view.fingers {
+                if let Some(i) = plate_of(pt) {
+                    want.push((plates[i].1, force.filter(|f| *f > 0.0).map(|f| f.clamp(0.05, 1.0)).unwrap_or_else(|| press_of(pt, plates[i].0)), along(pt)));
+                    pressed_plate = Some(plate_index[i]);
+                }
+            }
+            let touching = !self.touch_view.fingers.is_empty() || ui.input(|i| i.any_touches());
+            if let Some(pt) = resp.interact_pointer_pos().filter(|_| resp.is_pointer_button_down_on() && !touching) {
+                if let Some(i) = plate_of(pt) {
+                    want.push((plates[i].1, press_of(pt, plates[i].0), along(pt)));
+                    pressed_plate = Some(plate_index[i]);
+                }
+                ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+            }
         }
         let keys_down = self.held_keys.values().any(|(_, ids)| ids.contains(&tid));
         let root = key.root as i32;
-        for &(pr, pitch) in &plates {
+        for (n, &(pr, pitch)) in plates.iter().enumerate() {
+            let value = touch::plate_value(&dev.data, plate_index[n]);
             let sounding = held_notes >> pitch & 1 == 1;
             let held = want.iter().any(|w| w.0 == pitch) || self.held_keys.values().any(|(pp, ids)| *pp == pitch && ids.contains(&tid));
             let is_root = (pitch as i32 - root).rem_euclid(12) == 0;
@@ -1096,6 +1144,15 @@ impl App {
                 p.rect_stroke(pr, 5.0, Stroke::new(2.0_f32, mix(tcol, Color32::WHITE, 0.35)), egui::StrokeKind::Inside);
             } else {
                 p.rect_stroke(pr, 5.0, Stroke::new(1.0_f32, LINE), egui::StrokeKind::Inside);
+            }
+            // Its own value: a column up its side (the whole plate while setting them).
+            if values_on {
+                let fill = Rect::from_min_max(pos2(pr.left() + 2.0, pr.bottom() - value * pr.height()), pr.max - vec2(2.0, 0.0));
+                p.rect_filled(fill, 3.0, shade(OUT_COLORS[11], 0.55));
+                p.line_segment([pos2(pr.left() + 2.0, fill.top()), pos2(pr.right() - 2.0, fill.top())], Stroke::new(2.0_f32, OUT_COLORS[11]));
+            } else {
+                let tick = Rect::from_min_max(pos2(pr.right() - 4.0, pr.bottom() - value * (pr.height() - 10.0) - 4.0), pos2(pr.right() - 2.0, pr.bottom() - 4.0));
+                p.rect_filled(tick, 1.0, shade(OUT_COLORS[11], 0.7));
             }
             // Its edge: the key's root bright.
             let edge = Rect::from_min_size(pr.min + vec2(4.0, 3.0), vec2(pr.width() - 8.0, 3.0));
@@ -1124,6 +1181,10 @@ impl App {
                 continue;
             }
             if !before.iter().any(|&(bp, t)| bp == pitch && t == tid) {
+                if let Some(k) = pressed_plate {
+                    let value = touch::plate_value(&self.project.tracks[ti].midi_devices[di].data, k);
+                    self.cmd(Command::TouchPlate { track: tid, value });
+                }
                 self.cmd(Command::Touch { track: tid, pressure: pressure.max(pr), position: po });
                 self.cmd(Command::NoteOn { track: tid, pitch, velocity: pr });
                 self.touch_record(ti, di, pitch);

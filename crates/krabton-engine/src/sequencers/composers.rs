@@ -881,7 +881,7 @@ mod tests {
         let mut done = Vec::new();
         for b in 0..(beats * spb / 256.0) as u64 {
             let now = b * 256;
-            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 4] };
+            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5] };
             let mut out = Vec::new();
             st.process(kind, p, &[], &[], &mut out, &ctx);
             for e in &out {
@@ -951,7 +951,7 @@ mod tests {
         let mut vels = Vec::new();
         for b in 0..(4.0 * spb / 256.0) as u64 {
             let now = b * 256;
-            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 4] };
+            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5] };
             let mut out = Vec::new();
             st.process(MidiFxKind::Reich, &p, &[], &[], &mut out, &ctx);
             vels.extend(out.iter().filter(|e| e.on && e.pitch >= 64 && e.pitch < 84).map(|e| e.vel));
@@ -1044,7 +1044,7 @@ mod tests {
         let spb = 24000.0;
         for b in 0..(12.0 * spb / 256.0) as u64 {
             let now = b * 256;
-            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 4] };
+            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5] };
             let mut out = Vec::new();
             st.process(MidiFxKind::Nancarrow, &p, &[], &[], &mut out, &ctx);
         }

@@ -275,7 +275,7 @@ mod tests {
         let mut s = SeqState::new();
         let p = defaults(SPECS);
         let mut out = Vec::new();
-        let ctx = MidiCtx { now: 0, len: 48_000, samples_per_beat: 24_000.0, scale: crate::scale::Scale::new(0, crate::scale::ScaleKind::Major), scale_on: false, beat: 0.0, playing: true, sr: 48_000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 4] };
+        let ctx = MidiCtx { now: 0, len: 48_000, samples_per_beat: 24_000.0, scale: crate::scale::Scale::new(0, crate::scale::ScaleKind::Major), scale_on: false, beat: 0.0, playing: true, sr: 48_000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5] };
         s.process(crate::midi_fx::MidiFxKind::DrumMap, &p, &[], &mut out, &ctx);
         let kicks: Vec<u32> = out.iter().filter(|e| e.on && e.pitch == 36).map(|e| e.offset).collect();
         assert_eq!(kicks, vec![0, 24_000]);

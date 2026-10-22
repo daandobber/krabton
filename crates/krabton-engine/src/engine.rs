@@ -26,6 +26,7 @@ use crate::dsp::wind_chimes::WindChimesState;
 use crate::dsp::beads_synth::BeadsSynthState;
 use crate::dsp::birds::BirdsState;
 use crate::dsp::nature::NatureState;
+use crate::dsp::coast::CoastState;
 use crate::dsp::facet::FacetState;
 use crate::dsp::pan_flute::PanFluteState;
 use crate::dsp::melodica::MelodicaState;
@@ -331,6 +332,8 @@ pub enum Command {
     Touch { track: u64, pressure: f32, position: f32 },
     /// The Touch view's XY pad on a track (0..1 each way).
     TouchXY { track: u64, x: f32, y: f32 },
+    /// The value of the plate pressed on a track's Touch view (0..1).
+    TouchPlate { track: u64, value: f32 },
     /// The grand piano's samples (installed, or none).
     SetPianoLibrary(Option<Arc<PianoLibrary>>),
 }
@@ -474,6 +477,7 @@ enum InstState {
     Quartet(Box<QuartetState>),
     Orchestra(Box<OrchestraState>),
     Facet(Box<FacetState>),
+    Coast(Box<CoastState>),
     Sf2(Box<crate::dsp::sf2::Sf2State>),
     StreetOrgan(Box<crate::dsp::street_organ::StreetOrganState>),
     Singer(Box<crate::singer::SingerState>),
@@ -514,6 +518,7 @@ impl InstState {
             InstState::Quartet(s) => s.pitch_bend = semis,
             InstState::Orchestra(s) => s.pitch_bend = semis,
             InstState::Facet(s) => s.pitch_bend = semis,
+            InstState::Coast(s) => s.pitch_bend = semis,
             InstState::Voice(s) => s.pitch_bend = semis,
             InstState::Monk(s) => s.pitch_bend = semis,
             InstState::Sf2(s) => s.pitch_bend = semis,
@@ -570,6 +575,7 @@ impl InstState {
             Some(Instrument::Quartet { .. }) => InstState::Quartet(Box::new(QuartetState::new(sr))),
             Some(Instrument::Orchestra { .. }) => InstState::Orchestra(Box::new(OrchestraState::new(sr))),
             Some(Instrument::Facet { .. }) => InstState::Facet(Box::new(FacetState::new(sr))),
+            Some(Instrument::Coast { .. }) => InstState::Coast(Box::new(CoastState::new(sr))),
             Some(Instrument::Sf2 { font, .. }) => InstState::Sf2(Box::new(crate::dsp::sf2::Sf2State::new(font.as_ref(), sr))),
             Some(Instrument::StreetOrgan { .. }) => InstState::StreetOrgan(Box::new(crate::dsp::street_organ::StreetOrganState::new(sr))),
             Some(Instrument::Singer { .. }) => InstState::Singer(Box::new(crate::singer::SingerState::new(sr))),
@@ -638,6 +644,7 @@ impl InstState {
                 | (InstState::Quartet(_), Some(Instrument::Quartet { .. }))
                 | (InstState::Orchestra(_), Some(Instrument::Orchestra { .. }))
                 | (InstState::Facet(_), Some(Instrument::Facet { .. }))
+                | (InstState::Coast(_), Some(Instrument::Coast { .. }))
                 | (InstState::StreetOrgan(_), Some(Instrument::StreetOrgan { .. }))
                 | (InstState::Singer(_), Some(Instrument::Singer { .. }))
         ) || matches!((self, i), (InstState::Plugin { instance, .. }, Some(Instrument::Plugin(p))) if *instance == p.instance)
@@ -697,6 +704,7 @@ impl InstState {
             (InstState::Quartet(s), Instrument::Quartet { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Orchestra(s), Instrument::Orchestra { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Facet(s), Instrument::Facet { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Coast(s), Instrument::Coast { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             _ => {}
         }
     }
@@ -749,6 +757,7 @@ impl InstState {
             (InstState::Quartet(s), Instrument::Quartet { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Orchestra(s), Instrument::Orchestra { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Facet(s), Instrument::Facet { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Coast(s), Instrument::Coast { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             _ => {}
         }
     }
@@ -802,6 +811,7 @@ impl InstState {
             InstState::Quartet(s) => s.all_off(),
             InstState::Orchestra(s) => s.all_off(),
             InstState::Facet(s) => s.all_off(),
+            InstState::Coast(s) => s.all_off(),
             InstState::None => {}
         }
     }
@@ -841,6 +851,7 @@ impl InstState {
             InstState::Quartet(s) => s.visual(out),
             InstState::Orchestra(s) => s.visual(out),
             InstState::Facet(s) => s.visual(out),
+            InstState::Coast(s) => s.visual(out),
             InstState::StreetOrgan(s) => s.visual(out),
             InstState::Singer(s) => s.visual(out),
             InstState::Hyper(s) => s.visual(out),
@@ -897,6 +908,7 @@ impl InstState {
             (InstState::Quartet(s), Instrument::Quartet { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Orchestra(s), Instrument::Orchestra { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Facet(s), Instrument::Facet { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Coast(s), Instrument::Coast { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Plugin { proc, pending, .. }, Instrument::Plugin(_)) => {
                 if let Some(p) = proc {
                     p.process(pending, l, r);
@@ -1555,6 +1567,11 @@ impl Engine {
                 if let Some(rt) = self.project.track_index(track).and_then(|ti| self.tracks.get_mut(ti)) {
                     rt.signal.press[0] = pressure.clamp(0.0, 1.0);
                     rt.signal.press[1] = position.clamp(0.0, 1.0);
+                }
+            }
+            Command::TouchPlate { track, value } => {
+                if let Some(rt) = self.project.track_index(track).and_then(|ti| self.tracks.get_mut(ti)) {
+                    rt.signal.press[4] = value.clamp(0.0, 1.0);
                 }
             }
             Command::TouchXY { track, x, y } => {

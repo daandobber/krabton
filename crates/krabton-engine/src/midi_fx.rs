@@ -93,8 +93,8 @@ pub struct MidiCtx {
     /// for every other instrument.
     pub lead: f64,
     /// The Touch view: how hard its plates are pressed, where along them the
-    /// hand is, and its XY pad (0..1 each).
-    pub touch: [f32; 4],
+    /// hand is, its XY pad, and the value of the plate pressed (0..1 each).
+    pub touch: [f32; 5],
 }
 
 impl MidiCtx {
@@ -1185,7 +1185,7 @@ pub fn render_notes(kind: MidiFxKind, params: &[f32], data: &[u8], beats: f64, b
     let spb = SR as f64 * 60.0 / bpm.clamp(20.0, 999.0);
     // As in the engine: with the key off, all twelve notes, unless the device keeps a key itself.
     let scale = if scale_on || kind.keeps_key() { scale } else { Scale::new(scale.root, ScaleKind::Chromatic) };
-    let base = MidiCtx { now: 0, len: BLOCK, samples_per_beat: spb, scale, scale_on, beat: 0.0, playing: true, sr: SR, drum_notes, lead: 0.0, touch: [0.0; 4] };
+    let base = MidiCtx { now: 0, len: BLOCK, samples_per_beat: spb, scale, scale_on, beat: 0.0, playing: true, sr: SR, drum_notes, lead: 0.0, touch: [0.0; 5] };
     let mut st = MidiFxState::new(kind);
     let total = (beats.max(0.0) * spb).ceil() as u64;
     // Starts and ends land on a 1/960 beat grid, so a step is where it belongs.
@@ -1243,7 +1243,7 @@ mod tests {
     }
 
     fn ctx(now: u64, len: usize) -> MidiCtx {
-        MidiCtx { now, len, samples_per_beat: 24000.0, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: 0.0, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 4] }
+        MidiCtx { now, len, samples_per_beat: 24000.0, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: 0.0, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5] }
     }
 
     #[test]

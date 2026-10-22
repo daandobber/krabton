@@ -2137,7 +2137,7 @@ mod tests {
         let mut done = Vec::new();
         for b in 0..(beats * spb / 256.0) as u64 {
             let now = b * 256;
-            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale, scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 4] };
+            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale, scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5] };
             let mut out = Vec::new();
             st.process(kind, p, &[], &[], &mut out, &ctx);
             for e in &out {
@@ -2434,7 +2434,7 @@ mod tests {
         let mut seen = Vec::new();
         for b in 0..(40.0 * spb / 256.0) as u64 {
             let now = b * 256;
-            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: c_major(), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 4] };
+            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: c_major(), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5] };
             let mut out = Vec::new();
             st.process(MidiFxKind::Messiaen, &p, &[], &[], &mut out, &ctx);
             seen.push(st.visual().unwrap());
@@ -2462,7 +2462,7 @@ mod tests {
         // Each metronome its own note, at its own steady tick, until it stops.
         let mut ends = Vec::new();
         for i in 0..6 {
-            let pitch = SeqState::mdeg(&MidiCtx { now: 0, len: 256, samples_per_beat: 24000.0, scale: c_major(), scale_on: true, beat: 0.0, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 4] }, 60.0, METRONOME_DEGREES[i], 0) as u8;
+            let pitch = SeqState::mdeg(&MidiCtx { now: 0, len: 256, samples_per_beat: 24000.0, scale: c_major(), scale_on: true, beat: 0.0, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5] }, 60.0, METRONOME_DEGREES[i], 0) as u8;
             let ticks: Vec<f64> = n.iter().filter(|x| x.1 == pitch).map(|x| x.0).collect();
             let (period, winds) = metronome(0, i, 0.6, 0.5);
             assert_eq!(ticks.len(), winds as usize, "metronome {i}");

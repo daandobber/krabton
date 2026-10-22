@@ -527,6 +527,31 @@ const FACET: Skin = Skin {
     ..BASE
 };
 
+/// Coast: a pale blue-grey painted panel between walnut cheeks, dark ink,
+/// orange caps, the groups outlined.
+const COAST: Skin = Skin {
+    top: hex(0xd7e3e6),
+    bottom: hex(0xbfd0d4),
+    surface: Surface::Flat,
+    cheeks: Some(hex(0x6b4426)),
+    screws: true,
+    ink: hex(0x1d2a33),
+    dim: hex(0x51616b),
+    well: hex(0x1d2a33),
+    well_ink: hex(0xe8f0f2),
+    accent: hex(0xe8642c),
+    knob: Knob::Cap,
+    cap: hex(0x23292e),
+    logo: Font::Future,
+    logo_size: 20.0,
+    logo_ink: hex(0x1d2a33),
+    logo_case: Case::Lower,
+    groups: Groups::Outline,
+    caps: true,
+    heroes: &["Timbre", "Response"],
+    ..BASE
+};
+
 const PAN_FLUTE: Skin = Skin {
     top: hex(0xbd9d59),
     bottom: hex(0x8a6e35),
@@ -1018,6 +1043,7 @@ pub fn for_instrument(name: &str) -> Option<Skin> {
         "Birds" => BIRDS,
         "Nature" => NATURE,
         "Facet" => FACET,
+        "Coast" => COAST,
         "Pan Flute" => PAN_FLUTE,
         "Melodica" => MELODICA,
         "Harmonica" => HARMONICA,
