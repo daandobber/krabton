@@ -8,6 +8,8 @@
 //! is a device booted from one (slow: do it off the audio thread) that takes
 //! MIDI and gives stereo audio at the host's rate.
 
+pub mod chip;
+
 use std::ffi::{c_char, c_int, CString};
 use std::path::Path;
 use std::ptr::NonNull;

@@ -574,6 +574,28 @@ const CRIMSON: Skin = Skin {
     ..BASE
 };
 
+/// Silicon: a circuit board, solder-mask green, white print, gold for the
+/// lit parts, black caps, the groups outlined.
+const SILICON: Skin = Skin {
+    top: hex(0x1d5236),
+    bottom: hex(0x0f2e1e),
+    surface: Surface::Grain,
+    ink: hex(0xeef5ef),
+    dim: hex(0xb4cbb9),
+    well: hex(0x07130c),
+    well_ink: hex(0xf2c14e),
+    accent: hex(0xf2c14e),
+    knob: Knob::Cap,
+    cap: hex(0x161616),
+    logo: Font::Space,
+    logo_size: 19.0,
+    logo_ink: hex(0xf2c14e),
+    logo_case: Case::Upper,
+    groups: Groups::Outline,
+    heroes: &["Cutoff"],
+    ..BASE
+};
+
 const PAN_FLUTE: Skin = Skin {
     top: hex(0xbd9d59),
     bottom: hex(0x8a6e35),
@@ -1067,6 +1089,7 @@ pub fn for_instrument(name: &str) -> Option<Skin> {
         "Facet" => FACET,
         "Coast" => COAST,
         "Crimson" => CRIMSON,
+        "Silicon" => SILICON,
         "Pan Flute" => PAN_FLUTE,
         "Melodica" => MELODICA,
         "Harmonica" => HARMONICA,

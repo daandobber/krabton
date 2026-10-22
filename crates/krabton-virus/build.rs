@@ -43,6 +43,7 @@ fn main() {
         sources(&v.join(lib), "cpp", &mut cpp);
     }
     cpp.push(PathBuf::from("cpp/krabton_virus.cpp"));
+    cpp.push(PathBuf::from("cpp/krabton_chip.cpp"));
     let mut b = cc::Build::new();
     b.cpp(true)
         .std("c++17")

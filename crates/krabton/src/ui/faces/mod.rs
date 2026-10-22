@@ -19,6 +19,7 @@ pub mod singer;
 pub mod hyper;
 pub mod coast;
 pub mod crimson;
+pub mod silicon;
 pub mod street_organ;
 pub mod synth;
 

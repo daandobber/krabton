@@ -371,7 +371,7 @@ pub(crate) fn device_names() -> Vec<&'static str> {
     devices().iter().map(|d| d.name).collect()
 }
 
-fn devices() -> [Dev; 44] {
+fn devices() -> [Dev; 45] {
     [
         Dev {
             name: "Analog",
@@ -433,6 +433,7 @@ fn devices() -> [Dev; 44] {
         Dev { name: "Birds", hint: "Songbirds that sing by themselves: blackbird, robin, song thrush, nightingale, wren, chaffinch, great tit, skylark, sparrow, cuckoo, wood pigeon, tawny owl, loon, gull and a drumming woodpecker. Each sings its species' songs from its own place, near or far; a key makes the bird with the nearest voice sing (Follow Key puts its song on the key)", presets: krabton_engine::dsp::birds::preset_names(), make: BrowserItem::Birds, kind: None },
         Dev { name: "Nature", hint: "The sounds of outside, made from scratch: wind in gusts that whistles and rustles the leaves, rain on leaves, water, a roof or a tent, thunder after the lightning, a brook, the sea, crickets that chirp faster when it is warmer, frogs and a campfire. Play keys and the wind whistles on those notes", presets: krabton_engine::dsp::nature::preset_names(), make: BrowserItem::Nature, kind: None },
         Dev { name: "Facet", hint: "One synth, six engines, four knobs: Crease (phase distortion), Swarm (seven saws), Fold (wavefolding and FM), Grit (digital steps and noise), Partials (additive) and Wide (pulses and a wide chorus)", presets: krabton_engine::dsp::facet::preset_names(), make: BrowserItem::Facet, kind: None },
+        Dev { name: "Silicon", hint: "A synth that sounds on the emulated DSP56300 (the chip of Hyper's Virus) running Krabton's own firmware, no Virus firmware needed: saws turning into squares, a second saw and a sub, a resonant filter swept by its envelope, worked out sample by sample on the chip", presets: krabton_engine::dsp::silicon::preset_names(), make: BrowserItem::Silicon, kind: None },
         Dev { name: "Crimson", hint: "A virtual analog in the manner of the red German synths of the late nineties, no firmware needed: a hypersaw of up to nine saws, classic waves morphing from sine through saw to pulse, wavetables, sync, FM, ring and a sub; two filters (serial, parallel or split) with saturation, two envelopes, two LFOs, unison of up to eight, chorus, delay and reverb", presets: krabton_engine::dsp::crimson::preset_names(), make: BrowserItem::Crimson, kind: None },
         Dev { name: "Coast", hint: "A west-coast voice: a sine, triangle, saw or square, frequency and amplitude modulated by a second oscillator, folded back on itself (Timbre, Symmetry), through a low pass gate that a strike lights up and that rings out like a drum or a marimba (Response); or a contour that rises and falls or holds. Made to be played with Touch", presets: krabton_engine::dsp::coast::preset_names(), make: BrowserItem::Coast, kind: None },
         Dev { name: "Bass Guitar", hint: "An electric bass: four wound strings (E A D G, or Drop D) heard through a pickup at the neck, in the middle or at the bridge, played with the fingers or a pick, muted with the palm. The Guitar with its bass model (also in the Guitar's folder)", presets: krabton_engine::dsp::guitar::BASS_PRESETS, make: BrowserItem::Guitar, kind: Some("Bass") },
