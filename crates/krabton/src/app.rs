@@ -3633,6 +3633,7 @@ impl App {
                     }
                 }
                 "detail" => self.toggle_detail(),
+                "browser" => self.browser.visible = !self.browser.visible,
                 // plain[=0]: devices in the flat look (or, with 0, each in its own).
                 "plain" => self.prefs.plain_devices = nums.first() != Some(&0),
                 // sliders[=0]: the Touch view and Coast with sliders (or, with 0, knobs).

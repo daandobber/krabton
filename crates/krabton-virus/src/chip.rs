@@ -151,9 +151,9 @@ fn is_ident_start(c: char) -> bool {
 }
 
 /// The names in `text` that are symbols, each replaced by its value (as
-/// `$hex`); unknown names that look like symbols (they hold an underscore or
-/// start with a letter and are not the assembler's own words) by `unknown`.
-fn substitute(text: &str, symbols: &HashMap<String, u32>, unknown: Option<u32>) -> Result<String, String> {
+/// `$hex`); names not known yet that are labels somewhere (`labels`) or look
+/// like symbols (they hold an underscore) by `unknown`.
+fn substitute(text: &str, symbols: &HashMap<String, u32>, labels: &std::collections::HashSet<String>, unknown: Option<u32>) -> Result<String, String> {
     let mut out = String::with_capacity(text.len() + 8);
     let chars: Vec<char> = text.chars().collect();
     let mut i = 0;
@@ -172,7 +172,7 @@ fn substitute(text: &str, symbols: &HashMap<String, u32>, unknown: Option<u32>) 
             match symbols.get(&name) {
                 Some(&v) if long(&out, v) => out.push_str(&format!(">${v:x}")),
                 Some(v) => out.push_str(&format!("${v:x}")),
-                None if name.contains('_') => match unknown {
+                None if name.contains('_') || labels.contains(&name) => match unknown {
                     Some(v) => out.push_str(&format!("${v:x}")),
                     None => return Err(format!("unknown symbol {name}")),
                 },
@@ -188,9 +188,9 @@ fn substitute(text: &str, symbols: &HashMap<String, u32>, unknown: Option<u32>) 
 }
 
 /// Assembles firmware source placed from `origin`: an instruction a line,
-/// `label:` before it (or alone), `name equ value`, `;` comments. Labels and
-/// constants are written with an underscore in them (`loop_voice`, `X_PHASE`)
-/// so they cannot be taken for registers.
+/// `label:` before it (or alone), `name equ value`, `;` comments. Constants
+/// are written with an underscore in them (`X_PHASE`), so they cannot be
+/// taken for registers; labels may be any name but a register's.
 pub fn assemble(source: &str, origin: u32) -> Result<Program, String> {
     struct Line {
         no: usize,
@@ -200,6 +200,15 @@ pub fn assemble(source: &str, origin: u32) -> Result<Program, String> {
     }
     let mut symbols: HashMap<String, u32> = HashMap::new();
     let mut lines: Vec<Line> = Vec::new();
+    // Every label, before the first pass (so a jump forward to one is known for what it is).
+    let labels: std::collections::HashSet<String> = source
+        .lines()
+        .filter_map(|l| {
+            let l = l.split(';').next().unwrap_or("").trim();
+            let head = &l[..l.find(':')?];
+            (!head.is_empty() && head.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && is_ident_start(head.chars().next()?)).then(|| head.to_lowercase())
+        })
+        .collect();
     let mut pc = origin;
     // First pass: constants, labels, and how long each instruction is.
     for (no, raw) in source.lines().enumerate() {
@@ -227,7 +236,7 @@ pub fn assemble(source: &str, origin: u32) -> Result<Program, String> {
                 }
             }
         }
-        let probe = substitute(&l, &symbols, Some(0x100)).map_err(|e| format!("line {}: {e}", no + 1))?;
+        let probe = substitute(&l, &symbols, &labels, Some(0x100)).map_err(|e| format!("line {}: {e}", no + 1))?;
         let words = assemble_one(&probe).map_err(|e| format!("line {} ({l}): {e}", no + 1))?;
         lines.push(Line { no, text: l, at: pc, size: words.len() });
         pc += words.len() as u32;
@@ -235,7 +244,7 @@ pub fn assemble(source: &str, origin: u32) -> Result<Program, String> {
     // Second pass: every name known now.
     let mut words = Vec::with_capacity((pc - origin) as usize);
     for line in &lines {
-        let t = substitute(&line.text, &symbols, None).map_err(|e| format!("line {}: {e}", line.no + 1))?;
+        let t = substitute(&line.text, &symbols, &labels, None).map_err(|e| format!("line {}: {e}", line.no + 1))?;
         let w = assemble_one(&t).map_err(|e| format!("line {} ({}): {e}", line.no + 1, line.text))?;
         if w.len() != line.size {
             return Err(format!("line {} ({}): its length changed between the passes", line.no + 1, line.text));
@@ -316,6 +325,8 @@ idle_loop:
         assert!(assemble("twice:\ntwice: nop", 0).is_err());
         assert!(assemble("mpy x0,y0,a", 0).unwrap_err().contains("mpysu"), "a pair a multiply cannot take");
         assert!(assemble("mpy y0,x0,a", 0).is_ok());
+        let fwd = assemble(" jsr later\n nop\nlater:\n rts", 0x40).unwrap();
+        assert_eq!(fwd.at("later"), 0x42, "a label without an underscore, jumped to before it is there");
         let far = assemble("X_FAR equ $40\nX_NEAR equ $3f\n move x:X_FAR,x0\n move x:X_NEAR,x0\n move y0,y:X_FAR", 0).unwrap();
         assert_eq!(far.words.len(), 5, "a long address takes two words, a short one one");
         assert!((to_frac(frac(-0.25)) + 0.25).abs() < 1e-6 && to_frac(frac(1.5)) > 0.99);

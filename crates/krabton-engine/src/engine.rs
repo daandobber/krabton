@@ -2227,6 +2227,11 @@ impl Engine {
                         s.beat = ctx.beat;
                         s.bpm = ctx.bpm;
                     }
+                    // Its arpeggiator, LFOs and delay keep the song's time; the mod wheel in its matrix.
+                    InstState::Silicon(s) => {
+                        s.set_transport(ctx.bpm, ctx.beat, ctx.playing);
+                        s.modwheel = signal.modwheel;
+                    }
                     _ => {}
                 }
                 // The Key drawer moves what it plays into its key (not drums).

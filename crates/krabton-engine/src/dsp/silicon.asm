@@ -3,8 +3,10 @@
 ; Everything that sounds is worked out here, sample by sample, on the chip.
 ; Two LFOs for the block (triangle, sine, saw, square, sample and hold,
 ; sample and glide). Then each voice: two oscillators, each a classic wave
-; (a saw turning into a pulse of any width), a hypersaw (up to nine saws
-; spread around the note) or a wavetable (two waves of a table morphed);
+; (a saw turning into a pulse of any width, their edges smoothed with
+; polyBLEP so high notes do not alias), a hypersaw (up to nine saws spread
+; around the note), a wavetable (two waves of a table morphed) or a formant
+; (a sine burst many times the note's frequency, dying away each cycle);
 ; the second frequency modulated by the first or synced to it, its pitch
 ; and its FM swept by the filter envelope; a third oscillator, a sub (square
 ; or triangle), coloured noise, ring modulation; a drive into a soft clip;
@@ -14,7 +16,8 @@
 ; on the pitch, the cutoffs, the pulse widths, the FM, the wave, the level
 ; and the pan. Then the effects on what the voices made: distortion (also
 ; fewer bits or a lower rate), a chorus or a flanger, a phaser, a delay going
-; from side to side, a reverb, and a boost of the low end.
+; from side to side, a reverb, a three band EQ, the stereo width, and a boost
+; of the low end.
 ;
 ; Krabton is the host, as a microcontroller would be: it writes which voices
 ; play, their pitch, envelope targets and the knobs into X memory (and the
@@ -54,7 +57,8 @@ G_LFO_CUT       equ $1a
 G_LFO_PW        equ $1b
 G_LFO_AMP       equ $1c
 G_FLAGS         equ $1d     ; 0 sync, 1 filter 2 on, 2 osc 1 hypersaw, 3 osc 1 wavetable,
-                            ; 4 osc 2 hypersaw, 5 osc 2 wavetable, 6 sub triangle, 7 ladder, 8 split
+                            ; 4 osc 2 hypersaw, 5 osc 2 wavetable, 6 sub triangle, 7 ladder, 8 split,
+                            ; 9 osc 1 formant, 10 osc 2 formant, 11 osc 2 not heard, 12 osc 3 not heard
 G_RATIO2        equ $1e     ; filter 2's frequency against filter 1's, an eighth of it
 G_FLAGS2        equ $1f     ; saturation: 0 light, 1 soft, 2 hard, 3 digital, 4 shaper, 5 rectifier
 
@@ -81,6 +85,8 @@ G_WT_POS2       equ $9a
 G_WT_BASE1      equ $9b     ; their tables, in Y memory
 G_WT_BASE2      equ $9c
 G_HS_N          equ $9d     ; the hypersaw: how many saws
+G_FORM1         equ $9e     ; the formants: how many times the note, a 32nd of it
+G_FORM2         equ $9f
 G_HS_TAB        equ $a0     ; ... and each one's detune and level (18 words)
 
 ; ---- X memory, read once a block (long addresses)
@@ -154,6 +160,12 @@ PH_LAST_R       equ $10f
 PH_COEF         equ $110
 PH_STAGES_L     equ $112    ; six stages, two words each
 PH_STAGES_R     equ $120
+EQ_ON           equ $13a    ; EQ (its coefficients a quarter, three filters, five each) and width
+WD_ON           equ $13b
+WD_W            equ $13c
+EQ_COEF         equ $140
+EQ_ST_L         equ $150
+EQ_ST_R         equ $160
 BO_AMT          equ $130    ; analog boost
 BO_COEF         equ $131
 BO_L            equ $132
@@ -204,6 +216,9 @@ S_LAD2          equ $d5
 S_LAD3          equ $d6
 S_LAD4          equ $d7
 S_NCOL          equ $d8     ; the noise's low pass
+S_INV1          equ $d9     ; one over each classic oscillator's increment, a 4096th of it
+S_INV2          equ $da
+S_INV3          equ $db
 S_INC1V         equ $e0     ; worked out each sample (not kept)
 S_INC2V         equ $e1
 S_INC3V         equ $e2
@@ -219,6 +234,14 @@ S_TR_BASE       equ $eb
 S_TR_A          equ $ec
 S_TR_FRAC       equ $ed
 S_O2            equ $ee
+S_CPH           equ $ef     ; the classic oscillator's working words
+S_PWNOW         equ $f0
+S_BLW           equ $f1
+S_PULSE         equ $f2
+S_INV           equ $f3
+S_SAWAMT        equ $f4
+S_SQAMT         equ $f5
+S_FORM          equ $f6
 
 ; ---- Y memory
 OUT_L           equ $000    ; the samples made
@@ -309,6 +332,8 @@ voices_end:
         jsr     fx_phaser
         jsr     fx_delay
         jsr     fx_reverb
+        jsr     fx_eq
+        jsr     fx_width
         jsr     fx_boost
 render_done:
         jmp     render_done
@@ -465,19 +490,22 @@ voice_sample:
 osc1_round_done:
         jset    #2,x:G_FLAGS,osc1_hyper
         jset    #3,x:G_FLAGS,osc1_table
-        move    x:S_PH1,x1              ; classic: the saw, and a pulse
-        move    x:S_LFO,x0
-        move    x:G_LFO_PW,y0
-        move    x:G_PW1,b
-        mac     y0,x0,b
-        move    x1,a
-        sub     b,a
-        asl     #8,a,a
-        move    a,y1
+        jset    #9,x:G_FLAGS,osc1_formant
+        move    x:S_INV1,x0             ; classic
+        move    x0,x:S_INV
         move    x:G_SAW1,x0
-        mpy     x1,x0,b
+        move    x0,x:S_SAWAMT
         move    x:G_SQ1,x0
-        mac     x0,y1,b
+        move    x0,x:S_SQAMT
+        move    x:G_PW1,b
+        move    x:S_PH1,a
+        jsr     classic_wave
+        jmp     osc1_done
+osc1_formant:
+        move    x:G_FORM1,x0
+        move    x0,x:S_FORM
+        move    x:S_PH1,a
+        jsr     formant_burst
         jmp     osc1_done
 osc1_hyper:
         move    #>S_HS1,r6
@@ -502,21 +530,26 @@ osc1_done:
         move    x:S_FMAMT,y0
         mac     y0,x0,a
         move    a1,x:S_TR_A             ; its phase, moved
+        clr     b
+        jset    #11,x:G_FLAGS,osc2_done ; not heard: no wave to make
         jset    #4,x:G_FLAGS,osc2_hyper
         jset    #5,x:G_FLAGS,osc2_table
-        move    x:S_TR_A,x1
-        move    x:S_LFO,x0
-        move    x:G_LFO_PW,y0
-        move    x:G_PW2,b
-        mac     y0,x0,b
-        move    x1,a
-        sub     b,a
-        asl     #8,a,a
-        move    a,y1
+        jset    #10,x:G_FLAGS,osc2_formant
+        move    x:S_INV2,x0             ; classic
+        move    x0,x:S_INV
         move    x:G_SAW2,x0
-        mpy     x1,x0,b
+        move    x0,x:S_SAWAMT
         move    x:G_SQ2,x0
-        mac     x0,y1,b
+        move    x0,x:S_SQAMT
+        move    x:G_PW2,b
+        move    x:S_TR_A,a
+        jsr     classic_wave
+        jmp     osc2_done
+osc2_formant:
+        move    x:G_FORM2,x0
+        move    x0,x:S_FORM
+        move    x:S_TR_A,a
+        jsr     formant_burst
         jmp     osc2_done
 osc2_hyper:
         move    #>S_HS2,r6
@@ -537,16 +570,18 @@ osc2_done:
         move    x:S_PH3,a
         add     x0,a
         move    a1,x:S_PH3
-        move    a1,x1
-        move    x:G_PW3,b
-        move    x1,a
-        sub     b,a
-        asl     #8,a,a
-        move    a,y1
+        clr     b
+        jset    #12,x:G_FLAGS,osc3_done ; not heard
+        move    x:S_INV3,x0
+        move    x0,x:S_INV
         move    x:G_SAW3,x0
-        mpy     x1,x0,b
+        move    x0,x:S_SAWAMT
         move    x:G_SQ3,x0
-        mac     x0,y1,b
+        move    x0,x:S_SQAMT
+        move    x:G_PW3,b
+        move    x:S_PH3,a
+        jsr     classic_wave
+osc3_done:
         move    b,x1                    ; x1 = osc 3
 
         ; the second mix: osc 2 at its level, osc 3 at its, the ring
@@ -911,6 +946,118 @@ filter2_done:
         move    y:(r5),b
         add     a,b
         move    b,y:(r5)+
+        rts
+
+; ---- a classic wave: a = the phase, b = the pulse's edge, x:S_INV = one over the
+; increment (a 4096th), x:S_SAWAMT and x:S_SQAMT how much saw and pulse; b = the wave.
+; Both fall where the phase comes round, the pulse rises at its edge: each step is
+; smoothed over the sample either side (polyBLEP), so high notes do not alias.
+classic_wave:
+        move    a1,x:S_CPH
+        move    x:S_LFO,x0
+        move    x:G_LFO_PW,y0
+        mac     y0,x0,b
+        move    b,x:S_PWNOW             ; the edge, moved by LFO 1
+        move    #>$800000,x0            ; where it comes round
+        eor     x0,a
+        move    x:S_INV,y0
+        jsr     poly_blep
+        move    b,x:S_BLW
+        clr     a
+        move    a,y1
+        move    x:S_SQAMT,a
+        tst     a
+        jeq     classic_saw             ; no pulse in it
+        move    x:S_CPH,a               ; the pulse: high from its edge on
+        move    x:S_PWNOW,x0
+        move    #>$7fffff,x1
+        move    #>$800000,b
+        cmp     x0,a
+        tge     x1,b
+        move    b,x:S_PULSE
+        sub     x0,a                    ; how far from its edge
+        move    x:S_INV,y0
+        jsr     poly_blep
+        neg     b                       ; it rises there
+        move    x:S_BLW,x0
+        add     x0,b
+        move    x:S_PULSE,a
+        add     b,a
+        move    a,y1                    ; y1 = the pulse
+classic_saw:
+        move    x:S_CPH,a
+        move    x:S_BLW,x0
+        add     x0,a
+        move    a,x1                    ; x1 = the saw
+        move    x:S_SAWAMT,x0
+        mpy     x1,x0,b
+        move    x:S_SQAMT,x0
+        mac     x0,y1,b
+        rts
+
+; ---- polyBLEP: a = how far from a step (in phase), y0 = one over the increment
+; (a 4096th); b = the correction for a falling step: (1-x)^2 after it, -(1+x)^2
+; before it, nothing further away (x = the distance in samples)
+poly_blep:
+        clr     b
+        move    a,x0
+        mpy     y0,x0,a
+        asl     #12,a,a
+        jes     blep_far
+        tst     a
+        jlt     blep_before
+        neg     a
+        move    #>$7fffff,x0
+        add     x0,a
+        move    a,x0
+        mpy     x0,x0,b
+        rts
+blep_before:
+        move    #>$7fffff,x0
+        add     x0,a
+        move    a,x0
+        mpy     x0,x0,b
+        neg     b
+blep_far:
+        rts
+
+; ---- a formant: a = the phase, x:S_FORM = how many times the note (a 32nd);
+; b = a sine burst that fast, dying away through each cycle and starting again
+formant_burst:
+        move    #>$800000,x0
+        eor     x0,a
+        move    a1,x:S_TR_U             ; the cycle from 0
+        lsr     a
+        move    a1,x0
+        move    x:S_FORM,y0
+        mpy     y0,x0,a
+        asl     #7,a,a
+        move    a1,x1                   ; its own phase, that many times as fast
+        move    x1,a
+        abs     a
+        asl     a
+        neg     a
+        move    #>$7fffff,x0
+        add     x0,a
+        move    a,y1                    ; a triangle
+        abs     a
+        move    a,x0
+        mpy     x0,y1,a
+        neg     a
+        add     y1,a
+        add     y1,a
+        move    a,y1                    ; nearly a sine
+        move    x:S_TR_U,a              ; (1 - t)^2
+        lsr     a
+        neg     a
+        move    #>$400000,x0
+        add     x0,a
+        asl     a
+        move    a,x0
+        mpy     x0,x0,a
+        move    a,x0
+        mpy     x0,y1,b
+        asr     b
         rts
 
 ; ---- a hypersaw: r6 = its phases, y1 = the increment; b = the saws, each detuned and at its level
@@ -1452,6 +1599,91 @@ reverb_comb:
         mpy     y0,x0,b
         move    x:FX_IN,x1
         add     x1,b
+        rts
+
+; ==== EQ: three filters a side (a low shelf, a peak, a high shelf)
+fx_eq:
+        move    x:EQ_ON,a
+        tst     a
+        jeq     eq_done
+        move    #>OUT_L,r4
+        move    #>OUT_R,r5
+        move    x:G_N,x0
+        do      x0,eq_end
+        move    y:(r4),x0
+        move    #>EQ_COEF,r6
+        move    #>EQ_ST_L,r7
+        jsr     eq_biquad
+        jsr     eq_biquad
+        jsr     eq_biquad
+        move    x0,y:(r4)+
+        move    y:(r5),x0
+        move    #>EQ_COEF,r6
+        move    #>EQ_ST_R,r7
+        jsr     eq_biquad
+        jsr     eq_biquad
+        jsr     eq_biquad
+        move    x0,y:(r5)+
+eq_end:
+eq_done:
+        rts
+
+; ---- a biquad: x0 in and out, r6 its five coefficients (a quarter each:
+; b0 b1 b2 a1 a2), r7 its state (x1 x2 y1 y2); both left at the next one's
+eq_biquad:
+        move    x:(r6)+,y0
+        mpy     y0,x0,a
+        move    x:(r7)+,x1
+        move    x:(r6)+,y0
+        mac     x1,y0,a
+        move    x:(r7),y1
+        move    x:(r6)+,y0
+        mac     y1,y0,a
+        move    x1,x:(r7)-
+        move    x0,x:(r7)+
+        lua     (r7)+,r7
+        move    x:(r7)+,x1
+        move    x:(r6)+,y0
+        mac     -x1,y0,a
+        move    x:(r7),y1
+        move    x:(r6)+,y0
+        mac     -y1,y0,a
+        asl     #2,a,a
+        move    x1,x:(r7)-
+        move    a,x:(r7)+
+        lua     (r7)+,r7
+        move    a,x0
+        rts
+
+; ==== width: the sides against the middle, wider or narrower
+fx_width:
+        move    x:WD_ON,a
+        tst     a
+        jeq     width_done
+        move    #>OUT_L,r4
+        move    #>OUT_R,r5
+        move    x:G_N,x0
+        do      x0,width_end
+        move    y:(r4),x0
+        move    y:(r5),x1
+        tfr     x0,a
+        add     x1,a
+        asr     a                       ; the middle
+        tfr     x0,b
+        sub     x1,b
+        asr     b                       ; the sides
+        move    b,y0
+        move    x:WD_W,y1
+        mpy     y1,y0,b
+        asl     b
+        move    a,x0
+        add     b,a
+        move    a,y:(r4)+
+        tfr     x0,a
+        sub     b,a
+        move    a,y:(r5)+
+width_end:
+width_done:
         rts
 
 ; ==== analog boost: the low end, low passed and added again

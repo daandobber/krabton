@@ -3,7 +3,9 @@
 //! voices sounding, and Krabton's own firmware going by), the three
 //! oscillators with the sub, the noise and the ring, both filters with their
 //! routing and saturation in displays, both envelopes in faders with their
-//! sustain's slope, the two LFOs, the voices, and the effects.
+//! sustain's slope, the two LFOs, the voices, the effects, and then the
+//! modulation matrix, the arpeggiator, the third LFO with the song's clock,
+//! and the EQ in faders.
 
 use super::{draw, screen_box, Ctl, Ctx, Face, Presets};
 use crate::theme::*;
@@ -12,8 +14,18 @@ use crate::ui::modulation::ModView;
 use egui::{pos2, Align2, FontId, Id, Rect, Ui};
 use krabton_engine::dsp::silicon;
 
+/// The matrix's slots, a column each: its parameters and what the face calls them.
+const SLOTS: [[(&str, &str); 3]; 6] = [
+    [("Mod 1 Source", "1 From"), ("Mod 1 Dest", "1 To"), ("Mod 1 Amount", "1 Amount")],
+    [("Mod 2 Source", "2 From"), ("Mod 2 Dest", "2 To"), ("Mod 2 Amount", "2 Amount")],
+    [("Mod 3 Source", "3 From"), ("Mod 3 Dest", "3 To"), ("Mod 3 Amount", "3 Amount")],
+    [("Mod 4 Source", "4 From"), ("Mod 4 Dest", "4 To"), ("Mod 4 Amount", "4 Amount")],
+    [("Mod 5 Source", "5 From"), ("Mod 5 Dest", "5 To"), ("Mod 5 Amount", "5 Amount")],
+    [("Mod 6 Source", "6 From"), ("Mod 6 Dest", "6 To"), ("Mod 6 Amount", "6 Amount")],
+];
+
 pub(crate) fn face() -> Face {
-    Face::new(106.8, 12.0)
+    let face = Face::new(148.6, 12.0)
         .section(0.0, 0.0, 8.2, 12.0, "Chip")
         .preset(0.3, 0.4, 7.6, 1.4)
         .screen(0.3, 2.2, 7.6, 8.9, "chip")
@@ -113,6 +125,31 @@ pub(crate) fn face() -> Face {
         .named(96.0, 7.6, 2.6, 3.55, "Reverb Damp", Ctl::Knob, "Damp")
         .knob(98.6, 7.6, 2.6, 3.55, "Boost")
         .named(101.2, 7.6, 2.6, 3.55, "Boost Freq", Ctl::Knob, "Freq")
+        .knob(103.8, 7.6, 2.6, 3.55, "Width")
+        .section(106.8, 0.0, 18.4, 12.0, "Matrix");
+    let face = SLOTS.iter().enumerate().fold(face, |f, (k, slot)| {
+        let x = 107.0 + 3.0 * k as f32;
+        slot.iter().zip([0.3, 3.95, 7.6]).fold(f, |f, (&(key, label), y)| f.named(x, y, 3.0, 3.55, key, Ctl::Knob, label))
+    });
+    face.section(125.4, 0.0, 8.2, 12.0, "Arp")
+        .named(125.6, 0.3, 5.2, 3.55, "Arp Mode", Ctl::Lcd, "Arp")
+        .named(130.8, 0.3, 2.6, 3.55, "Arp Hold", Ctl::Switch, "Hold")
+        .named(125.6, 3.95, 5.2, 3.55, "Arp Rate", Ctl::Lcd, "Rate")
+        .named(130.8, 3.95, 2.6, 3.55, "Arp Octaves", Ctl::Knob, "Octaves")
+        .named(125.6, 7.6, 2.6, 3.55, "Arp Gate", Ctl::Knob, "Gate")
+        .named(128.2, 7.6, 2.6, 3.55, "Arp Swing", Ctl::Knob, "Swing")
+        .section(133.8, 0.0, 8.2, 12.0, "LFO 3 & Sync")
+        .named(134.0, 0.3, 5.2, 3.55, "LFO 3 Shape", Ctl::Lcd, "LFO 3")
+        .named(139.2, 0.3, 2.6, 3.55, "LFO 3 Rate", Ctl::Knob, "Rate")
+        .named(134.0, 3.95, 2.6, 3.55, "LFO 1 Sync", Ctl::Knob, "Sync 1")
+        .named(136.6, 3.95, 2.6, 3.55, "LFO 2 Sync", Ctl::Knob, "Sync 2")
+        .named(139.2, 3.95, 2.6, 3.55, "LFO 3 Sync", Ctl::Knob, "Sync 3")
+        .named(134.0, 7.6, 2.6, 3.55, "Delay Sync", Ctl::Knob, "Delay")
+        .section(142.2, 0.0, 6.4, 12.0, "EQ")
+        .named(142.4, 0.3, 1.5, 10.9, "EQ Low", Ctl::Fader, "Low")
+        .named(143.9, 0.3, 1.5, 10.9, "EQ Mid", Ctl::Fader, "Mid")
+        .named(145.4, 0.3, 1.5, 10.9, "EQ Mid Freq", Ctl::Fader, "Freq")
+        .named(146.9, 0.3, 1.5, 10.9, "EQ High", Ctl::Fader, "High")
 }
 
 /// Silicon's face, its screen live. Returns whether a value changed.
