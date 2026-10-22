@@ -12,7 +12,8 @@
 //! fourth apart; in the key, pentatonic or chromatic): higher up a plate
 //! presses harder, dragging across slides, the letter keys and fingers on a
 //! touch screen press them too. Beside them the motion: an XY pad, the LFO,
-//! and a shape to draw (or to record with the pad).
+//! and a shape to draw (or to record with the pad). With *Sliders* on (a
+//! pref, switched in the header) its knobs are long sliders instead.
 //!
 //! It works on the track's Touch device (put first in its MIDI chain when the
 //! view first shows the track) and on Touch modulators routed to the
@@ -203,6 +204,123 @@ fn knob_named(ui: &mut Ui, r: Rect, id: Id, spec: &ParamSpec, name: &str, value:
     }
     resp.on_hover_text(format!("{}: {}", spec.name, spec.format(*value)));
     p.text(pos2(r.center().x, k.bottom() + 1.0), Align2::CENTER_TOP, spec.format(*value), FontId::proportional(10.0), TEXT);
+    changed
+}
+
+/// A font of `size` made smaller until `text` fits in `width`.
+fn fitted(p: &egui::Painter, text: &str, size: f32, width: f32) -> FontId {
+    let w = p.layout_no_wrap(text.to_string(), FontId::proportional(size), TEXT).size().x;
+    FontId::proportional(if w > width { (size * width / w).max(7.5) } else { size })
+}
+
+/// A slider as on a west-coast panel: a long slot with a scale beside it, a
+/// coloured cap, its name above and its value below. Drag it (Shift: fine),
+/// click to put it there, double-click: back to where it starts.
+fn slider_named(ui: &mut Ui, r: Rect, id: Id, spec: &ParamSpec, name: &str, value: &mut f32, color: Color32) -> bool {
+    let p = ui.painter().clone();
+    p.text(pos2(r.center().x, r.top()), Align2::CENTER_TOP, name, fitted(&p, name, 10.5, r.width() - 2.0), TEXT_DIM);
+    let text = spec.format(*value);
+    p.text(pos2(r.center().x, r.bottom()), Align2::CENTER_BOTTOM, &text, fitted(&p, &text, 10.0, r.width() - 2.0), TEXT);
+    let slot = Rect::from_min_max(pos2(r.center().x - 3.0, r.top() + 17.0), pos2(r.center().x + 3.0, r.bottom() - 16.0));
+    let cap_h = (slot.height() * 0.12).clamp(8.0, 14.0);
+    let cap_w = (r.width() - 10.0).clamp(14.0, 28.0);
+    let travel = slot.shrink2(vec2(0.0, cap_h * 0.5));
+    let hit = Rect::from_min_max(pos2(r.left(), slot.top() - 2.0), pos2(r.right(), slot.bottom() + 2.0));
+    let resp = ui.interact(hit, id, Sense::click_and_drag());
+    let norm = spec.to_norm(*value);
+    let fine = ui.input(|i| i.modifiers.shift);
+    let d = -resp.drag_delta().y / travel.height().max(1.0) * if fine { 0.2 } else { 1.0 };
+    let mut changed = false;
+    let mut set = |v: f32, value: &mut f32| {
+        if v != *value {
+            *value = v;
+            changed = true;
+        }
+    };
+    if let Some(n) = drag_position(ui, &resp, id, norm, d) {
+        set(spec.from_norm(n), value);
+    }
+    if resp.double_clicked() {
+        set(spec.default, value);
+    } else if resp.clicked() {
+        if let Some(pt) = resp.interact_pointer_pos() {
+            set(spec.from_norm((travel.bottom() - pt.y) / travel.height().max(1.0)), value);
+        }
+    }
+    let shown = shown_position(ui, &resp, id, spec.to_norm(*value));
+    // The scale, the slot, how far it is open, the cap.
+    for t in 0..=10 {
+        let y = travel.bottom() - t as f32 / 10.0 * travel.height();
+        let len = if t % 5 == 0 { 6.0 } else { 3.5 };
+        for (a, b) in [(slot.left() - 2.0 - len, slot.left() - 2.0), (slot.right() + 2.0, slot.right() + 2.0 + len)] {
+            p.line_segment([pos2(a, y), pos2(b, y)], Stroke::new(1.0_f32, LINE));
+        }
+    }
+    p.rect_filled(slot, 3.0, SLOT);
+    let y = travel.bottom() - shown * travel.height();
+    let from = if spec.min < 0.0 && spec.max > 0.0 { travel.center().y } else { travel.bottom() };
+    p.rect_filled(Rect::from_min_max(pos2(slot.left() + 1.0, y.min(from)), pos2(slot.right() - 1.0, y.max(from))), 2.0, shade(color, 0.6));
+    let cap = Rect::from_center_size(pos2(slot.center().x, y), vec2(cap_w, cap_h));
+    let lit = resp.hovered() || resp.dragged();
+    p.rect_filled(cap.translate(vec2(0.0, 1.5)), 3.0, Color32::from_black_alpha(90));
+    p.rect_filled(cap, 3.0, if lit { mix(color, Color32::WHITE, 0.25) } else { color });
+    p.rect_stroke(cap, 3.0, Stroke::new(1.0_f32, shade(color, 0.5)), egui::StrokeKind::Inside);
+    p.line_segment([pos2(cap.left() + 3.0, cap.center().y), pos2(cap.right() - 3.0, cap.center().y)], Stroke::new(1.5_f32, shade(color, 0.35)));
+    resp.on_hover_text(format!("{}: {}\nDrag (Shift: fine), click to put it there, double-click to reset", spec.name, spec.format(*value)));
+    changed
+}
+
+/// [`slider_named`] lying down, for a row: its name on the left, its value
+/// on the right.
+fn slider_across(ui: &mut Ui, r: Rect, id: Id, spec: &ParamSpec, name: &str, value: &mut f32, color: Color32) -> bool {
+    let p = ui.painter().clone();
+    let name_w = (r.width() * 0.26).clamp(30.0, 46.0);
+    let value_w = (r.width() * 0.3).clamp(36.0, 52.0);
+    p.text(pos2(r.left(), r.center().y), Align2::LEFT_CENTER, name, fitted(&p, name, 10.0, name_w - 2.0), TEXT_DIM);
+    let text = spec.format(*value);
+    p.text(pos2(r.right(), r.center().y), Align2::RIGHT_CENTER, &text, fitted(&p, &text, 10.0, value_w - 4.0), TEXT);
+    let slot = Rect::from_min_max(pos2(r.left() + name_w, r.center().y - 2.5), pos2(r.right() - value_w, r.center().y + 2.5));
+    let cap_w = (slot.width() * 0.1).clamp(8.0, 12.0);
+    let cap_h = (r.height() - 4.0).clamp(10.0, 18.0);
+    let travel = slot.shrink2(vec2(cap_w * 0.5, 0.0));
+    let hit = Rect::from_min_max(pos2(slot.left() - 2.0, r.top()), pos2(slot.right() + 2.0, r.bottom()));
+    let resp = ui.interact(hit, id, Sense::click_and_drag());
+    let fine = ui.input(|i| i.modifiers.shift);
+    let d = resp.drag_delta().x / travel.width().max(1.0) * if fine { 0.2 } else { 1.0 };
+    let mut changed = false;
+    let mut set = |v: f32, value: &mut f32| {
+        if v != *value {
+            *value = v;
+            changed = true;
+        }
+    };
+    if let Some(n) = drag_position(ui, &resp, id, spec.to_norm(*value), d) {
+        set(spec.from_norm(n), value);
+    }
+    if resp.double_clicked() {
+        set(spec.default, value);
+    } else if resp.clicked() {
+        if let Some(pt) = resp.interact_pointer_pos() {
+            set(spec.from_norm((pt.x - travel.left()) / travel.width().max(1.0)), value);
+        }
+    }
+    let shown = shown_position(ui, &resp, id, spec.to_norm(*value));
+    for t in 0..=10 {
+        let x = travel.left() + t as f32 / 10.0 * travel.width();
+        let len = if t % 5 == 0 { 4.0 } else { 2.5 };
+        p.line_segment([pos2(x, slot.bottom() + 2.0), pos2(x, slot.bottom() + 2.0 + len)], Stroke::new(1.0_f32, LINE));
+    }
+    p.rect_filled(slot, 2.5, SLOT);
+    let x = travel.left() + shown * travel.width();
+    let from = if spec.min < 0.0 && spec.max > 0.0 { travel.center().x } else { travel.left() };
+    p.rect_filled(Rect::from_min_max(pos2(x.min(from), slot.top() + 1.0), pos2(x.max(from), slot.bottom() - 1.0)), 2.0, shade(color, 0.6));
+    let cap = Rect::from_center_size(pos2(x, slot.center().y), vec2(cap_w, cap_h));
+    let lit = resp.hovered() || resp.dragged();
+    p.rect_filled(cap.translate(vec2(0.0, 1.5)), 3.0, Color32::from_black_alpha(90));
+    p.rect_filled(cap, 3.0, if lit { mix(color, Color32::WHITE, 0.25) } else { color });
+    p.rect_stroke(cap, 3.0, Stroke::new(1.0_f32, shade(color, 0.5)), egui::StrokeKind::Inside);
+    p.line_segment([pos2(cap.center().x, cap.top() + 3.0), pos2(cap.center().x, cap.bottom() - 3.0)], Stroke::new(1.5_f32, shade(color, 0.35)));
+    resp.on_hover_text(format!("{}: {}\nDrag (Shift: fine), click to put it there, double-click to reset", spec.name, spec.format(*value)));
     changed
 }
 
@@ -548,9 +666,15 @@ impl App {
                 }
             }
         });
+        let sliders = self.prefs.sliders;
+        let sliders_r = Rect::from_min_size(pos2(preset_r.right() + 10.0, preset_r.top()), vec2(72.0, 24.0));
+        if toggle(ui, sliders_r, Id::new("touch_sliders"), "Sliders", sliders, None, "Sliders instead of knobs, as on a west-coast panel (here and on Coast)") {
+            self.prefs.sliders = !sliders;
+            self.prefs.save();
+        }
         let hint = "higher up a plate: harder  ·  drag across: slide  ·  keys A–L and W–P play the plates";
         let hw = p.layout_no_wrap(hint.into(), FontId::proportional(11.0), TEXT_DIM).size().x;
-        if header.right() - hw > preset_r.right() + 20.0 {
+        if header.right() - hw > sliders_r.right() + 20.0 {
             p.text(header.right_center(), Align2::RIGHT_CENTER, hint, FontId::proportional(11.0), TEXT_DIM);
         }
 
@@ -598,8 +722,20 @@ impl App {
         };
         let cells = [touch::GATE, touch::SWING, touch::CHANCE, touch::WANDER, extra[0], extra[1]];
         for (n, k) in cells.into_iter().enumerate() {
-            let cell = Rect::from_min_size(pos2(kn.left() + (n % 3) as f32 * kw, kn.top() + (n / 3) as f32 * kh), vec2(kw, kh)).shrink(1.0);
             let color = if n < 2 { OUT_COLORS[1] } else if n < 4 { OUT_COLORS[3] } else { accent };
+            if sliders {
+                let sw = kn.width() / cells.len() as f32;
+                let cell = Rect::from_min_size(pos2(kn.left() + n as f32 * sw, kn.top()), vec2(sw, kn.height())).shrink2(vec2(1.0, 2.0));
+                let name = match k {
+                    touch::PRESS_VEL => "Press",
+                    touch::ARP_ORDER => "Order",
+                    touch::FEEDBACK => "Fade",
+                    _ => specs[k].name,
+                };
+                changed |= slider_named(ui, cell, Id::new(("touch_knob", tid, k)), &specs[k], name, &mut dev.params[k], color);
+                continue;
+            }
+            let cell = Rect::from_min_size(pos2(kn.left() + (n % 3) as f32 * kw, kn.top() + (n / 3) as f32 * kh), vec2(kw, kh)).shrink(1.0);
             if matches!(specs[k].kind, ParamKind::Choice(_)) {
                 p.text(pos2(cell.center().x, cell.top()), Align2::CENTER_TOP, specs[k].name, FontId::proportional(10.5), TEXT_DIM);
                 changed |= choice(ui, Rect::from_center_size(cell.center() + vec2(0.0, 4.0), vec2(cell.width() - 2.0, 22.0)), Id::new(("touch_cell", tid, k)), &specs[k], &mut dev.params[k]);
@@ -1144,10 +1280,17 @@ impl App {
         p.rect_filled(Rect::from_min_size(env_m.min, vec2(env_m.width() * outs[10], 4.0)), 2.0, OUT_COLORS[10]);
         let kn = Rect::from_min_max(pos2(envr.left(), env_m.bottom() + 8.0), envr.max);
         let kw = kn.width() / 3.0;
+        let rh = (kn.height() / 3.0).min(28.0);
         for (n, (k, name)) in [(touch::ENV_ATTACK, "Rise"), (touch::ENV_DECAY, "Fall"), (touch::RANDOM_STEPS, "Levels")].into_iter().enumerate() {
-            let cell = Rect::from_min_size(pos2(kn.left() + n as f32 * kw, kn.top()), vec2(kw, kn.height().min(84.0)));
             let color = if n < 2 { OUT_COLORS[10] } else { OUT_COLORS[3] };
-            changed |= knob_named(ui, cell.shrink(1.0), Id::new(("touch_env_knob", tid, k)), &specs[k], name, &mut dev.params[k], color);
+            let id = Id::new(("touch_env_knob", tid, k));
+            changed |= if sliders {
+                // Little height here: the sliders lie down, one under the other.
+                slider_across(ui, Rect::from_min_size(pos2(kn.left(), kn.top() + n as f32 * rh), vec2(kn.width(), rh)), id, &specs[k], name, &mut dev.params[k], color)
+            } else {
+                let cell = Rect::from_min_size(pos2(kn.left() + n as f32 * kw, kn.top()), vec2(kw, kn.height().min(84.0)));
+                knob_named(ui, cell.shrink(1.0), id, &specs[k], name, &mut dev.params[k], color)
+            };
         }
         // Recording the shape: the pad's height where the shape is now.
         if self.touch_view.shape_rec && pad_down {

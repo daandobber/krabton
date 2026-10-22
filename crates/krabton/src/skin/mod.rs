@@ -250,6 +250,7 @@ impl Skin {
 
 thread_local! {
     static ENABLED: Cell<bool> = const { Cell::new(true) };
+    static SLIDERS: Cell<bool> = const { Cell::new(false) };
     static CURRENT: Cell<Option<Skin>> = const { Cell::new(None) };
     static TRACK: Cell<Option<Color32>> = const { Cell::new(None) };
 }
@@ -261,6 +262,15 @@ pub fn set_enabled(on: bool) {
 
 pub fn enabled() -> bool {
     ENABLED.with(|c| c.get())
+}
+
+/// Sliders instead of knobs where a panel has both (the Touch view, Coast).
+pub fn set_sliders(on: bool) {
+    SLIDERS.with(|c| c.set(on));
+}
+
+pub fn sliders() -> bool {
+    SLIDERS.with(|c| c.get())
 }
 
 /// The skin of the device being drawn, if it has one.

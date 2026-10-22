@@ -3555,6 +3555,8 @@ impl App {
                 "detail" => self.toggle_detail(),
                 // plain[=0]: devices in the flat look (or, with 0, each in its own).
                 "plain" => self.prefs.plain_devices = nums.first() != Some(&0),
+                // sliders[=0]: the Touch view and Coast with sliders (or, with 0, knobs).
+                "sliders" => self.prefs.sliders = nums.first() != Some(&0),
                 "envelopes" => {
                     self.env_view = true;
                     self.detail = DetailTab::Clip;
@@ -4239,6 +4241,7 @@ impl eframe::App for App {
 
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         crate::skin::set_enabled(!self.prefs.plain_devices);
+        crate::skin::set_sliders(self.prefs.sliders);
         self.engine.collect_garbage();
         self.sync_plugins();
         self.frame += 1;

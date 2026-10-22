@@ -2,7 +2,9 @@
 //! oscillator, the principal oscillator with its folder (a screen draws the
 //! wave folded as Timbre and Symmetry fold it), the contour that strikes or
 //! opens the gate, the low pass gate itself (a screen shows the light, and
-//! the afterglow Response leaves) and the output.
+//! the afterglow Response leaves) and the output. With sliders on (the
+//! Sliders pref) the same in long sliders, as on a west-coast panel, and a
+//! screen of the contour's shape.
 
 use super::{draw, screen_box, Ctl, Ctx, Face, Presets};
 use crate::theme::*;
@@ -49,9 +51,50 @@ pub(crate) fn face() -> Face {
         .knob(49.2, 5.9, 3.6, 5.3, "Width")
 }
 
-/// Coast's face, its screens live. Returns whether a value changed.
+/// Coast in sliders: the selectors and switches stay, the rest slides.
+pub(crate) fn face_sliders() -> Face {
+    Face::new(53.0, 12.0)
+        .section(0.0, 0.0, 7.4, 12.0, "Play")
+        .preset(0.3, 0.4, 6.8, 1.4)
+        .named(0.3, 2.0, 1.7, 9.2, "Glide", Ctl::Fader, "Glide")
+        .named(2.0, 2.0, 1.7, 9.2, "Velocity", Ctl::Fader, "Vel")
+        .named(3.7, 2.0, 1.7, 9.2, "Octave", Ctl::Fader, "Oct")
+        .named(5.4, 2.0, 1.7, 9.2, "Voices", Ctl::Fader, "Voices")
+        .section(7.6, 0.0, 10.2, 12.0, "Modulation")
+        .named(7.8, 0.3, 3.4, 5.4, "Mod Wave", Ctl::Selector, "Wave")
+        .ctl(7.8, 5.9, 3.4, 5.3, "Keyed", Ctl::Switch)
+        .named(11.3, 0.3, 1.6, 10.8, "Ratio", Ctl::Fader, "Ratio")
+        .named(12.9, 0.3, 1.6, 10.8, "Mod Freq", Ctl::Fader, "Free")
+        .named(14.5, 0.3, 1.6, 10.8, "FM", Ctl::Fader, "FM")
+        .named(16.1, 0.3, 1.6, 10.8, "AM", Ctl::Fader, "AM")
+        .section(18.0, 0.0, 12.6, 12.0, "Oscillator")
+        .named(18.2, 0.3, 3.4, 5.4, "Wave", Ctl::Selector, "Wave")
+        .screen(18.2, 6.2, 3.4, 4.8, "wave")
+        .named(21.8, 0.3, 1.6, 10.8, "Timbre", Ctl::Fader, "Timbre")
+        .named(23.4, 0.3, 1.6, 10.8, "Symmetry", Ctl::Fader, "Sym")
+        .named(25.0, 0.3, 1.6, 10.8, "Noise", Ctl::Fader, "Noise")
+        .screen(26.8, 0.6, 3.6, 10.4, "fold")
+        .section(30.8, 0.0, 10.4, 12.0, "Contour")
+        .named(31.0, 0.3, 3.4, 5.4, "Contour", Ctl::Selector, "Mode")
+        .screen(31.0, 6.2, 3.4, 4.8, "contour")
+        .named(35.0, 0.3, 1.55, 10.8, "Attack", Ctl::Fader, "Rise")
+        .named(36.55, 0.3, 1.55, 10.8, "Decay", Ctl::Fader, "Fall")
+        .named(38.1, 0.3, 1.55, 10.8, "Env Timbre", Ctl::Fader, "Timbre")
+        .named(39.65, 0.3, 1.5, 10.8, "Env FM", Ctl::Fader, "FM")
+        .section(41.4, 0.0, 7.6, 12.0, "Low Pass Gate")
+        .named(41.6, 0.3, 3.2, 5.4, "Gate", Ctl::Selector, "Mode")
+        .screen(41.6, 6.2, 3.2, 4.8, "gate")
+        .named(45.0, 0.3, 1.8, 10.8, "Response", Ctl::Fader, "Resp")
+        .named(46.8, 0.3, 1.8, 10.8, "Brightness", Ctl::Fader, "Bright")
+        .section(49.2, 0.0, 3.8, 12.0, "Output")
+        .named(49.4, 0.3, 1.6, 10.8, "Volume", Ctl::Fader, "Vol")
+        .named(51.0, 0.3, 1.6, 10.8, "Width", Ctl::Fader, "Width")
+}
+
+/// Coast's face (with knobs, or with sliders), its screens live. Returns
+/// whether a value changed.
 pub(crate) fn panel(ui: &mut Ui, id: Id, preset: &mut String, params: &mut [f32], live: &InstLive, height: f32, mv: Option<&mut ModView>) -> bool {
-    let face = face();
+    let face = if crate::skin::sliders() { face_sliders() } else { face() };
     let mut cx = Ctx { id, keys: coast::SPECS, specs: coast::SPECS, params, mv, presets: Some(Presets { current: preset, names: coast::preset_names(), load: coast::preset }) };
     let changed = draw(ui, &face, height, &mut cx, &mut |ui, which, rect, p| {
         screen(ui, rect, which, p, live);
@@ -104,6 +147,30 @@ fn screen(ui: &mut Ui, r: Rect, which: &str, p: &[f32], live: &InstLive) {
             plot(&|f| folded(base_wave(kind, f), now), ink);
         }
         "wave" => plot(&|f| base_wave(kind, f) * 0.9, ink),
+        "contour" => {
+            // Struck: at once and down; Transient: up and down; Sustained: up, held, down.
+            let mode = get(coast::CONTOUR).round().max(0.0) as usize;
+            let (a, d) = (get(coast::ATTACK).max(0.001), get(coast::DECAY).max(0.01));
+            let hold = if mode == 2 { (a + d) * 0.6 } else { 0.0 };
+            let a = if mode == 0 { 0.0 } else { a };
+            let total = a + hold + d;
+            let level = |t: f32| {
+                if t < a {
+                    t / a
+                } else if t < a + hold {
+                    1.0
+                } else {
+                    (-4.6 * (t - a - hold) / d).exp()
+                }
+            };
+            let pts: Vec<_> = (0..=64)
+                .map(|k| {
+                    let t = k as f32 / 64.0 * total;
+                    pos2(inner.left() + k as f32 / 64.0 * inner.width(), inner.bottom() - level(t) * inner.height())
+                })
+                .collect();
+            painter.add(Shape::line(pts, Stroke::new(1.5_f32, ink)));
+        }
         _ => {
             // The light: how far the gate is open now, and the afterglow it leaves.
             let open = live.vals[1].clamp(0.0, 1.0);
@@ -128,5 +195,6 @@ mod tests {
     #[test]
     fn every_knob_of_coast_is_on_its_face() {
         super::super::check(&super::face(), krabton_engine::dsp::coast::SPECS);
+        super::super::check(&super::face_sliders(), krabton_engine::dsp::coast::SPECS);
     }
 }
