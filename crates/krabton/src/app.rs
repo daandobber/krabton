@@ -2290,8 +2290,6 @@ impl App {
         let pitch = if self.snap_input && self.project.scale_mode { self.project.sounding_key().snap(pitch) } else { pitch };
         let pitch = self.unmove_live(pitch);
         let targets = self.note_targets_from(channel);
-        let status = self.status();
-        let playing = self.is_playing();
         let mut ids = Vec::new();
         // An Endless that records takes the note as its next step.
         for &ti in &targets {
@@ -2306,25 +2304,34 @@ impl App {
             let id = self.project.tracks[ti].id;
             ids.push(id);
             self.cmd(Command::NoteOn { track: id, pitch, velocity: vel });
-            if self.recording && playing {
-                if let Some(&(aid, _)) = self.arr_takes.get(&id) {
-                    let song = status.song_pos.load();
-                    if let Some(a) = self.project.tracks[ti].arrangement.iter().find(|a| a.id == aid) {
-                        if song >= a.start {
-                            self.rec_notes.insert((id, pitch), RecNote { scene: 0, start: song - a.start, vel, arr: Some(aid) });
-                        }
-                    }
-                    continue;
-                }
-                let ts = &status.tracks[ti];
-                let slot = ts.playing_slot.load(Ordering::Relaxed);
-                let pos = ts.clip_pos.load();
-                if slot >= 0 && pos >= 0.0 {
-                    self.rec_notes.insert((id, pitch), RecNote { scene: slot as usize, start: pos, vel, arr: None });
-                }
-            }
+            self.rec_note_on(ti, pitch, vel);
         }
         (pitch, ids)
+    }
+
+    /// A live note played on track `ti` goes into the clip it records into
+    /// (with Record on and the transport going); it is written when it ends.
+    pub(crate) fn rec_note_on(&mut self, ti: usize, pitch: u8, vel: f32) {
+        if !self.recording || !self.is_playing() {
+            return;
+        }
+        let status = self.status();
+        let id = self.project.tracks[ti].id;
+        if let Some(&(aid, _)) = self.arr_takes.get(&id) {
+            let song = status.song_pos.load();
+            if let Some(a) = self.project.tracks[ti].arrangement.iter().find(|a| a.id == aid) {
+                if song >= a.start {
+                    self.rec_notes.insert((id, pitch), RecNote { scene: 0, start: song - a.start, vel, arr: Some(aid) });
+                }
+            }
+            return;
+        }
+        let ts = &status.tracks[ti];
+        let slot = ts.playing_slot.load(Ordering::Relaxed);
+        let pos = ts.clip_pos.load();
+        if slot >= 0 && pos >= 0.0 {
+            self.rec_notes.insert((id, pitch), RecNote { scene: slot as usize, start: pos, vel, arr: None });
+        }
     }
 
     /// Plays through another output device (None: the system default), at
@@ -2598,12 +2605,13 @@ impl App {
         for &id in ids {
             self.cmd(Command::NoteOff { track: id, pitch });
             self.finish_rec_note(id, pitch, None);
+            self.touch_played_off(id, pitch);
         }
     }
 
     /// Writes a recorded note into its clip once it ends: at `end` (the
     /// position in the clip) or where the clip is now.
-    fn finish_rec_note(&mut self, id: u64, pitch: u8, end: Option<f64>) {
+    pub(crate) fn finish_rec_note(&mut self, id: u64, pitch: u8, end: Option<f64>) {
         let status = self.status();
         {
             let Some(rn) = self.rec_notes.remove(&(id, pitch)) else { return };
@@ -4031,6 +4039,12 @@ impl App {
                     }
                 }
                 // touchdown=x1,y1,x2,y2...: fingers on a touch screen there (pressing at 60%); touchup: they let go.
+                // touchcapture: the Touch view's Capture, on the selected track.
+                "touchcapture" => {
+                    if let Some(ti) = self.touch_track() {
+                        self.touch_capture(ti);
+                    }
+                }
                 "touchdown" | "touchmove" | "touchup" => {
                     let f: Vec<f32> = arg.split(',').filter_map(|v| v.trim().parse().ok()).collect();
                     let phase = match name {

@@ -19,12 +19,15 @@
 //! are ladders of values to click; the envelope's are sliders (knobs with
 //! the *Sliders* pref off).
 //!
+//! *Record* (as the transport's) records what the plates play into a clip;
+//! *Capture* makes a clip of what was just played, recorded or not.
+//!
 //! It works on the track's Touch device (put first in its MIDI chain when the
 //! view first shows the track) and on Touch modulators routed to the
 //! instrument, so what is played and patched here is saved, automatable and
 //! seen in the Mod tab as well.
 
-use crate::app::{App, TrackSel};
+use crate::app::{App, ClipSel, TrackSel};
 use crate::theme::*;
 use crate::widgets::*;
 use egui::epaint::CubicBezierShape;
@@ -34,6 +37,7 @@ use krabton_engine::midi_fx::MidiFxKind;
 use krabton_engine::modulation::{instrument_specs, ModKind, ModOwner, ModTarget, MAX_MODS};
 use krabton_engine::params::{ParamKind, ParamSpec};
 use krabton_engine::project::TrackKind;
+use krabton_engine::{Clip, Note};
 use krabton_engine::sequencers::touch::{self, Gate, Step, MAX_PULSES, MAX_RATCHET, N_OUT, N_PATCH, N_SHAPE, N_STEPS, OUTPUTS};
 
 /// The colours of the outputs, and of their cables.
@@ -101,6 +105,64 @@ pub struct TouchViewState {
     slide_from: Option<u8>,
     bend_now: f32,
     bend_sent: Option<(u64, f32)>,
+    /// What the plates played lately, for Capture, and whether on the
+    /// song's clock (the transport going) or on one of their own.
+    played: Vec<Played>,
+    played_on_song: bool,
+}
+
+/// A note the plates played: when (in beats), how long (`end` None while
+/// it is held).
+#[derive(Clone, Copy, Debug)]
+struct Played {
+    track: u64,
+    pitch: u8,
+    vel: f32,
+    start: f64,
+    end: Option<f64>,
+}
+
+/// How many notes Capture remembers.
+const PLAYED_MAX: usize = 4096;
+
+/// What was played last as a clip, its length and its notes: the notes since
+/// the last pause of two bars or more, from the bar the first falls in (played
+/// with the song stopped: from the first itself) to whole bars past the last,
+/// one, two, four, eight or sixteen (the last sixteen at most). Notes still
+/// held end `now`; `quantize` puts them on sixteenths.
+fn captured(played: &[Played], now: f64, bar: f64, on_bars: bool, quantize: bool) -> Option<(f64, Vec<Note>)> {
+    let last = played.len().checked_sub(1)?;
+    let end_of = |p: &Played| p.end.unwrap_or(now).max(p.start);
+    // Back to the last pause.
+    let mut first = last;
+    let mut from = played[last].start;
+    for i in (0..last).rev() {
+        if end_of(&played[i]) < from - 2.0 * bar {
+            break;
+        }
+        first = i;
+        from = from.min(played[i].start);
+    }
+    let group = &played[first..];
+    let end = group.iter().map(end_of).fold(f64::MIN, f64::max);
+    let q = |b: f64| if quantize { (b * 4.0).round() / 4.0 } else { b };
+    let mut start = if on_bars { (from / bar + 1e-9).floor() * bar } else { q(from) };
+    let need = ((end - start) / bar - 1e-6).ceil().max(1.0);
+    let bars = [1.0, 2.0, 4.0, 8.0, 16.0].into_iter().find(|&b| b >= need).unwrap_or(16.0);
+    if need > 16.0 {
+        start = if on_bars { ((end / bar) - 1e-9).ceil() * bar - 16.0 * bar } else { end - 16.0 * bar };
+    }
+    let length = bars * bar;
+    let notes = group
+        .iter()
+        .filter(|p| p.start >= start - 1e-9)
+        .map(|p| {
+            let at = q(p.start - start).clamp(0.0, length - 1.0 / 32.0);
+            let len = (end_of(p) - p.start).max(1.0 / 32.0).min(length - at);
+            Note::new(p.pitch, at, len, p.vel)
+        })
+        .collect();
+    Some((length, notes))
 }
 
 /// Where along its row of plates a point is, as a pitch between theirs: a
@@ -643,8 +705,92 @@ impl App {
         self.cmd(Command::TouchPlate { track: id, value });
         self.touch_record(ti, di, pitch);
         self.cmd(Command::Touch { track: id, pressure: vel, position: 0.5 });
-        self.cmd(Command::NoteOn { track: id, pitch, velocity: vel });
+        self.touch_note_on(ti, pitch, vel);
         Some((pitch, vec![id]))
+    }
+
+    /// The clock the plates' notes are remembered on: the song's (the
+    /// transport going) or one of their own, in beats at the tempo.
+    fn touch_clock(&self) -> (bool, f64) {
+        static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+        if self.is_playing() {
+            (true, self.status().session_pos.load())
+        } else {
+            (false, START.get_or_init(std::time::Instant::now).elapsed().as_secs_f64() * self.project.bpm / 60.0)
+        }
+    }
+
+    /// A plate's note starts: it sounds, Record takes it, Capture remembers it.
+    fn touch_note_on(&mut self, ti: usize, pitch: u8, vel: f32) {
+        let track = self.project.tracks[ti].id;
+        self.cmd(Command::NoteOn { track, pitch, velocity: vel });
+        self.rec_note_on(ti, pitch, vel);
+        let (on_song, start) = self.touch_clock();
+        let pl = &mut self.touch_view;
+        if pl.played_on_song != on_song {
+            // The transport started or stopped: another clock.
+            pl.played.clear();
+            pl.played_on_song = on_song;
+        }
+        if pl.played.len() >= PLAYED_MAX {
+            pl.played.drain(..PLAYED_MAX / 4);
+        }
+        pl.played.push(Played { track, pitch, vel, start, end: None });
+    }
+
+    /// A plate's note ends.
+    fn touch_note_off(&mut self, track: u64, pitch: u8) {
+        self.cmd(Command::NoteOff { track, pitch });
+        self.finish_rec_note(track, pitch, None);
+        self.touch_played_off(track, pitch);
+    }
+
+    /// Capture's note of `pitch` on `track` ends now (if it is one).
+    pub(crate) fn touch_played_off(&mut self, track: u64, pitch: u8) {
+        if self.touch_view.played.is_empty() {
+            return;
+        }
+        let (on_song, now) = self.touch_clock();
+        let pl = &mut self.touch_view;
+        if let Some(p) = pl.played.iter_mut().rev().find(|p| p.track == track && p.pitch == pitch && p.end.is_none()) {
+            p.end = Some(if on_song == pl.played_on_song { now.max(p.start) } else { p.start + 0.25 });
+        }
+    }
+
+    /// Capture: what the plates played last on track `ti` becomes a clip in
+    /// the next free slot, and plays.
+    pub(crate) fn touch_capture(&mut self, ti: usize) {
+        let track = self.project.tracks[ti].id;
+        let (on_song, now) = self.touch_clock();
+        let mine: Vec<Played> = self.touch_view.played.iter().filter(|p| p.track == track).copied().collect();
+        let now = if on_song == self.touch_view.played_on_song { now } else { mine.iter().map(|p| p.end.unwrap_or(p.start)).fold(0.0, f64::max) };
+        let bar = self.project.beats_per_bar_f();
+        let Some((length, notes)) = captured(&mine, now, bar, self.touch_view.played_on_song, self.rec_quantize) else {
+            self.toast("Nothing played on the plates yet to capture");
+            return;
+        };
+        let ns = self.project.scenes.len();
+        let from = self.sel_scene.min(ns.saturating_sub(1));
+        let slot = match (from..ns).find(|&s| self.project.tracks[ti].slots[s].is_none()) {
+            Some(s) => s,
+            None => {
+                self.project.add_scene(ns);
+                ns
+            }
+        };
+        let id = self.project.alloc_id();
+        let t = &mut self.project.tracks[ti];
+        let mut clip = Clip::new_midi(id, "Capture", t.color, length);
+        let n = notes.len();
+        if let Some(v) = clip.notes_mut() {
+            *v = notes;
+        }
+        t.slots[slot] = Some(clip);
+        self.touch_view.played.retain(|p| p.track != track);
+        self.cmd(Command::LaunchClip { track, slot });
+        self.select_clip(ClipSel::Slot { track: ti, scene: slot });
+        let bars = (length / bar).round() as u32;
+        self.toast(format!("Captured {n} note{} into a clip of {bars} bar{}", if n == 1 { "" } else { "s" }, if bars == 1 { "" } else { "s" }));
     }
 
     /// The track bent by sliding back to its notes.
@@ -755,10 +901,20 @@ impl App {
                 }
             }
         });
+        let rec_r = Rect::from_min_size(pos2(preset_r.right() + 10.0, preset_r.top()), vec2(84.0, 24.0));
+        let recording = self.recording;
+        if toggle(ui, rec_r, Id::new("touch_rec_clip"), "Record", recording, Some(if recording { 1.0 } else { 0.0 }), "Records what you play on the plates into a clip on this track (the transport's Record): into the clip playing, or a new one in the next free slot; the transport starts") {
+            self.toggle_record();
+        }
+        let cap_r = Rect::from_min_size(pos2(rec_r.right() + 6.0, rec_r.top()), vec2(76.0, 24.0));
+        let cap_tip = "Capture: what you just played on the plates (since the last pause) becomes a clip in the next free slot and plays, also when you were not recording";
+        if button(ui, cap_r, Id::new("touch_capture"), "Capture", cap_tip) {
+            self.touch_capture(ti);
+        }
         let sliders = !self.prefs.knobs;
         let hint = "higher up a plate: harder  ·  press and move along: slide  ·  keys A–L and W–P play the plates";
         let hw = p.layout_no_wrap(hint.into(), FontId::proportional(11.0), TEXT_DIM).size().x;
-        if header.right() - hw > preset_r.right() + 20.0 {
+        if header.right() - hw > cap_r.right() + 20.0 {
             p.text(header.right_center(), Align2::RIGHT_CENTER, hint, FontId::proportional(11.0), TEXT_DIM);
         }
 
@@ -1560,7 +1716,7 @@ impl App {
         let before = std::mem::take(&mut self.touch_view.held);
         for &(pitch, t) in &before {
             if t != tid || !want.iter().any(|w| w.0 == pitch) {
-                self.cmd(Command::NoteOff { track: t, pitch });
+                self.touch_note_off(t, pitch);
             }
         }
         let mut now_held: Vec<(u8, u64)> = Vec::with_capacity(want.len());
@@ -1575,7 +1731,7 @@ impl App {
                     self.cmd(Command::TouchPlate { track: tid, value });
                 }
                 self.cmd(Command::Touch { track: tid, pressure: pressure.max(pr), position: po });
-                self.cmd(Command::NoteOn { track: tid, pitch, velocity: pr });
+                self.touch_note_on(ti, pitch, pr);
                 self.touch_record(ti, di, pitch);
             }
             now_held.push((pitch, tid));
@@ -1688,7 +1844,7 @@ impl App {
     /// Lets go of the plates held (leaving the view, another track).
     pub(crate) fn touch_release_all(&mut self) {
         for (pitch, t) in std::mem::take(&mut self.touch_view.held) {
-            self.cmd(Command::NoteOff { track: t, pitch });
+            self.touch_note_off(t, pitch);
         }
         self.touch_view.fingers.clear();
         self.touch_view.slide_from = None;
@@ -1862,6 +2018,29 @@ mod tests {
             assert!(r.windows(2).all(|w| w[0] < w[1]), "{}: {r:?}", spec.name);
             assert!(r.iter().all(|&v| v >= spec.min - 1e-6 && v <= spec.max + 1e-6), "{}: {r:?}", spec.name);
         }
+    }
+
+    #[test]
+    fn capture_takes_what_was_played_since_the_last_pause() {
+        let n = |pitch: u8, start: f64, end: Option<f64>| Played { track: 1, pitch, vel: 0.8, start, end };
+        // An old phrase, a long pause, then a bar and a half on the song's clock from beat 17.
+        let played = [n(40, 1.0, Some(2.0)), n(60, 17.0, Some(17.5)), n(62, 18.1, Some(19.0)), n(64, 21.0, Some(22.0)), n(67, 22.0, None)];
+        let (len, notes) = captured(&played, 22.5, 4.0, true, true).unwrap();
+        assert_eq!(len, 8.0, "from bar 5 (beat 16) to past beat 22: two bars");
+        let got: Vec<(u8, f64, f64)> = notes.iter().map(|x| (x.pitch, x.start, x.length)).collect();
+        assert_eq!(got.len(), 4, "the old phrase is not in it: {got:?}");
+        assert_eq!((got[0].0, got[0].1), (60, 1.0));
+        assert_eq!(got[1].1, 2.0, "on a sixteenth");
+        assert!((got[3].2 - 0.5).abs() < 1e-9, "a held note ends now");
+        // Played with the song stopped: from the first note on.
+        let (len, notes) = captured(&[n(60, 13.3, Some(14.0)), n(64, 14.0, Some(15.0))], 15.0, 4.0, false, true).unwrap();
+        assert_eq!((len, notes[0].start), (4.0, 0.0));
+        // Longer than sixteen bars: the last sixteen.
+        let long: Vec<Played> = (0..80).map(|k| n(60, k as f64, Some(k as f64 + 0.5))).collect();
+        let (len, notes) = captured(&long, 80.0, 4.0, true, false).unwrap();
+        assert_eq!(len, 64.0);
+        assert_eq!(notes.len(), 64);
+        assert!(captured(&[], 0.0, 4.0, true, true).is_none());
     }
 
     #[test]
