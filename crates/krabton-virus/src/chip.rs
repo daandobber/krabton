@@ -167,7 +167,10 @@ fn substitute(text: &str, symbols: &HashMap<String, u32>, unknown: Option<u32>) 
                 j += 1;
             }
             let name: String = chars[i..j].iter().collect::<String>().to_lowercase();
+            // A memory address past the short ones ($00-$3f) is written as a long one.
+            let long = |out: &String, v: u32| v > 0x3f && (out.ends_with("x:") || out.ends_with("y:"));
             match symbols.get(&name) {
+                Some(&v) if long(&out, v) => out.push_str(&format!(">${v:x}")),
                 Some(v) => out.push_str(&format!("${v:x}")),
                 None if name.contains('_') => match unknown {
                     Some(v) => out.push_str(&format!("${v:x}")),
@@ -313,6 +316,8 @@ idle_loop:
         assert!(assemble("twice:\ntwice: nop", 0).is_err());
         assert!(assemble("mpy x0,y0,a", 0).unwrap_err().contains("mpysu"), "a pair a multiply cannot take");
         assert!(assemble("mpy y0,x0,a", 0).is_ok());
+        let far = assemble("X_FAR equ $40\nX_NEAR equ $3f\n move x:X_FAR,x0\n move x:X_NEAR,x0\n move y0,y:X_FAR", 0).unwrap();
+        assert_eq!(far.words.len(), 5, "a long address takes two words, a short one one");
         assert!((to_frac(frac(-0.25)) + 0.25).abs() < 1e-6 && to_frac(frac(1.5)) > 0.99);
     }
 }
