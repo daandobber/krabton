@@ -552,6 +552,28 @@ const COAST: Skin = Skin {
     ..BASE
 };
 
+/// Crimson: deep red textured plastic, light ink, amber displays, dark caps,
+/// each group under a bar.
+const CRIMSON: Skin = Skin {
+    top: hex(0x9e1622),
+    bottom: hex(0x5a0912),
+    surface: Surface::Grain,
+    ink: hex(0xf6ecec),
+    dim: hex(0xdcbcbc),
+    well: hex(0x170406),
+    well_ink: hex(0xffd9a0),
+    accent: hex(0xffaa3c),
+    knob: Knob::Cap,
+    cap: hex(0x26262a),
+    logo: Font::Wide,
+    logo_size: 19.0,
+    logo_ink: hex(0xffffff),
+    logo_case: Case::Upper,
+    groups: Groups::Header,
+    heroes: &["Cutoff"],
+    ..BASE
+};
+
 const PAN_FLUTE: Skin = Skin {
     top: hex(0xbd9d59),
     bottom: hex(0x8a6e35),
@@ -1044,6 +1066,7 @@ pub fn for_instrument(name: &str) -> Option<Skin> {
         "Nature" => NATURE,
         "Facet" => FACET,
         "Coast" => COAST,
+        "Crimson" => CRIMSON,
         "Pan Flute" => PAN_FLUTE,
         "Melodica" => MELODICA,
         "Harmonica" => HARMONICA,

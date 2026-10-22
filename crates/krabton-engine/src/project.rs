@@ -776,6 +776,8 @@ pub enum Instrument {
     Facet { preset: String, params: Vec<f32> },
     /// Coast: a west-coast voice, folded and frequency modulated, through a low pass gate (see `dsp::coast`).
     Coast { preset: String, params: Vec<f32> },
+    /// Crimson: a virtual analog with a hypersaw, wavetables, two filters, unison and effects (see `dsp::crimson`).
+    Crimson { preset: String, params: Vec<f32> },
     /// Beads: the wavetable synth of Mutable Instruments Beads, played with keys, with its grains.
     BeadsSynth { preset: String, params: Vec<f32> },
     /// Singer: sings its notes' lyrics with a UTAU voicebank (see `singer`).
@@ -984,6 +986,11 @@ impl Instrument {
         Instrument::Coast { preset: preset.to_string(), params: crate::dsp::coast::preset(preset) }
     }
 
+    pub fn crimson(preset: &str) -> Self {
+        crate::dsp::waves::warm();
+        Instrument::Crimson { preset: preset.to_string(), params: crate::dsp::crimson::preset(preset) }
+    }
+
     pub fn singer(bank: Option<crate::singer::VoicebankRef>) -> Self {
         Instrument::Singer { params: params::defaults(crate::singer::SPECS), bank }
     }
@@ -1062,6 +1069,7 @@ impl Instrument {
             Instrument::Orchestra { params, .. } => crate::orchestra::device_name(params),
             Instrument::Facet { .. } => "Facet",
             Instrument::Coast { .. } => "Coast",
+            Instrument::Crimson { .. } => "Crimson",
             Instrument::Sf2 { .. } => "SF2 Player",
             Instrument::StreetOrgan { .. } => "Street Organ",
             Instrument::Singer { .. } => "Singer",
@@ -1084,6 +1092,7 @@ impl Instrument {
             Instrument::Hyper { .. } => "No firmware".into(),
             Instrument::Fm { voice, .. } => Dx7Voice::from_slice(voice).map(|v| v.name()).unwrap_or_else(|| "FM".into()),
             Instrument::Coast { preset, .. } => preset.clone(),
+            Instrument::Crimson { preset, .. } => preset.clone(),
             Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Modular { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } | Instrument::Monk { preset, .. } | Instrument::Piano { preset, .. } | Instrument::Bassline { preset, .. } | Instrument::Mono101 { preset, .. } | Instrument::Drone { preset, .. } | Instrument::Waves { preset, .. } | Instrument::Guitar { preset, .. } | Instrument::WindChimes { preset, .. } | Instrument::Birds { preset, .. } | Instrument::Nature { preset, .. } | Instrument::PanFlute { preset, .. } | Instrument::Melodica { preset, .. } | Instrument::Harmonica { preset, .. } | Instrument::Calculator { preset, .. } | Instrument::Console { preset, .. } | Instrument::Handheld { preset, .. } | Instrument::Micro { preset, .. } | Instrument::Warp { preset, .. } | Instrument::Hybrid { preset, .. } | Instrument::Quartet { preset, .. } | Instrument::ChipFm { preset, .. } | Instrument::V2 { preset, .. } | Instrument::Oidos { preset, .. } | Instrument::Orchestra { preset, .. } | Instrument::Facet { preset, .. } | Instrument::BeadsSynth { preset, .. } | Instrument::StreetOrgan { preset, .. } => preset.clone(),
         }
     }
@@ -2169,6 +2178,10 @@ impl Project {
                     Some(Instrument::Orchestra { params, .. }) => params::fix_len(params, crate::orchestra::SPECS),
                     Some(Instrument::Facet { params, .. }) => params::fix_len(params, crate::dsp::facet::SPECS),
                     Some(Instrument::Coast { params, .. }) => params::fix_len(params, crate::dsp::coast::SPECS),
+                    Some(Instrument::Crimson { params, .. }) => {
+                        params::fix_len(params, crate::dsp::crimson::SPECS);
+                        crate::dsp::waves::warm();
+                    }
                     // Shakers became an instrument; their kits are the Drum Rack's.
                     Some(Instrument::Drums { engine, .. }) if *engine == drums::DrumEngine::Shakers => *engine = drums::DrumEngine::Rack,
                     Some(Instrument::Plugin(p)) => *max_id = (*max_id).max(p.instance + 1),

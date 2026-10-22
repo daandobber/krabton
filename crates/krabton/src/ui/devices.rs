@@ -1548,6 +1548,25 @@ impl App {
                             param_grid_mod(ui, Id::new(("coast", track_id)), krabton_engine::dsp::coast::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
                         }
                     }
+                    Instrument::Crimson { preset, params } => {
+                        if crate::skin::current().is_some() {
+                            super::faces::crimson::panel(ui, Id::new(("crimson", track_id)), preset, params, &live, h - 36.0, mv.as_mut());
+                        } else {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
+                                egui::ComboBox::from_id_salt(("crimson_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                    for name in krabton_engine::dsp::crimson::preset_names() {
+                                        if ui.selectable_label(preset == name, *name).clicked() {
+                                            *preset = name.to_string();
+                                            *params = krabton_engine::dsp::crimson::preset(name);
+                                        }
+                                    }
+                                });
+                                ui.label(RichText::new("a hypersaw, wavetables, two filters, unison and effects").small().color(crate::skin::ink_dim()));
+                            });
+                            param_grid_mod(ui, Id::new(("crimson", track_id)), krabton_engine::dsp::crimson::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
+                        }
+                    }
                     Instrument::Facet { preset, params } => {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));

@@ -27,6 +27,7 @@ use crate::dsp::beads_synth::BeadsSynthState;
 use crate::dsp::birds::BirdsState;
 use crate::dsp::nature::NatureState;
 use crate::dsp::coast::CoastState;
+use crate::dsp::crimson::CrimsonState;
 use crate::dsp::facet::FacetState;
 use crate::dsp::pan_flute::PanFluteState;
 use crate::dsp::melodica::MelodicaState;
@@ -478,6 +479,7 @@ enum InstState {
     Orchestra(Box<OrchestraState>),
     Facet(Box<FacetState>),
     Coast(Box<CoastState>),
+    Crimson(Box<CrimsonState>),
     Sf2(Box<crate::dsp::sf2::Sf2State>),
     StreetOrgan(Box<crate::dsp::street_organ::StreetOrganState>),
     Singer(Box<crate::singer::SingerState>),
@@ -519,6 +521,7 @@ impl InstState {
             InstState::Orchestra(s) => s.pitch_bend = semis,
             InstState::Facet(s) => s.pitch_bend = semis,
             InstState::Coast(s) => s.pitch_bend = semis,
+            InstState::Crimson(s) => s.pitch_bend = semis,
             InstState::Voice(s) => s.pitch_bend = semis,
             InstState::Monk(s) => s.pitch_bend = semis,
             InstState::Sf2(s) => s.pitch_bend = semis,
@@ -576,6 +579,7 @@ impl InstState {
             Some(Instrument::Orchestra { .. }) => InstState::Orchestra(Box::new(OrchestraState::new(sr))),
             Some(Instrument::Facet { .. }) => InstState::Facet(Box::new(FacetState::new(sr))),
             Some(Instrument::Coast { .. }) => InstState::Coast(Box::new(CoastState::new(sr))),
+            Some(Instrument::Crimson { .. }) => InstState::Crimson(Box::new(CrimsonState::new(sr))),
             Some(Instrument::Sf2 { font, .. }) => InstState::Sf2(Box::new(crate::dsp::sf2::Sf2State::new(font.as_ref(), sr))),
             Some(Instrument::StreetOrgan { .. }) => InstState::StreetOrgan(Box::new(crate::dsp::street_organ::StreetOrganState::new(sr))),
             Some(Instrument::Singer { .. }) => InstState::Singer(Box::new(crate::singer::SingerState::new(sr))),
@@ -645,6 +649,7 @@ impl InstState {
                 | (InstState::Orchestra(_), Some(Instrument::Orchestra { .. }))
                 | (InstState::Facet(_), Some(Instrument::Facet { .. }))
                 | (InstState::Coast(_), Some(Instrument::Coast { .. }))
+                | (InstState::Crimson(_), Some(Instrument::Crimson { .. }))
                 | (InstState::StreetOrgan(_), Some(Instrument::StreetOrgan { .. }))
                 | (InstState::Singer(_), Some(Instrument::Singer { .. }))
         ) || matches!((self, i), (InstState::Plugin { instance, .. }, Some(Instrument::Plugin(p))) if *instance == p.instance)
@@ -705,6 +710,7 @@ impl InstState {
             (InstState::Orchestra(s), Instrument::Orchestra { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Facet(s), Instrument::Facet { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Coast(s), Instrument::Coast { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Crimson(s), Instrument::Crimson { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             _ => {}
         }
     }
@@ -758,6 +764,7 @@ impl InstState {
             (InstState::Orchestra(s), Instrument::Orchestra { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Facet(s), Instrument::Facet { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Coast(s), Instrument::Coast { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Crimson(s), Instrument::Crimson { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             _ => {}
         }
     }
@@ -812,6 +819,7 @@ impl InstState {
             InstState::Orchestra(s) => s.all_off(),
             InstState::Facet(s) => s.all_off(),
             InstState::Coast(s) => s.all_off(),
+            InstState::Crimson(s) => s.all_off(),
             InstState::None => {}
         }
     }
@@ -852,6 +860,7 @@ impl InstState {
             InstState::Orchestra(s) => s.visual(out),
             InstState::Facet(s) => s.visual(out),
             InstState::Coast(s) => s.visual(out),
+            InstState::Crimson(s) => s.visual(out),
             InstState::StreetOrgan(s) => s.visual(out),
             InstState::Singer(s) => s.visual(out),
             InstState::Hyper(s) => s.visual(out),
@@ -909,6 +918,7 @@ impl InstState {
             (InstState::Orchestra(s), Instrument::Orchestra { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Facet(s), Instrument::Facet { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Coast(s), Instrument::Coast { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Crimson(s), Instrument::Crimson { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Plugin { proc, pending, .. }, Instrument::Plugin(_)) => {
                 if let Some(p) = proc {
                     p.process(pending, l, r);
