@@ -10,8 +10,10 @@
 //! cables from ten outputs to eight of the instrument's knobs, each with its
 //! amount. Along the bottom the plates (a row, wide, or a grid of rows a
 //! fourth apart; in the key, pentatonic or chromatic): higher up a plate
-//! presses harder, dragging across slides, the letter keys and fingers on a
-//! touch screen press them too. Beside them the motion: an XY pad, the LFO,
+//! presses harder, the letter keys and fingers on a touch screen press them
+//! too; with Slide on, a plate pressed and the finger moved along bends its
+//! note smoothly to wherever the finger is (otherwise dragging across plays
+//! plate after plate). Beside them the motion: an XY pad, the LFO,
 //! and a shape to draw (or to record with the pad). With *Sliders* on (a
 //! pref, switched in the header) its knobs are long sliders instead.
 //!
@@ -92,6 +94,33 @@ pub struct TouchViewState {
     lane_tab: usize,
     /// The plates' values are being set (dragging sets them instead of playing).
     values: bool,
+    /// Sliding: the note pressed first, the bend (semitones) it is at now and
+    /// the one last sent, with its track.
+    slide_from: Option<u8>,
+    bend_now: f32,
+    bend_sent: Option<(u64, f32)>,
+}
+
+/// Where along its row of plates a point is, as a pitch between theirs: a
+/// plate's own around its middle (pressed there, it is in tune), sliding
+/// from one to the next between them.
+fn slide_pitch(plates: &[(Rect, u8)], pt: Pos2) -> Option<f32> {
+    let off = |r: &Rect| if pt.y < r.top() { r.top() - pt.y } else if pt.y > r.bottom() { pt.y - r.bottom() } else { 0.0 };
+    let row_y = plates.iter().min_by(|a, b| off(&a.0).total_cmp(&off(&b.0)))?.0.center().y;
+    let mut row: Vec<(f32, f32)> = plates.iter().filter(|(r, _)| (r.center().y - row_y).abs() < 1.0).map(|(r, p)| (r.center().x, *p as f32)).collect();
+    row.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let (first, last) = (*row.first()?, *row.last()?);
+    if pt.x <= first.0 {
+        return Some(first.1);
+    }
+    for w in row.windows(2) {
+        if pt.x <= w[1].0 {
+            let f = ((pt.x - w[0].0) / (w[1].0 - w[0].0).max(1.0)).clamp(0.0, 1.0);
+            let f = ((f - 0.3) / 0.4).clamp(0.0, 1.0);
+            return Some(w[0].1 + (w[1].1 - w[0].1) * f);
+        }
+    }
+    Some(last.1)
 }
 
 /// A track's Touch modulator for one output.
@@ -561,11 +590,22 @@ impl App {
         let id = self.project.tracks[ti].id;
         let vel = self.kb_velocity;
         let value = touch::plate_value(&self.project.tracks[ti].midi_devices[di].data, step.max(0) as usize);
+        self.unbend();
         self.cmd(Command::TouchPlate { track: id, value });
         self.touch_record(ti, di, pitch);
         self.cmd(Command::Touch { track: id, pressure: vel, position: 0.5 });
         self.cmd(Command::NoteOn { track: id, pitch, velocity: vel });
         Some((pitch, vec![id]))
+    }
+
+    /// The track bent by sliding back to its notes.
+    fn unbend(&mut self) {
+        if let Some((t, b)) = self.touch_view.bend_sent.take() {
+            if b != 0.0 {
+                self.cmd(Command::PitchBend { track: t, semis: 0.0 });
+            }
+        }
+        self.touch_view.bend_now = 0.0;
     }
 
     /// The recorder: a plate played goes into the next step (the sequencer
@@ -666,13 +706,13 @@ impl App {
                 }
             }
         });
-        let sliders = self.prefs.sliders;
+        let sliders = !self.prefs.knobs;
         let sliders_r = Rect::from_min_size(pos2(preset_r.right() + 10.0, preset_r.top()), vec2(72.0, 24.0));
-        if toggle(ui, sliders_r, Id::new("touch_sliders"), "Sliders", sliders, None, "Sliders instead of knobs, as on a west-coast panel (here and on Coast)") {
-            self.prefs.sliders = !sliders;
+        if toggle(ui, sliders_r, Id::new("touch_sliders"), "Sliders", sliders, None, "Sliders (on) or knobs (off), here and on Coast") {
+            self.prefs.knobs = sliders;
             self.prefs.save();
         }
-        let hint = "higher up a plate: harder  ·  drag across: slide  ·  keys A–L and W–P play the plates";
+        let hint = "higher up a plate: harder  ·  press and move along: slide  ·  keys A–L and W–P play the plates";
         let hw = p.layout_no_wrap(hint.into(), FontId::proportional(11.0), TEXT_DIM).size().x;
         if header.right() - hw > sliders_r.right() + 20.0 {
             p.text(header.right_center(), Align2::RIGHT_CENTER, hint, FontId::proportional(11.0), TEXT_DIM);
@@ -1308,14 +1348,25 @@ impl App {
         p.rect_filled(plates_r, 6.0, PANEL);
         let bar = Rect::from_min_size(plates_r.min + vec2(10.0, 6.0), vec2(plates_r.width() - 20.0, 20.0));
         p.text(bar.left_center(), Align2::LEFT_CENTER, "PLATES", FontId::proportional(11.0), TEXT_DIM);
-        let cw = 128.0;
+        // From the right: the octave, Slide and Values; the two choices share what is left.
+        let base_txt = format!("from {}", krabton_engine::note_name(base_note.clamp(0, 127) as u8));
+        let base_w = p.layout_no_wrap(base_txt.clone(), FontId::proportional(11.0), TEXT).size().x;
+        let slide_r = Rect::from_min_size(pos2(bar.right() - 46.0 - base_w - 10.0 - 60.0, bar.top()), vec2(60.0, 20.0));
+        let values_r = Rect::from_min_size(pos2(slide_r.left() - 4.0 - 66.0, bar.top()), vec2(66.0, 20.0));
+        let cw = ((values_r.left() - 8.0 - bar.left() - 60.0 - 4.0 - 20.0) / 2.0).clamp(70.0, 128.0);
         changed |= choice(ui, Rect::from_min_size(pos2(bar.left() + 60.0, bar.top()), vec2(cw, 20.0)), Id::new(("touch_layout", tid)), &specs[touch::LAYOUT], &mut dev.params[touch::LAYOUT]);
         changed |= choice(ui, Rect::from_min_size(pos2(bar.left() + 64.0 + cw, bar.top()), vec2(cw + 20.0, 20.0)), Id::new(("touch_notes", tid)), &specs[touch::NOTES], &mut dev.params[touch::NOTES]);
         let values_on = self.touch_view.values;
-        if toggle(ui, Rect::from_min_size(pos2(bar.left() + 70.0 + 2.0 * cw + 20.0, bar.top()), vec2(70.0, 20.0)), Id::new(("touch_values", tid)), "Values", values_on, None, "Each plate's own value, the Plate output: on, drag a plate up or down to set it (it plays again when you switch this off)") {
+        if toggle(ui, values_r, Id::new(("touch_values", tid)), "Values", values_on, None, "Each plate's own value, the Plate output: on, drag a plate up or down to set it (it plays again when you switch this off)") {
             self.touch_view.values = !values_on;
         }
-        let base_txt = format!("from {}", krabton_engine::note_name(base_note.clamp(0, 127) as u8));
+        let slide = dev.params.get(touch::SLIDE).copied().unwrap_or(1.0) >= 0.5;
+        if toggle(ui, slide_r, Id::new(("touch_slide", tid)), "Slide", slide, None, "Slide: press a plate and move along the plates, and its note bends smoothly to wherever you are (in tune around a plate's middle). Off: moving across plays plate after plate") {
+            if let Some(v) = dev.params.get_mut(touch::SLIDE) {
+                *v = if slide { 0.0 } else { 1.0 };
+            }
+            changed = true;
+        }
         p.text(pos2(bar.right() - 46.0, bar.center().y), Align2::RIGHT_CENTER, base_txt, FontId::proportional(11.0), TEXT);
         for (dir, glyph, x) in [(-1, "◀", bar.right() - 34.0), (1, "▶", bar.right() - 10.0)] {
             let br = Rect::from_center_size(pos2(x, bar.center().y), vec2(18.0, 18.0));
@@ -1369,6 +1420,9 @@ impl App {
         }
         let mut want: Vec<(u8, f32, f32)> = Vec::new();
         let mut pressed_plate: Option<usize> = None;
+        // Sliding: where the bend is going, and the plate under the finger (lit).
+        let mut bend_to: Option<f32> = None;
+        let mut slid: Option<(Pos2, u8, f32)> = None;
         if values_on {
             // Setting the plates' values: a drag sets the one under it.
             if let Some(pt) = resp.interact_pointer_pos().filter(|_| resp.is_pointer_button_down_on()) {
@@ -1379,7 +1433,37 @@ impl App {
                 ui.ctx().set_cursor_icon(CursorIcon::ResizeVertical);
             }
             self.touch_view.fingers.clear();
+        } else if slide {
+            // One contact (the first finger, or the pointer): its note pressed
+            // first, bent to where it is now.
+            let touching = !self.touch_view.fingers.is_empty() || ui.input(|i| i.any_touches());
+            let mouse = resp.interact_pointer_pos().filter(|_| resp.is_pointer_button_down_on() && !touching).map(|pt| (pt, None));
+            let contact = self.touch_view.fingers.first().map(|f| (f.1, f.2)).or(mouse);
+            match contact {
+                Some((pt, force)) => {
+                    let under = plate_of(pt);
+                    if self.touch_view.slide_from.is_none() {
+                        if let Some(i) = under {
+                            self.touch_view.slide_from = Some(plates[i].1);
+                            pressed_plate = Some(plate_index[i]);
+                        }
+                    }
+                    if let Some(from) = self.touch_view.slide_from {
+                        let r = under.map(|i| plates[i].0).unwrap_or(area);
+                        let pressure = force.filter(|f| *f > 0.0).map(|f| f.clamp(0.05, 1.0)).unwrap_or_else(|| press_of(pt, r));
+                        want.push((from, pressure, along(pt)));
+                        let to = slide_pitch(&plates, pt).unwrap_or(from as f32);
+                        bend_to = Some(to - from as f32);
+                        slid = Some((pt, under.map(|i| plates[i].1).unwrap_or(from), to));
+                    }
+                    if mouse.is_some() {
+                        ui.ctx().set_cursor_icon(CursorIcon::ResizeHorizontal);
+                    }
+                }
+                None => self.touch_view.slide_from = None,
+            }
         } else {
+            self.touch_view.slide_from = None;
             for &(_, pt, force) in &self.touch_view.fingers {
                 if let Some(i) = plate_of(pt) {
                     want.push((plates[i].1, force.filter(|f| *f > 0.0).map(|f| f.clamp(0.05, 1.0)).unwrap_or_else(|| press_of(pt, plates[i].0)), along(pt)));
@@ -1397,14 +1481,18 @@ impl App {
         }
         let keys_down = self.held_keys.values().any(|(_, ids)| ids.contains(&tid));
         let root = key.root as i32;
+        let lit: Vec<(u8, f32)> = match slid {
+            Some((_, under, _)) => want.iter().map(|w| (under, w.1)).collect(),
+            None => want.iter().map(|w| (w.0, w.1)).collect(),
+        };
         for (n, &(pr, pitch)) in plates.iter().enumerate() {
             let value = touch::plate_value(&dev.data, plate_index[n]);
-            let sounding = held_notes >> pitch & 1 == 1;
-            let held = want.iter().any(|w| w.0 == pitch) || self.held_keys.values().any(|(pp, ids)| *pp == pitch && ids.contains(&tid));
+            let sounding = held_notes >> pitch & 1 == 1 && slid.is_none();
+            let held = lit.iter().any(|w| w.0 == pitch) || self.held_keys.values().any(|(pp, ids)| *pp == pitch && ids.contains(&tid));
             let is_root = (pitch as i32 - root).rem_euclid(12) == 0;
             gradient(&p, pr, Color32::from_rgb(0x2e, 0x2e, 0x34), Color32::from_rgb(0x1c, 0x1c, 0x20));
             // How hard: the plate fills up to it.
-            if let Some(&(_, pressure, _)) = want.iter().find(|w| w.0 == pitch) {
+            if let Some(&(_, pressure)) = lit.iter().find(|w| w.0 == pitch) {
                 let fill = Rect::from_min_max(pos2(pr.left(), pr.bottom() - pressure * pr.height()), pr.max);
                 gradient(&p, fill, mix(tcol, Color32::WHITE, 0.25), shade(tcol, 0.6));
             } else if held {
@@ -1432,6 +1520,17 @@ impl App {
                 p.text(pos2(pr.center().x, pr.bottom() - 4.0), Align2::CENTER_BOTTOM, krabton_engine::note_name(pitch), FontId::proportional(if pw > 34.0 { 10.5 } else { 9.0 }), if sounding || held { TEXT } else { TEXT_DIM });
             }
         }
+        // Sliding: a line where the finger is, the note it is at above it.
+        if let Some((pt, _, to)) = slid {
+            let x = pt.x.clamp(area.left(), area.right());
+            p.line_segment([pos2(x, area.top()), pos2(x, area.bottom())], Stroke::new(2.0_f32, mix(tcol, Color32::WHITE, 0.5)));
+            let near = to.round();
+            let cents = ((to - near) * 100.0).round() as i32;
+            let label = if cents == 0 { krabton_engine::note_name(near.clamp(0.0, 127.0) as u8) } else { format!("{} {cents:+}", krabton_engine::note_name(near.clamp(0.0, 127.0) as u8)) };
+            let lr = Rect::from_center_size(pos2(x.clamp(area.left() + 30.0, area.right() - 30.0), area.top() + 10.0), vec2(58.0, 18.0));
+            p.rect_filled(lr, 4.0, shade(tcol, 0.45));
+            p.text(lr.center(), Align2::CENTER_CENTER, label, FontId::proportional(11.0), TEXT);
+        }
 
         // ---------------------------------------------------------------- what was asked
         let (pressure, position) = match want.iter().fold(None::<(f32, f32)>, |a, w| Some((a.map_or(w.1, |a| a.0.max(w.1)), w.2))) {
@@ -1452,6 +1551,7 @@ impl App {
                 continue;
             }
             if !before.iter().any(|&(bp, t)| bp == pitch && t == tid) {
+                self.unbend();
                 if let Some(k) = pressed_plate {
                     let value = touch::plate_value(&self.project.tracks[ti].midi_devices[di].data, k);
                     self.cmd(Command::TouchPlate { track: tid, value });
@@ -1463,6 +1563,23 @@ impl App {
             now_held.push((pitch, tid));
         }
         self.touch_view.held = now_held;
+        if let Some(to) = bend_to {
+            // A little smoothing, so it glides rather than steps.
+            let dt = ui.input(|i| i.stable_dt).clamp(0.0, 0.1);
+            let now = self.touch_view.bend_now;
+            let next = now + (to - now) * (1.0 - (-dt / 0.025).exp());
+            self.touch_view.bend_now = if (to - next).abs() < 0.002 { to } else { next };
+            if self.touch_view.bend_now != to {
+                ui.ctx().request_repaint();
+            }
+            let b = self.touch_view.bend_now;
+            if self.touch_view.bend_sent.is_none_or(|(t, s)| t != tid || (s - b).abs() > 0.003) {
+                self.cmd(Command::PitchBend { track: tid, semis: b });
+                self.touch_view.bend_sent = Some((tid, b));
+            }
+        } else if !slide && self.touch_view.bend_sent.is_some() {
+            self.unbend();
+        }
         let fresh = match self.touch_view.sent {
             Some((t, pr, po)) => t != tid || (pr - pressure).abs() > 0.004 || (po - position).abs() > 0.004,
             None => true,
@@ -1556,6 +1673,8 @@ impl App {
             self.cmd(Command::NoteOff { track: t, pitch });
         }
         self.touch_view.fingers.clear();
+        self.touch_view.slide_from = None;
+        self.unbend();
         if let Some((t, _, po)) = self.touch_view.sent.take() {
             self.cmd(Command::Touch { track: t, pressure: 0.0, position: po });
         }
@@ -1680,6 +1799,23 @@ mod tests {
         assert_eq!(penta, vec![60, 62, 64, 67, 69, 72], "C major pentatonic");
         assert_eq!(plate_pitch(&c_major, 60, 2, 1), 61);
         assert_eq!((per_octave(&c_major, 60, 0), per_octave(&c_major, 60, 1), per_octave(&c_major, 60, 2)), (7, 5, 12));
+    }
+
+    #[test]
+    fn sliding_is_in_tune_on_a_plate_and_glides_between() {
+        // Three plates in a row, C D E, 40 wide with 10 between: middles at 20, 70, 120.
+        let plates: Vec<(Rect, u8)> = [60u8, 62, 64].iter().enumerate().map(|(i, &p)| (Rect::from_min_size(pos2(i as f32 * 50.0, 0.0), vec2(40.0, 100.0)), p)).collect();
+        let at = |x: f32, y: f32| slide_pitch(&plates, pos2(x, y)).unwrap();
+        assert_eq!((at(20.0, 50.0), at(70.0, 10.0), at(120.0, 90.0)), (60.0, 62.0, 64.0), "the middles");
+        assert_eq!((at(28.0, 50.0), at(62.0, 50.0)), (60.0, 62.0), "near the middle: still in tune");
+        assert!((at(45.0, 50.0) - 61.0).abs() < 1e-4, "half way: half way");
+        assert!(at(40.0, 50.0) > 60.0 && at(40.0, 50.0) < at(50.0, 50.0), "it glides");
+        assert_eq!((at(-30.0, 50.0), at(400.0, 50.0)), (60.0, 64.0), "past the ends: the ends");
+        // Two rows (a grid): the row the finger is in.
+        let mut grid = plates.clone();
+        grid.extend([65u8, 67, 69].iter().enumerate().map(|(i, &p)| (Rect::from_min_size(pos2(i as f32 * 50.0, -110.0), vec2(40.0, 100.0)), p)));
+        assert_eq!(slide_pitch(&grid, pos2(70.0, -50.0)), Some(67.0));
+        assert_eq!(slide_pitch(&grid, pos2(70.0, 50.0)), Some(62.0));
     }
 
     #[test]

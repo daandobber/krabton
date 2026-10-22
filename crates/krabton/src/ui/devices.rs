@@ -1207,10 +1207,10 @@ impl App {
                                     (Some(f), _) => format!("{} ({})", f.name, f.model),
                                 };
                                 ui.label(RichText::new(name).strong().color(TEXT));
-                                if ui.button("Firmware...").on_hover_text("Open a Virus firmware: a Virus TI's (Access's container, whatever it is called), or a Virus A, B or C operating system").clicked() {
+                                if ui.button("Firmware...").on_hover_text("Open a Virus firmware: a Virus TI's (Access's container, whatever it is called), or a Virus A, B or C operating system; or Access's Virus TI installer, and Krabton takes the firmware out of it").clicked() {
                                     asked.open = true;
                                 }
-                                if ui.button("Search folder...").on_hover_text("Look through a folder for a Virus TI firmware: where Access's Virus TI software was unpacked or installed").clicked() {
+                                if ui.button("Search folder...").on_hover_text("Look through a folder for a Virus TI firmware: where Access's Virus TI software was unpacked or installed, or where its installer was downloaded").clicked() {
                                     asked.search = true;
                                 }
                                 if let Some(f) = firmware.as_ref().filter(|f| !f.is_missing()) {

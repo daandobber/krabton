@@ -89,9 +89,9 @@ pub struct Prefs {
     pub big_picture: bool,
     /// Devices in the flat look instead of each machine's own.
     pub plain_devices: bool,
-    /// Sliders instead of knobs, as on a west-coast panel: in the Touch view
-    /// and on Coast.
-    pub sliders: bool,
+    /// Knobs instead of sliders in the Touch view and on Coast (sliders, as
+    /// on a mixing desk, unless this is set).
+    pub knobs: bool,
 }
 
 impl Prefs {

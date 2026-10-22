@@ -341,7 +341,9 @@ impl App {
             if ui.checkbox(&mut self.prefs.plain_devices, "Plain devices").on_hover_text("Every device in the same flat look, instead of each machine its own panel, knobs and logo").changed() {
                 self.prefs.save();
             }
-            if ui.checkbox(&mut self.prefs.sliders, "Sliders").on_hover_text("Sliders instead of knobs, as on a west-coast panel: in the Touch view and on Coast").changed() {
+            let mut sliders = !self.prefs.knobs;
+            if ui.checkbox(&mut sliders, "Sliders").on_hover_text("Sliders instead of knobs in the Touch view and on Coast (off: knobs)").changed() {
+                self.prefs.knobs = !sliders;
                 self.prefs.save();
             }
             ui.separator();

@@ -127,7 +127,7 @@ pub(crate) fn display(ui: &mut Ui, id: Id, r: Rect, fw: Option<&FirmwareRef>, st
             let msg = if fw.is_some() { "OPEN IT AGAIN" } else { "OPEN A VIRUS FIRMWARE" };
             let head = Rect::from_min_size(row.min, vec2(row.width(), u * 1.8));
             p.text(head.center(), Align2::CENTER_CENTER, msg, fit(&p, msg, lcd(u * 1.0), head.width()), ink);
-            let hint = "A VIRUS TI FIRMWARE (.BIN) OR A/B/C OS";
+            let hint = "A VIRUS TI FIRMWARE, ITS INSTALLER, OR A/B/C OS";
             p.text(pos2(head.center().x, head.bottom() + u * 0.35), Align2::CENTER_CENTER, hint, fit(&p, hint, lcd(u * 0.55), head.width()), dim);
             for (k, path) in found.iter().take(3).enumerate() {
                 let b = Rect::from_min_size(pos2(inner.left(), head.bottom() + u * 0.9 + k as f32 * u * 1.9), vec2(inner.width(), u * 1.6));
@@ -178,11 +178,11 @@ pub(crate) fn display(ui: &mut Ui, id: Id, r: Rect, fw: Option<&FirmwareRef>, st
     // Along the bottom: open a firmware, or look for one in a folder.
     let bh = u * 1.7;
     let open_r = Rect::from_min_size(pos2(inner.left(), inner.bottom() - bh), vec2(u * 6.0, bh));
-    if lcd_button(ui, &p, open_r, id.with("open"), "FIRMWARE", false, u).on_hover_text("Open a Virus firmware file: a Virus TI's (Access's container, 6 to 9 MB, whatever it is called), or a Virus A, B or C operating system. It stays where it is; Krabton keeps the path").clicked() {
+    if lcd_button(ui, &p, open_r, id.with("open"), "FIRMWARE", false, u).on_hover_text("Open a Virus firmware file: a Virus TI's (Access's container, 6 to 9 MB, whatever it is called), or a Virus A, B or C operating system. It stays where it is; Krabton keeps the path. Or open Access's Virus TI installer (.exe, .msi, .dmg, on any computer, Linux too): Krabton unpacks it with 7-Zip and keeps the firmware in its Firmware folder").clicked() {
         asked.open = true;
     }
     let find_r = Rect::from_min_size(pos2(open_r.right() + u * 0.4, open_r.top()), vec2(u * 6.0, bh));
-    if lcd_button(ui, &p, find_r, id.with("search"), "SEARCH", false, u).on_hover_text("Look through a folder (and the folders in it) for a Virus TI firmware: where Access's Virus TI software was unpacked or installed").clicked() {
+    if lcd_button(ui, &p, find_r, id.with("search"), "SEARCH", false, u).on_hover_text("Look through a folder (and the folders in it) for a Virus TI firmware: where Access's Virus TI software was unpacked or installed; or for its installer, to take the firmware out of").clicked() {
         asked.search = true;
     }
 }

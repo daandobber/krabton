@@ -896,7 +896,7 @@ impl App {
         out.push(Node::Folder { tag: None, label: "Singer".into(), icon: Icon::Device, hint: SINGER_HINT.into(), load: Some(BrowserItem::Singer), kids: Kids::Nodes(singer) });
         // Hyper, with the firmware opened before or found on this computer.
         let mut hyper = vec![
-            Node::Action { label: "Open a Virus firmware...".into(), hint: "A Virus TI's firmware (Access's container, 6 to 9 MB, whatever it is called), or a Virus A, B or C operating system: it stays where it is".into(), act: Act::LoadFirmware },
+            Node::Action { label: "Open a Virus firmware...".into(), hint: "A Virus TI's firmware (Access's container, 6 to 9 MB, whatever it is called), or a Virus A, B or C operating system: it stays where it is. Or Access's Virus TI installer (.exe, .msi, .dmg, also on Linux): Krabton unpacks it with 7-Zip and keeps the firmware".into(), act: Act::LoadFirmware },
             Node::Action { label: "Search a folder for a firmware...".into(), hint: "Looks through a folder and the folders in it for a Virus TI firmware: where Access's Virus TI software was unpacked or installed".into(), act: Act::FindFirmware },
         ];
         for path in self.hyper_found() {

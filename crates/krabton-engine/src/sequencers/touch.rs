@@ -78,6 +78,9 @@ pub const ENV_MODE: usize = 33;
 pub const ENV_ATTACK: usize = 34;
 pub const ENV_DECAY: usize = 35;
 pub const RANDOM_STEPS: usize = 36;
+/// The plates slide: a plate pressed and the finger moved bends its note
+/// smoothly to the plate under it (the Touch view plays it so).
+pub const SLIDE: usize = 37;
 
 pub const RATES: &[&str] = &["1/32", "1/16 T", "1/16", "1/8 T", "1/8", "1/4 T", "1/4", "1/2", "1 Bar"];
 const RATE_BEATS: [f64; 9] = [0.125, 1.0 / 6.0, 0.25, 1.0 / 3.0, 0.5, 2.0 / 3.0, 1.0, 2.0, 4.0];
@@ -176,6 +179,7 @@ pub static TOUCH: &[ParamSpec] = &[
     ParamSpec::log("Env Attack", "Motion", 0.001, 4.0, 0.01, Unit::Sec),
     ParamSpec::log("Env Decay", "Motion", 0.005, 8.0, 0.5, Unit::Sec),
     ParamSpec::int("Random Steps", "Motion", 0.0, 12.0, 0.0, Unit::None),
+    ParamSpec::toggle("Slide", "Plates", true),
 ];
 
 /// What a step plays on its pulses (in the order of `GATES`).

@@ -390,6 +390,8 @@ pub struct App {
     /// Virus firmware read (the last few), and the files found on this computer (looked for now and then).
     pub(crate) hyper_open: Vec<krabton_engine::hyper::FirmwareRef>,
     hyper_found: std::cell::RefCell<Option<(std::time::Instant, Vec<PathBuf>)>>,
+    /// An installer being unpacked for its Virus TI firmware: what comes of it, and its name.
+    firmware_unpack: Option<(std::sync::mpsc::Receiver<Result<PathBuf, String>>, String)>,
     pub(crate) lyric_text: String,
     /// monome grid/arc and the virtual grid.
     pub grid: crate::grid::GridState,
@@ -596,6 +598,7 @@ impl App {
             singer_open: Vec::new(),
             hyper_open: Vec::new(),
             hyper_found: std::cell::RefCell::new(None),
+            firmware_unpack: None,
             lyric_text: String::new(),
             grid: crate::grid::GridState::new(),
             mod_learn: None,
@@ -1805,6 +1808,13 @@ impl App {
         } else if cfg!(target_os = "macos") {
             installed.push(PathBuf::from("/Library/Application Support/Access Music"));
             installed.push(home.join("Library/Application Support/Access Music"));
+        } else {
+            // Linux: where Access's Windows installer puts it, run with Wine.
+            for prefix in [std::env::var_os("WINEPREFIX").map(PathBuf::from), Some(home.join(".wine"))].into_iter().flatten() {
+                for sub in ["Program Files", "Program Files (x86)", "Program Files/Common Files", "Program Files (x86)/Common Files"] {
+                    installed.push(prefix.join("drive_c").join(sub).join("Access Music"));
+                }
+            }
         }
         for dir in installed.iter().filter(|d| d.is_dir()) {
             for f in krabton_engine::hyper::find_ti_firmware(dir) {
@@ -1832,24 +1842,86 @@ impl App {
         None
     }
 
-    /// Opens a Virus firmware for Hyper (a TI's whatever the file is called).
+    /// Opens a Virus firmware for Hyper (a TI's whatever the file is called),
+    /// or Access's installer it is in (unpacked for it, in the background).
     pub(crate) fn open_firmware_dialog(&mut self) -> Option<krabton_engine::hyper::FirmwareRef> {
         let path = rfd::FileDialog::new()
-            .set_title("A Virus firmware: a Virus TI's (Access's container, 6 to 9 MB, often firmware.bin or firmware_bin), or an A, B or C operating system (.bin, .mid)")
+            .set_title("A Virus firmware (a Virus TI's: Access's container, 6 to 9 MB; or an A, B or C operating system, .bin or .mid), or Access's Virus TI installer it is in")
             .add_filter("All files", &["*"])
             .add_filter("Virus firmware", &["bin", "BIN", "mid", "MID"])
+            .add_filter("Installers and archives", &["exe", "msi", "dmg", "pkg", "zip", "7z", "cab", "EXE", "MSI", "DMG", "PKG", "ZIP"])
             .pick_file()?;
         *self.hyper_found.borrow_mut() = None;
+        let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+        if ext != "bin" && ext != "mid" && !krabton_engine::hyper::looks_like_ti_firmware(&path) && crate::firmware_lib::is_container(&path) {
+            self.start_firmware_unpack(path);
+            return None;
+        }
         self.hyper_firmware(&path)
     }
 
+    /// Unpacks an installer for its Virus TI firmware, in the background;
+    /// the Hypers without a firmware get it when it is out.
+    pub(crate) fn start_firmware_unpack(&mut self, installer: PathBuf) {
+        if self.firmware_unpack.is_some() {
+            self.toast("Already unpacking an installer for its firmware: a moment");
+            return;
+        }
+        let name = installer.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        self.toast(format!("Unpacking {name} for its Virus TI firmware (this can take a minute)"));
+        self.firmware_unpack = Some((crate::firmware_lib::start(installer), name));
+    }
+
+    fn poll_firmware_unpack(&mut self) {
+        let Some((rx, name)) = &self.firmware_unpack else { return };
+        let name = name.clone();
+        let result = match rx.try_recv() {
+            Ok(r) => r,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => Err(format!("Unpacking {name} stopped")),
+        };
+        self.firmware_unpack = None;
+        let path = match result {
+            Ok(path) => path,
+            Err(e) => {
+                self.toast(e);
+                return;
+            }
+        };
+        *self.hyper_found.borrow_mut() = None;
+        let Some(fw) = self.hyper_firmware(&path) else { return };
+        let mut given = 0;
+        for t in self.project.tracks.iter_mut() {
+            if let Some(Instrument::Hyper { params, firmware, bank, program, preset, .. }) = t.instrument.as_mut() {
+                if firmware.as_ref().is_none_or(|f| f.is_missing()) {
+                    *firmware = Some(fw.clone());
+                    (*bank, *program) = (0, 0);
+                    if let Some(pr) = fw.preset(0, 0) {
+                        *preset = pr.name.clone();
+                        *params = pr.knobs();
+                    }
+                    given += 1;
+                }
+            }
+        }
+        let dir = crate::firmware_lib::firmware_dir();
+        let to = if given > 0 { ", Hyper boots on it" } else { ": drag it onto a track from the browser's Hyper folder" };
+        self.toast(format!("The {} firmware is out of {name}, kept in {}{to}", fw.model, dir.display()));
+    }
+
     /// Looks through a folder (and the folders in it) for a Virus TI's
-    /// firmware: where Access's installer was unpacked or installed.
+    /// firmware: where Access's installer was unpacked or installed; or, with
+    /// none there, for the installer itself to take it out of.
     pub(crate) fn find_firmware_dialog(&mut self) -> Option<krabton_engine::hyper::FirmwareRef> {
-        let dir = rfd::FileDialog::new().set_title("A folder to look in for a Virus TI firmware (where Access's Virus TI software was unpacked or installed)").pick_folder()?;
+        let dir = rfd::FileDialog::new().set_title("A folder to look in for a Virus TI firmware (where Access's Virus TI software was unpacked or installed, or its installer was downloaded)").pick_folder()?;
         let found = krabton_engine::hyper::find_ti_firmware(&dir);
         if found.is_empty() {
-            self.toast(format!("No Virus TI firmware in {} (a file of 6 to 9 MB that starts with FORM)", dir.display()));
+            // Access's installer there, not unpacked: unpacked for it.
+            if let Some(installer) = crate::firmware_lib::installers_in(&dir).into_iter().next() {
+                self.start_firmware_unpack(installer);
+                return None;
+            }
+            self.toast(format!("No Virus TI firmware in {} (a file of 6 to 9 MB that starts with FORM), and no Virus installer to take it out of", dir.display()));
             return None;
         }
         *self.hyper_found.borrow_mut() = None;
@@ -3556,7 +3628,7 @@ impl App {
                 // plain[=0]: devices in the flat look (or, with 0, each in its own).
                 "plain" => self.prefs.plain_devices = nums.first() != Some(&0),
                 // sliders[=0]: the Touch view and Coast with sliders (or, with 0, knobs).
-                "sliders" => self.prefs.sliders = nums.first() != Some(&0),
+                "sliders" => self.prefs.knobs = nums.first() == Some(&0),
                 "envelopes" => {
                     self.env_view = true;
                     self.detail = DetailTab::Clip;
@@ -3938,9 +4010,13 @@ impl App {
                     }
                 }
                 // touchdown=x1,y1,x2,y2...: fingers on a touch screen there (pressing at 60%); touchup: they let go.
-                "touchdown" | "touchup" => {
+                "touchdown" | "touchmove" | "touchup" => {
                     let f: Vec<f32> = arg.split(',').filter_map(|v| v.trim().parse().ok()).collect();
-                    let phase = if name == "touchdown" { egui::TouchPhase::Start } else { egui::TouchPhase::End };
+                    let phase = match name {
+                        "touchdown" => egui::TouchPhase::Start,
+                        "touchmove" => egui::TouchPhase::Move,
+                        _ => egui::TouchPhase::End,
+                    };
                     let fingers: Vec<egui::Pos2> = if f.len() >= 2 { f.chunks_exact(2).map(|c| egui::pos2(c[0], c[1])).collect() } else { vec![egui::Pos2::ZERO; 4] };
                     let evs = fingers
                         .iter()
@@ -4241,7 +4317,7 @@ impl eframe::App for App {
 
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         crate::skin::set_enabled(!self.prefs.plain_devices);
-        crate::skin::set_sliders(self.prefs.sliders);
+        crate::skin::set_sliders(!self.prefs.knobs);
         self.engine.collect_garbage();
         self.sync_plugins();
         self.frame += 1;
@@ -4264,6 +4340,7 @@ impl eframe::App for App {
         self.poll_drum_install();
         self.poll_sf2_installs();
         self.poll_singer_installs();
+        self.poll_firmware_unpack();
         self.boot_hypers();
         self.recover_engine();
         self.poll_recording();
