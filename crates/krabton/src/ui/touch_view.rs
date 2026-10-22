@@ -4,7 +4,8 @@
 //! with swing, Latch and Run, chance and wander), the sixteen-step sequencer
 //! (switched on and off, Trigger and Pitch apart; each step a note, one to
 //! eight pulses and a gate for what they play, a value, chance or ratchet,
-//! tie, accent and skip, its lanes painted by dragging across them, with
+//! tie, accent and skip; the note and the value drawn, the rest clicked
+//! (a click one further, a right-click one back, dragged across: copied), with
 //! dice, mutate, shift, reverse, clear and a recorder that writes the plates
 //! played into the steps), and the patch bay:
 //! cables from ten outputs to eight of the instrument's knobs, each with its
@@ -14,8 +15,9 @@
 //! too; with Slide on, a plate pressed and the finger moved along bends its
 //! note smoothly to wherever the finger is (otherwise dragging across plays
 //! plate after plate). Beside them the motion: an XY pad, the LFO,
-//! and a shape to draw (or to record with the pad). With *Sliders* on (a
-//! pref, switched in the header) its knobs are long sliders instead.
+//! and a shape to draw (or to record with the pad). The pulser's controls
+//! are ladders of values to click; the envelope's are sliders (knobs with
+//! the *Sliders* pref off).
 //!
 //! It works on the track's Touch device (put first in its MIDI chain when the
 //! view first shows the track) and on Touch modulators routed to the
@@ -87,9 +89,9 @@ pub struct TouchViewState {
     rec: Option<usize>,
     /// Recording the shape with the XY pad.
     shape_rec: bool,
-    /// A lane being painted: what a toggle lane is set to, what the Gate lane.
-    paint: Option<bool>,
-    paint_gate: Option<Gate>,
+    /// A lane being clicked and dragged across: the step clicked, as the
+    /// click left it (the steps dragged over get the same).
+    paint: Option<Step>,
     /// What the third lane shows: the steps' values, chances or ratchets.
     lane_tab: usize,
     /// The plates' values are being set (dragging sets them instead of playing).
@@ -214,12 +216,7 @@ fn section(p: &egui::Painter, r: Rect, title: &str) -> Rect {
     Rect::from_min_max(r.min + vec2(10.0, 26.0), r.max - vec2(10.0, 8.0))
 }
 
-/// A knob for one of Touch's parameters, its name above and value below.
-fn knob_param(ui: &mut Ui, r: Rect, id: Id, spec: &ParamSpec, value: &mut f32, color: Color32) -> bool {
-    knob_named(ui, r, id, spec, spec.name, value, color)
-}
-
-/// [`knob_param`] with a shorter name shown.
+/// A knob for one of Touch's parameters, `name` above it and its value below.
 fn knob_named(ui: &mut Ui, r: Rect, id: Id, spec: &ParamSpec, name: &str, value: &mut f32, color: Color32) -> bool {
     let p = ui.painter().clone();
     p.text(pos2(r.center().x, r.top()), Align2::CENTER_TOP, name, FontId::proportional(10.5), TEXT_DIM);
@@ -242,65 +239,10 @@ fn fitted(p: &egui::Painter, text: &str, size: f32, width: f32) -> FontId {
     FontId::proportional(if w > width { (size * width / w).max(7.5) } else { size })
 }
 
-/// A slider as on a west-coast panel: a long slot with a scale beside it, a
-/// coloured cap, its name above and its value below. Drag it (Shift: fine),
-/// click to put it there, double-click: back to where it starts.
-fn slider_named(ui: &mut Ui, r: Rect, id: Id, spec: &ParamSpec, name: &str, value: &mut f32, color: Color32) -> bool {
-    let p = ui.painter().clone();
-    p.text(pos2(r.center().x, r.top()), Align2::CENTER_TOP, name, fitted(&p, name, 10.5, r.width() - 2.0), TEXT_DIM);
-    let text = spec.format(*value);
-    p.text(pos2(r.center().x, r.bottom()), Align2::CENTER_BOTTOM, &text, fitted(&p, &text, 10.0, r.width() - 2.0), TEXT);
-    let slot = Rect::from_min_max(pos2(r.center().x - 3.0, r.top() + 17.0), pos2(r.center().x + 3.0, r.bottom() - 16.0));
-    let cap_h = (slot.height() * 0.12).clamp(8.0, 14.0);
-    let cap_w = (r.width() - 10.0).clamp(14.0, 28.0);
-    let travel = slot.shrink2(vec2(0.0, cap_h * 0.5));
-    let hit = Rect::from_min_max(pos2(r.left(), slot.top() - 2.0), pos2(r.right(), slot.bottom() + 2.0));
-    let resp = ui.interact(hit, id, Sense::click_and_drag());
-    let norm = spec.to_norm(*value);
-    let fine = ui.input(|i| i.modifiers.shift);
-    let d = -resp.drag_delta().y / travel.height().max(1.0) * if fine { 0.2 } else { 1.0 };
-    let mut changed = false;
-    let mut set = |v: f32, value: &mut f32| {
-        if v != *value {
-            *value = v;
-            changed = true;
-        }
-    };
-    if let Some(n) = drag_position(ui, &resp, id, norm, d) {
-        set(spec.from_norm(n), value);
-    }
-    if resp.double_clicked() {
-        set(spec.default, value);
-    } else if resp.clicked() {
-        if let Some(pt) = resp.interact_pointer_pos() {
-            set(spec.from_norm((travel.bottom() - pt.y) / travel.height().max(1.0)), value);
-        }
-    }
-    let shown = shown_position(ui, &resp, id, spec.to_norm(*value));
-    // The scale, the slot, how far it is open, the cap.
-    for t in 0..=10 {
-        let y = travel.bottom() - t as f32 / 10.0 * travel.height();
-        let len = if t % 5 == 0 { 6.0 } else { 3.5 };
-        for (a, b) in [(slot.left() - 2.0 - len, slot.left() - 2.0), (slot.right() + 2.0, slot.right() + 2.0 + len)] {
-            p.line_segment([pos2(a, y), pos2(b, y)], Stroke::new(1.0_f32, LINE));
-        }
-    }
-    p.rect_filled(slot, 3.0, SLOT);
-    let y = travel.bottom() - shown * travel.height();
-    let from = if spec.min < 0.0 && spec.max > 0.0 { travel.center().y } else { travel.bottom() };
-    p.rect_filled(Rect::from_min_max(pos2(slot.left() + 1.0, y.min(from)), pos2(slot.right() - 1.0, y.max(from))), 2.0, shade(color, 0.6));
-    let cap = Rect::from_center_size(pos2(slot.center().x, y), vec2(cap_w, cap_h));
-    let lit = resp.hovered() || resp.dragged();
-    p.rect_filled(cap.translate(vec2(0.0, 1.5)), 3.0, Color32::from_black_alpha(90));
-    p.rect_filled(cap, 3.0, if lit { mix(color, Color32::WHITE, 0.25) } else { color });
-    p.rect_stroke(cap, 3.0, Stroke::new(1.0_f32, shade(color, 0.5)), egui::StrokeKind::Inside);
-    p.line_segment([pos2(cap.left() + 3.0, cap.center().y), pos2(cap.right() - 3.0, cap.center().y)], Stroke::new(1.5_f32, shade(color, 0.35)));
-    resp.on_hover_text(format!("{}: {}\nDrag (Shift: fine), click to put it there, double-click to reset", spec.name, spec.format(*value)));
-    changed
-}
-
-/// [`slider_named`] lying down, for a row: its name on the left, its value
-/// on the right.
+/// A slider as on a west-coast panel, lying down for a row: a long slot with
+/// a scale under it and a coloured cap, its name on the left, its value on
+/// the right. Drag it (Shift: fine), click to put it there, double-click:
+/// back to where it starts.
 fn slider_across(ui: &mut Ui, r: Rect, id: Id, spec: &ParamSpec, name: &str, value: &mut f32, color: Color32) -> bool {
     let p = ui.painter().clone();
     let name_w = (r.width() * 0.26).clamp(30.0, 46.0);
@@ -351,6 +293,111 @@ fn slider_across(ui: &mut Ui, r: Rect, id: Id, spec: &ParamSpec, name: &str, val
     p.line_segment([pos2(cap.center().x, cap.top() + 3.0), pos2(cap.center().x, cap.bottom() - 3.0)], Stroke::new(1.5_f32, shade(color, 0.35)));
     resp.on_hover_text(format!("{}: {}\nDrag (Shift: fine), click to put it there, double-click to reset", spec.name, spec.format(*value)));
     changed
+}
+
+/// The values a ladder offers for one of Touch's parameters, low to high: a
+/// few that matter (a choice's or a short count's every one).
+fn rungs(k: usize, spec: &ParamSpec) -> Vec<f32> {
+    match k {
+        touch::GATE => vec![0.1, 0.25, 0.5, 0.75, 1.0],
+        touch::SWING => vec![0.0, 0.1, 0.2, 0.33, 0.5],
+        touch::CHANCE => vec![0.2, 0.4, 0.6, 0.8, 1.0],
+        touch::WANDER | touch::PRESS_VEL => vec![0.0, 0.25, 0.5, 0.75, 1.0],
+        touch::DECAY => vec![0.05, 0.12, 0.25, 0.6, 1.5],
+        touch::STRUM => vec![0.01, 0.02, 0.04, 0.08, 0.16],
+        touch::FEEDBACK => vec![0.2, 0.4, 0.6, 0.8, 0.95],
+        _ => match spec.kind {
+            ParamKind::Choice(items) => (0..items.len()).map(|i| i as f32).collect(),
+            ParamKind::Int if spec.max - spec.min <= 8.0 => (spec.min as i32..=spec.max as i32).map(|i| i as f32).collect(),
+            _ => (0..5).map(|j| spec.from_norm(j as f32 / 4.0)).collect(),
+        },
+    }
+}
+
+/// A ladder of buttons for one of Touch's parameters, standing where a slider
+/// would: each rung a value (written on it), lit up to the one it is on. A
+/// click puts it on a rung.
+fn ladder(ui: &mut Ui, r: Rect, id: Id, spec: &ParamSpec, name: &str, rungs: &[f32], value: &mut f32, color: Color32) -> bool {
+    let p = ui.painter().clone();
+    p.text(pos2(r.center().x, r.top()), Align2::CENTER_TOP, name, fitted(&p, name, 10.5, r.width() - 2.0), TEXT_DIM);
+    let body = Rect::from_min_max(pos2(r.left() + 2.0, r.top() + 16.0), pos2(r.right() - 2.0, r.bottom() - 15.0));
+    let n = rungs.len().max(1);
+    let rh = body.height() / n as f32;
+    let rung_at = |y: f32| (((body.bottom() - y) / rh).floor().max(0.0) as usize).min(n - 1);
+    let resp = ui.interact(body, id, Sense::click_and_drag());
+    let mut changed = false;
+    if let Some(pt) = resp.interact_pointer_pos().filter(|_| resp.clicked() || resp.dragged()) {
+        let v = rungs[rung_at(pt.y)];
+        if v != *value {
+            *value = v;
+            changed = true;
+        }
+    }
+    let text = spec.format(*value);
+    p.text(pos2(r.center().x, r.bottom()), Align2::CENTER_BOTTOM, &text, fitted(&p, &text, 10.0, r.width() - 2.0), TEXT);
+    // The rung it is on: the nearest (a value set elsewhere may lie between two).
+    let norm = spec.to_norm(*value);
+    let at = (0..n).min_by(|&a, &b| (spec.to_norm(rungs[a]) - norm).abs().total_cmp(&(spec.to_norm(rungs[b]) - norm).abs())).unwrap_or(0);
+    let choice = matches!(spec.kind, ParamKind::Choice(_));
+    let hover = resp.hover_pos().map(|pt| rung_at(pt.y));
+    for (j, &v) in rungs.iter().enumerate() {
+        let cell = Rect::from_min_size(pos2(body.left(), body.bottom() - (j + 1) as f32 * rh), vec2(body.width(), rh)).shrink2(vec2(0.0, 1.0));
+        let fill = if j == at {
+            color
+        } else if j < at && !choice {
+            shade(color, 0.4)
+        } else {
+            SLOT
+        };
+        p.rect_filled(cell, 3.0, if hover == Some(j) { mix(fill, TEXT, 0.15) } else { fill });
+        let label = spec.format(v);
+        p.text(cell.center(), Align2::CENTER_CENTER, &label, fitted(&p, &label, (rh * 0.7).clamp(7.5, 9.5), cell.width() - 3.0), if j == at { text_on(color) } else { TEXT_DIM });
+    }
+    resp.on_hover_text(format!("{}: {text}\nClick a rung to put it there", spec.name));
+    changed
+}
+
+/// One more (`by` 1) or one fewer (-1) of a count from one to `most`, round
+/// from the top to one and back.
+fn turn_count(n: u8, most: u8, by: i32) -> u8 {
+    ((n.clamp(1, most) as i32 - 1 + by).rem_euclid(most as i32) + 1) as u8
+}
+
+/// The chances a click goes through, from always down.
+const CHANCES: [f32; 4] = [1.0, 0.75, 0.5, 0.25];
+
+/// The next of [`CHANCES`] (`by` 1) or the one before (-1), from the nearest.
+fn turn_chance(c: f32, by: i32) -> f32 {
+    let at = (0..CHANCES.len()).min_by(|&a, &b| (CHANCES[a] - c).abs().total_cmp(&(CHANCES[b] - c).abs())).unwrap_or(0);
+    CHANCES[(at as i32 + by).rem_euclid(CHANCES.len() as i32) as usize]
+}
+
+/// A step with what lane `k` shows of it (the third lane: tab `tab`) turned
+/// by a click (`by` 1) or a right-click (-1): its pulses, chance, ratchets or
+/// gate one further, its tie, accent or skip switched.
+fn turn(s: Step, k: usize, tab: usize, by: i32) -> Step {
+    match k {
+        1 => Step { pulses: turn_count(s.pulses, MAX_PULSES, by), ..s },
+        2 if tab == 1 => Step { chance: turn_chance(s.chance, by), ..s },
+        2 => Step { ratchet: turn_count(s.ratchet, MAX_RATCHET, by), ..s },
+        3 => Step { gate: Gate::from_index((s.gate.index() as i32 + by).rem_euclid(Gate::ALL.len() as i32) as usize), ..s },
+        4 => Step { tie: !s.tie, ..s },
+        5 => Step { accent: !s.accent, ..s },
+        _ => Step { skip: !s.skip, ..s },
+    }
+}
+
+/// `s` with what lane `k` shows taken from `from` (a click dragged across).
+fn copy_lane(s: Step, from: Step, k: usize, tab: usize) -> Step {
+    match k {
+        1 => Step { pulses: from.pulses, ..s },
+        2 if tab == 1 => Step { chance: from.chance, ..s },
+        2 => Step { ratchet: from.ratchet, ..s },
+        3 => Step { gate: from.gate, ..s },
+        4 => Step { tie: from.tie, ..s },
+        5 => Step { accent: from.accent, ..s },
+        _ => Step { skip: from.skip, ..s },
+    }
 }
 
 /// A lit button that switches something on and off.
@@ -707,14 +754,9 @@ impl App {
             }
         });
         let sliders = !self.prefs.knobs;
-        let sliders_r = Rect::from_min_size(pos2(preset_r.right() + 10.0, preset_r.top()), vec2(72.0, 24.0));
-        if toggle(ui, sliders_r, Id::new("touch_sliders"), "Sliders", sliders, None, "Sliders (on) or knobs (off), here and on Coast") {
-            self.prefs.knobs = sliders;
-            self.prefs.save();
-        }
         let hint = "higher up a plate: harder  ·  press and move along: slide  ·  keys A–L and W–P play the plates";
         let hw = p.layout_no_wrap(hint.into(), FontId::proportional(11.0), TEXT_DIM).size().x;
-        if header.right() - hw > sliders_r.right() + 20.0 {
+        if header.right() - hw > preset_r.right() + 20.0 {
             p.text(header.right_center(), Align2::RIGHT_CENTER, hint, FontId::proportional(11.0), TEXT_DIM);
         }
 
@@ -751,8 +793,6 @@ impl App {
         changed |= choice(ui, Rect::from_min_size(pos2(inner.left(), y), vec2(inner.width(), row_h)), Id::new(("touch_rate", tid)), &specs[touch::RATE], &mut dev.params[touch::RATE]);
         y += row_h + 6.0;
         let kn = Rect::from_min_max(pos2(inner.left(), y), inner.max);
-        let kw = kn.width() / 3.0;
-        let kh = kn.height() / 2.0;
         let mode = dev.params[touch::PLAY].round() as usize;
         let extra: [usize; 2] = match mode {
             1 => [touch::ARP_ORDER, touch::OCTAVES],
@@ -760,28 +800,19 @@ impl App {
             3 | 4 => [touch::ECHOES, touch::FEEDBACK],
             _ => [touch::PRESS_VEL, touch::DECAY],
         };
+        // Each a ladder of values to click.
         let cells = [touch::GATE, touch::SWING, touch::CHANCE, touch::WANDER, extra[0], extra[1]];
+        let sw = kn.width() / cells.len() as f32;
         for (n, k) in cells.into_iter().enumerate() {
             let color = if n < 2 { OUT_COLORS[1] } else if n < 4 { OUT_COLORS[3] } else { accent };
-            if sliders {
-                let sw = kn.width() / cells.len() as f32;
-                let cell = Rect::from_min_size(pos2(kn.left() + n as f32 * sw, kn.top()), vec2(sw, kn.height())).shrink2(vec2(1.0, 2.0));
-                let name = match k {
-                    touch::PRESS_VEL => "Press",
-                    touch::ARP_ORDER => "Order",
-                    touch::FEEDBACK => "Fade",
-                    _ => specs[k].name,
-                };
-                changed |= slider_named(ui, cell, Id::new(("touch_knob", tid, k)), &specs[k], name, &mut dev.params[k], color);
-                continue;
-            }
-            let cell = Rect::from_min_size(pos2(kn.left() + (n % 3) as f32 * kw, kn.top() + (n / 3) as f32 * kh), vec2(kw, kh)).shrink(1.0);
-            if matches!(specs[k].kind, ParamKind::Choice(_)) {
-                p.text(pos2(cell.center().x, cell.top()), Align2::CENTER_TOP, specs[k].name, FontId::proportional(10.5), TEXT_DIM);
-                changed |= choice(ui, Rect::from_center_size(cell.center() + vec2(0.0, 4.0), vec2(cell.width() - 2.0, 22.0)), Id::new(("touch_cell", tid, k)), &specs[k], &mut dev.params[k]);
-            } else {
-                changed |= knob_param(ui, cell, Id::new(("touch_knob", tid, k)), &specs[k], &mut dev.params[k], color);
-            }
+            let cell = Rect::from_min_size(pos2(kn.left() + n as f32 * sw, kn.top()), vec2(sw, kn.height())).shrink2(vec2(1.5, 2.0));
+            let name = match k {
+                touch::PRESS_VEL => "Press",
+                touch::ARP_ORDER => "Order",
+                touch::FEEDBACK => "Fade",
+                _ => specs[k].name,
+            };
+            changed |= ladder(ui, cell, Id::new(("touch_knob", tid, k)), &specs[k], name, &rungs(k, &specs[k]), &mut dev.params[k], color);
         }
 
         // ---------------------------------------------------------------- sequence
@@ -871,25 +902,25 @@ impl App {
         let num_h = 15.0;
         let gh = grid.height() - num_h - 4.0;
         // The small lanes keep their height; the note lane takes most of the rest.
-        let small = [24.0, 10.0, 10.0, 10.0];
+        let small = [24.0, 13.0, 13.0, 13.0];
         let rest_h = (gh - small.iter().sum::<f32>()).max(30.0);
         let heights = [rest_h * 0.46, rest_h * 0.24, rest_h * 0.30, small[0], small[1], small[2], small[3]];
         let tab = self.touch_view.lane_tab.min(2);
         let lane_names = ["Note", "Pulses", "", "Gate", "Tie", "Accent", "Skip"];
         let tab_names = ["Value", "Chance", "Ratchet"];
         let tab_tips = [
-            "Each step's value, for the Steps output (patch it to a knob)",
-            "How likely each of the step's notes plays (with Trigger)",
-            "How many notes each of the step's notes is split into, one to eight (with Trigger and the pulser)",
+            "Each step's value, for the Steps output (patch it to a knob). Drag across to draw",
+            "How likely each of the step's notes plays (with Trigger). Click: 100, 75, 50, 25 %, round again; right-click: back; drag across to copy",
+            "How many notes each of the step's notes is split into, one to eight (with Trigger and the pulser). Click: one more, right-click: one fewer; drag across to copy",
         ];
         let tips = [
             "Each step's note, up and down through the key (drag across to draw; double-click: back to the base; right-click: a rest)",
-            "How many pulses each step lasts, one to eight (drag up and down)",
+            "How many pulses each step lasts, one to eight. Click: one more (after eight: one), right-click: one fewer; drag across to copy",
             tab_tips[tab],
             "What each step plays on its pulses (with Trigger): Single (the first), Every (each one), Hold (one note over them all), Rest, Last, Alternate (every other one), Roll (one more note each pulse). Click: the next, right-click: the one before; drag across to copy",
-            "Steps held into the next (legato, with Trigger)",
-            "Steps played louder (with Trigger)",
-            "Steps passed over",
+            "Steps held into the next (legato, with Trigger). Click to switch, drag across for more",
+            "Steps played louder (with Trigger). Click to switch, drag across for more",
+            "Steps passed over. Click to switch, drag across for more",
         ];
         let mut lane_rects = [Rect::NOTHING; 7];
         let mut ly = grid.top();
@@ -908,23 +939,20 @@ impl App {
                 p.rect_stroke(col.shrink(1.0), 3.0, Stroke::new(1.5_f32, REC), egui::StrokeKind::Inside);
             }
         }
-        let next_gate = |g: Gate, by: usize| Gate::from_index((g.index() + by) % Gate::ALL.len());
-        let count_of = |f: f32, most: u8| ((f * most as f32).ceil() as u8).clamp(1, most);
+        // The note and the value are drawn; the rest is clicked.
+        let clicked_lane = |k: usize| k != 0 && !(k == 2 && tab == 0);
         for (k, lr) in lane_rects.iter().enumerate() {
             if k == 2 {
-                // Its tabs: the values, the chances or the ratchets.
-                let th = lr.height() / 3.0;
-                for (j, name) in tab_names.iter().enumerate() {
-                    let tr = Rect::from_min_size(pos2(lanes.left() - 2.0, lr.top() + j as f32 * th), vec2(label_w - 4.0, th - 1.0));
-                    let resp = ui.interact(tr, Id::new(("touch_tab", tid, j)), Sense::click()).on_hover_text(tab_tips[j]);
-                    if j == tab {
-                        p.rect_filled(tr, 3.0, PANEL3);
-                    }
-                    let c = if j == tab { TEXT } else if resp.hovered() { mix(TEXT_DIM, TEXT, 0.5) } else { TEXT_DIM };
-                    p.text(pos2(tr.left() + 2.0, tr.center().y), Align2::LEFT_CENTER, *name, FontId::proportional(if th < 14.0 { 8.5 } else { 9.5 }), c);
-                    if resp.clicked() {
-                        self.touch_view.lane_tab = j;
-                    }
+                // Its tab: what it shows, a click for the next.
+                let th = lr.height().min(22.0);
+                let tr = Rect::from_min_size(pos2(lanes.left() - 2.0, lr.center().y - th * 0.5), vec2(label_w - 6.0, th));
+                let resp = ui.interact(tr, Id::new(("touch_tab", tid)), Sense::click()).on_hover_text(format!("Shows: {}. Click: {} (right-click: {})", tab_names[tab], tab_names[(tab + 1) % 3], tab_names[(tab + 2) % 3]));
+                p.rect_filled(tr, 3.0, if resp.hovered() { mix(PANEL3, TEXT, 0.1) } else { PANEL3 });
+                p.text(tr.center(), Align2::CENTER_CENTER, tab_names[tab], fitted(&p, tab_names[tab], 9.5, tr.width() - 4.0), TEXT);
+                if resp.clicked() {
+                    self.touch_view.lane_tab = (tab + 1) % 3;
+                } else if resp.secondary_clicked() {
+                    self.touch_view.lane_tab = (tab + 2) % 3;
                 }
             } else {
                 p.text(pos2(lanes.left(), lr.center().y), Align2::LEFT_CENTER, lane_names[k], FontId::proportional(if lr.height() < 12.0 { 8.5 } else { 10.0 }), TEXT_DIM);
@@ -941,33 +969,34 @@ impl App {
             };
             let resp = ui.interact(*lr, Id::new(("touch_lane", tid, k)), Sense::click_and_drag()).on_hover_text(tip);
             let frac = |yy: f32| ((lr.bottom() - yy) / lr.height()).clamp(0.0, 1.0);
-            if resp.drag_started() || resp.clicked() {
-                if let Some(pt) = ui.input(|i| i.pointer.press_origin()).or(resp.interact_pointer_pos()) {
-                    let s = touch::step(&dev.data, col_of(pt.x));
-                    self.touch_view.paint = Some(match k {
-                        4 => !s.tie,
-                        5 => !s.accent,
-                        6 => !s.skip,
-                        _ => true,
-                    });
-                    self.touch_view.paint_gate = Some(next_gate(s.gate, 1));
+            if clicked_lane(k) {
+                // A click turns the step one further, a right-click one back; dragged on, the steps passed over get the same.
+                if resp.drag_started() || resp.clicked() || resp.secondary_clicked() {
+                    if let Some(pt) = ui.input(|i| i.pointer.press_origin()).or(resp.interact_pointer_pos()) {
+                        let back = resp.secondary_clicked() || ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary));
+                        let i = col_of(pt.x);
+                        let s = turn(touch::step(&dev.data, i), k, tab, if back { -1 } else { 1 });
+                        touch::set_step(&mut dev.data, i, s);
+                        self.touch_view.paint = Some(s);
+                        changed = true;
+                    }
                 }
-            }
-            let painting = resp.dragged() || resp.clicked();
-            if let Some(pt) = resp.interact_pointer_pos().filter(|_| painting) {
+                if let (Some(pt), Some(from)) = (resp.interact_pointer_pos().filter(|_| resp.dragged()), self.touch_view.paint) {
+                    let i = col_of(pt.x);
+                    let s = touch::step(&dev.data, i);
+                    let to = copy_lane(s, from, k, tab);
+                    if to != s {
+                        touch::set_step(&mut dev.data, i, to);
+                        changed = true;
+                    }
+                }
+            } else if let Some(pt) = resp.interact_pointer_pos().filter(|_| resp.dragged() || resp.clicked()) {
                 let i = col_of(pt.x);
                 let mut s = touch::step(&dev.data, i);
-                let set = self.touch_view.paint.unwrap_or(true);
-                match k {
-                    0 => s.note = ((frac(pt.y) * 2.0 - 1.0) * 14.0).round() as i32,
-                    1 => s.pulses = count_of(frac(pt.y), MAX_PULSES),
-                    2 if tab == 0 => s.value = frac(pt.y),
-                    2 if tab == 1 => s.chance = frac(pt.y),
-                    2 => s.ratchet = count_of(frac(pt.y), MAX_RATCHET),
-                    3 => s.gate = self.touch_view.paint_gate.unwrap_or(s.gate),
-                    4 => s.tie = set,
-                    5 => s.accent = set,
-                    _ => s.skip = set,
+                if k == 0 {
+                    s.note = ((frac(pt.y) * 2.0 - 1.0) * 14.0).round() as i32;
+                } else {
+                    s.value = frac(pt.y);
                 }
                 touch::set_step(&mut dev.data, i, s);
                 changed = true;
@@ -980,17 +1009,11 @@ impl App {
                     changed = true;
                 }
             }
-            if resp.secondary_clicked() && (k == 0 || k == 3) {
+            if resp.secondary_clicked() && k == 0 {
                 if let Some(pt) = resp.interact_pointer_pos() {
                     let i = col_of(pt.x);
                     let s = touch::step(&dev.data, i);
-                    let gate = if k == 3 {
-                        next_gate(s.gate, Gate::ALL.len() - 1)
-                    } else if s.rests() {
-                        Gate::Single
-                    } else {
-                        Gate::Rest
-                    };
+                    let gate = if s.rests() { Gate::Single } else { Gate::Rest };
                     touch::set_step(&mut dev.data, i, Step { gate, ..s });
                     changed = true;
                 }
@@ -1001,7 +1024,8 @@ impl App {
                 let active = i < n_on;
                 let now = seq_on && active && i == seen.step;
                 let col = |base: Color32| if !active || s.skip { shade(base, 0.25) } else if seq_on { base } else { shade(base, 0.55) };
-                p.rect_filled(c, 2.0, SLOT);
+                let under = clicked_lane(k) && hovered == Some(i);
+                p.rect_filled(c, 2.0, if under { mix(SLOT, TEXT, 0.12) } else { SLOT });
                 match k {
                     0 => {
                         let mid = c.center().y;
@@ -1014,42 +1038,34 @@ impl App {
                             p.text(pos2(c.center().x, c.top() + 1.0), Align2::CENTER_TOP, format!("{:+}", s.note), FontId::proportional(9.0), if active { TEXT } else { TEXT_DIM });
                         }
                     }
-                    1 => {
-                        // A block for each pulse, the one it is at lit.
-                        let bh = c.height() / MAX_PULSES as f32;
-                        for j in 0..MAX_PULSES as usize {
-                            let r = Rect::from_min_size(pos2(c.left() + 2.0, c.bottom() - (j + 1) as f32 * bh + 0.5), vec2(c.width() - 4.0, (bh - 1.0).max(1.0)));
-                            let lit = now && j == seen.pulse;
-                            let fill = if j >= s.pulses as usize {
-                                mix(SLOT, TEXT_DIM, 0.08)
-                            } else if lit {
-                                mix(OUT_COLORS[1], TEXT, 0.6 * lamp + 0.2)
+                    1 | 2 if clicked_lane(k) => {
+                        // Its count (or chance) written large, and under it a mark for each pulse (the one it is at lit), each ratchet note, or how likely.
+                        let (text, plain, marks, cc) = match k {
+                            1 => (s.pulses.to_string(), s.pulses <= 1, s.pulses.clamp(1, MAX_PULSES) as usize, OUT_COLORS[1]),
+                            _ if tab == 1 => (format!("{}%", (s.chance * 100.0).round()), s.chance >= 0.999, 0, OUT_COLORS[3]),
+                            _ => (format!("×{}", s.ratchet.max(1)), s.ratchet <= 1, s.ratchet.clamp(1, MAX_RATCHET) as usize, accent),
+                        };
+                        let foot = if c.height() >= 16.0 { 5.0 } else { 0.0 };
+                        let tc = if !active { shade(TEXT_DIM, 0.5) } else if plain { TEXT_DIM } else { TEXT };
+                        let size = ((c.height() - foot) * 0.62).clamp(8.0, 12.5);
+                        p.text(pos2(c.center().x, c.center().y - foot * 0.5), Align2::CENTER_CENTER, &text, fitted(&p, &text, size, c.width() - 2.0), tc);
+                        if foot > 0.0 {
+                            let fr = Rect::from_min_max(pos2(c.left() + 2.0, c.bottom() - 4.0), pos2(c.right() - 2.0, c.bottom() - 1.5));
+                            if marks == 0 {
+                                p.rect_filled(Rect::from_min_size(fr.min, vec2(fr.width() * s.chance, fr.height())), 1.0, shade(col(cc), 0.8));
                             } else {
-                                shade(col(OUT_COLORS[1]), 0.75)
-                            };
-                            p.rect_filled(r, 1.0, fill);
+                                let mw = fr.width() / marks as f32;
+                                for j in 0..marks {
+                                    let m = Rect::from_min_size(pos2(fr.left() + j as f32 * mw, fr.top()), vec2((mw - 1.0).max(0.8), fr.height()));
+                                    let lit = k == 1 && now && j == seen.pulse;
+                                    p.rect_filled(m, 0.5, if lit { mix(cc, TEXT, 0.6 * lamp + 0.2) } else { shade(col(cc), 0.8) });
+                                }
+                            }
                         }
-                        if col_w >= 20.0 && s.pulses > 1 {
-                            p.text(pos2(c.center().x, c.top() + 1.0), Align2::CENTER_TOP, format!("{}", s.pulses), FontId::proportional(9.0), if active { TEXT } else { TEXT_DIM });
-                        }
-                    }
-                    2 if tab < 2 => {
-                        let v = if tab == 0 { s.value } else { s.chance };
-                        let cc = if tab == 0 { OUT_COLORS[2] } else { OUT_COLORS[3] };
-                        p.rect_filled(Rect::from_min_max(pos2(c.left() + 1.0, c.bottom() - v * c.height()), pos2(c.right() - 1.0, c.bottom())), 1.5, shade(col(cc), 0.75));
                     }
                     2 => {
-                        // As high as there are notes, split in as many.
-                        let n = s.ratchet.max(1) as usize;
-                        let top = c.bottom() - n as f32 / MAX_RATCHET as f32 * c.height();
-                        let w = (c.width() - 2.0) / n as f32;
-                        for j in 0..n {
-                            let r = Rect::from_min_max(pos2(c.left() + 1.0 + j as f32 * w, top), pos2(c.left() + 1.0 + (j + 1) as f32 * w - 1.0, c.bottom()));
-                            p.rect_filled(r, 1.0, shade(col(accent), 0.8));
-                        }
-                        if col_w >= 20.0 && n > 1 {
-                            p.text(pos2(c.center().x, c.top() + 1.0), Align2::CENTER_TOP, format!("×{n}"), FontId::proportional(9.0), if active { TEXT } else { TEXT_DIM });
-                        }
+                        let v = s.value;
+                        p.rect_filled(Rect::from_min_max(pos2(c.left() + 1.0, c.bottom() - v * c.height()), pos2(c.right() - 1.0, c.bottom())), 1.5, shade(col(OUT_COLORS[2]), 0.75));
                     }
                     3 => {
                         // Its name, and what it plays on each of its pulses.
@@ -1816,6 +1832,34 @@ mod tests {
         grid.extend([65u8, 67, 69].iter().enumerate().map(|(i, &p)| (Rect::from_min_size(pos2(i as f32 * 50.0, -110.0), vec2(40.0, 100.0)), p)));
         assert_eq!(slide_pitch(&grid, pos2(70.0, -50.0)), Some(67.0));
         assert_eq!(slide_pitch(&grid, pos2(70.0, 50.0)), Some(62.0));
+    }
+
+    #[test]
+    fn a_click_turns_a_step_one_further_and_round() {
+        assert_eq!((turn_count(1, 8, 1), turn_count(7, 8, 1), turn_count(8, 8, 1), turn_count(1, 8, -1)), (2, 8, 1, 8));
+        assert_eq!((turn_chance(1.0, 1), turn_chance(0.25, 1), turn_chance(1.0, -1), turn_chance(0.6, 1)), (0.75, 1.0, 0.25, 0.25));
+        let s = Step { pulses: 3, ratchet: 1, gate: Gate::Single, ..Step::default() };
+        assert_eq!(turn(s, 1, 0, 1).pulses, 4);
+        assert_eq!(turn(s, 2, 2, -1).ratchet, MAX_RATCHET);
+        assert_eq!(turn(s, 3, 0, 1).gate, Gate::Every);
+        assert_eq!(turn(s, 3, 0, -1).gate, Gate::Roll);
+        assert!(turn(s, 5, 0, 1).accent && !turn(turn(s, 5, 0, 1), 5, 0, 1).accent);
+        // Dragged across: only that lane is copied.
+        let from = turn(s, 1, 0, 1);
+        let other = Step { note: 5, pulses: 1, accent: true, ..Step::default() };
+        let to = copy_lane(other, from, 1, 0);
+        assert_eq!((to.pulses, to.note, to.accent), (4, 5, true));
+    }
+
+    #[test]
+    fn the_ladders_rungs_go_up_inside_their_range() {
+        for k in [touch::GATE, touch::SWING, touch::CHANCE, touch::WANDER, touch::PRESS_VEL, touch::DECAY, touch::ARP_ORDER, touch::OCTAVES, touch::STRUM, touch::ECHOES, touch::FEEDBACK] {
+            let spec = &touch::TOUCH[k];
+            let r = rungs(k, spec);
+            assert!((2..=8).contains(&r.len()), "{}: {} rungs", spec.name, r.len());
+            assert!(r.windows(2).all(|w| w[0] < w[1]), "{}: {r:?}", spec.name);
+            assert!(r.iter().all(|&v| v >= spec.min - 1e-6 && v <= spec.max + 1e-6), "{}: {r:?}", spec.name);
+        }
     }
 
     #[test]
