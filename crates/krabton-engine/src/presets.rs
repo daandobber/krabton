@@ -985,14 +985,39 @@ static TOUCH: &[Preset] = &[
     pd("Pendulum", &[("Pulse", N(1.0)), ("Rate", C("1/8 T")), ("Sequencer", N(1.0)), ("Order", C("Pendulum")), ("Steps", N(6.0))], || crate::sequencers::touch::notes(&[0, 1, 2, 4, 5, 7])),
     pd("Random Walk", &[("Pulse", N(1.0)), ("Rate", C("1/8")), ("Sequencer", N(1.0)), ("Order", C("Drunk")), ("Latch", N(1.0))], || crate::sequencers::touch::notes(&[-2, 0, 3, 5, -4, 2, 7, 0])),
     pd("Ratchet Groove", &[("Pulse", N(1.0)), ("Rate", C("1/8")), ("Sequencer", N(1.0)), ("Pitch", N(0.0)), ("Swing", N(0.4)), ("Latch", N(1.0)), ("Gate", N(0.5))], || {
-        use crate::sequencers::touch::{pattern, Step};
+        use crate::sequencers::touch::{pattern, Gate, Step};
         let d = Step::default();
-        pattern(&[Step { accent: true, ..d }, d, Step { ratchet: 2, ..d }, Step { rest: true, ..d }, Step { accent: true, ..d }, Step { ratchet: 3, chance: 0.7, ..d }, d, Step { ratchet: 4, chance: 0.5, ..d }])
+        pattern(&[Step { accent: true, ..d }, d, Step { ratchet: 2, ..d }, Step { gate: Gate::Rest, ..d }, Step { accent: true, ..d }, Step { ratchet: 3, chance: 0.7, ..d }, d, Step { ratchet: 4, chance: 0.5, ..d }])
     }),
     pd("Power Riff", &[("Pulse", N(1.0)), ("Rate", C("1/8")), ("Sequencer", N(1.0)), ("Voicing", C("Power")), ("Run", N(1.0)), ("Gate", N(0.35))], || {
-        use crate::sequencers::touch::{pattern, Step};
-        let s = |note: i32, accent: bool, rest: bool| Step { note, accent, rest, ..Step::default() };
+        use crate::sequencers::touch::{pattern, Gate, Step};
+        let s = |note: i32, accent: bool, rest: bool| Step { note, accent, gate: if rest { Gate::Rest } else { Gate::Single }, ..Step::default() };
         pattern(&[s(0, true, false), s(0, false, false), s(0, false, true), s(3, true, false), s(0, false, false), s(5, false, false), s(4, true, false), s(-2, false, false)])
+    }),
+    pd("Stages", &[("Pulse", N(1.0)), ("Rate", C("1/16")), ("Sequencer", N(1.0)), ("Run", N(1.0)), ("Gate", N(0.5)), ("Steps", N(8.0))], || {
+        use crate::sequencers::touch::{pattern, Gate, Step};
+        let s = |note: i32, pulses: u8, gate: Gate| Step { note, pulses, gate, value: (note + 3) as f32 / 10.0, ..Step::default() };
+        pattern(&[s(0, 2, Gate::Every), s(4, 1, Gate::Single), s(2, 3, Gate::Hold), s(7, 1, Gate::Single), s(5, 2, Gate::Every), s(4, 4, Gate::Alternate), s(2, 1, Gate::Rest), s(-3, 2, Gate::Hold)])
+    }),
+    pd("Long and Short", &[("Pulse", N(1.0)), ("Rate", C("1/8")), ("Sequencer", N(1.0)), ("Latch", N(1.0)), ("Gate", N(0.4))], || {
+        use crate::sequencers::touch::{pattern, Gate, Step};
+        let s = |note: i32, pulses: u8, gate: Gate, tie: bool| Step { note, pulses, gate, tie, value: pulses as f32 / 4.0, ..Step::default() };
+        pattern(&[s(0, 4, Gate::Hold, false), s(2, 1, Gate::Single, false), s(4, 1, Gate::Single, false), s(5, 2, Gate::Single, true), s(4, 3, Gate::Hold, false), s(2, 1, Gate::Single, false), s(1, 1, Gate::Single, false), s(-1, 3, Gate::Last, false)])
+    }),
+    pd("Drum Roll", &[("Pulse", N(1.0)), ("Rate", C("1/8")), ("Sequencer", N(1.0)), ("Pitch", N(0.0)), ("Run", N(1.0)), ("Gate", N(0.4)), ("Steps", N(4.0))], || {
+        use crate::sequencers::touch::{pattern, Gate, Step};
+        let d = Step::default();
+        pattern(&[Step { accent: true, pulses: 2, gate: Gate::Every, value: 1.0, ..d }, Step { pulses: 2, gate: Gate::Single, value: 0.3, ..d }, Step { pulses: 4, gate: Gate::Roll, value: 0.6, ..d }, Step { accent: true, ratchet: 6, chance: 0.7, value: 0.9, ..d }])
+    }),
+    pd("Ratchet Eight", &[("Pulse", N(1.0)), ("Rate", C("1/4")), ("Sequencer", N(1.0)), ("Latch", N(1.0)), ("Gate", N(0.5)), ("Steps", N(6.0))], || {
+        use crate::sequencers::touch::{pattern, Step};
+        let s = |note: i32, ratchet: u8, accent: bool| Step { note, ratchet, accent, value: ratchet as f32 / 8.0, ..Step::default() };
+        pattern(&[s(0, 1, true), s(0, 8, false), s(2, 3, false), s(4, 6, true), s(2, 2, false), s(-1, 5, false)])
+    }),
+    pd("Skipping Stones", &[("Pulse", N(1.0)), ("Rate", C("1/16")), ("Sequencer", N(1.0)), ("Order", C("Pendulum")), ("Latch", N(1.0)), ("Gate", N(0.45)), ("Steps", N(12.0))], || {
+        use crate::sequencers::touch::{pattern, Gate, Step};
+        let s = |note: i32, pulses: u8, gate: Gate, skip: bool| Step { note, pulses, gate, skip, value: (note + 3) as f32 / 12.0, ..Step::default() };
+        pattern(&[s(0, 1, Gate::Single, false), s(2, 1, Gate::Single, true), s(4, 2, Gate::Every, false), s(5, 1, Gate::Single, false), s(7, 1, Gate::Single, true), s(9, 3, Gate::Last, false), s(7, 1, Gate::Single, false), s(4, 2, Gate::Alternate, true), s(2, 1, Gate::Single, false), s(1, 2, Gate::Every, false), s(-1, 1, Gate::Single, true), s(-3, 2, Gate::Hold, false)])
     }),
     pd("Arp Up", &[("Play", C("Arp")), ("Rate", C("1/16")), ("Octaves", N(2.0)), ("Voicing", C("Triad")), ("Latch", N(1.0)), ("Gate", N(0.5))], crate::sequencers::touch::default_data),
     pd("Arp Converge", &[("Play", C("Arp")), ("Arp Order", C("Converge")), ("Rate", C("1/16 T")), ("Octaves", N(3.0)), ("Voicing", C("Seventh")), ("Latch", N(1.0))], crate::sequencers::touch::default_data),

@@ -26,12 +26,20 @@
 //! where along the plates the hand is, an LFO, a drawn shape, the XY pad's X
 //! and Y, an envelope (once, held, or cycling) and each plate's own value.
 //!
-//! Its data (version 2): a version byte, sixteen steps of four bytes (note
-//! i8, value, chance, flags: ratchet - 1 in the low two bits, then rest, tie,
-//! accent), eight patch points (the instrument's parameters the Touch view
-//! shows, u16 little-endian, 0xFFFF: none), the shape's 32 points and each
-//! plate's value (24). The first version (five steps of two bytes and six
-//! patch points), and the second without the plates' values, are read too.
+//! Each step lasts one to eight pulses and its gate decides what they play:
+//! the first pulse (Single), every one (Every), one note held over them all
+//! (Hold), none (Rest), the last, every other one, or more notes on each
+//! pulse (Roll); a ratchet splits each note into one to eight. Steps can be
+//! skipped.
+//!
+//! Its data (version 3): a version byte, sixteen steps of six bytes (note i8,
+//! value, chance, ratchet - 1, pulses - 1, flags: the gate in the low three
+//! bits, then tie, accent, skip), eight patch points (the instrument's
+//! parameters the Touch view shows, u16 little-endian, 0xFFFF: none), the
+//! shape's 32 points and each plate's value (24). The first version (five
+//! steps of two bytes and six patch points) and the second (steps of four
+//! bytes: ratchets up to four and a rest, with or without the plates'
+//! values) are read too.
 
 use super::SeqState;
 use crate::midi_fx::{MidiCtx, MidiEvent};
@@ -91,6 +99,8 @@ const VOICING_NOTES: [&[(i32, i32)]; 11] = [
     &[(0, 0), (1, 0), (2, 0)],
     &[(0, -1), (4, 0), (2, 1)],
 ];
+/// What a step plays on its pulses.
+pub const GATES: &[&str] = &["Single", "Every", "Hold", "Rest", "Last", "Alternate", "Roll"];
 pub const ARP_ORDERS: &[&str] = &["Up", "Down", "Up-Down", "Random", "As Played", "Converge"];
 pub const LFO_SHAPES: &[&str] = &["Sine", "Triangle", "Saw", "Square", "S&H"];
 pub const SLOW_RATES: &[&str] = &["1/16", "1/8", "1/4", "1/2", "1 Bar", "2 Bars", "4 Bars", "8 Bars"];
@@ -109,14 +119,22 @@ pub const N_SHAPE: usize = 32;
 const MAX_HELD: usize = 16;
 const MAX_SOUNDING: usize = 48;
 
-const VERSION: u8 = 2;
+/// Ratchets and pulses: at most this many.
+pub const MAX_RATCHET: u8 = 8;
+pub const MAX_PULSES: u8 = 8;
+
+const VERSION: u8 = 3;
+const STEP_BYTES: usize = 6;
 const STEP_AT: usize = 1;
-const PATCH_AT: usize = STEP_AT + N_STEPS * 4;
+const PATCH_AT: usize = STEP_AT + N_STEPS * STEP_BYTES;
 const SHAPE_AT: usize = PATCH_AT + N_PATCH * 2;
 const PLATES_AT: usize = SHAPE_AT + N_SHAPE;
 const LEN: usize = PLATES_AT + N_PLATES;
-/// The second version's length (no plate values).
-const V2_LEN: usize = PLATES_AT;
+/// The second version: steps of four bytes, with the plates' values or (an
+/// older one) without.
+const V2_PATCH_AT: usize = STEP_AT + N_STEPS * 4;
+const V2_PLATES_AT: usize = V2_PATCH_AT + N_PATCH * 2 + N_SHAPE;
+const V2_LEN: usize = V2_PLATES_AT + N_PLATES;
 /// The first version's length (five steps of two bytes, six patch points).
 const V1_LEN: usize = 22;
 
@@ -160,6 +178,42 @@ pub static TOUCH: &[ParamSpec] = &[
     ParamSpec::int("Random Steps", "Motion", 0.0, 12.0, 0.0, Unit::None),
 ];
 
+/// What a step plays on its pulses (in the order of `GATES`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Gate {
+    /// A note on the first pulse.
+    #[default]
+    Single,
+    /// A note on every pulse.
+    Every,
+    /// One note held over all its pulses.
+    Hold,
+    /// Nothing.
+    Rest,
+    /// A note on the last pulse.
+    Last,
+    /// A note on every other pulse, the first first.
+    Alternate,
+    /// A note on every pulse, each with one more ratchet than the last.
+    Roll,
+}
+
+impl Gate {
+    pub const ALL: [Gate; 7] = [Gate::Single, Gate::Every, Gate::Hold, Gate::Rest, Gate::Last, Gate::Alternate, Gate::Roll];
+
+    pub fn from_index(i: usize) -> Gate {
+        Gate::ALL.get(i).copied().unwrap_or_default()
+    }
+
+    pub fn index(self) -> usize {
+        Gate::ALL.iter().position(|&g| g == self).unwrap_or(0)
+    }
+
+    pub fn name(self) -> &'static str {
+        GATES[self.index()]
+    }
+}
+
 /// One step of the sequence.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Step {
@@ -167,30 +221,67 @@ pub struct Step {
     pub note: i32,
     /// The value it gives the Steps output (0..1).
     pub value: f32,
-    /// How likely it plays (0..1).
+    /// How likely each of its notes plays (0..1).
     pub chance: f32,
-    /// Notes in the step (1..4).
+    /// Notes each of its notes is split into (1..8).
     pub ratchet: u8,
-    pub rest: bool,
+    /// Pulses it lasts (1..8).
+    pub pulses: u8,
+    /// What it plays on them.
+    pub gate: Gate,
     /// Held into the next step (legato).
     pub tie: bool,
     pub accent: bool,
+    /// Passed over.
+    pub skip: bool,
 }
 
 impl Default for Step {
     fn default() -> Self {
-        Self { note: 0, value: 0.0, chance: 1.0, ratchet: 1, rest: false, tie: false, accent: false }
+        Self { note: 0, value: 0.0, chance: 1.0, ratchet: 1, pulses: 1, gate: Gate::Single, tie: false, accent: false, skip: false }
     }
 }
 
-fn step_bytes(s: &Step) -> [u8; 4] {
-    let flags = (s.ratchet.clamp(1, 4) - 1) | (s.rest as u8) << 2 | (s.tie as u8) << 3 | (s.accent as u8) << 4;
-    [s.note.clamp(-14, 14) as i8 as u8, (s.value.clamp(0.0, 1.0) * 255.0).round() as u8, (s.chance.clamp(0.0, 1.0) * 255.0).round() as u8, flags]
+impl Step {
+    pub fn rests(&self) -> bool {
+        self.gate == Gate::Rest
+    }
 }
 
-/// The second version, with the plates' values or (an older one) without.
-fn is_v2(data: &[u8]) -> bool {
-    (data.len() == LEN || data.len() == V2_LEN) && data[0] == VERSION
+fn step_bytes(s: &Step) -> [u8; STEP_BYTES] {
+    let flags = s.gate.index() as u8 | (s.tie as u8) << 3 | (s.accent as u8) << 4 | (s.skip as u8) << 5;
+    [
+        s.note.clamp(-14, 14) as i8 as u8,
+        (s.value.clamp(0.0, 1.0) * 255.0).round() as u8,
+        (s.chance.clamp(0.0, 1.0) * 255.0).round() as u8,
+        s.ratchet.clamp(1, MAX_RATCHET) - 1,
+        s.pulses.clamp(1, MAX_PULSES) - 1,
+        flags,
+    ]
+}
+
+fn write_step(data: &mut [u8], i: usize, s: &Step) {
+    let at = STEP_AT + i * STEP_BYTES;
+    data[at..at + STEP_BYTES].copy_from_slice(&step_bytes(s));
+}
+
+fn write_patch(data: &mut [u8], k: usize, param: Option<u16>) {
+    data[PATCH_AT + k * 2..PATCH_AT + k * 2 + 2].copy_from_slice(&param.unwrap_or(0xFFFF).to_le_bytes());
+}
+
+fn is_current(data: &[u8]) -> bool {
+    data.len() == LEN && data[0] == VERSION
+}
+
+/// Where the patch points, the shape and the plates' values are in data of
+/// the second or third version: (version, patch points, shape, plates).
+fn layout(data: &[u8]) -> Option<(u8, usize, usize, Option<usize>)> {
+    match (data.first().copied(), data.len()) {
+        (Some(VERSION), LEN) => Some((3, PATCH_AT, SHAPE_AT, Some(PLATES_AT))),
+        (Some(2), V2_LEN) => Some((2, V2_PATCH_AT, V2_PATCH_AT + N_PATCH * 2, Some(V2_PLATES_AT))),
+        (Some(2), V2_PLATES_AT) => Some((2, V2_PATCH_AT, V2_PATCH_AT + N_PATCH * 2, None)),
+        _ => None,
+    }
 }
 
 /// A pattern's data from its steps (the rest of the sixteen plain), no patch
@@ -199,11 +290,10 @@ pub fn pattern(steps: &[Step]) -> Vec<u8> {
     let mut d = vec![0u8; LEN];
     d[0] = VERSION;
     for i in 0..N_STEPS {
-        let s = steps.get(i).copied().unwrap_or_default();
-        d[STEP_AT + i * 4..STEP_AT + i * 4 + 4].copy_from_slice(&step_bytes(&s));
+        write_step(&mut d, i, &steps.get(i).copied().unwrap_or_default());
     }
     for k in 0..N_PATCH {
-        d[PATCH_AT + k * 2..PATCH_AT + k * 2 + 2].copy_from_slice(&0xFFFFu16.to_le_bytes());
+        write_patch(&mut d, k, None);
     }
     for j in 0..N_SHAPE {
         d[SHAPE_AT + j] = default_shape(j);
@@ -222,10 +312,9 @@ fn default_plate(k: usize) -> u8 {
 /// Plate `k`'s value (0..1).
 pub fn plate_value(data: &[u8], k: usize) -> f32 {
     let k = k % N_PLATES;
-    if data.len() == LEN && data[0] == VERSION {
-        data[PLATES_AT + k] as f32 / 255.0
-    } else {
-        default_plate(k) as f32 / 255.0
+    match layout(data).and_then(|l| l.3) {
+        Some(at) => data[at + k] as f32 / 255.0,
+        None => default_plate(k) as f32 / 255.0,
     }
 }
 
@@ -254,65 +343,77 @@ pub fn default_data() -> Vec<u8> {
 
 /// Data of any version made the current one, keeping what it had.
 pub fn whole(data: &mut Vec<u8>) {
-    if data.len() == LEN && data[0] == VERSION {
-        return;
-    }
-    if data.len() == V2_LEN && data[0] == VERSION {
-        // The second version without the plates' values: theirs at first.
-        for k in 0..N_PLATES {
-            data.push(default_plate(k));
-        }
+    if is_current(data) {
         return;
     }
     let old = std::mem::take(data);
     *data = default_data();
-    if old.len() == V1_LEN {
-        for i in 0..N_STEPS {
-            let s = if i < 5 { Step { note: (old[i * 2] as i8) as i32, value: old[i * 2 + 1] as f32 / 255.0, ..Step::default() } } else { Step::default() };
-            data[STEP_AT + i * 4..STEP_AT + i * 4 + 4].copy_from_slice(&step_bytes(&s));
-        }
-        for k in 0..N_PATCH {
-            let v = if k < 6 { [old[10 + k * 2], old[11 + k * 2]] } else { [0xFF, 0xFF] };
-            data[PATCH_AT + k * 2..PATCH_AT + k * 2 + 2].copy_from_slice(&v);
-        }
+    if layout(&old).is_none() && old.len() != V1_LEN {
+        return;
+    }
+    for i in 0..N_STEPS {
+        write_step(data, i, &step(&old, i));
+    }
+    for k in 0..N_PATCH {
+        write_patch(data, k, patch(&old, k));
+    }
+    for j in 0..N_SHAPE {
+        data[SHAPE_AT + j] = (shape(&old, j) * 255.0).round() as u8;
+    }
+    for k in 0..N_PLATES {
+        data[PLATES_AT + k] = (plate_value(&old, k) * 255.0).round() as u8;
     }
 }
 
 /// Step `i` (of any version's data).
 pub fn step(data: &[u8], i: usize) -> Step {
-    if is_v2(data) && i < N_STEPS {
-        let b = &data[STEP_AT + i * 4..STEP_AT + i * 4 + 4];
-        return Step {
-            note: ((b[0] as i8) as i32).clamp(-14, 14),
-            value: b[1] as f32 / 255.0,
-            chance: b[2] as f32 / 255.0,
-            ratchet: (b[3] & 3) + 1,
-            rest: b[3] & 4 != 0,
-            tie: b[3] & 8 != 0,
-            accent: b[3] & 16 != 0,
-        };
+    match layout(data) {
+        Some((3, ..)) if i < N_STEPS => {
+            let b = &data[STEP_AT + i * STEP_BYTES..STEP_AT + (i + 1) * STEP_BYTES];
+            Step {
+                note: ((b[0] as i8) as i32).clamp(-14, 14),
+                value: b[1] as f32 / 255.0,
+                chance: b[2] as f32 / 255.0,
+                ratchet: (b[3] + 1).min(MAX_RATCHET),
+                pulses: (b[4] + 1).min(MAX_PULSES),
+                gate: Gate::from_index((b[5] & 7) as usize),
+                tie: b[5] & 8 != 0,
+                accent: b[5] & 16 != 0,
+                skip: b[5] & 32 != 0,
+            }
+        }
+        Some((2, ..)) if i < N_STEPS => {
+            // Ratchets up to four and a rest.
+            let b = &data[STEP_AT + i * 4..STEP_AT + i * 4 + 4];
+            Step {
+                note: ((b[0] as i8) as i32).clamp(-14, 14),
+                value: b[1] as f32 / 255.0,
+                chance: b[2] as f32 / 255.0,
+                ratchet: (b[3] & 3) + 1,
+                gate: if b[3] & 4 != 0 { Gate::Rest } else { Gate::Single },
+                tie: b[3] & 8 != 0,
+                accent: b[3] & 16 != 0,
+                ..Step::default()
+            }
+        }
+        None if data.len() == V1_LEN && i < 5 => Step { note: ((data[i * 2] as i8) as i32).clamp(-7, 7), value: data[i * 2 + 1] as f32 / 255.0, ..Step::default() },
+        _ => Step::default(),
     }
-    if data.len() == V1_LEN && i < 5 {
-        return Step { note: ((data[i * 2] as i8) as i32).clamp(-7, 7), value: data[i * 2 + 1] as f32 / 255.0, ..Step::default() };
-    }
-    Step::default()
 }
 
 pub fn set_step(data: &mut Vec<u8>, i: usize, s: Step) {
     whole(data);
     if i < N_STEPS {
-        data[STEP_AT + i * 4..STEP_AT + i * 4 + 4].copy_from_slice(&step_bytes(&s));
+        write_step(data, i, &s);
     }
 }
 
 /// The instrument parameter on patch point `k`, if one is set.
 pub fn patch(data: &[u8], k: usize) -> Option<u16> {
-    let at = if is_v2(data) && k < N_PATCH {
-        PATCH_AT + k * 2
-    } else if data.len() == V1_LEN && k < 6 {
-        10 + k * 2
-    } else {
-        return None;
+    let at = match layout(data) {
+        Some((_, at, ..)) if k < N_PATCH => at + k * 2,
+        None if data.len() == V1_LEN && k < 6 => 10 + k * 2,
+        _ => return None,
     };
     let v = u16::from_le_bytes([data[at], data[at + 1]]);
     (v != 0xFFFF).then_some(v)
@@ -321,17 +422,16 @@ pub fn patch(data: &[u8], k: usize) -> Option<u16> {
 pub fn set_patch(data: &mut Vec<u8>, k: usize, param: Option<u16>) {
     whole(data);
     if k < N_PATCH {
-        data[PATCH_AT + k * 2..PATCH_AT + k * 2 + 2].copy_from_slice(&param.unwrap_or(0xFFFF).to_le_bytes());
+        write_patch(data, k, param);
     }
 }
 
 /// The drawn shape's point `j` (0..1).
 pub fn shape(data: &[u8], j: usize) -> f32 {
     let j = j % N_SHAPE;
-    if is_v2(data) {
-        data[SHAPE_AT + j] as f32 / 255.0
-    } else {
-        default_shape(j) as f32 / 255.0
+    match layout(data) {
+        Some((_, _, at, _)) => data[at + j] as f32 / 255.0,
+        None => default_shape(j) as f32 / 255.0,
     }
 }
 
@@ -349,13 +449,15 @@ pub fn shape_at(data: &[u8], phase: f32) -> f32 {
 }
 
 /// What the screen is told: the step, how many steps, the pulses so far,
-/// the note played last, whether the sequencer runs, and the outputs.
+/// the note played last, whether the sequencer runs, which of its step's
+/// pulses it is at, and the outputs.
 pub struct Seen {
     pub step: usize,
     pub steps: usize,
     pub pulses: u32,
     pub last_note: u8,
     pub seq: bool,
+    pub pulse: usize,
     pub outs: [f32; N_OUT],
 }
 
@@ -364,7 +466,7 @@ pub fn read_visual(v: [u64; 4]) -> Seen {
         let (word, at) = if k < 8 { (v[1], k) } else { (v[2], k - 8) };
         ((word >> (at * 8)) & 0xFF) as f32 / 255.0
     });
-    Seen { step: (v[0] & 0xFF) as usize, steps: ((v[0] >> 8) & 0xFF) as usize, pulses: ((v[0] >> 16) & 0xFFFF) as u32, last_note: ((v[0] >> 32) & 0x7F) as u8, seq: (v[0] >> 40) & 1 == 1, outs }
+    Seen { step: (v[0] & 0xFF) as usize, steps: ((v[0] >> 8) & 0xFF) as usize, pulses: ((v[0] >> 16) & 0xFFFF) as u32, last_note: ((v[0] >> 32) & 0x7F) as u8, seq: (v[0] >> 40) & 1 == 1, pulse: ((v[0] >> 41) & 7) as usize, outs }
 }
 
 /// A small fixed set of notes (the audio thread never allocates).
@@ -423,6 +525,9 @@ pub struct TouchState {
     clock: f64,
     last_pulse: Option<i64>,
     step: usize,
+    /// Pulses of the step so far, and how many it lasts.
+    pulse: u8,
+    of: u8,
     backwards: bool,
     arp: usize,
     strum_up: bool,
@@ -454,6 +559,8 @@ impl Default for TouchState {
             last_pulse: None,
             // The first step taken is the first.
             step: N_STEPS - 1,
+            pulse: 0,
+            of: 0,
             backwards: false,
             arp: 0,
             strum_up: false,
@@ -530,6 +637,58 @@ impl Hits {
             self.n += 1;
         }
     }
+}
+
+/// What a step lets through on a pulse: notes split in `ratchet`, louder,
+/// held into the next step, held over its pulses, and how many pulses its
+/// note covers.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Gates {
+    ratchet: u8,
+    accent: bool,
+    tie: bool,
+    hold: bool,
+    span: u8,
+}
+
+impl Gates {
+    const PLAIN: Gates = Gates { ratchet: 1, accent: false, tie: false, hold: false, span: 1 };
+
+    /// How long its notes are (`len` as the gate knob sets it): a tie into
+    /// the next step, a held note over its pulses.
+    fn length(&self, interval: f64, len: f64) -> f64 {
+        if self.tie {
+            interval * (self.span as f64 + 0.05)
+        } else if self.hold {
+            interval * self.span as f64 * 0.97
+        } else {
+            len
+        }
+    }
+}
+
+/// A step's pulse `k` (of `of`): what its gate plays there.
+fn gates_of(st: &Step, k: u8, of: u8) -> Option<Gates> {
+    let last = k + 1 >= of;
+    let left = of.saturating_sub(k).max(1);
+    let r = st.ratchet.clamp(1, MAX_RATCHET);
+    let (ratchet, hold, span) = match st.gate {
+        Gate::Rest => return None,
+        Gate::Single if k == 0 => (r, false, left),
+        Gate::Every => (r, false, 1),
+        Gate::Hold if k == 0 => (1, true, left),
+        Gate::Last if last => (r, false, 1),
+        Gate::Alternate if k % 2 == 0 => (r, false, left.min(2)),
+        Gate::Roll => ((r + k).min(MAX_RATCHET), false, 1),
+        _ => return None,
+    };
+    Some(Gates { ratchet, accent: st.accent, tie: st.tie, hold, span })
+}
+
+/// What a step plays on its pulse `k`: how many notes (0: none), and
+/// whether that note is held over the rest of its pulses.
+pub fn plays(st: &Step, k: u8) -> (u8, bool) {
+    gates_of(st, k, st.pulses.clamp(1, MAX_PULSES)).map(|g| (g.ratchet, g.hold)).unwrap_or((0, false))
 }
 
 fn param(p: &[f32], i: usize, or: f32) -> f32 {
@@ -722,7 +881,7 @@ impl SeqState {
         let outs = [pressure, t.env, value, random, t.drift, ctx.touch[1].clamp(0.0, 1.0), lfo, drawn, ctx.touch[2].clamp(0.0, 1.0), ctx.touch[3].clamp(0.0, 1.0), t.env2, ctx.touch[4].clamp(0.0, 1.0)];
         self.touch_out = outs;
         let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u64;
-        self.visual[0] = shown as u64 | (steps as u64) << 8 | ((self.touch.pulses & 0xFFFF) as u64) << 16 | ((self.touch.last_note & 0x7F) as u64) << 32 | (seq as u64) << 40;
+        self.visual[0] = shown as u64 | (steps as u64) << 8 | ((self.touch.pulses & 0xFFFF) as u64) << 16 | ((self.touch.last_note & 0x7F) as u64) << 32 | (seq as u64) << 40 | ((self.touch.pulse.saturating_sub(1) & 7) as u64) << 41;
         self.visual[1] = (0..8).fold(0u64, |a, k| a | byte(outs[k]) << (k * 8));
         self.visual[2] = (8..N_OUT).fold(0u64, |a, k| a | byte(outs[k]) << ((k - 8) * 8));
     }
@@ -738,9 +897,7 @@ impl SeqState {
         let rests = chance < 1.0 && unit(&mut self.rng) >= chance;
         let Some(plate) = source.filter(|_| !rests) else {
             // Nothing to play (or chance rests): the sequence and the outputs still move.
-            if param(p, SEQ, 0.0) >= 0.5 {
-                self.touch_advance(p);
-            }
+            self.touch_step(p, data);
             self.touch_outputs();
             return;
         };
@@ -764,14 +921,14 @@ impl SeqState {
         let interval = rate_beats(p) * ctx.samples_per_beat;
         let st = self.touch_step(p, data);
         self.touch_outputs();
-        let Some((ratchet, accent, tie)) = self.touch_gates(p, st) else { return };
-        let vel = if accent { (vel * 1.3).min(1.0) } else { vel };
-        // A tie holds into the next pulse; ratchets split the pulse.
-        let len = if clocked && tie { interval * 1.05 } else { len };
-        let ratchet = if clocked { ratchet } else { 1 };
+        let Some(g) = self.touch_gates(p, st) else { return };
+        let vel = if g.accent { (vel * 1.3).min(1.0) } else { vel };
+        // A tie holds into the next step, Hold over the step's pulses; ratchets split the pulse.
+        let len = if clocked { g.length(interval, len) } else { len };
+        let ratchet = if clocked { g.ratchet } else { 1 };
         let sub = interval / ratchet as f64;
         let rlen = if ratchet > 1 { (sub * gate(p)).min(len) } else { len };
-        let shift = self.touch_shift(p, st);
+        let shift = self.touch_shift(p, st.map(|s| s.0));
         let voicing = VOICING_NOTES[choice(p, VOICING, VOICING_NOTES.len())];
         let play = choice(p, PLAY, PLAYS.len());
         let strum = (param(p, STRUM, 0.04).clamp(0.005, 0.25) * ctx.sr) as u64;
@@ -813,8 +970,8 @@ impl SeqState {
     fn touch_arp(&mut self, p: &[f32], data: &[u8], ctx: &MidiCtx, at: u64, plate: u8, vel: f32, len: f64, latch: bool, run: bool, hits: &mut Hits) {
         let st = self.touch_step(p, data);
         self.touch_outputs();
-        let Some((ratchet, accent, tie)) = self.touch_gates(p, st) else { return };
-        let shift = self.touch_shift(p, st);
+        let Some(g) = self.touch_gates(p, st) else { return };
+        let shift = self.touch_shift(p, st.map(|s| s.0));
         let voicing = VOICING_NOTES[choice(p, VOICING, VOICING_NOTES.len())];
         let octaves = param(p, OCTAVES, 1.0).round().clamp(1.0, 4.0) as i32;
         let plates = if self.touch.held.n > 0 {
@@ -871,9 +1028,10 @@ impl SeqState {
             _ => i % n,
         };
         let note = pool.v[idx];
-        let vel = if accent { (vel * 1.3).min(1.0) } else { vel };
+        let vel = if g.accent { (vel * 1.3).min(1.0) } else { vel };
         let interval = rate_beats(p) * ctx.samples_per_beat;
-        let len = if tie { interval * 1.05 } else { len };
+        let len = g.length(interval, len);
+        let ratchet = g.ratchet;
         let sub = interval / ratchet as f64;
         for r in 0..ratchet {
             let rlen = if ratchet > 1 { (sub * gate(p)).min(len) } else { len };
@@ -882,24 +1040,39 @@ impl SeqState {
         self.touch.last_note = note;
     }
 
-    /// The sequence a step further (when it runs), and that step.
-    fn touch_step(&mut self, p: &[f32], data: &[u8]) -> Option<Step> {
+    /// A pulse of the sequence (when it runs): a step further once the
+    /// step's pulses are done (past the steps skipped), and that step with
+    /// which of its pulses this is and how many it lasts.
+    fn touch_step(&mut self, p: &[f32], data: &[u8]) -> Option<(Step, u8, u8)> {
         if param(p, SEQ, 0.0) < 0.5 {
             return None;
         }
-        self.touch_advance(p);
         let n = (param(p, STEPS, 8.0).round() as usize).clamp(1, N_STEPS);
-        Some(step(data, self.touch.step.min(n - 1)))
+        if self.touch.pulse >= self.touch.of || self.touch.step >= n {
+            // The next step not skipped (all skipped: the next one anyway).
+            for _ in 0..n {
+                self.touch_advance(p);
+                if !step(data, self.touch.step.min(n - 1)).skip {
+                    break;
+                }
+            }
+            self.touch.pulse = 0;
+            self.touch.of = step(data, self.touch.step.min(n - 1)).pulses.clamp(1, MAX_PULSES);
+        }
+        let k = self.touch.pulse;
+        self.touch.pulse += 1;
+        Some((step(data, self.touch.step.min(n - 1)), k, self.touch.of))
     }
 
-    /// What a step lets through when it decides (Trigger): (ratchet, accent,
-    /// tie), or None for a rest (or a step its chance leaves out).
-    fn touch_gates(&mut self, p: &[f32], st: Option<Step>) -> Option<(u8, bool, bool)> {
-        let Some(st) = st.filter(|_| param(p, TRIGGER, 1.0) >= 0.5) else { return Some((1, false, false)) };
-        if st.rest || (st.chance < 1.0 && unit(&mut self.rng) >= st.chance) {
+    /// What a step lets through on a pulse when it decides (Trigger), or
+    /// None: its gate plays nothing there (or its chance leaves the note out).
+    fn touch_gates(&mut self, p: &[f32], st: Option<(Step, u8, u8)>) -> Option<Gates> {
+        let Some((st, k, of)) = st.filter(|_| param(p, TRIGGER, 1.0) >= 0.5) else { return Some(Gates::PLAIN) };
+        let g = gates_of(&st, k, of)?;
+        if st.chance < 1.0 && unit(&mut self.rng) >= st.chance {
             return None;
         }
-        Some((st.ratchet.clamp(1, 4), st.accent, st.tie))
+        Some(g)
     }
 
     /// How many scale steps a note moves: the step (Pitch), and Wander.
@@ -1105,7 +1278,7 @@ mod tests {
         p[RUN] = 1.0;
         p[BASE] = 60.0;
         p[STEPS] = 4.0;
-        let steps = [Step { rest: true, ..Step::default() }, Step { ratchet: 3, ..Step::default() }, Step { accent: true, ..Step::default() }, Step::default()];
+        let steps = [Step { gate: Gate::Rest, ..Step::default() }, Step { ratchet: 3, ..Step::default() }, Step { accent: true, ..Step::default() }, Step::default()];
         let data = pattern(&steps);
         // Run: no plate needed. Pulses at beats 0..3 play steps 1 to 4.
         let (evs, _) = run(&p, &data, beats(4.0), &[], false);
@@ -1256,12 +1429,13 @@ mod tests {
     #[test]
     fn data_keeps_steps_patch_points_and_shape_and_reads_the_first_version() {
         let mut d = default_data();
-        let s = Step { note: -5, value: 0.5, chance: 0.25, ratchet: 3, rest: false, tie: true, accent: true };
+        let s = Step { note: -5, value: 0.5, chance: 0.25, ratchet: 7, pulses: 5, gate: Gate::Roll, tie: true, accent: true, skip: true };
         set_step(&mut d, 11, s);
         set_patch(&mut d, 7, Some(17));
         set_shape(&mut d, 3, 1.0);
         let back = step(&d, 11);
-        assert_eq!((back.note, back.ratchet, back.tie, back.accent, back.rest), (-5, 3, true, true, false));
+        assert_eq!((back.note, back.ratchet, back.pulses, back.gate, back.tie, back.accent, back.skip), (-5, 7, 5, Gate::Roll, true, true, true));
+        assert_eq!(step(&d, 10).gate, Gate::Single);
         assert!((back.value - 0.5).abs() < 0.01 && (back.chance - 0.25).abs() < 0.01);
         assert_eq!((patch(&d, 7), patch(&d, 0)), (Some(17), None));
         assert_eq!(shape(&d, 3), 1.0);
@@ -1273,7 +1447,82 @@ mod tests {
         assert_eq!(v1.len(), 22);
         assert_eq!((step(&v1, 0).note, step(&v1, 1).note, patch(&v1, 1)), (2, -2, Some(5)));
         set_shape(&mut v1, 0, 0.5);
-        assert!(is_v2(&v1));
+        assert!(is_current(&v1));
         assert_eq!((step(&v1, 0).note, step(&v1, 1).note, patch(&v1, 1), patch(&v1, 6)), (2, -2, Some(5), None));
+    }
+
+    /// Run on, the base note C (60), C major: a step's note n is the key's n-th note up.
+    fn stages(steps: &[Step], beats_long: f64) -> Vec<(u64, u8, bool, f32)> {
+        let mut p = defaults(TOUCH);
+        p[SEQ] = 1.0;
+        p[PULSE] = 1.0;
+        p[RATE] = 6.0;
+        p[RUN] = 1.0;
+        p[BASE] = 60.0;
+        p[STEPS] = steps.len() as f32;
+        run(&p, &pattern(steps), beats(beats_long), &[], false).0
+    }
+
+    #[test]
+    fn a_step_lasts_its_pulses_and_its_gate_decides_what_they_play() {
+        let st = |note: i32, pulses: u8, gate: Gate| Step { note, pulses, gate, ..Step::default() };
+        let steps = [st(0, 3, Gate::Every), st(1, 2, Gate::Single), st(2, 3, Gate::Hold), st(3, 2, Gate::Rest), st(4, 3, Gate::Last)];
+        let evs = stages(&steps, 13.0);
+        let b = 24_000;
+        assert_eq!(ons(&evs), vec![(0, 60), (b, 60), (2 * b, 60), (3 * b, 62), (5 * b, 64), (12 * b, 67)], "every pulse, the first, held, none, the last");
+        let off = |pitch: u8, after: u64| evs.iter().find(|e| !e.2 && e.1 == pitch && e.0 > after).map(|e| e.0).unwrap();
+        assert!(off(62, 3 * b) < 4 * b, "Single: as long as the gate");
+        assert!(off(64, 5 * b) > 7 * b + b / 2, "Hold: over its three pulses");
+    }
+
+    #[test]
+    fn alternate_roll_and_ratchets_up_to_eight() {
+        let steps = [Step { note: 0, pulses: 4, gate: Gate::Alternate, ..Step::default() }, Step { note: 1, pulses: 3, gate: Gate::Roll, ..Step::default() }, Step { note: 2, ratchet: 8, ..Step::default() }];
+        let evs = stages(&steps, 8.0);
+        let count = |pitch: u8| ons(&evs).iter().filter(|e| e.1 == pitch).count();
+        assert_eq!((count(60), count(62), count(64)), (2, 1 + 2 + 3, 8), "every other pulse, more each pulse, eight in one");
+        let eight: Vec<u64> = ons(&evs).iter().filter(|e| e.1 == 64).map(|e| e.0).collect();
+        assert_eq!(eight[1] - eight[0], 3_000, "a beat split in eight");
+    }
+
+    #[test]
+    fn skipped_steps_are_passed_over() {
+        let st = |note: i32, skip: bool| Step { note, skip, ..Step::default() };
+        let evs = stages(&[st(0, false), st(1, true), st(2, false), st(3, true)], 4.0);
+        let notes: Vec<u8> = ons(&evs).iter().map(|e| e.1).collect();
+        assert_eq!(notes, vec![60, 64, 60, 64]);
+        // All of them skipped: it still goes on.
+        let evs = stages(&[st(0, true), st(1, true)], 4.0);
+        assert_eq!(ons(&evs).len(), 4);
+    }
+
+    #[test]
+    fn the_second_version_is_read_and_made_the_third() {
+        let mut v2 = vec![0u8; 137];
+        v2[0] = 2;
+        for i in 0..N_STEPS {
+            v2[1 + i * 4 + 2] = 255;
+        }
+        // Step 4: note -3, ratchet 3, a rest, an accent.
+        v2[1 + 3 * 4..1 + 3 * 4 + 4].copy_from_slice(&[(-3i8) as u8, 128, 255, 2 | 4 | 16]);
+        for k in 0..N_PATCH {
+            v2[65 + k * 2..67 + k * 2].copy_from_slice(&(if k == 2 { 9u16 } else { 0xFFFF }).to_le_bytes());
+        }
+        v2[81 + 5] = 255;
+        v2[113 + 1] = 77;
+        let s = step(&v2, 3);
+        assert_eq!((s.note, s.ratchet, s.gate, s.accent, s.pulses), (-3, 3, Gate::Rest, true, 1));
+        assert_eq!((patch(&v2, 2), patch(&v2, 0), shape(&v2, 5)), (Some(9), None, 1.0));
+        set_step(&mut v2, 0, Step { note: 1, ..Step::default() });
+        assert!(is_current(&v2));
+        let s = step(&v2, 3);
+        assert_eq!((s.note, s.ratchet, s.gate, s.accent, step(&v2, 0).note), (-3, 3, Gate::Rest, true, 1));
+        assert_eq!((patch(&v2, 2), shape(&v2, 5), (plate_value(&v2, 1) * 255.0).round()), (Some(9), 1.0, 77.0));
+        // Without the plates' values: theirs at first.
+        let mut short = vec![0u8; 113];
+        short[0] = 2;
+        assert_eq!(plate_value(&short, 7), 1.0);
+        whole(&mut short);
+        assert_eq!((short.len(), plate_value(&short, 7)), (LEN, 1.0));
     }
 }

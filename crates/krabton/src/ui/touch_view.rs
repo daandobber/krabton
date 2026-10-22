@@ -2,9 +2,11 @@
 //! (see `sequencers::touch`). Along the top: how it plays (notes, an
 //! arpeggio, strummed, echoing; one note or a chord per plate; the pulser
 //! with swing, Latch and Run, chance and wander), the sixteen-step sequencer
-//! (switched on and off, Trigger and Pitch apart, its lanes painted by
-//! dragging across them, with dice, mutate, shift, reverse, clear and a
-//! recorder that writes the plates played into the steps), and the patch bay:
+//! (switched on and off, Trigger and Pitch apart; each step a note, one to
+//! eight pulses and a gate for what they play, a value, chance or ratchet,
+//! tie, accent and skip, its lanes painted by dragging across them, with
+//! dice, mutate, shift, reverse, clear and a recorder that writes the plates
+//! played into the steps), and the patch bay:
 //! cables from ten outputs to eight of the instrument's knobs, each with its
 //! amount. Along the bottom the plates (a row, wide, or a grid of rows a
 //! fourth apart; in the key, pentatonic or chromatic): higher up a plate
@@ -27,7 +29,7 @@ use krabton_engine::midi_fx::MidiFxKind;
 use krabton_engine::modulation::{instrument_specs, ModKind, ModOwner, ModTarget, MAX_MODS};
 use krabton_engine::params::{ParamKind, ParamSpec};
 use krabton_engine::project::TrackKind;
-use krabton_engine::sequencers::touch::{self, Step, N_OUT, N_PATCH, N_SHAPE, N_STEPS, OUTPUTS};
+use krabton_engine::sequencers::touch::{self, Gate, Step, MAX_PULSES, MAX_RATCHET, N_OUT, N_PATCH, N_SHAPE, N_STEPS, OUTPUTS};
 
 /// The colours of the outputs, and of their cables.
 pub(crate) const OUT_COLORS: [Color32; N_OUT] = [
@@ -82,8 +84,11 @@ pub struct TouchViewState {
     rec: Option<usize>,
     /// Recording the shape with the XY pad.
     shape_rec: bool,
-    /// A lane being painted: what a toggle lane is set to.
+    /// A lane being painted: what a toggle lane is set to, what the Gate lane.
     paint: Option<bool>,
+    paint_gate: Option<Gate>,
+    /// What the third lane shows: the steps' values, chances or ratchets.
+    lane_tab: usize,
     /// The plates' values are being set (dragging sets them instead of playing).
     values: bool,
 }
@@ -288,7 +293,8 @@ impl Dice {
 }
 
 /// Rolls a new sequence: a walk through the key with small steps more
-/// likely, values, a few rests, ratchets, accents and steps by chance.
+/// likely, values, a few rests, longer steps and other gates, ratchets,
+/// accents and steps by chance.
 fn dice(data: &mut Vec<u8>, n: usize, seed: f64) {
     let mut r = Dice::new(seed);
     let mut note = 0i32;
@@ -296,14 +302,32 @@ fn dice(data: &mut Vec<u8>, n: usize, seed: f64) {
         let u = r.unit();
         let mv = if u < 0.3 { 0 } else if u < 0.7 { 1 } else if u < 0.9 { 2 } else { 4 };
         note = (note + if r.unit() < 0.5 { mv } else { -mv }).clamp(-7, 9);
+        let u = r.unit();
+        let gate = if i > 0 && u < 0.14 {
+            Gate::Rest
+        } else if u < 0.24 {
+            Gate::Every
+        } else if u < 0.31 {
+            Gate::Hold
+        } else if u < 0.35 {
+            Gate::Alternate
+        } else if u < 0.38 {
+            Gate::Roll
+        } else if u < 0.41 {
+            Gate::Last
+        } else {
+            Gate::Single
+        };
         let s = Step {
             note,
             value: r.unit(),
             chance: if r.unit() < 0.15 { 0.5 + r.unit() * 0.4 } else { 1.0 },
-            ratchet: if r.unit() < 0.12 { 2 + (r.unit() * 2.0) as u8 } else { 1 },
-            rest: i > 0 && r.unit() < 0.15,
+            ratchet: if r.unit() < 0.12 { 2 + (r.unit() * 4.0) as u8 } else { 1 },
+            pulses: if r.unit() < 0.22 { 2 + (r.unit() * 3.0) as u8 } else { 1 },
+            gate,
             tie: r.unit() < 0.06,
             accent: i % 4 == 0 && r.unit() < 0.6,
+            skip: false,
         };
         touch::set_step(data, i, s);
     }
@@ -315,11 +339,13 @@ fn mutate(data: &mut Vec<u8>, n: usize, seed: f64) {
     for _ in 0..(1 + n / 5) {
         let i = ((r.unit() * n as f32) as usize).min(n - 1);
         let mut s = touch::step(data, i);
-        match (r.unit() * 4.0) as u32 {
+        match (r.unit() * 6.0) as u32 {
             0 => s.note = (s.note + if r.unit() < 0.5 { 1 } else { -1 }).clamp(-14, 14),
             1 => s.note = (s.note + if r.unit() < 0.5 { 2 } else { -2 }).clamp(-14, 14),
-            2 => s.rest = !s.rest,
-            _ => s.ratchet = if s.ratchet > 1 { 1 } else { 2 },
+            2 => s.gate = if s.rests() { Gate::Single } else { Gate::Rest },
+            3 => s.ratchet = if s.ratchet > 1 { 1 } else { 2 + (r.unit() * 3.0) as u8 },
+            4 => s.pulses = if s.pulses > 1 { 1 } else { 2 + (r.unit() * 2.0) as u8 },
+            _ => s.gate = Gate::from_index((s.gate.index() + 1) % Gate::ALL.len()),
         }
         s.value = (s.value + (r.unit() - 0.5) * 0.3).clamp(0.0, 1.0);
         touch::set_step(data, i, s);
@@ -435,7 +461,9 @@ impl App {
         let note = (key.locate(pitch as i32).0 - key.locate(base).0).clamp(-14, 14);
         let mut s = touch::step(&dev.data, at);
         s.note = note;
-        s.rest = false;
+        if s.rests() {
+            s.gate = Gate::Single;
+        }
         touch::set_step(&mut dev.data, at, s);
         dev.params[touch::SEQ] = 1.0;
         dev.params[touch::PITCH] = 1.0;
@@ -455,7 +483,7 @@ impl App {
         let now = ui.input(|i| i.time);
         let status = self.status();
         let vis = status.seqs.read(self.project.tracks[ti].midi_devices[di].id);
-        let seen = vis.map(touch::read_visual).unwrap_or(touch::Seen { step: 0, steps: 8, pulses: 0, last_note: 0, seq: false, outs: [0.0; N_OUT] });
+        let seen = vis.map(touch::read_visual).unwrap_or(touch::Seen { step: 0, steps: 8, pulses: 0, last_note: 0, seq: false, pulse: 0, outs: [0.0; N_OUT] });
         let outs = seen.outs;
         if seen.pulses != self.touch_view.pulses {
             self.touch_view.pulses = seen.pulses;
@@ -588,7 +616,7 @@ impl App {
         let mut x = seq_r.right() - 10.0 - 3.0 * (tbw + 4.0);
         for (k, label, tip) in [
             (touch::SEQ, "On", "The sequencer on: each pulse (or each touch, without the pulser) a step further"),
-            (touch::TRIGGER, "Trigger", "The steps decide which notes play: rests, each step's chance, ratchets, accents, ties"),
+            (touch::TRIGGER, "Trigger", "The steps decide which notes play: each step's gate over its pulses, its chance, ratchets, accents, ties"),
             (touch::PITCH, "Pitch", "The steps move the notes through the key (the Note lane)"),
         ] {
             let on = dev.params[k] >= 0.5;
@@ -606,12 +634,12 @@ impl App {
         changed |= choice(ui, Rect::from_min_size(tools.min, vec2(order_w, 22.0)), Id::new(("touch_order", tid)), &specs[touch::ORDER], &mut dev.params[touch::ORDER]);
         let names: [(&str, &str); 7] = [
             ("Rec", "Record: the plates you play go into the steps, one after the other (the sequencer goes on)"),
-            ("Dice", "A new sequence: a walk through the key, with some rests, ratchets, accents and chances"),
+            ("Dice", "A new sequence: a walk through the key, with some rests, longer steps, gates, ratchets, accents and chances"),
             ("Mutate", "Changes a few steps a little"),
             ("◀", "Shift the steps one to the left"),
             ("▶", "Shift the steps one to the right"),
             ("Rev", "Reverse the steps"),
-            ("Clear", "Every step plain: the base note, no rests or ratchets"),
+            ("Clear", "Every step plain: the base note, one pulse, Single, no ratchets"),
         ];
         let bw = ((tools.width() - order_w - 6.0) / names.len() as f32 - 3.0).max(24.0);
         let mut tool = None;
@@ -667,18 +695,25 @@ impl App {
         let num_h = 15.0;
         let gh = grid.height() - num_h - 4.0;
         // The small lanes keep their height; the note lane takes most of the rest.
-        let small = [13.0, 10.0, 10.0, 10.0];
+        let small = [24.0, 10.0, 10.0, 10.0];
         let rest_h = (gh - small.iter().sum::<f32>()).max(30.0);
-        let heights = [rest_h * 0.56, rest_h * 0.24, rest_h * 0.20, small[0], small[1], small[2], small[3]];
-        let lane_names = ["Note", "Value", "Chance", "Ratchet", "Rest", "Tie", "Accent"];
+        let heights = [rest_h * 0.46, rest_h * 0.24, rest_h * 0.30, small[0], small[1], small[2], small[3]];
+        let tab = self.touch_view.lane_tab.min(2);
+        let lane_names = ["Note", "Pulses", "", "Gate", "Tie", "Accent", "Skip"];
+        let tab_names = ["Value", "Chance", "Ratchet"];
+        let tab_tips = [
+            "Each step's value, for the Steps output (patch it to a knob)",
+            "How likely each of the step's notes plays (with Trigger)",
+            "How many notes each of the step's notes is split into, one to eight (with Trigger and the pulser)",
+        ];
         let tips = [
             "Each step's note, up and down through the key (drag across to draw; double-click: back to the base; right-click: a rest)",
-            "Each step's value, for the Steps output (patch it to a knob)",
-            "How likely each step plays (with Trigger)",
-            "How many notes in the step, one to four (click; with Trigger and the pulser)",
-            "Steps that rest (with Trigger)",
+            "How many pulses each step lasts, one to eight (drag up and down)",
+            tab_tips[tab],
+            "What each step plays on its pulses (with Trigger): Single (the first), Every (each one), Hold (one note over them all), Rest, Last, Alternate (every other one), Roll (one more note each pulse). Click: the next, right-click: the one before; drag across to copy",
             "Steps held into the next (legato, with Trigger)",
             "Steps played louder (with Trigger)",
+            "Steps passed over",
         ];
         let mut lane_rects = [Rect::NOTHING; 7];
         let mut ly = grid.top();
@@ -697,20 +732,49 @@ impl App {
                 p.rect_stroke(col.shrink(1.0), 3.0, Stroke::new(1.5_f32, REC), egui::StrokeKind::Inside);
             }
         }
+        let next_gate = |g: Gate, by: usize| Gate::from_index((g.index() + by) % Gate::ALL.len());
+        let count_of = |f: f32, most: u8| ((f * most as f32).ceil() as u8).clamp(1, most);
         for (k, lr) in lane_rects.iter().enumerate() {
-            p.text(pos2(lanes.left(), lr.center().y), Align2::LEFT_CENTER, lane_names[k], FontId::proportional(if lr.height() < 12.0 { 8.5 } else { 10.0 }), TEXT_DIM);
-            let resp = ui.interact(*lr, Id::new(("touch_lane", tid, k)), Sense::click_and_drag()).on_hover_text(tips[k]);
+            if k == 2 {
+                // Its tabs: the values, the chances or the ratchets.
+                let th = lr.height() / 3.0;
+                for (j, name) in tab_names.iter().enumerate() {
+                    let tr = Rect::from_min_size(pos2(lanes.left() - 2.0, lr.top() + j as f32 * th), vec2(label_w - 4.0, th - 1.0));
+                    let resp = ui.interact(tr, Id::new(("touch_tab", tid, j)), Sense::click()).on_hover_text(tab_tips[j]);
+                    if j == tab {
+                        p.rect_filled(tr, 3.0, PANEL3);
+                    }
+                    let c = if j == tab { TEXT } else if resp.hovered() { mix(TEXT_DIM, TEXT, 0.5) } else { TEXT_DIM };
+                    p.text(pos2(tr.left() + 2.0, tr.center().y), Align2::LEFT_CENTER, *name, FontId::proportional(if th < 14.0 { 8.5 } else { 9.5 }), c);
+                    if resp.clicked() {
+                        self.touch_view.lane_tab = j;
+                    }
+                }
+            } else {
+                p.text(pos2(lanes.left(), lr.center().y), Align2::LEFT_CENTER, lane_names[k], FontId::proportional(if lr.height() < 12.0 { 8.5 } else { 10.0 }), TEXT_DIM);
+            }
             let col_of = |x: f32| (((x - lr.left()) / col_w).floor().max(0.0) as usize).min(N_STEPS - 1);
+            // The Gate lane says what the step under the pointer does.
+            let hovered = ui.input(|i| i.pointer.hover_pos()).filter(|pt| lr.contains(*pt)).map(|pt| col_of(pt.x));
+            let tip = match hovered.filter(|_| k == 3) {
+                Some(i) => {
+                    let st = touch::step(&dev.data, i);
+                    format!("Step {}: {}, {} pulse{}, ratchet ×{}\n\n{}", i + 1, st.gate.name(), st.pulses, if st.pulses == 1 { "" } else { "s" }, st.ratchet, tips[k])
+                }
+                None => tips[k].to_string(),
+            };
+            let resp = ui.interact(*lr, Id::new(("touch_lane", tid, k)), Sense::click_and_drag()).on_hover_text(tip);
             let frac = |yy: f32| ((lr.bottom() - yy) / lr.height()).clamp(0.0, 1.0);
             if resp.drag_started() || resp.clicked() {
                 if let Some(pt) = ui.input(|i| i.pointer.press_origin()).or(resp.interact_pointer_pos()) {
                     let s = touch::step(&dev.data, col_of(pt.x));
                     self.touch_view.paint = Some(match k {
-                        4 => !s.rest,
-                        5 => !s.tie,
-                        6 => !s.accent,
+                        4 => !s.tie,
+                        5 => !s.accent,
+                        6 => !s.skip,
                         _ => true,
                     });
+                    self.touch_view.paint_gate = Some(next_gate(s.gate, 1));
                 }
             }
             let painting = resp.dragged() || resp.clicked();
@@ -720,13 +784,14 @@ impl App {
                 let set = self.touch_view.paint.unwrap_or(true);
                 match k {
                     0 => s.note = ((frac(pt.y) * 2.0 - 1.0) * 14.0).round() as i32,
-                    1 => s.value = frac(pt.y),
-                    2 => s.chance = frac(pt.y),
-                    3 if resp.clicked() => s.ratchet = s.ratchet % 4 + 1,
-                    3 => s.ratchet = (frac(pt.y) * 3.99).floor() as u8 + 1,
-                    4 => s.rest = set,
-                    5 => s.tie = set,
-                    _ => s.accent = set,
+                    1 => s.pulses = count_of(frac(pt.y), MAX_PULSES),
+                    2 if tab == 0 => s.value = frac(pt.y),
+                    2 if tab == 1 => s.chance = frac(pt.y),
+                    2 => s.ratchet = count_of(frac(pt.y), MAX_RATCHET),
+                    3 => s.gate = self.touch_view.paint_gate.unwrap_or(s.gate),
+                    4 => s.tie = set,
+                    5 => s.accent = set,
+                    _ => s.skip = set,
                 }
                 touch::set_step(&mut dev.data, i, s);
                 changed = true;
@@ -739,11 +804,18 @@ impl App {
                     changed = true;
                 }
             }
-            if resp.secondary_clicked() && k == 0 {
+            if resp.secondary_clicked() && (k == 0 || k == 3) {
                 if let Some(pt) = resp.interact_pointer_pos() {
                     let i = col_of(pt.x);
                     let s = touch::step(&dev.data, i);
-                    touch::set_step(&mut dev.data, i, Step { rest: !s.rest, ..s });
+                    let gate = if k == 3 {
+                        next_gate(s.gate, Gate::ALL.len() - 1)
+                    } else if s.rests() {
+                        Gate::Single
+                    } else {
+                        Gate::Rest
+                    };
+                    touch::set_step(&mut dev.data, i, Step { gate, ..s });
                     changed = true;
                 }
             }
@@ -751,45 +823,101 @@ impl App {
                 let c = Rect::from_min_size(pos2(lr.left() + i as f32 * col_w, lr.top()), vec2(col_w, lr.height())).shrink2(vec2(1.5, 0.0));
                 let s = touch::step(&dev.data, i);
                 let active = i < n_on;
-                let col = |base: Color32| if !active { shade(base, 0.25) } else if seq_on { base } else { shade(base, 0.55) };
+                let now = seq_on && active && i == seen.step;
+                let col = |base: Color32| if !active || s.skip { shade(base, 0.25) } else if seq_on { base } else { shade(base, 0.55) };
                 p.rect_filled(c, 2.0, SLOT);
                 match k {
                     0 => {
                         let mid = c.center().y;
                         let yv = mid - s.note as f32 / 14.0 * c.height() * 0.5;
                         p.line_segment([pos2(c.left(), mid), pos2(c.right(), mid)], Stroke::new(1.0_f32, LINE));
-                        let bar_col = if s.rest { shade(TEXT_DIM, 0.4) } else { col(OUT_COLORS[2]) };
+                        let bar_col = if s.rests() { shade(TEXT_DIM, 0.4) } else { col(OUT_COLORS[2]) };
                         p.rect_filled(Rect::from_two_pos(pos2(c.left() + 1.0, mid), pos2(c.right() - 1.0, yv)), 1.5, shade(bar_col, 0.7));
                         p.line_segment([pos2(c.left() + 1.0, yv), pos2(c.right() - 1.0, yv)], Stroke::new(2.0_f32, bar_col));
                         if col_w >= 20.0 && s.note != 0 {
                             p.text(pos2(c.center().x, c.top() + 1.0), Align2::CENTER_TOP, format!("{:+}", s.note), FontId::proportional(9.0), if active { TEXT } else { TEXT_DIM });
                         }
                     }
-                    1 | 2 => {
-                        let v = if k == 1 { s.value } else { s.chance };
-                        let cc = if k == 1 { OUT_COLORS[2] } else { OUT_COLORS[3] };
+                    1 => {
+                        // A block for each pulse, the one it is at lit.
+                        let bh = c.height() / MAX_PULSES as f32;
+                        for j in 0..MAX_PULSES as usize {
+                            let r = Rect::from_min_size(pos2(c.left() + 2.0, c.bottom() - (j + 1) as f32 * bh + 0.5), vec2(c.width() - 4.0, (bh - 1.0).max(1.0)));
+                            let lit = now && j == seen.pulse;
+                            let fill = if j >= s.pulses as usize {
+                                mix(SLOT, TEXT_DIM, 0.08)
+                            } else if lit {
+                                mix(OUT_COLORS[1], TEXT, 0.6 * lamp + 0.2)
+                            } else {
+                                shade(col(OUT_COLORS[1]), 0.75)
+                            };
+                            p.rect_filled(r, 1.0, fill);
+                        }
+                        if col_w >= 20.0 && s.pulses > 1 {
+                            p.text(pos2(c.center().x, c.top() + 1.0), Align2::CENTER_TOP, format!("{}", s.pulses), FontId::proportional(9.0), if active { TEXT } else { TEXT_DIM });
+                        }
+                    }
+                    2 if tab < 2 => {
+                        let v = if tab == 0 { s.value } else { s.chance };
+                        let cc = if tab == 0 { OUT_COLORS[2] } else { OUT_COLORS[3] };
                         p.rect_filled(Rect::from_min_max(pos2(c.left() + 1.0, c.bottom() - v * c.height()), pos2(c.right() - 1.0, c.bottom())), 1.5, shade(col(cc), 0.75));
                     }
+                    2 => {
+                        // As high as there are notes, split in as many.
+                        let n = s.ratchet.max(1) as usize;
+                        let top = c.bottom() - n as f32 / MAX_RATCHET as f32 * c.height();
+                        let w = (c.width() - 2.0) / n as f32;
+                        for j in 0..n {
+                            let r = Rect::from_min_max(pos2(c.left() + 1.0 + j as f32 * w, top), pos2(c.left() + 1.0 + (j + 1) as f32 * w - 1.0, c.bottom()));
+                            p.rect_filled(r, 1.0, shade(col(accent), 0.8));
+                        }
+                        if col_w >= 20.0 && n > 1 {
+                            p.text(pos2(c.center().x, c.top() + 1.0), Align2::CENTER_TOP, format!("×{n}"), FontId::proportional(9.0), if active { TEXT } else { TEXT_DIM });
+                        }
+                    }
                     3 => {
-                        for j in 0..s.ratchet {
-                            let dw = (c.width() - 4.0) / 4.0;
-                            let d = Rect::from_min_size(pos2(c.left() + 2.0 + j as f32 * dw, c.top() + 2.0), vec2(dw - 1.5, c.height() - 4.0));
-                            p.rect_filled(d, 1.0, col(accent));
+                        // Its name, and what it plays on each of its pulses.
+                        let g = s.gate.index();
+                        let label = if col_w >= 34.0 { ["1st", "Every", "Hold", "Rest", "Last", "Alt", "Roll"][g] } else { ["1", "E", "H", "-", "L", "A", "R"][g] };
+                        p.text(pos2(c.center().x, c.top() + 1.0), Align2::CENTER_TOP, label, FontId::proportional(8.5), if s.rests() || !active { TEXT_DIM } else { col(TEXT) });
+                        let pr = Rect::from_min_max(pos2(c.left() + 2.0, c.bottom() - 7.0), pos2(c.right() - 2.0, c.bottom() - 2.0));
+                        let n = s.pulses.clamp(1, MAX_PULSES);
+                        let sw = pr.width() / n as f32;
+                        for j in 0..n {
+                            let slot = Rect::from_min_size(pos2(pr.left() + j as f32 * sw, pr.top()), vec2(sw, pr.height()));
+                            let lit = now && j as usize == seen.pulse;
+                            let cc = if lit { TEXT } else { col(accent) };
+                            match touch::plays(&s, j) {
+                                (_, true) => {
+                                    p.rect_filled(Rect::from_min_max(pos2(slot.left() + 0.5, slot.top()), pos2(pr.right() - 0.5, slot.bottom())), 1.0, if now { TEXT } else { col(accent) });
+                                    break;
+                                }
+                                (0, _) => {
+                                    p.rect_filled(Rect::from_center_size(slot.center(), vec2((sw - 1.5).max(1.0), 1.0)), 0.0, if lit { TEXT_DIM } else { shade(TEXT_DIM, 0.4) });
+                                }
+                                (notes, _) => {
+                                    let tw = (sw - 1.0) / notes as f32;
+                                    for t in 0..notes {
+                                        let x = slot.left() + 0.5 + t as f32 * tw;
+                                        p.rect_filled(Rect::from_min_max(pos2(x, slot.top()), pos2(x + (tw - 0.8).max(0.8), slot.bottom())), 0.0, cc);
+                                    }
+                                }
+                            }
                         }
                     }
                     _ => {
                         let on = match k {
-                            4 => s.rest,
-                            5 => s.tie,
-                            _ => s.accent,
+                            4 => s.tie,
+                            5 => s.accent,
+                            _ => s.skip,
                         };
                         if on {
                             let cc = match k {
-                                4 => TEXT_DIM,
-                                5 => SELECT,
-                                _ => REC,
+                                4 => SELECT,
+                                5 => REC,
+                                _ => TEXT_DIM,
                             };
-                            p.rect_filled(c.shrink(1.5), 2.0, col(cc));
+                            p.rect_filled(c.shrink(1.5), 2.0, if active { cc } else { shade(cc, 0.25) });
                         }
                     }
                 }
@@ -1364,7 +1492,7 @@ pub(crate) fn device_editor(ui: &mut Ui, id: Id, params: &[f32], data: &mut Vec<
         }
         p.rect_filled(nr, 2.0, SLOT);
         let y = nr.center().y - s.note as f32 / 14.0 * nr.height() * 0.5;
-        p.rect_filled(Rect::from_two_pos(pos2(nr.left() + 1.0, nr.center().y), pos2(nr.right() - 1.0, y)), 1.0, shade(if s.rest { TEXT_DIM } else { c }, 0.7));
+        p.rect_filled(Rect::from_two_pos(pos2(nr.left() + 1.0, nr.center().y), pos2(nr.right() - 1.0, y)), 1.0, shade(if s.rests() || s.skip { TEXT_DIM } else { c }, 0.7));
         p.rect_filled(vr, 2.0, SLOT);
         p.rect_filled(Rect::from_min_max(pos2(vr.left() + 1.0, vr.bottom() - s.value * vr.height()), pos2(vr.right() - 1.0, vr.bottom())), 1.0, shade(c, 0.55));
     }
@@ -1417,9 +1545,9 @@ mod tests {
         dice(&mut d, 16, 1.25);
         for i in 0..16 {
             let s = touch::step(&d, i);
-            assert!((-14..=14).contains(&s.note) && (1..=4).contains(&s.ratchet));
+            assert!((-14..=14).contains(&s.note) && (1..=MAX_RATCHET).contains(&s.ratchet) && (1..=MAX_PULSES).contains(&s.pulses));
         }
-        assert!(!touch::step(&d, 0).rest, "the first step plays");
+        assert!(!touch::step(&d, 0).rests(), "the first step plays");
         let before = d.clone();
         mutate(&mut d, 16, 7.5);
         assert_ne!(d, before, "something changed");
