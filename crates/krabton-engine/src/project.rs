@@ -1437,6 +1437,10 @@ pub struct Project {
     /// instrument by its track's id). The engine ignores them.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub rack_heights: std::collections::BTreeMap<u64, f32>,
+    /// Devices folded to a strip in the device chain, by device id (an
+    /// instrument by its track's id). The engine ignores them.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub folded: std::collections::BTreeSet<u64>,
 }
 
 /// A part of the song on the arranger track (Intro, Verse, Chorus...), as in
@@ -1492,6 +1496,7 @@ impl Project {
             key_seq_bars: 1,
             key_seq_on: false,
             rack_heights: Default::default(),
+            folded: Default::default(),
         };
         let mut reverb = p.make_device(EffectKind::Reverb);
         reverb.params[5] = 1.0;

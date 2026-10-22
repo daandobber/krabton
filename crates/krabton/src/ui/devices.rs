@@ -328,6 +328,9 @@ fn device_frame_presets<R>(ui: &mut Ui, title: &str, info: Option<&str>, enabled
             ui.set_min_height(height);
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
+                    if fold_button(ui, true).clicked() {
+                        action = Some(ChainActionKind::Fold);
+                    }
                     let mut enabled = enabled;
                     if let Some(en) = enabled.as_mut() {
                         let (rr, resp) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::click());
@@ -341,8 +344,15 @@ fn device_frame_presets<R>(ui: &mut Ui, title: &str, info: Option<&str>, enabled
                         Some(s) => crate::skin::logo(ui, title, s),
                         None => ui.add(egui::Label::new(RichText::new(title).strong().color(TEXT)).sense(Sense::click())),
                     }
-                    .on_hover_text("Right-click: on/off, duplicate, move, remove");
+                    .on_hover_text("Double-click: fold · right-click: on/off, duplicate, move, remove");
+                    if name.double_clicked() {
+                        action = Some(ChainActionKind::Fold);
+                    }
                     name.context_menu(|ui| {
+                        if ui.button("Fold").clicked() {
+                            action = Some(ChainActionKind::Fold);
+                            ui.close();
+                        }
                         if let Some(en) = enabled.as_mut() {
                             if ui.button(if **en { "Turn off" } else { "Turn on" }).clicked() {
                                 **en = !**en;
@@ -410,6 +420,54 @@ fn device_frame_presets<R>(ui: &mut Ui, title: &str, info: Option<&str>, enabled
     (r.inner, action)
 }
 
+/// The triangle at the left of a device's title bar: down while it is open,
+/// to the side while it is folded.
+fn fold_button(ui: &mut Ui, open: bool) -> egui::Response {
+    let (r, resp) = ui.allocate_exact_size(vec2(12.0, 14.0), Sense::click());
+    let c = if resp.hovered() { accent_now() } else { TEXT_DIM };
+    let m = r.center();
+    let pts = if open { vec![m + vec2(-4.0, -2.5), m + vec2(4.0, -2.5), m + vec2(0.0, 3.0)] } else { vec![m + vec2(-2.5, -4.0), m + vec2(3.0, 0.0), m + vec2(-2.5, 4.0)] };
+    ui.painter().add(egui::Shape::convex_polygon(pts, c, Stroke::NONE));
+    resp.on_hover_text(if open { "Fold this device away" } else { "Unfold" })
+}
+
+/// A folded device: a narrow strip as tall as the chain (a bar as wide as
+/// the Rack where devices lie under each other) with its name, its on/off
+/// light and the triangle to unfold it. Returns whether it is to unfold
+/// (a click on it, anywhere but the light).
+fn folded_strip(ui: &mut Ui, id: Id, title: &str, enabled: Option<&mut bool>, h: f32) -> bool {
+    let across = ui.layout().main_dir().is_horizontal();
+    let size = if across { vec2(26.0, h) } else { vec2(ui.available_width().clamp(160.0, 420.0), 26.0) };
+    let (r, resp) = ui.allocate_exact_size(size, Sense::click());
+    let resp = resp.on_hover_text(format!("{title}: click to unfold"));
+    let p = ui.painter().clone();
+    p.rect_filled(r, 4.0, if resp.hovered() { PANEL3 } else { PANEL2 });
+    p.rect_stroke(r, 4.0, Stroke::new(1.0_f32, LINE_SOFT), egui::StrokeKind::Inside);
+    let lead = r.left_top() + vec2(13.0, 13.0);
+    let c = if resp.hovered() { accent_now() } else { TEXT_DIM };
+    p.add(egui::Shape::convex_polygon(vec![lead + vec2(-2.5, -4.0), lead + vec2(3.0, 0.0), lead + vec2(-2.5, 4.0)], c, Stroke::NONE));
+    // The light, then the name: down the strip, or along the bar.
+    let light = if across { pos2(r.center().x, r.top() + 30.0) } else { pos2(r.left() + 30.0, r.center().y) };
+    let mut toggled = false;
+    if let Some(en) = enabled {
+        let lr = Rect::from_center_size(light, vec2(14.0, 14.0));
+        let lresp = ui.interact(lr, id.with("light"), Sense::click()).on_hover_text("Device on/off");
+        p.circle_filled(light, 5.0, if *en { accent_now() } else { PANEL3 });
+        if lresp.clicked() {
+            *en = !*en;
+            toggled = true;
+        }
+    }
+    let galley = p.layout_no_wrap(title.to_string(), egui::FontId::proportional(12.0), TEXT);
+    if across {
+        let at = pos2(r.center().x + galley.size().y * 0.5, light.y + 12.0);
+        p.with_clip_rect(r.shrink(2.0)).add(egui::epaint::TextShape::new(at, galley, TEXT).with_angle(std::f32::consts::FRAC_PI_2));
+    } else {
+        p.with_clip_rect(r.shrink(2.0)).galley(pos2(light.x + 12.0, r.center().y - galley.size().y * 0.5), galley, TEXT);
+    }
+    resp.clicked() && !toggled
+}
+
 /// Escape, or a press on the interface outside any popup (submenus are
 /// popups too, so picking from one still works).
 pub(crate) fn popup_dismissed(ui: &Ui) -> bool {
@@ -418,6 +476,8 @@ pub(crate) fn popup_dismissed(ui: &Ui) -> bool {
 
 #[derive(Clone, Copy)]
 enum ChainActionKind {
+    /// Folded to a strip (or unfolded).
+    Fold,
     Remove,
     Left,
     Right,
@@ -507,6 +567,13 @@ impl App {
                         for d in 0..n {
                             let key = self.project.tracks[i].midi_devices[d].id;
                             let hd = if resizable { self.rack_height(key, h) } else { h };
+                            if self.project.folded.contains(&key) {
+                                let dev = &mut self.project.tracks[i].midi_devices[d];
+                                if folded_strip(ui, Id::new(("folded", key)), dev.kind.name(), Some(&mut dev.enabled), hd) {
+                                    self.project.folded.remove(&key);
+                                }
+                                continue;
+                            }
                             let r = ui.scope(|ui| self.midi_fx_panel(ui, i, d, hd));
                             if let Some(a) = r.inner {
                                 midi_actions.push(a);
@@ -520,9 +587,16 @@ impl App {
                     if self.project.tracks.get(i).map(|t| t.instrument.is_some()).unwrap_or(false) {
                         let key = self.project.tracks[i].id;
                         let hd = if resizable { self.rack_height(key, h) } else { h };
-                        let r = ui.scope(|ui| self.instrument_panel(ui, i, hd));
-                        if resizable {
-                            self.rack_grip(ui, key, r.response.rect, hd);
+                        if self.project.folded.contains(&key) {
+                            let title = self.project.tracks[i].instrument.as_ref().map(|inst| inst.kind_name().to_string()).unwrap_or_default();
+                            if folded_strip(ui, Id::new(("folded", key)), &title, None, hd) {
+                                self.project.folded.remove(&key);
+                            }
+                        } else {
+                            let r = ui.scope(|ui| self.instrument_panel(ui, i, hd));
+                            if resizable {
+                                self.rack_grip(ui, key, r.response.rect, hd);
+                            }
                         }
                     } else if self.project.tracks.get(i).map(|t| t.kind == krabton_engine::TrackKind::Midi).unwrap_or(false) {
                         self.empty_instrument_slot(ui, i, h);
@@ -532,6 +606,19 @@ impl App {
                 for d in 0..n {
                     let key = self.chain_mut(sel).and_then(|c| c.get(d)).map(|dev| dev.id).unwrap_or(0);
                     let hd = if resizable { self.rack_height(key, h) } else { h };
+                    if self.project.folded.contains(&key) {
+                        let unfold = match self.chain_mut(sel).and_then(|c| c.get_mut(d)) {
+                            Some(dev) => {
+                                let title = dev.name().to_string();
+                                folded_strip(ui, Id::new(("folded", key)), &title, Some(&mut dev.enabled), hd)
+                            }
+                            None => false,
+                        };
+                        if unfold {
+                            self.project.folded.remove(&key);
+                        }
+                        continue;
+                    }
                     let r = ui.scope(|ui| self.effect_panel(ui, sel, d, hd));
                     if let Some(a) = r.inner {
                         actions.push(a);
@@ -749,6 +836,9 @@ impl App {
             Some(ConvAct::Clear) => self.chain_mut(sel)?.get_mut(d)?.sample = None,
             None => {}
         }
+        if matches!(action, Some(ChainActionKind::Fold)) {
+            self.project.folded.insert(dev_id);
+        }
         let dev = self.chain_mut(sel)?.get_mut(d)?;
         if let Some(pr) = picked.and_then(|i| presets::effect(kind).get(i)) {
             dev.params = presets::apply_to(kind.specs(), pr, &dev.params);
@@ -762,7 +852,7 @@ impl App {
             ChainActionKind::Left => Some(ChainAction::MoveLeft(d)),
             ChainActionKind::Right => Some(ChainAction::MoveRight(d)),
             ChainActionKind::Duplicate => Some(ChainAction::Duplicate(d)),
-            ChainActionKind::ToClip(_) => None,
+            ChainActionKind::ToClip(_) | ChainActionKind::Fold => None,
         })
     }
 
@@ -819,12 +909,15 @@ impl App {
         if let Some(ChainActionKind::ToClip(bars)) = action {
             self.sequencer_to_clip(track, dev.id, bars);
         }
+        if matches!(action, Some(ChainActionKind::Fold)) {
+            self.project.folded.insert(dev.id);
+        }
         action.and_then(|a| match a {
             ChainActionKind::Remove => Some(ChainAction::Remove(d)),
             ChainActionKind::Left => Some(ChainAction::MoveLeft(d)),
             ChainActionKind::Right => Some(ChainAction::MoveRight(d)),
             ChainActionKind::Duplicate => Some(ChainAction::Duplicate(d)),
-            ChainActionKind::ToClip(_) => None,
+            ChainActionKind::ToClip(_) | ChainActionKind::Fold => None,
         })
     }
 
@@ -2562,8 +2655,12 @@ impl App {
             });
         });
         self.apply_mod_view(mv);
-        if matches!(action, Some(ChainActionKind::Remove)) {
-            remove = true;
+        match action {
+            Some(ChainActionKind::Remove) => remove = true,
+            Some(ChainActionKind::Fold) => {
+                self.project.folded.insert(track_id);
+            }
+            _ => {}
         }
         let t = &mut self.project.tracks[i];
         if remove {

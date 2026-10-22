@@ -568,6 +568,8 @@ impl App {
         for (k, &param) in picks.iter().enumerate() {
             touch::set_patch(&mut dev.data, k, Some(param as u16));
         }
+        // Played here, it starts folded away in the device chain.
+        self.project.folded.insert(dev.id);
         self.project.tracks[ti].midi_devices.insert(0, dev);
         if let Some(&first) = picks.first() {
             self.touch_connect(tid, 0, first as u16, 0.5);
