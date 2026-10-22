@@ -30,6 +30,7 @@ pub enum ModKind {
     Tides,
     ModWheel,
     Joystick,
+    Touch,
 }
 
 pub const LFO_SHAPES: &[&str] = &["Sine", "Triangle", "Saw Up", "Saw Down", "Square", "S&H", "Smooth Random"];
@@ -108,6 +109,12 @@ pub static MOD_WHEEL: &[ParamSpec] = &[
     ParamSpec::lin("Depth", "Wheel", 0.0, 1.0, 1.0, Unit::Percent),
 ];
 
+pub static TOUCH: &[ParamSpec] = &[
+    ParamSpec::choice("Output", "Touch", crate::sequencers::touch::OUTPUTS, 0),
+    ParamSpec::log("Smooth", "Touch", 0.001, 1.0, 0.01, Unit::Sec),
+    ParamSpec::lin("Depth", "Touch", 0.0, 1.0, 1.0, Unit::Percent),
+];
+
 pub static JOYSTICK: &[ParamSpec] = &[
     ParamSpec::choice("Axis", "Stick", &["X", "Y"], 0),
     ParamSpec::log("Smooth", "Stick", 0.001, 1.0, 0.02, Unit::Sec),
@@ -115,8 +122,8 @@ pub static JOYSTICK: &[ParamSpec] = &[
 ];
 
 impl ModKind {
-    pub const ALL: [ModKind; 11] =
-        [ModKind::Lfo, ModKind::Envelope, ModKind::Follower, ModKind::Steps, ModKind::Macro, ModKind::Notes, ModKind::Math, ModKind::Shaper, ModKind::Tides, ModKind::ModWheel, ModKind::Joystick];
+    pub const ALL: [ModKind; 12] =
+        [ModKind::Lfo, ModKind::Envelope, ModKind::Follower, ModKind::Steps, ModKind::Macro, ModKind::Notes, ModKind::Math, ModKind::Shaper, ModKind::Tides, ModKind::ModWheel, ModKind::Joystick, ModKind::Touch];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -131,6 +138,7 @@ impl ModKind {
             ModKind::Tides => "Tides",
             ModKind::ModWheel => "Mod Wheel",
             ModKind::Joystick => "Joystick",
+            ModKind::Touch => "Touch",
         }
     }
 
@@ -147,6 +155,7 @@ impl ModKind {
             ModKind::Tides => "A tidal modulator after Mutable Instruments Tides: a slope looping with the tempo, or rising and falling on the notes of a track (AD, AR), its curve, peak and smoothness set by Shape, Slope and Smoothness; four outputs in phase, amplitude or frequency relations (Shift)",
             ModKind::ModWheel => "The mod wheel of a track: a MIDI keyboard's (CC 1), or a controller's triggers in Big Picture",
             ModKind::Joystick => "One way (X or Y) of a track's joystick: the right stick in Big Picture's XY play mode, -1 to 1 around the knob",
+            ModKind::Touch => "One output of a track's Touch: how hard its plates are pressed, the pulse, the steps, a stepped or a drifting random, or where along the plates the hand is (the Touch view patches them with cables)",
         }
     }
 
@@ -163,12 +172,13 @@ impl ModKind {
             ModKind::Tides => TIDES,
             ModKind::ModWheel => MOD_WHEEL,
             ModKind::Joystick => JOYSTICK,
+            ModKind::Touch => TOUCH,
         }
     }
 
     /// Modulators that listen to a track (notes or audio).
     pub fn uses_track(self) -> bool {
-        matches!(self, ModKind::Envelope | ModKind::Follower | ModKind::Notes | ModKind::Tides | ModKind::ModWheel | ModKind::Joystick)
+        matches!(self, ModKind::Envelope | ModKind::Follower | ModKind::Notes | ModKind::Tides | ModKind::ModWheel | ModKind::Joystick | ModKind::Touch)
     }
 
     /// True when the output goes from -1 to 1 (otherwise 0 to 1).
@@ -450,6 +460,10 @@ pub struct TrackSignal {
     pub modwheel: f32,
     /// A joystick (x, y; -1..1): a controller's stick in Big Picture.
     pub joy: [f32; 2],
+    /// The Touch view's plates: how hard, where along them (0..1 each).
+    pub press: [f32; 2],
+    /// What the track's Touch makes (see `sequencers::touch::OUTPUTS`).
+    pub touch: [f32; 6],
 }
 
 /// Musical time for a control tick.
@@ -1078,6 +1092,11 @@ fn step(m: &Modulator, p: &[f32], st: &mut ModState, sig: TrackSignal, clock: Mo
         ModKind::Joystick => {
             let axis = (get(0).round() as usize).min(1);
             st.value = slew(st.value, sig.joy[axis], get(1), dt);
+            st.value * get(2)
+        }
+        ModKind::Touch => {
+            let out = (get(0).round().max(0.0) as usize).min(5);
+            st.value = slew(st.value, sig.touch[out], get(1), dt);
             st.value * get(2)
         }
     }

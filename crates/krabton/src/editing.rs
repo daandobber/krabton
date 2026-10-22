@@ -194,7 +194,7 @@ impl App {
                 self.cmd(krabton_engine::Command::SetPosition(start + length));
             }
             // Pasting in the Rack (or the Tape) goes into the session, like in Session.
-            View::Session | View::Studio | View::Tape => {
+            View::Session | View::Studio | View::Tape | View::Touch => {
                 let scene = match self.sel_clip {
                     Some(ClipSel::Slot { track: t, scene }) if t == track => scene,
                     _ => self.sel_scene,
@@ -235,8 +235,8 @@ impl App {
                     self.tape_step_bar(dx as f64);
                 }
             }
-            // Up and down pick the track in the Rack.
-            View::Studio => {
+            // Up and down pick the track in the Rack (and the one Touch plays).
+            View::Studio | View::Touch => {
                 if dy != 0 {
                     self.step_track(-dy);
                 }

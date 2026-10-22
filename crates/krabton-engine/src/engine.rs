@@ -327,6 +327,8 @@ pub enum Command {
     TapeBend(f32),
     /// A joystick on a track (-1..1 each way), for its Joystick modulators.
     Joystick { track: u64, x: f32, y: f32 },
+    /// The Touch view's plates on a track: how hard (0..1), and where along them (0..1).
+    Touch { track: u64, pressure: f32, position: f32 },
     /// The grand piano's samples (installed, or none).
     SetPianoLibrary(Option<Arc<PianoLibrary>>),
 }
@@ -1547,6 +1549,11 @@ impl Engine {
                     rt.signal.modwheel = value.clamp(0.0, 1.0);
                 }
             }
+            Command::Touch { track, pressure, position } => {
+                if let Some(rt) = self.project.track_index(track).and_then(|ti| self.tracks.get_mut(ti)) {
+                    rt.signal.press = [pressure.clamp(0.0, 1.0), position.clamp(0.0, 1.0)];
+                }
+            }
             Command::Joystick { track, x, y } => {
                 if let Some(rt) = self.project.track_index(track).and_then(|ti| self.tracks.get_mut(ti)) {
                     rt.signal.joy = [x.clamp(-1.0, 1.0), y.clamp(-1.0, 1.0)];
@@ -2065,11 +2072,12 @@ impl Engine {
             }
             events.sort_unstable_by_key(|e| (e.offset, e.on));
             // MIDI effects transform the events before the instrument hears them.
+            let mut touched = false;
             if snd.midi_devices.iter().any(|d| d.enabled) {
                 let drum_notes = snd.instrument.map(|i| i.drum_notes()).unwrap_or(0);
                 // A Singer hears what a sequencer sings early (its consonants before the beat).
                 let lead = if matches!(snd.instrument, Some(Instrument::Singer { .. })) { crate::singer::LEAD_SECS } else { 0.0 };
-                let ctx = MidiCtx { now: clock, len: seg, samples_per_beat: spb, scale: project.scale, scale_on: project.scale_mode, beat: s0, playing, sr, drum_notes, lead };
+                let ctx = MidiCtx { now: clock, len: seg, samples_per_beat: spb, scale: project.scale, scale_on: project.scale_mode, beat: s0, playing, sr, drum_notes, lead, touch: signal.press };
                 // All notes free (scale mode off): the twelve of them, but for
                 // what is in a key by nature.
                 let free = MidiCtx { scale: crate::scale::Scale::new(project.scale.root, crate::scale::ScaleKind::Chromatic), ..ctx };
@@ -2084,6 +2092,13 @@ impl Engine {
                     st.process(dev.kind, params, &dev.data, events, fx_buf, dctx);
                     fx_buf.sort_by_key(|e| (e.offset, e.on));
                     std::mem::swap(events, fx_buf);
+                    // Touch's outputs, for its modulators (the track's first Touch).
+                    if dev.kind == crate::midi_fx::MidiFxKind::Touch && !touched {
+                        if let Some(o) = st.touch_out() {
+                            signal.touch = o;
+                            touched = true;
+                        }
+                    }
                     if let Some(v) = st.visual() {
                         status.seqs.write(dev.id, v);
                         // The track's first one also for the grid.
@@ -2095,6 +2110,9 @@ impl Engine {
                         }
                     }
                 }
+            }
+            if !touched {
+                signal.touch = [0.0; 6];
             }
             // The chain changed or the transport stopped: notes started by
             // effects that are gone or bypassed would never get their note-off.
@@ -3123,6 +3141,38 @@ mod tests {
         h.send(Command::Stop);
         run(&mut e, 0.05);
         assert_eq!(sounding(&e), 0, "stop left notes on");
+    }
+
+    #[test]
+    fn touch_plates_play_stopped_and_their_pressure_reaches_a_modulator() {
+        use crate::modulation::{ModKind, ModOwner, ModTarget};
+        let mut p = Project::new_default();
+        let ti = p.tracks.iter().position(|t| matches!(t.instrument, Some(Instrument::Synth { .. }))).expect("a synth track");
+        let id = p.tracks[ti].id;
+        let dev = p.make_midi_device(crate::midi_fx::MidiFxKind::Touch);
+        p.tracks[ti].midi_devices.insert(0, dev);
+        let mut m = p.make_modulator(ModKind::Touch);
+        m.track = Some(id);
+        m.params[1] = 0.001;
+        let mid = m.id;
+        p.modulators.push(m);
+        p.add_route(mid, ModTarget::Param { owner: ModOwner::Instrument(id), param: 0 }, 0.5);
+        let mi = p.modulators.iter().position(|m| m.id == mid).unwrap();
+        let sounding = |e: &Engine| e.tracks[ti].sounding.iter().map(|&n| n as u32).sum::<u32>();
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        h.send(Command::Touch { track: id, pressure: 0.9, position: 0.3 });
+        h.send(Command::NoteOn { track: id, pitch: 57, velocity: 0.9 });
+        run(&mut e, 0.1);
+        assert!(sounding(&e) > 0, "a plate plays with the song stopped");
+        let v = h.status.mods[mi].load();
+        assert!((v - 0.9).abs() < 0.02, "the pressure reaches its modulator: {v}");
+        h.send(Command::Touch { track: id, pressure: 0.2, position: 0.3 });
+        run(&mut e, 0.1);
+        let v = h.status.mods[mi].load();
+        assert!((v - 0.2).abs() < 0.02, "and follows it: {v}");
+        h.send(Command::NoteOff { track: id, pitch: 57 });
+        run(&mut e, 0.05);
+        assert_eq!(sounding(&e), 0, "let go, it stops");
     }
 
     #[test]

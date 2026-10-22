@@ -29,6 +29,8 @@ pub enum View {
     Studio,
     /// The four-track tape.
     Tape,
+    /// Touch: the selected track played with plates, a pulser, steps and cables.
+    Touch,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -437,7 +439,7 @@ pub struct App {
     pub kb_enabled: bool,
     pub kb_octave: i32,
     pub kb_velocity: f32,
-    held_keys: HashMap<Key, (u8, Vec<u64>)>,
+    pub(crate) held_keys: HashMap<Key, (u8, Vec<u64>)>,
     midi_held: HashMap<u8, (u8, Vec<u64>)>,
     /// Snap played notes (keyboard and MIDI) into the project scale.
     pub snap_input: bool,
@@ -467,6 +469,8 @@ pub struct App {
     /// The voicebanks downloading, by offer (see `singer_lib::OFFERS`), and
     /// the tracks whose Singers asked for them.
     pub(crate) singer_installs: HashMap<usize, (crate::singer_lib::Install, Vec<u64>)>,
+    /// The Touch view's plate held, cable being drawn, pulse light.
+    pub(crate) touch_view: crate::ui::touch_view::TouchViewState,
     /// When the sound engine last failed and was restarted.
     engine_failed_at: Option<std::time::Instant>,
     pub(crate) packs_here: std::collections::HashSet<&'static str>,
@@ -645,6 +649,7 @@ impl App {
             drum_installs: Default::default(),
             sf2_installs: HashMap::new(),
             singer_installs: HashMap::new(),
+            touch_view: Default::default(),
             engine_failed_at: None,
             packs_here: krabton_engine::dsp::real_drums::PACKS.iter().filter(|p| krabton_engine::dsp::real_drums::installed(p)).map(|p| p.folder).collect(),
             meters: Vec::new(),
@@ -3037,6 +3042,18 @@ impl App {
             }
             return;
         }
+        // The Touch view: the letter rows press its plates (as the keys do in
+        // key mode), the computer keyboard on or not.
+        if self.view == View::Touch && m.is_none() {
+            if let Some(&(_, step)) = SCALE_KEYMAP.iter().find(|(k, _)| *k == key) {
+                if !self.held_keys.contains_key(&key) {
+                    if let Some(played) = self.touch_key(step) {
+                        self.held_keys.insert(key, played);
+                    }
+                }
+                return;
+            }
+        }
         match key {
             Key::Escape if self.mod_learn.is_some() => self.mod_learn = None,
             Key::Space => self.toggle_play(),
@@ -3513,6 +3530,7 @@ impl App {
                 "session" => self.view = View::Session,
                 "rackview" | "studio" => self.view = View::Studio,
                 "tapeview" => self.view = View::Tape,
+                "touchview" => self.view = View::Touch,
                 "detail" => self.toggle_detail(),
                 // plain[=0]: devices in the flat look (or, with 0, each in its own).
                 "plain" => self.prefs.plain_devices = nums.first() != Some(&0),
@@ -3889,6 +3907,18 @@ impl App {
                         }
                         self.script_input.push_back(vec![button(to, false)]);
                     }
+                }
+                // touchdown=x1,y1,x2,y2...: fingers on a touch screen there (pressing at 60%); touchup: they let go.
+                "touchdown" | "touchup" => {
+                    let f: Vec<f32> = arg.split(',').filter_map(|v| v.trim().parse().ok()).collect();
+                    let phase = if name == "touchdown" { egui::TouchPhase::Start } else { egui::TouchPhase::End };
+                    let fingers: Vec<egui::Pos2> = if f.len() >= 2 { f.chunks_exact(2).map(|c| egui::pos2(c[0], c[1])).collect() } else { vec![egui::Pos2::ZERO; 4] };
+                    let evs = fingers
+                        .iter()
+                        .enumerate()
+                        .map(|(k, &pos)| egui::Event::Touch { device_id: egui::TouchDeviceId(1), id: egui::TouchId(k as u64), phase, pos, force: Some(0.6) })
+                        .collect();
+                    self.script_input.push_back(evs);
                 }
                 "modtab" => self.detail = DetailTab::Mod,
                 "mod" => {
@@ -4337,10 +4367,15 @@ impl eframe::App for App {
                     }
                 });
         }
+        // Away from the Touch view, its plate lets go.
+        if self.view != View::Touch && (self.touch_view_holds()) {
+            self.touch_release_all();
+        }
         egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::BG)).show(ctx, |ui| match self.view {
             View::Session => self.ui_session(ui),
             View::Arrangement => self.ui_arrangement(ui),
             View::Studio => self.ui_device_rack(ui),
+            View::Touch => self.ui_touch(ui),
             View::Tape => self.ui_tape(ui),
         });
         self.ui_dialogs(ctx);

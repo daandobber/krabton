@@ -186,6 +186,7 @@ pub fn midi(kind: MidiFxKind) -> &'static [Preset] {
         K::Rain => RAIN,
         K::Words => WORDS,
         K::Sing => SING,
+        K::Touch => TOUCH,
         K::Lorenz => LORENZ,
         K::Loops => LOOPS,
         K::Bloom => BLOOM,
@@ -976,6 +977,16 @@ static ANT: &[Preset] = &[p("One Ant", &[("Ants", N(1.0))]), p("Colony", &[("Ant
 static PONG: &[Preset] = &[p("Rally", &[("Speed", N(1.0))]), p("Fast Game", &[("Speed", N(2.5)), ("Balls", N(2.0))]), p("Lob", &[("Speed", N(0.5)), ("Angle", N(60.0))])];
 static MARKOV: &[Preset] = &[p("Singer", &[("Step", N(0.7)), ("Leap", N(0.1))]), p("Leaper", &[("Leap", N(0.6)), ("Step", N(0.3))]), p("Stammer", &[("Repeat", N(0.6))]), p("Falling", &[("Up/Down", N(-0.6))])];
 static RAIN: &[Preset] = &[p("Drizzle", &[("Density", N(1.0)), ("Storm", N(0.1))]), p("Storm", &[("Density", N(8.0)), ("Storm", N(0.8))]), p("On the Grid", &[("Sync", C("1/16")), ("Density", N(4.0))])];
+static TOUCH: &[Preset] = &[
+    pd("Plates", &[], crate::sequencers::touch::default_data),
+    pd("Pulse", &[("Pulse", N(1.0)), ("Rate", C("1/8")), ("Gate", N(0.5))], crate::sequencers::touch::default_data),
+    pd("Walking Steps", &[("Pulse", N(1.0)), ("Rate", C("1/16")), ("Move Notes", N(1.0)), ("Gate", N(0.45))], || crate::sequencers::touch::steps_data(&[(0, 30), (2, 120), (4, 200), (7, 255), (4, 90)])),
+    pd("Chance Garden", &[("Pulse", N(1.0)), ("Rate", C("1/16")), ("Latch", N(1.0)), ("Chance", N(0.55)), ("Wander", N(0.3)), ("Gate", N(0.4))], crate::sequencers::touch::default_data),
+    pd("Pendulum", &[("Pulse", N(1.0)), ("Rate", C("1/8 T")), ("Move Notes", N(1.0)), ("Order", C("Pendulum"))], || crate::sequencers::touch::steps_data(&[(0, 0), (1, 64), (2, 128), (4, 192), (5, 255)])),
+    pd("Slow Bloom", &[("Pulse", N(1.0)), ("Rate", C("1/2")), ("Decay", N(1.6)), ("Gate", N(1.0)), ("Latch", N(1.0))], crate::sequencers::touch::default_data),
+    pd("Stutter", &[("Pulse", N(1.0)), ("Rate", C("1/32")), ("Gate", N(0.3)), ("Decay", N(0.05))], crate::sequencers::touch::default_data),
+    pd("Random Walk", &[("Pulse", N(1.0)), ("Rate", C("1/8")), ("Move Notes", N(1.0)), ("Order", C("Random")), ("Latch", N(1.0))], || crate::sequencers::touch::steps_data(&[(-2, 40), (0, 250), (3, 120), (5, 200), (-4, 0)])),
+];
 static SING: &[Preset] = &[
     pd("Sakura", &[], crate::sequencers::sing::default_text),
     pd("La La La", &[("Rhythm", C("Lilt")), ("Melody", C("Wave"))], || b"la la la li la lo".to_vec()),

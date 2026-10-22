@@ -92,6 +92,9 @@ pub struct MidiCtx {
     /// sequencer sings (a Singer: its consonants start before the beat); 0
     /// for every other instrument.
     pub lead: f64,
+    /// The plates of the Touch view: how hard they are pressed and where
+    /// along them the hand is (0..1 each).
+    pub touch: [f32; 2],
 }
 
 impl MidiCtx {
@@ -176,6 +179,7 @@ pub enum MidiFxKind {
     OrganGrinder,
     MusicBox,
     Sing,
+    Touch,
 }
 
 const ARP_STYLES: &[&str] = &["Up", "Down", "Up Down", "Down Up", "Converge", "Diverge", "Random", "Played", "Chord"];
@@ -284,7 +288,7 @@ impl MidiFxKind {
     /// ambient ones): with the project's notes free (scale mode off) it
     /// stays in the song's key, where the others take all twelve notes.
     pub fn keeps_key(self) -> bool {
-        matches!(self.group(), "Composers" | "Players" | "Ambient") || matches!(self, MidiFxKind::Progression | MidiFxKind::Chord | MidiFxKind::Sing)
+        matches!(self.group(), "Composers" | "Players" | "Ambient") || matches!(self, MidiFxKind::Progression | MidiFxKind::Chord | MidiFxKind::Sing | MidiFxKind::Touch)
     }
 
     /// Which group a sequencer belongs to (see `SEQUENCER_GROUPS`).
@@ -294,7 +298,7 @@ impl MidiFxKind {
             K::Step | K::Acid | K::DrumGrid | K::Progression | K::Drummer => "Classic",
             K::GuitarChords | K::Ukulele | K::PianoPlayer | K::BassPlayer | K::Banjo | K::Section | K::OrganGrinder | K::MusicBox => "Players",
             K::Euclid | K::DrumMap | K::Marbles | K::Chance | K::Bits | K::Percussion => "Rhythm",
-            K::Spinner | K::Endless | K::Hands | K::Draw => "Played",
+            K::Spinner | K::Endless | K::Hands | K::Draw | K::Touch => "Played",
             K::Polymeter | K::Turing | K::Life | K::Drunk | K::Markov | K::Words | K::Sing => "Generative",
             K::Bounce | K::Orbits | K::Pong | K::Rain | K::Chaos | K::Automaton | K::Ant | K::Lorenz => "Physics & Chaos",
             K::Loops | K::Bloom | K::Chimes | K::DriftChords | K::Tintinnabuli | K::Pedal => "Ambient",
@@ -303,7 +307,7 @@ impl MidiFxKind {
         }
     }
 
-    pub const SEQUENCERS: [MidiFxKind; 60] = [
+    pub const SEQUENCERS: [MidiFxKind; 61] = [
         MidiFxKind::Step,
         MidiFxKind::Acid,
         MidiFxKind::DrumGrid,
@@ -364,6 +368,7 @@ impl MidiFxKind {
         MidiFxKind::OrganGrinder,
         MidiFxKind::MusicBox,
         MidiFxKind::Sing,
+        MidiFxKind::Touch,
     ];
 
     pub fn is_sequencer(self) -> bool {
@@ -381,6 +386,7 @@ impl MidiFxKind {
             MidiFxKind::Life => sequencers::life_default(),
             MidiFxKind::Words => sequencers::more::words_default(),
             MidiFxKind::Sing => sequencers::sing::default_text(),
+            MidiFxKind::Touch => sequencers::touch::default_data(),
             MidiFxKind::GuitarChords | MidiFxKind::Ukulele => sequencers::strum::strum_default(),
             MidiFxKind::Drummer => sequencers::drummer::drummer_default(),
             MidiFxKind::Chance => sequencers::chance::chance_default(),
@@ -412,6 +418,7 @@ impl MidiFxKind {
             MidiFxKind::Rain => "Rain",
             MidiFxKind::Words => "Words",
             MidiFxKind::Sing => "Sing",
+            MidiFxKind::Touch => "Touch",
             MidiFxKind::Lorenz => "Lorenz",
             MidiFxKind::Loops => "Loops",
             MidiFxKind::Bloom => "Bloom",
@@ -491,6 +498,7 @@ impl MidiFxKind {
             MidiFxKind::Markov => "A melody from chances: repeat, step, leap or rest, with accents",
             MidiFxKind::Rain => "Raindrops at random times and pitches, in drizzles and storms",
             MidiFxKind::Words => "Type text and it plays as a melody, or as Morse code",
+            MidiFxKind::Touch => "Play the track with touch plates (the Touch view): a pulser plays the held plate again in time, five steps move the notes through the key, chance leaves pulses out or lets a note wander, Latch keeps the last plate going; its pressure, pulse, steps, random, drift and position patched to the instrument's knobs",
             MidiFxKind::Sing => "Type words or sounds and it sings them: each syllable a note with it as its lyric (for the Singer), in a rhythm and a melody of its own in the song's key, a little different each time round",
             MidiFxKind::Lorenz => "The Lorenz attractor's butterfly as a melody",
             MidiFxKind::Loops => "Notes on their own long loops that drift in and out of phase, like tape loops: ambient chords that never repeat",
@@ -572,6 +580,7 @@ impl MidiFxKind {
             MidiFxKind::Rain => sequencers::more::RAIN,
             MidiFxKind::Words => sequencers::more::WORDS,
             MidiFxKind::Sing => sequencers::sing::SING,
+            MidiFxKind::Touch => sequencers::touch::TOUCH,
             MidiFxKind::Lorenz => sequencers::more::LORENZ,
             MidiFxKind::Loops => sequencers::ambient::LOOPS,
             MidiFxKind::Bloom => sequencers::ambient::BLOOM,
@@ -811,6 +820,14 @@ impl MidiFxState {
     pub fn visual(&self) -> Option<[u64; 4]> {
         match self {
             MidiFxState::Seq(s) => Some(s.visual),
+            _ => None,
+        }
+    }
+
+    /// A Touch device's outputs (pressure, pulse, steps, random, drift, position).
+    pub fn touch_out(&self) -> Option<[f32; 6]> {
+        match self {
+            MidiFxState::Seq(s) => Some(s.touch_out),
             _ => None,
         }
     }
@@ -1168,7 +1185,7 @@ pub fn render_notes(kind: MidiFxKind, params: &[f32], data: &[u8], beats: f64, b
     let spb = SR as f64 * 60.0 / bpm.clamp(20.0, 999.0);
     // As in the engine: with the key off, all twelve notes, unless the device keeps a key itself.
     let scale = if scale_on || kind.keeps_key() { scale } else { Scale::new(scale.root, ScaleKind::Chromatic) };
-    let base = MidiCtx { now: 0, len: BLOCK, samples_per_beat: spb, scale, scale_on, beat: 0.0, playing: true, sr: SR, drum_notes, lead: 0.0 };
+    let base = MidiCtx { now: 0, len: BLOCK, samples_per_beat: spb, scale, scale_on, beat: 0.0, playing: true, sr: SR, drum_notes, lead: 0.0, touch: [0.0; 2] };
     let mut st = MidiFxState::new(kind);
     let total = (beats.max(0.0) * spb).ceil() as u64;
     // Starts and ends land on a 1/960 beat grid, so a step is where it belongs.
@@ -1226,7 +1243,7 @@ mod tests {
     }
 
     fn ctx(now: u64, len: usize) -> MidiCtx {
-        MidiCtx { now, len, samples_per_beat: 24000.0, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: 0.0, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0 }
+        MidiCtx { now, len, samples_per_beat: 24000.0, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: 0.0, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 2] }
     }
 
     #[test]
