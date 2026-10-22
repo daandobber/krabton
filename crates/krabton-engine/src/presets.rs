@@ -980,12 +980,28 @@ static RAIN: &[Preset] = &[p("Drizzle", &[("Density", N(1.0)), ("Storm", N(0.1))
 static TOUCH: &[Preset] = &[
     pd("Plates", &[], crate::sequencers::touch::default_data),
     pd("Pulse", &[("Pulse", N(1.0)), ("Rate", C("1/8")), ("Gate", N(0.5))], crate::sequencers::touch::default_data),
-    pd("Walking Steps", &[("Pulse", N(1.0)), ("Rate", C("1/16")), ("Move Notes", N(1.0)), ("Gate", N(0.45))], || crate::sequencers::touch::steps_data(&[(0, 30), (2, 120), (4, 200), (7, 255), (4, 90)])),
+    pd("Walking Steps", &[("Pulse", N(1.0)), ("Rate", C("1/16")), ("Sequencer", N(1.0)), ("Gate", N(0.45))], || crate::sequencers::touch::notes(&[0, 2, 4, 7, 4, 2, 5, 4])),
     pd("Chance Garden", &[("Pulse", N(1.0)), ("Rate", C("1/16")), ("Latch", N(1.0)), ("Chance", N(0.55)), ("Wander", N(0.3)), ("Gate", N(0.4))], crate::sequencers::touch::default_data),
-    pd("Pendulum", &[("Pulse", N(1.0)), ("Rate", C("1/8 T")), ("Move Notes", N(1.0)), ("Order", C("Pendulum"))], || crate::sequencers::touch::steps_data(&[(0, 0), (1, 64), (2, 128), (4, 192), (5, 255)])),
-    pd("Slow Bloom", &[("Pulse", N(1.0)), ("Rate", C("1/2")), ("Decay", N(1.6)), ("Gate", N(1.0)), ("Latch", N(1.0))], crate::sequencers::touch::default_data),
+    pd("Pendulum", &[("Pulse", N(1.0)), ("Rate", C("1/8 T")), ("Sequencer", N(1.0)), ("Order", C("Pendulum")), ("Steps", N(6.0))], || crate::sequencers::touch::notes(&[0, 1, 2, 4, 5, 7])),
+    pd("Random Walk", &[("Pulse", N(1.0)), ("Rate", C("1/8")), ("Sequencer", N(1.0)), ("Order", C("Drunk")), ("Latch", N(1.0))], || crate::sequencers::touch::notes(&[-2, 0, 3, 5, -4, 2, 7, 0])),
+    pd("Ratchet Groove", &[("Pulse", N(1.0)), ("Rate", C("1/8")), ("Sequencer", N(1.0)), ("Pitch", N(0.0)), ("Swing", N(0.4)), ("Latch", N(1.0)), ("Gate", N(0.5))], || {
+        use crate::sequencers::touch::{pattern, Step};
+        let d = Step::default();
+        pattern(&[Step { accent: true, ..d }, d, Step { ratchet: 2, ..d }, Step { rest: true, ..d }, Step { accent: true, ..d }, Step { ratchet: 3, chance: 0.7, ..d }, d, Step { ratchet: 4, chance: 0.5, ..d }])
+    }),
+    pd("Power Riff", &[("Pulse", N(1.0)), ("Rate", C("1/8")), ("Sequencer", N(1.0)), ("Voicing", C("Power")), ("Run", N(1.0)), ("Gate", N(0.35))], || {
+        use crate::sequencers::touch::{pattern, Step};
+        let s = |note: i32, accent: bool, rest: bool| Step { note, accent, rest, ..Step::default() };
+        pattern(&[s(0, true, false), s(0, false, false), s(0, false, true), s(3, true, false), s(0, false, false), s(5, false, false), s(4, true, false), s(-2, false, false)])
+    }),
+    pd("Arp Up", &[("Play", C("Arp")), ("Rate", C("1/16")), ("Octaves", N(2.0)), ("Voicing", C("Triad")), ("Latch", N(1.0)), ("Gate", N(0.5))], crate::sequencers::touch::default_data),
+    pd("Arp Converge", &[("Play", C("Arp")), ("Arp Order", C("Converge")), ("Rate", C("1/16 T")), ("Octaves", N(3.0)), ("Voicing", C("Seventh")), ("Latch", N(1.0))], crate::sequencers::touch::default_data),
+    pd("Arp Steps", &[("Play", C("Arp")), ("Arp Order", C("Up-Down")), ("Rate", C("1/16")), ("Voicing", C("Triad")), ("Sequencer", N(1.0)), ("Steps", N(4.0)), ("Latch", N(1.0))], || crate::sequencers::touch::notes(&[0, 0, 3, -2])),
+    pd("Strummer", &[("Play", C("Strum")), ("Voicing", C("Seventh")), ("Strum", N(0.06)), ("Pulse", N(1.0)), ("Rate", C("1/4")), ("Gate", N(0.9))], crate::sequencers::touch::default_data),
+    pd("Echo Rain", &[("Play", C("Echo")), ("Echoes", N(5.0)), ("Feedback", N(0.55)), ("Rate", C("1/8 T")), ("Wander", N(0.2))], crate::sequencers::touch::default_data),
+    pd("Slow Bloom", &[("Pulse", N(1.0)), ("Rate", C("1/2")), ("Decay", N(1.6)), ("Gate", N(1.0)), ("Latch", N(1.0)), ("Voicing", C("Triad"))], crate::sequencers::touch::default_data),
+    pd("Open Pads", &[("Voicing", C("Open")), ("Latch", N(1.0)), ("Decay", N(1.2)), ("LFO Rate", C("2 Bars"))], crate::sequencers::touch::default_data),
     pd("Stutter", &[("Pulse", N(1.0)), ("Rate", C("1/32")), ("Gate", N(0.3)), ("Decay", N(0.05))], crate::sequencers::touch::default_data),
-    pd("Random Walk", &[("Pulse", N(1.0)), ("Rate", C("1/8")), ("Move Notes", N(1.0)), ("Order", C("Random")), ("Latch", N(1.0))], || crate::sequencers::touch::steps_data(&[(-2, 40), (0, 250), (3, 120), (5, 200), (-4, 0)])),
 ];
 static SING: &[Preset] = &[
     pd("Sakura", &[], crate::sequencers::sing::default_text),

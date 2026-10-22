@@ -541,7 +541,7 @@ mod tests {
         let mut ons = Vec::new();
         let mut now = 0u64;
         while (now as f64) < bars * 4.0 * 24000.0 {
-            let c = MidiCtx { now, len: 512, samples_per_beat: 24000.0, scale: Scale::default(), scale_on: true, beat: now as f64 / 24000.0, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 2] };
+            let c = MidiCtx { now, len: 512, samples_per_beat: 24000.0, scale: Scale::default(), scale_on: true, beat: now as f64 / 24000.0, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 4] };
             let mut out = Vec::new();
             s.process(kind, p, data, &mut out, &c);
             for e in out.iter().filter(|e| e.on) {

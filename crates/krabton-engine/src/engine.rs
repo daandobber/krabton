@@ -329,6 +329,8 @@ pub enum Command {
     Joystick { track: u64, x: f32, y: f32 },
     /// The Touch view's plates on a track: how hard (0..1), and where along them (0..1).
     Touch { track: u64, pressure: f32, position: f32 },
+    /// The Touch view's XY pad on a track (0..1 each way).
+    TouchXY { track: u64, x: f32, y: f32 },
     /// The grand piano's samples (installed, or none).
     SetPianoLibrary(Option<Arc<PianoLibrary>>),
 }
@@ -1551,7 +1553,14 @@ impl Engine {
             }
             Command::Touch { track, pressure, position } => {
                 if let Some(rt) = self.project.track_index(track).and_then(|ti| self.tracks.get_mut(ti)) {
-                    rt.signal.press = [pressure.clamp(0.0, 1.0), position.clamp(0.0, 1.0)];
+                    rt.signal.press[0] = pressure.clamp(0.0, 1.0);
+                    rt.signal.press[1] = position.clamp(0.0, 1.0);
+                }
+            }
+            Command::TouchXY { track, x, y } => {
+                if let Some(rt) = self.project.track_index(track).and_then(|ti| self.tracks.get_mut(ti)) {
+                    rt.signal.press[2] = x.clamp(0.0, 1.0);
+                    rt.signal.press[3] = y.clamp(0.0, 1.0);
                 }
             }
             Command::Joystick { track, x, y } => {
@@ -2112,7 +2121,7 @@ impl Engine {
                 }
             }
             if !touched {
-                signal.touch = [0.0; 6];
+                signal.touch = [0.0; crate::sequencers::touch::N_OUT];
             }
             // The chain changed or the transport stopped: notes started by
             // effects that are gone or bypassed would never get their note-off.

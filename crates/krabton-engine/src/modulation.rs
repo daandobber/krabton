@@ -155,7 +155,7 @@ impl ModKind {
             ModKind::Tides => "A tidal modulator after Mutable Instruments Tides: a slope looping with the tempo, or rising and falling on the notes of a track (AD, AR), its curve, peak and smoothness set by Shape, Slope and Smoothness; four outputs in phase, amplitude or frequency relations (Shift)",
             ModKind::ModWheel => "The mod wheel of a track: a MIDI keyboard's (CC 1), or a controller's triggers in Big Picture",
             ModKind::Joystick => "One way (X or Y) of a track's joystick: the right stick in Big Picture's XY play mode, -1 to 1 around the knob",
-            ModKind::Touch => "One output of a track's Touch: how hard its plates are pressed, the pulse, the steps, a stepped or a drifting random, or where along the plates the hand is (the Touch view patches them with cables)",
+            ModKind::Touch => "One output of a track's Touch: how hard its plates are pressed, the pulse, the steps' values, a stepped or a drifting random, where along the plates the hand is, its LFO, its drawn shape, or its XY pad's X or Y (the Touch view patches them with cables)",
         }
     }
 
@@ -460,10 +460,10 @@ pub struct TrackSignal {
     pub modwheel: f32,
     /// A joystick (x, y; -1..1): a controller's stick in Big Picture.
     pub joy: [f32; 2],
-    /// The Touch view's plates: how hard, where along them (0..1 each).
-    pub press: [f32; 2],
+    /// The Touch view: how hard, where along the plates, the XY pad (0..1 each).
+    pub press: [f32; 4],
     /// What the track's Touch makes (see `sequencers::touch::OUTPUTS`).
-    pub touch: [f32; 6],
+    pub touch: [f32; crate::sequencers::touch::N_OUT],
 }
 
 /// Musical time for a control tick.
@@ -1095,7 +1095,7 @@ fn step(m: &Modulator, p: &[f32], st: &mut ModState, sig: TrackSignal, clock: Mo
             st.value * get(2)
         }
         ModKind::Touch => {
-            let out = (get(0).round().max(0.0) as usize).min(5);
+            let out = (get(0).round().max(0.0) as usize).min(crate::sequencers::touch::N_OUT - 1);
             st.value = slew(st.value, sig.touch[out], get(1), dt);
             st.value * get(2)
         }

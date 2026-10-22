@@ -92,9 +92,9 @@ pub struct MidiCtx {
     /// sequencer sings (a Singer: its consonants start before the beat); 0
     /// for every other instrument.
     pub lead: f64,
-    /// The plates of the Touch view: how hard they are pressed and where
-    /// along them the hand is (0..1 each).
-    pub touch: [f32; 2],
+    /// The Touch view: how hard its plates are pressed, where along them the
+    /// hand is, and its XY pad (0..1 each).
+    pub touch: [f32; 4],
 }
 
 impl MidiCtx {
@@ -498,7 +498,7 @@ impl MidiFxKind {
             MidiFxKind::Markov => "A melody from chances: repeat, step, leap or rest, with accents",
             MidiFxKind::Rain => "Raindrops at random times and pitches, in drizzles and storms",
             MidiFxKind::Words => "Type text and it plays as a melody, or as Morse code",
-            MidiFxKind::Touch => "Play the track with touch plates (the Touch view): a pulser plays the held plate again in time, five steps move the notes through the key, chance leaves pulses out or lets a note wander, Latch keeps the last plate going; its pressure, pulse, steps, random, drift and position patched to the instrument's knobs",
+            MidiFxKind::Touch => "Play the track with plates (the Touch view): as notes, an arpeggio, strummed or with echoes, each plate a note or a chord in the key; a pulser with swing, Latch and Run, chance and wander; a sixteen-step sequencer (note, value, chance, ratchet, rest, tie, accent per step) that can trigger and move the notes; its pressure, pulse, steps, randoms, position, LFO, drawn shape and XY pad patched to the instrument's knobs",
             MidiFxKind::Sing => "Type words or sounds and it sings them: each syllable a note with it as its lyric (for the Singer), in a rhythm and a melody of its own in the song's key, a little different each time round",
             MidiFxKind::Lorenz => "The Lorenz attractor's butterfly as a melody",
             MidiFxKind::Loops => "Notes on their own long loops that drift in and out of phase, like tape loops: ambient chords that never repeat",
@@ -824,8 +824,8 @@ impl MidiFxState {
         }
     }
 
-    /// A Touch device's outputs (pressure, pulse, steps, random, drift, position).
-    pub fn touch_out(&self) -> Option<[f32; 6]> {
+    /// A Touch device's outputs (see `sequencers::touch::OUTPUTS`).
+    pub fn touch_out(&self) -> Option<[f32; sequencers::touch::N_OUT]> {
         match self {
             MidiFxState::Seq(s) => Some(s.touch_out),
             _ => None,
@@ -1185,7 +1185,7 @@ pub fn render_notes(kind: MidiFxKind, params: &[f32], data: &[u8], beats: f64, b
     let spb = SR as f64 * 60.0 / bpm.clamp(20.0, 999.0);
     // As in the engine: with the key off, all twelve notes, unless the device keeps a key itself.
     let scale = if scale_on || kind.keeps_key() { scale } else { Scale::new(scale.root, ScaleKind::Chromatic) };
-    let base = MidiCtx { now: 0, len: BLOCK, samples_per_beat: spb, scale, scale_on, beat: 0.0, playing: true, sr: SR, drum_notes, lead: 0.0, touch: [0.0; 2] };
+    let base = MidiCtx { now: 0, len: BLOCK, samples_per_beat: spb, scale, scale_on, beat: 0.0, playing: true, sr: SR, drum_notes, lead: 0.0, touch: [0.0; 4] };
     let mut st = MidiFxState::new(kind);
     let total = (beats.max(0.0) * spb).ceil() as u64;
     // Starts and ends land on a 1/960 beat grid, so a step is where it belongs.
@@ -1243,7 +1243,7 @@ mod tests {
     }
 
     fn ctx(now: u64, len: usize) -> MidiCtx {
-        MidiCtx { now, len, samples_per_beat: 24000.0, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: 0.0, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 2] }
+        MidiCtx { now, len, samples_per_beat: 24000.0, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: 0.0, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 4] }
     }
 
     #[test]

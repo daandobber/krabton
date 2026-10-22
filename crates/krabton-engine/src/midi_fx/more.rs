@@ -310,7 +310,7 @@ mod tests {
         for b in 0..blocks {
             let now = b * 256;
             let evs: Vec<MidiEvent> = input.iter().filter(|(t, _)| *t >= now && *t < now + 256).map(|(t, e)| MidiEvent { offset: (t - now) as u32, ..*e }).collect();
-            let ctx = MidiCtx { now, len: 256, samples_per_beat: 24000.0, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / 24000.0, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 2] };
+            let ctx = MidiCtx { now, len: 256, samples_per_beat: 24000.0, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / 24000.0, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 4] };
             let mut out = Vec::new();
             st.process(kind, p, &[], &evs, &mut out, &ctx);
             all.extend(out.into_iter().map(|e| (now + e.offset as u64, e)));

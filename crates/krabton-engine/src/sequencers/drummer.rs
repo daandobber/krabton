@@ -647,7 +647,7 @@ mod tests {
     use crate::scale::{Scale, ScaleKind};
 
     fn ctx(now: u64, kit: u128) -> MidiCtx {
-        MidiCtx { now, len: 256, samples_per_beat: 24000.0, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / 24000.0, playing: true, sr: 48000.0, drum_notes: kit, lead: 0.0, touch: [0.0; 2] }
+        MidiCtx { now, len: 256, samples_per_beat: 24000.0, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / 24000.0, playing: true, sr: 48000.0, drum_notes: kit, lead: 0.0, touch: [0.0; 4] }
     }
 
     /// The notes played over `bars` bars: (frame, note, velocity).

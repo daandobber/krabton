@@ -335,7 +335,7 @@ pub struct SeqState {
     pub(crate) sing: Box<sing::SingState>,
     pub(crate) touch: Box<touch::TouchState>,
     /// Touch's outputs, for its modulators (see `touch::OUTPUTS`).
-    pub(crate) touch_out: [f32; 6],
+    pub(crate) touch_out: [f32; touch::N_OUT],
     pos: i32,
     /// Packed state for the UI / grid (layout depends on the sequencer).
     pub visual: [u64; 4],
@@ -383,7 +383,7 @@ impl SeqState {
             players: Box::default(),
             sing: Box::default(),
             touch: Box::default(),
-            touch_out: [0.0; 6],
+            touch_out: [0.0; touch::N_OUT],
             pos: 0,
             visual: [0; 4],
         }
@@ -879,7 +879,7 @@ mod dynamics_tests {
         let mut out_v = Vec::new();
         for b in 0..(8.0 * spb / 256.0) as u64 {
             let now = b * 256;
-            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 2] };
+            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 4] };
             let mut out: Vec<MidiEvent> = Vec::new();
             st.process(kind, &p, &data, &[], &mut out, &ctx);
             out_v.extend(out.iter().filter(|e| e.on).map(|e| e.vel));
@@ -924,7 +924,7 @@ mod tests {
         let blocks = (beats * spb / 256.0) as u64;
         for b in 0..blocks {
             let now = b * 256;
-            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 2] };
+            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 4] };
             let mut out = Vec::new();
             st.process(kind, p, data, &[], &mut out, &ctx);
             for e in out.iter().filter(|e| e.on) {
@@ -1043,7 +1043,7 @@ mod tests {
             let release = (3.5 * spb / 256.0) as u64;
             for b in 0..(8.0 * spb / 256.0) as u64 {
                 let now = b * 256;
-                let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 2] };
+                let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 4] };
                 // D3 pressed just after the first beat, let go halfway through the fourth.
                 let input = match b {
                     1 => vec![MidiEvent::on(0, 62, 0.8)],
@@ -1077,7 +1077,7 @@ mod tests {
     #[test]
     fn silent_when_stopped() {
         let mut st = MidiFxState::new(MidiFxKind::Euclid);
-        let ctx = MidiCtx { now: 0, len: 256, samples_per_beat: 24000.0, scale: Scale::default(), scale_on: true, beat: 0.0, playing: false, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 2] };
+        let ctx = MidiCtx { now: 0, len: 256, samples_per_beat: 24000.0, scale: Scale::default(), scale_on: true, beat: 0.0, playing: false, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 4] };
         let mut out = Vec::new();
         st.process(MidiFxKind::Euclid, &defaults(EUCLID), &[], &[], &mut out, &ctx);
         assert!(out.is_empty());

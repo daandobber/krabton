@@ -896,7 +896,7 @@ mod tests {
         let mut frame = 0u64;
         while (frame as f64) < secs * sr as f64 {
             each(frame as f64 / sr as f64, p);
-            let ctx = MidiCtx { now: frame, len: block, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: frame as f64 / spb, playing, sr, drum_notes: 0, lead: 0.0, touch: [0.0; 2] };
+            let ctx = MidiCtx { now: frame, len: block, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: frame as f64 / spb, playing, sr, drum_notes: 0, lead: 0.0, touch: [0.0; 4] };
             out.clear();
             st.process(kind, p, &[], &[], &mut out, &ctx);
             notes.extend(out.iter().filter(|e| e.on).map(|e| ((frame + e.offset as u64) as f64 / sr as f64, e.pitch)));

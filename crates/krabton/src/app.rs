@@ -3531,6 +3531,23 @@ impl App {
                 "rackview" | "studio" => self.view = View::Studio,
                 "tapeview" => self.view = View::Tape,
                 "touchview" => self.view = View::Touch,
+                // touchparam=K,V: the selected track's Touch parameter K set to V.
+                "touchparam" => {
+                    let f: Vec<f32> = arg.split(',').filter_map(|v| v.trim().parse().ok()).collect();
+                    if let (Some(ti), [k, v, ..]) = (self.touch_track(), f.as_slice()) {
+                        let di = self.touch_device(ti);
+                        if let Some(p) = self.project.tracks[ti].midi_devices[di].params.get_mut(*k as usize) {
+                            *p = *v;
+                        }
+                    }
+                }
+                // touchpreset=N: Touch preset N on the selected track's Touch.
+                "touchpreset" => {
+                    if let Some(ti) = self.touch_track() {
+                        let di = self.touch_device(ti);
+                        self.touch_preset(ti, di, nums.first().copied().unwrap_or(0));
+                    }
+                }
                 "detail" => self.toggle_detail(),
                 // plain[=0]: devices in the flat look (or, with 0, each in its own).
                 "plain" => self.prefs.plain_devices = nums.first() != Some(&0),
