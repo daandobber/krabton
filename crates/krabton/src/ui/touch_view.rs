@@ -832,15 +832,16 @@ impl App {
 
     /// The Tonnetz in place of the plates: the lattice of notes a fifth apart
     /// along it and a major third apart up it (the middle the base note),
-    /// every triangle a triad. A triangle pressed plays its chord (its notes
-    /// asked for, the root last; where a finger is higher up, harder), and
-    /// with Rec on goes into the steps; moving onto the triangle beside it
-    /// keeps the two notes they share. The notes sounding light up wherever
-    /// they are on it; with the sequence on, its steps' chords are marked
-    /// (around the middle) and joined in their order, the one playing lit.
+    /// every triangle a triad. A note pressed (the middle of its dot) plays
+    /// that note alone; a triangle pressed plays its chord (its notes asked
+    /// for, the root last; where a finger is higher up, harder), and with Rec
+    /// on goes into the steps; moving onto the triangle beside it keeps the
+    /// two notes they share. The notes sounding light up wherever they are on
+    /// it; with the sequence on, its steps' chords (around the middle) carry
+    /// their numbers, the one playing lit.
     #[allow(clippy::too_many_arguments)]
     fn tonnetz_plates(&mut self, ui: &mut Ui, area: Rect, ti: usize, di: usize, playing: Option<usize>, sounding: u128, tcol: Color32) -> Vec<(u8, f32, f32)> {
-        let p = ui.painter().clone();
+        let p = ui.painter().with_clip_rect(area.expand(2.0));
         let accent = accent_now();
         let tid = self.project.tracks[ti].id;
         let dev = &self.project.tracks[ti].midi_devices[di];
@@ -848,11 +849,11 @@ impl App {
         let seq = dev.params[touch::SEQ] >= 0.5 && dev.params[touch::PITCH] >= 0.5;
         let base = dev.params[touch::BASE].round() as i32;
         let steps: Vec<Step> = (0..n_on).map(|i| touch::step(&dev.data, i)).collect();
-        // Five and a half triangles along at the most, at least four rows (up to eight).
+        // Big: three rows of triangles (more where there is the height), four and a bit along.
         let h3 = 3f32.sqrt() * 0.5;
-        let side = (area.height() / 4.0 / h3).min(area.width() / 5.5).max(12.0);
+        let side = (area.height() / 3.0 / h3).min(area.width() / 4.2).max(12.0);
         let th = side * h3;
-        let rows = ((area.height() / th).floor() as i8).clamp(4, 8);
+        let rows = ((area.height() / th).floor() as i8).clamp(3, 6);
         let (low, high) = (-(rows / 2), rows - rows / 2 - 1);
         let mid = pos2(area.center().x, area.center().y + (low + high + 1) as f32 * 0.5 * th);
         let point = |a: i32, b: i32| pos2(mid.x + (a as f32 + b as f32 * 0.5) * side, mid.y - b as f32 * th);
@@ -865,6 +866,7 @@ impl App {
             }
         };
         let centre = |c: &[Pos2; 3]| pos2((c[0].x + c[1].x + c[2].x) / 3.0, (c[0].y + c[1].y + c[2].y) / 3.0);
+        // The triangles whose middle is on it (cut off at its edges), and the notes at their corners.
         let room = area.expand(1.0);
         let mut tris: Vec<(Tri, [Pos2; 3])> = Vec::new();
         for b in low..=high {
@@ -872,12 +874,23 @@ impl App {
                 for minor in [false, true] {
                     let t = Tri::new(a, b, minor);
                     let c = corners(t);
-                    if c.iter().all(|q| room.contains(*q)) {
+                    if room.contains(centre(&c)) {
                         tris.push((t, c));
                     }
                 }
             }
         }
+        let rr = (side * 0.2).clamp(10.0, 24.0);
+        let mut dots: Vec<(Pos2, i32, i32)> = Vec::new();
+        for b in low as i32..=high as i32 + 1 {
+            for a in -9..=8 {
+                let q = point(a, b);
+                if area.expand(rr * 0.5).contains(q) {
+                    dots.push((q, a, b));
+                }
+            }
+        }
+        let dot_at = |pt: Pos2| dots.iter().find(|d| d.0.distance(pt) <= rr).copied();
         let tri_at = |pt: Pos2| tris.iter().find(|(_, c)| inside(pt, c)).copied();
         // Where it is pressed: fingers, or the pointer.
         let resp = ui.interact(area, Id::new(("tonnetz", tid)), Sense::click_and_drag());
@@ -905,11 +918,20 @@ impl App {
         }
         let mut want: Vec<(u8, f32, f32)> = Vec::new();
         let mut pressed: Vec<Tri> = Vec::new();
+        let mut pressed_dots: Vec<(i32, i32)> = Vec::new();
         for (pt, force) in contacts {
+            let along = ((pt.x - area.left()) / area.width()).clamp(0.0, 1.0);
+            // In the middle of a note: that note alone, in the octave nearest the middle.
+            if let Some((q, a, b)) = dot_at(pt) {
+                let pressure = force.filter(|f| *f > 0.0).map(|f| f.clamp(0.05, 1.0)).unwrap_or(((1.0 - (pt.y - q.y + rr) / (2.0 * rr)) * 0.8 + 0.2).clamp(0.05, 1.0));
+                let note = (base + (7 * a + 4 * b + 6).rem_euclid(12) - 6).clamp(0, 127) as u8;
+                want.push((note, pressure, along));
+                pressed_dots.push((a, b));
+                continue;
+            }
             let Some((t, c)) = tri_at(pt) else { continue };
             let top = c.iter().map(|q| q.y).fold(f32::MAX, f32::min);
             let pressure = force.filter(|f| *f > 0.0).map(|f| f.clamp(0.05, 1.0)).unwrap_or(((1.0 - (pt.y - top) / th) * 0.8 + 0.2).clamp(0.05, 1.0));
-            let along = ((pt.x - area.left()) / area.width()).clamp(0.0, 1.0);
             // Its notes around the middle, the root last.
             let root = (base + t.root()).rem_euclid(12);
             let mut notes = touch::triad(base.clamp(0, 127) as u8, t);
@@ -943,7 +965,8 @@ impl App {
         // The steps' chords around the middle (where each is, or the same chord elsewhere on it).
         let shown: Vec<Option<Tri>> = steps.iter().map(|s| tris.iter().find(|x| x.0 == s.tri).or_else(|| tris.iter().find(|x| x.0.classes() == s.tri.classes())).map(|x| x.0)).collect();
         let now = playing.filter(|_| seq).and_then(|i| shown.get(i).copied().flatten());
-        let hover = resp.hover_pos().and_then(|pt| tri_at(pt)).map(|x| x.0);
+        let hover_dot = resp.hover_pos().and_then(|pt| dot_at(pt));
+        let hover = resp.hover_pos().filter(|_| hover_dot.is_none()).and_then(|pt| tri_at(pt)).map(|x| x.0);
         for (t, c) in &tris {
             let used = seq && shown.contains(&Some(*t));
             let mut fill = if t.minor { Color32::from_rgb(0x1e, 0x1e, 0x23) } else { Color32::from_rgb(0x2b, 0x2b, 0x31) };
@@ -959,33 +982,33 @@ impl App {
                 fill = mix(fill, TEXT, 0.1);
             }
             p.add(egui::Shape::convex_polygon(c.to_vec(), fill, Stroke::new(1.0_f32, LINE)));
-            let size = (side * 0.2).clamp(8.0, 14.0);
+            let size = (side * 0.17).clamp(9.0, 20.0);
             let lit = pressed.contains(t) || now == Some(*t);
             p.text(centre(c) + vec2(0.0, if t.minor { -th * 0.06 } else { th * 0.06 }), Align2::CENTER_CENTER, chord_name(base, *t), FontId::proportional(size), if lit { TEXT } else if used { mix(TEXT_DIM, TEXT, 0.5) } else { TEXT_DIM });
         }
         // The notes at the corners, lit while they sound.
         let classes_sounding: Vec<i32> = (0..128).filter(|n| sounding >> n & 1 == 1).map(|n: i32| n.rem_euclid(12)).collect();
-        for b in low as i32..=high as i32 + 1 {
-            for a in -9..=8 {
-                let q = point(a, b);
-                if !room.contains(q) {
-                    continue;
-                }
-                let pc = (base + 7 * a + 4 * b).rem_euclid(12);
-                let on = classes_sounding.contains(&pc);
-                let rr = (side * 0.14).clamp(6.0, 11.0);
-                p.circle_filled(q, rr, if on { tcol } else if a == 0 && b == 0 { mix(PANEL, accent, 0.35) } else { PANEL });
-                p.circle_stroke(q, rr, Stroke::new(1.0_f32, if on { mix(tcol, Color32::WHITE, 0.4) } else { LINE }));
-                p.text(q, Align2::CENTER_CENTER, PITCH_NAMES[pc as usize], FontId::proportional(rr * 1.05), if on { text_on(tcol) } else { TEXT });
-            }
+        for &(q, a, b) in &dots {
+            let pc = (base + 7 * a + 4 * b).rem_euclid(12);
+            let on = classes_sounding.contains(&pc);
+            let down = pressed_dots.contains(&(a, b));
+            let fill = if down {
+                mix(tcol, Color32::WHITE, 0.3)
+            } else if on {
+                tcol
+            } else if a == 0 && b == 0 {
+                mix(PANEL, accent, 0.35)
+            } else {
+                PANEL
+            };
+            let fill = if hover_dot.is_some_and(|d| d.1 == a && d.2 == b) && !down { mix(fill, TEXT, 0.12) } else { fill };
+            p.circle_filled(q, rr, fill);
+            p.circle_stroke(q, rr, Stroke::new(if down { 2.0_f32 } else { 1.0 }, if on || down { mix(tcol, Color32::WHITE, 0.5) } else { LINE }));
+            p.text(q, Align2::CENTER_CENTER, PITCH_NAMES[pc as usize], FontId::proportional(rr * 0.85), if on || down { text_on(tcol) } else { TEXT });
         }
-        // The sequence's path and its steps' numbers.
+        // The sequence: its steps' numbers under their chords' names.
         if seq {
             let at_of = |t: Tri| tris.iter().find(|x| x.0 == t).map(|x| centre(&x.1));
-            let path: Vec<Pos2> = shown.iter().filter_map(|t| t.and_then(at_of)).collect();
-            if path.len() > 1 {
-                p.add(egui::Shape::line(path, Stroke::new(1.5_f32, shade(accent, 0.75))));
-            }
             let mut labels: Vec<(Pos2, String)> = Vec::new();
             for (i, t) in shown.iter().enumerate() {
                 let Some(c) = t.and_then(at_of) else { continue };
@@ -994,14 +1017,17 @@ impl App {
                     None => labels.push((c, (i + 1).to_string())),
                 }
             }
+            let playing_at = now.and_then(at_of);
             for (c, text) in labels {
-                let font = fitted(&p, &text, 9.5, side * 0.6);
-                p.text(c + vec2(0.0, th * 0.24), Align2::CENTER_CENTER, text, font, accent);
+                let font = fitted(&p, &text, (side * 0.11).clamp(9.0, 13.0), side * 0.45);
+                p.text(c + vec2(0.0, th * 0.22), Align2::CENTER_CENTER, text, font, if playing_at == Some(c) { text_on(accent) } else { shade(accent, 0.9) });
             }
         }
-        if let Some(t) = hover {
+        if let Some((_, a, b)) = hover_dot {
+            resp.on_hover_text(format!("{}: press to play it alone", PITCH_NAMES[(base + 7 * a + 4 * b).rem_euclid(12) as usize]));
+        } else if let Some(t) = hover {
             let rec = self.touch_view.rec.map(|i| format!("; Rec writes it into step {}", i + 1)).unwrap_or_default();
-            resp.on_hover_text(format!("{}: press to play it{rec}", chord_name(base, t)));
+            resp.on_hover_text(format!("{}: press to play the chord{rec}", chord_name(base, t)));
         }
         want
     }
