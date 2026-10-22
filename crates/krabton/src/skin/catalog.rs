@@ -574,24 +574,24 @@ const CRIMSON: Skin = Skin {
     ..BASE
 };
 
-/// Silicon: a circuit board, solder-mask green, white print, gold for the
-/// lit parts, black caps, the groups outlined.
+/// Silicon: dark anthracite as the big desktop virtual analogs, light print,
+/// red for what is lit, a blue backlit display, black caps under bars.
 const SILICON: Skin = Skin {
-    top: hex(0x1d5236),
-    bottom: hex(0x0f2e1e),
+    top: hex(0x2c2d31),
+    bottom: hex(0x17181b),
     surface: Surface::Grain,
-    ink: hex(0xeef5ef),
-    dim: hex(0xb4cbb9),
-    well: hex(0x07130c),
-    well_ink: hex(0xf2c14e),
-    accent: hex(0xf2c14e),
+    ink: hex(0xe9e9ec),
+    dim: hex(0xa2a4ab),
+    well: hex(0x0a1824),
+    well_ink: hex(0x9fdcff),
+    accent: hex(0xe5372b),
     knob: Knob::Cap,
-    cap: hex(0x161616),
-    logo: Font::Space,
+    cap: hex(0x0e0e10),
+    logo: Font::Wide,
     logo_size: 19.0,
-    logo_ink: hex(0xf2c14e),
+    logo_ink: hex(0xffffff),
     logo_case: Case::Upper,
-    groups: Groups::Outline,
+    groups: Groups::Header,
     heroes: &["Cutoff"],
     ..BASE
 };
