@@ -30,11 +30,12 @@
 //! notes a fifth apart along it and a major third apart up it, where every
 //! triangle is a major or a minor triad and the triangles beside it share two
 //! of its notes (P, L and R: the parallel, the leading-tone exchange, the
-//! relative). A triangle pressed is its three notes pressed together (its
-//! root last): one touch, a chord the pulser pulses whole. The sequence's
-//! steps are then triangles too: each plays its triad around the root of the
-//! triangle held (or the base note with Run), each note in the octave
-//! nearest it, so a walk across the lattice moves as little as it can.
+//! relative). A triangle pressed is its three notes pressed together: one
+//! touch, a chord the pulser pulses whole. With the sequencer on, the steps
+//! are triangles too and the sequence plays their chords by itself, a step a
+//! pulse, around the base note (each note in the octave nearest it, so a
+//! walk across the lattice moves as little as it can); what is pressed then
+//! plays as it is, held, over it.
 //!
 //! Each step lasts one to eight pulses and its gate decides what they play:
 //! the first pulse (Single), every one (Every), one note held over them all
@@ -857,9 +858,11 @@ impl SeqState {
         self.shift_in_note = false;
         let arp = choice(p, PLAY, PLAYS.len()) == 1;
         let pulse_on = param(p, PULSE, 0.0) >= 0.5;
-        let clocked = pulse_on || arp;
         let latch = param(p, LATCH, 0.0) >= 0.5;
         let seq = param(p, SEQ, 0.0) >= 0.5;
+        // On the Tonnetz the sequence of chords plays by itself, on the pulses.
+        let chords = tonnetz(p) && seq;
+        let clocked = pulse_on || arp || chords;
         let rate = rate_beats(p);
         let spb = ctx.samples_per_beat.max(1.0);
         let interval = rate * spb;
@@ -939,21 +942,34 @@ impl SeqState {
                 }
             }
         } else {
-            // Notes held from before the pulser came on end now.
-            let mut ending: Notes<MAX_SOUNDING> = Notes::default();
-            while self.touch.n_sounding > 0 {
-                let plate = self.touch.sounding[0].0;
-                self.touch.forget(plate, &mut ending);
-            }
-            self.touch_end_all(&ending, out);
-            // A touch plays at once (an arpeggio waits for its clock).
-            if !arp {
-                let (groups, n_groups) = touches(&presses[..n_press], tonnetz(p));
-                for &(plates, vel) in &groups[..n_groups] {
-                    let mut hits = Hits::new();
-                    self.touch_trigger(p, data, ctx, ctx.now, plates.as_slice(), vel_of(vel), interval * gate(p), true, &mut hits);
-                    for h in &hits.v[..hits.n] {
-                        self.touch_play(ctx, *h, out);
+            if chords {
+                // What is pressed plays as it is, held, over the chords the sequence plays.
+                let mut ending: Notes<MAX_SOUNDING> = Notes::default();
+                for &plate in &releases[..n_release] {
+                    self.touch.forget(plate, &mut ending);
+                }
+                self.touch_end_all(&ending, out);
+                for &(plate, vel) in &presses[..n_press] {
+                    self.touch.remember(plate, plate);
+                    self.touch_play(ctx, Hit { at: ctx.now, note: plate, vel: vel_of(vel), len: 1e12 }, out);
+                }
+            } else {
+                // Notes held from before the pulser came on end now.
+                let mut ending: Notes<MAX_SOUNDING> = Notes::default();
+                while self.touch.n_sounding > 0 {
+                    let plate = self.touch.sounding[0].0;
+                    self.touch.forget(plate, &mut ending);
+                }
+                self.touch_end_all(&ending, out);
+                // A touch plays at once (an arpeggio waits for its clock).
+                if !arp {
+                    let (groups, n_groups) = touches(&presses[..n_press], tonnetz(p));
+                    for &(plates, vel) in &groups[..n_groups] {
+                        let mut hits = Hits::new();
+                        self.touch_trigger(p, data, ctx, ctx.now, plates.as_slice(), vel_of(vel), interval * gate(p), true, &mut hits);
+                        for h in &hits.v[..hits.n] {
+                            self.touch_play(ctx, *h, out);
+                        }
                     }
                 }
             }
@@ -965,7 +981,14 @@ impl SeqState {
                 if t >= b0 - 1e-9 && t < b1 - 1e-9 && Some(k) != self.touch.last_pulse {
                     self.touch.last_pulse = Some(k);
                     let at = ctx.now + ((t - b0).max(0.0) * spb).round() as u64;
-                    let vel = vel_of(if self.touch.held.n > 0 { pressure } else { self.touch.pressure });
+                    // How hard: the plate held, or the last one (nothing pressed yet: firmly).
+                    let vel = vel_of(if self.touch.held.n > 0 {
+                        pressure
+                    } else if self.touch.pressure > 0.0 {
+                        self.touch.pressure
+                    } else {
+                        0.8
+                    });
                     self.touch_pulse(p, data, ctx, at, latch, vel, out);
                 }
                 k += 1;
@@ -1038,9 +1061,12 @@ impl SeqState {
     /// the base note), chance, the sequence a step further, the outputs.
     #[allow(clippy::too_many_arguments)]
     fn touch_pulse(&mut self, p: &[f32], data: &[u8], ctx: &MidiCtx, at: u64, latch: bool, vel: f32, out: &mut Vec<MidiEvent>) {
-        let run = param(p, RUN, 0.0) >= 0.5;
         let arp = choice(p, PLAY, PLAYS.len()) == 1;
-        let source = self.touch.held.last().or(if latch { self.touch.latched.last() } else { None }).or(if run { Some(param(p, BASE, 48.0).round().clamp(0.0, 127.0) as u8) } else { None });
+        // The Tonnetz's sequence of chords: around the base note, whatever is pressed.
+        let chords = tonnetz(p) && param(p, SEQ, 0.0) >= 0.5;
+        let run = param(p, RUN, 0.0) >= 0.5 || chords;
+        let base = param(p, BASE, 48.0).round().clamp(0.0, 127.0) as u8;
+        let source = if chords { Some(base) } else { self.touch.held.last().or(if latch { self.touch.latched.last() } else { None }).or(if run { Some(base) } else { None }) };
         let chance = param(p, CHANCE, 1.0);
         let rests = chance < 1.0 && unit(&mut self.rng) >= chance;
         let Some(plate) = source.filter(|_| !rests) else {
@@ -1056,9 +1082,9 @@ impl SeqState {
         } else {
             // On the Tonnetz the chord held (or latched) pulses whole.
             let mut plates: Notes<MAX_HELD> = Notes::default();
-            if tonnetz(p) && self.touch.held.n > 0 {
+            if tonnetz(p) && !chords && self.touch.held.n > 0 {
                 plates = self.touch.held;
-            } else if tonnetz(p) && latch && self.touch.latched.n > 0 {
+            } else if tonnetz(p) && !chords && latch && self.touch.latched.n > 0 {
                 plates = self.touch.latched;
             } else {
                 plates.push(plate);
@@ -1157,7 +1183,13 @@ impl SeqState {
         let Some(g) = self.touch_gates(p, st) else { return };
         let shift = self.touch_shift(p, st.map(|s| s.0));
         let octaves = param(p, OCTAVES, 1.0).round().clamp(1.0, 4.0) as i32;
-        let plates = if self.touch.held.n > 0 {
+        let chords = tonnetz(p) && param(p, SEQ, 0.0) >= 0.5;
+        let plates = if chords {
+            // The Tonnetz's sequence: its chord, from the base note.
+            let mut one: Notes<MAX_HELD> = Notes::default();
+            one.push(plate);
+            one
+        } else if self.touch.held.n > 0 {
             self.touch.held
         } else if latch && self.touch.latched.n > 0 {
             self.touch.latched
@@ -1434,33 +1466,27 @@ mod tests {
     }
 
     #[test]
-    fn with_tonnetz_on_the_steps_play_their_triads() {
+    fn on_the_tonnetz_the_sequence_plays_its_chords_by_itself() {
         let mut p = defaults(TOUCH);
-        (p[SEQ], p[LAYOUT], p[STEPS]) = (1.0, TONNETZ_LAYOUT as f32, 4.0);
+        (p[SEQ], p[LAYOUT], p[STEPS], p[RATE]) = (1.0, TONNETZ_LAYOUT as f32, 4.0, 6.0);
         let data = default_data();
-        // Four touches: I, vi, IV, V around C4.
-        let plates: Vec<(u64, u8, bool)> = (0..4).flat_map(|k| [(2 + k * 10, 60, true), (7 + k * 10, 60, false)]).collect();
-        let (evs, _) = run(&p, &data, 50, &plates, false);
+        // A beat each (1/4) around the base note (C3), nothing pressed: I, vi, IV, V.
+        let (evs, _) = run(&p, &data, 380, &[(150, 64, true), (200, 64, false)], false);
         let on = ons(&evs);
-        let chords: Vec<Vec<u8>> = (0..4)
-            .map(|k| {
-                let at = (2 + k * 10) * 256;
-                let mut c: Vec<u8> = on.iter().filter(|e| e.0 == at).map(|e| e.1).collect();
-                c.sort_unstable();
-                c
-            })
-            .collect();
-        assert_eq!(chords, vec![vec![55, 60, 64], vec![57, 60, 64], vec![57, 60, 65], vec![55, 59, 62]]);
-        // A triangle pressed (its three notes together, the root last) is one touch: one step further, around its root.
-        let plates = [(2, 64, true), (2, 67, true), (2, 60, true), (8, 64, false), (8, 67, false), (8, 60, false), (12, 69, true), (12, 72, true), (12, 65, true), (18, 69, false), (18, 72, false), (18, 65, false)];
-        let (evs, _) = run(&p, &data, 30, &plates, false);
-        let on = ons(&evs);
-        let at = |b: u64| {
-            let mut c: Vec<u8> = on.iter().filter(|e| e.0 == b * 256).map(|e| e.1).collect();
+        let chord_at = |at: u64| {
+            let mut c: Vec<u8> = on.iter().filter(|e| e.0 == at).map(|e| e.1).collect();
             c.sort_unstable();
             c
         };
-        assert_eq!((at(2), at(12)), (vec![55, 60, 64], vec![62, 65, 69]), "I around C, then vi around F: Dm");
+        assert_eq!([chord_at(0), chord_at(24_000), chord_at(48_000), chord_at(72_000)], [vec![43, 48, 52], vec![45, 48, 52], vec![45, 48, 53], vec![43, 47, 50]]);
+        assert!(evs.iter().filter(|e| e.0 == 0).all(|e| e.3 > 0.5), "firm, with nothing pressed");
+        // A note pressed meanwhile plays as it is, held, and stops when let go.
+        assert!(on.contains(&(150 * 256, 64)), "the note pressed");
+        assert!(evs.iter().any(|e| e.0 == 200 * 256 && e.1 == 64 && !e.2), "let go: it stops");
+        // The sequencer off: a triangle pressed plays itself, nothing more.
+        p[SEQ] = 0.0;
+        let (evs, _) = run(&p, &data, 100, &[(2, 64, true), (2, 67, true), (2, 60, true), (50, 64, false), (50, 67, false), (50, 60, false)], false);
+        assert_eq!(ons(&evs), vec![(512, 60), (512, 64), (512, 67)]);
         // Without the sequence a triangle plays itself, and the pulser pulses it whole.
         let mut q = defaults(TOUCH);
         (q[LAYOUT], q[PULSE], q[RATE]) = (TONNETZ_LAYOUT as f32, 1.0, 0.0);

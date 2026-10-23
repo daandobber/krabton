@@ -839,9 +839,10 @@ impl App {
     /// that note alone; a triangle pressed plays its chord (its notes asked
     /// for, the root last; where a finger is higher up, harder), and with Rec
     /// on goes into the steps; sliding onto another triangle (or note) plays
-    /// it whole, the notes it shares too. The notes sounding light up wherever they are on
-    /// it; with the sequence on, its steps' chords (around the middle) carry
-    /// their numbers, the one playing lit.
+    /// it whole, the notes it shares too. The notes sounding light up wherever
+    /// they are on it; with the sequencer on (it plays the steps' chords by
+    /// itself, around the middle) the steps' triangles carry their numbers,
+    /// the one playing lit.
     #[allow(clippy::too_many_arguments)]
     fn tonnetz_plates(&mut self, ui: &mut Ui, area: Rect, ti: usize, di: usize, playing: Option<usize>, sounding: u128, tcol: Color32) -> Vec<(u8, f32, f32)> {
         let p = ui.painter().with_clip_rect(area.expand(2.0));
@@ -955,12 +956,11 @@ impl App {
         let first = pressed.first().copied();
         if first.is_some() && first != self.touch_view.tri_down {
             if let (Some(at), Some(t)) = (self.touch_view.rec, first) {
-                // Rec: into the step it is at, and on to the next.
+                // Rec: into the step it is at, and on to the next (the sequence plays them once switched on).
                 let dev = &mut self.project.tracks[ti].midi_devices[di];
                 let s = touch::step(&dev.data, at);
                 let gate = if s.rests() { Gate::Single } else { s.gate };
                 touch::set_step(&mut dev.data, at, Step { tri: t, gate, ..s });
-                dev.params[touch::SEQ] = 1.0;
                 dev.params[touch::PITCH] = 1.0;
                 dev.preset.clear();
                 self.touch_view.rec = Some((at + 1) % n_on);
@@ -1318,7 +1318,7 @@ impl App {
         ];
         let tips = [
             if tonnetz {
-                "Each step's chord, a triangle of the Tonnetz: click a step and Rec writes the triangles you press from there; right-click: a rest"
+                "Each step's chord, a triangle of the Tonnetz; with the sequencer On they play by themselves, one a pulse (Rate). Rec writes the triangles you press into them (click a step to start there); Dice makes new ones; right-click: a rest"
             } else {
                 "Each step's note, up and down through the key (drag across to draw; double-click: back to the base; right-click: a rest)"
             },
@@ -1799,40 +1799,10 @@ impl App {
         let values_on = self.touch_view.values && !on_tonnetz;
         let slide = dev.params.get(touch::SLIDE).copied().unwrap_or(1.0) >= 0.5 && !on_tonnetz;
         if on_tonnetz {
-            // P, L and R: the chord beside the step before, into the step Rec is at (Rec goes on); Walk: a walk over every step.
-            let n_on = (dev.params[touch::STEPS].round() as usize).clamp(1, N_STEPS);
-            let at = self.touch_view.rec.unwrap_or(0).min(n_on - 1);
-            let before = touch::step(&dev.data, (at + n_on - 1) % n_on).tri;
-            let mut x = bar.left() + 64.0 + cw;
-            for (k, (label, turn, tip)) in [
-                ("P", Turn::P, "Parallel: the step before's chord, major made minor or minor major (C to Cm)"),
-                ("L", Turn::L, "Leading-tone exchange: the step before's chord, one note a half step away (C to Em)"),
-                ("R", Turn::R, "Relative: the step before's chord, one note a whole step away (C to Am)"),
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                let br = Rect::from_min_size(pos2(x, bar.top()), vec2(28.0, 20.0));
-                if button(ui, br, Id::new(("tonnetz_turn", tid, k)), label, &format!("{tip}, into step {} (Rec)", at + 1)) {
-                    let s = touch::step(&dev.data, at);
-                    let gate = if s.rests() { Gate::Single } else { s.gate };
-                    touch::set_step(&mut dev.data, at, Step { tri: before.turn(turn), gate, ..s });
-                    dev.params[touch::SEQ] = 1.0;
-                    dev.params[touch::PITCH] = 1.0;
-                    self.touch_view.rec = Some((at + 1) % n_on);
-                    changed = true;
-                }
-                x += 31.0;
-            }
-            if button(ui, Rect::from_min_size(pos2(x + 4.0, bar.top()), vec2(50.0, 20.0)), Id::new(("tonnetz_walk", tid)), "Walk", "A walk across the Tonnetz over every step, from the first step's chord: each chord beside the one before") {
-                let walk = tonnetz_walk(touch::step(&dev.data, 0).tri, n_on, ui.input(|i| i.time));
-                for (i, t) in walk.into_iter().enumerate() {
-                    let s = touch::step(&dev.data, i);
-                    touch::set_step(&mut dev.data, i, Step { tri: t, ..s });
-                }
-                dev.params[touch::SEQ] = 1.0;
-                dev.params[touch::PITCH] = 1.0;
-                changed = true;
+            let hint = "a dot: its note  ·  a triangle: its chord  ·  Sequence On: the Chord lane plays by itself";
+            let hr = Rect::from_min_max(pos2(bar.left() + 70.0 + cw, bar.top()), pos2(bar.right() - 46.0 - base_w - 14.0, bar.bottom()));
+            if hr.width() > 60.0 {
+                p.text(hr.left_center(), Align2::LEFT_CENTER, hint, fitted(&p, hint, 10.5, hr.width()), TEXT_DIM);
             }
         } else {
             changed |= choice(ui, Rect::from_min_size(pos2(bar.left() + 64.0 + cw, bar.top()), vec2(cw + 20.0, 20.0)), Id::new(("touch_notes", tid)), &specs[touch::NOTES], &mut dev.params[touch::NOTES]);
