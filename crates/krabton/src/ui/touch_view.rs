@@ -111,8 +111,11 @@ pub struct TouchViewState {
     /// song's clock (the transport going) or on one of their own.
     played: Vec<Played>,
     played_on_song: bool,
-    /// The Tonnetz's triangle pressed last (Rec writes a new one into the steps).
+    /// The Tonnetz's triangle pressed last (Rec writes a new one into the
+    /// steps), and everything pressed on it (triangles, and notes as `None`
+    /// with their place): when that changes, all of it plays anew.
     tri_down: Option<Tri>,
+    surface_down: Vec<(Option<Tri>, i32, i32)>,
 }
 
 /// The notes' names, from C.
@@ -835,8 +838,8 @@ impl App {
     /// every triangle a triad. A note pressed (the middle of its dot) plays
     /// that note alone; a triangle pressed plays its chord (its notes asked
     /// for, the root last; where a finger is higher up, harder), and with Rec
-    /// on goes into the steps; moving onto the triangle beside it keeps the
-    /// two notes they share. The notes sounding light up wherever they are on
+    /// on goes into the steps; sliding onto another triangle (or note) plays
+    /// it whole, the notes it shares too. The notes sounding light up wherever they are on
     /// it; with the sequence on, its steps' chords (around the middle) carry
     /// their numbers, the one playing lit.
     #[allow(clippy::too_many_arguments)]
@@ -941,14 +944,16 @@ impl App {
             }
             pressed.push(t);
         }
-        // Another triangle with the sequence moving the chords: all its notes anew (the root counts).
+        // Slid onto another triangle or note: all of it anew, the notes it shares with the last too.
+        let down: Vec<(Option<Tri>, i32, i32)> = pressed.iter().map(|&t| (Some(t), 0, 0)).chain(pressed_dots.iter().map(|&(a, b)| (None, a, b))).collect();
+        if !down.is_empty() && !self.touch_view.surface_down.is_empty() && down != self.touch_view.surface_down {
+            for (pitch, t) in std::mem::take(&mut self.touch_view.held) {
+                self.touch_note_off(t, pitch);
+            }
+        }
+        self.touch_view.surface_down = down;
         let first = pressed.first().copied();
         if first.is_some() && first != self.touch_view.tri_down {
-            if seq && self.touch_view.tri_down.is_some() {
-                for (pitch, t) in std::mem::take(&mut self.touch_view.held) {
-                    self.touch_note_off(t, pitch);
-                }
-            }
             if let (Some(at), Some(t)) = (self.touch_view.rec, first) {
                 // Rec: into the step it is at, and on to the next.
                 let dev = &mut self.project.tracks[ti].midi_devices[di];
