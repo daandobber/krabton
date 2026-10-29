@@ -224,6 +224,20 @@ pub fn midi(kind: MidiFxKind) -> &'static [Preset] {
         K::Endless => ENDLESS,
         K::Hands => HANDS,
         K::Draw => DRAW,
+        K::Fireflies => FIREFLIES,
+        K::Sandpile => SANDPILE,
+        K::Pendulums => PENDULUMS,
+        K::Flock => FLOCK,
+        K::Plants => PLANTS,
+        K::Bells => BELLS,
+        K::Canon => CANON_PRESETS,
+        K::Row => ROW,
+        K::Gears => GEARS,
+        K::Formula => FORMULA,
+        K::Staircase => STAIRCASE,
+        K::Gamelan => GAMELAN,
+        K::Raga => RAGA,
+        K::Call => CALL,
         _ => crate::sequencers::players::presets(kind),
     }
 }
@@ -1224,6 +1238,109 @@ static DRAW: &[Preset] = &[
     pd("Mountain", &[], || line(|x| 1.0 - (2.0 * x - 1.0).abs())),
     pd("Zigzag", &[("Mode", C("Every Step")), ("Rate", C("1/16"))], || line(|x| (x * 8.0).fract() * 0.8 + x * 0.2)),
     pd("Stairs", &[], || line(|x| (x * 4.0).floor() / 3.0)),
+];
+static FIREFLIES: &[Preset] = &[
+    p("Summer Night", &[]),
+    p("Swarm as One", &[("Coupling", N(1.0)), ("Fireflies", N(10.0))]),
+    p("Restless", &[("Coupling", N(0.05)), ("Spread", N(0.3)), ("Nudge", N(0.4))]),
+    p("Slow Glow", &[("Pulse", C("1 Bar")), ("Fireflies", N(4.0)), ("Gate", N(1.5))]),
+    p("Sparks", &[("Pulse", C("1/8")), ("Sync", C("1/16")), ("Coupling", N(0.5)), ("Notes", C("Pentatonic"))]),
+];
+static SANDPILE: &[Preset] = &[
+    p("Sand Timer", &[]),
+    p("Full Pile", &[("Start", C("Full")), ("Drop", N(0.4))]),
+    p("Wandering Grains", &[("Spot", C("Wander")), ("Play", C("Diagonal"))]),
+    p("Rain of Grains", &[("Spot", C("Random")), ("Drop", N(1.0)), ("Rate", C("1/16"))]),
+    p("Rings", &[("Play", C("Distance")), ("Voices", N(4.0)), ("Steps", N(2.0))]),
+];
+static PENDULUMS: &[Preset] = &[
+    p("Pendulum Wave", &[]),
+    p("Long Cycle", &[("Cycle", C("8 Bars")), ("Pendulums", N(12.0)), ("Swings", N(12.0))]),
+    p("Through the Middle", &[("Play", C("Middle")), ("Sync", C("Free"))]),
+    p("Dying Away", &[("Fade", N(0.9))]),
+    p("Chords", &[("Notes", C("Chord")), ("Pendulums", N(12.0))]),
+];
+static FLOCK: &[Preset] = &[
+    p("Starlings", &[]),
+    p("Tight Flock", &[("Cohesion", N(0.9)), ("Alignment", N(0.9)), ("Wander", N(0.1))]),
+    p("Scattered", &[("Cohesion", N(0.0)), ("Alignment", N(0.1)), ("Wander", N(0.8))]),
+    p("Many Lines", &[("Lines", N(6.0)), ("Speed", N(0.2))]),
+    p("Swifts", &[("Speed", N(0.8)), ("Sync", C("1/16"))]),
+];
+static PLANTS: &[Preset] = &[
+    p("Weed", &[]),
+    p("Algae", &[("Plant", C("Algae")), ("Generations", N(5.0))]),
+    p("Koch Curve", &[("Plant", C("Koch")), ("Generations", N(3.0)), ("Grow", N(0.0))]),
+    p("Bush", &[("Plant", C("Bush")), ("Generations", N(2.0))]),
+    p("Dragon", &[("Plant", C("Dragon")), ("Generations", N(5.0)), ("X", C("Skip"))]),
+    p("Triangle", &[("Plant", C("Triangle")), ("Generations", N(4.0)), ("Turn", N(2.0))]),
+];
+static BELLS: &[Preset] = &[
+    p("Plain Bob Minor", &[]),
+    p("Grandsire Triples", &[("Bells", N(8.0)), ("Method", C("Grandsire"))]),
+    p("Stedman Doubles", &[("Bells", N(5.0)), ("Method", C("Stedman"))]),
+    p("Plain Hunt", &[("Method", C("Plain Hunt")), ("Calls", N(0.0))]),
+    p("Rounds", &[("Method", C("Rounds"))]),
+    p("Called Touch", &[("Calls", N(0.7)), ("Singles", N(0.5))]),
+];
+static CANON_PRESETS: &[Preset] = &[
+    p("Round", &[]),
+    p("Mirror", &[("Form 1", C("Upside Down")), ("Form 2", C("Upside Down"))]),
+    p("Crab", &[("Voices", N(1.0)), ("Form 1", C("Backward")), ("Delay 1", N(1.0))]),
+    p("Three Speeds", &[("Voices", N(3.0)), ("Speed 1", C("Half")), ("Speed 2", C("Double")), ("Speed 3", C("Same"))]),
+    p("Four Voices", &[("Voices", N(4.0))]),
+    p("Follow Me", &[("Source", C("Played"))]),
+];
+static ROW: &[Preset] = &[
+    p("Serial", &[]),
+    p("All Intervals", &[("Row", C("All Intervals"))]),
+    p("Chords of Three", &[("Texture", C("Threes")), ("Rhythm", C("Long Short"))]),
+    p("Pointillist", &[("Octaves", N(4.0)), ("Rhythm", C("Scattered")), ("Dynamics", N(0.9))]),
+    p("Row in the Key", &[("Notes", C("Key")), ("Rhythm", C("Even"))]),
+];
+static GEARS: &[Preset] = &[
+    p("Clockwork", &[]),
+    p("Three Against Four", &[("Gears", N(2.0)), ("Teeth 1", N(4.0)), ("Teeth 2", N(3.0)), ("Pegs 1", N(1.0)), ("Pegs 2", N(1.0))]),
+    p("Big Train", &[("Gears", N(6.0))]),
+    p("Slipping", &[("Slip", N(0.3)), ("Gears", N(4.0))]),
+    p("Swung", &[("Swing", N(0.4))]),
+];
+static FORMULA: &[Preset] = &[
+    p("Classic", &[]),
+    p("Arpeggio", &[("Formula", C("t*a%(b+7)")), ("A", N(3.0)), ("B", N(5.0))]),
+    p("Long Notes", &[("Legato", N(1.0)), ("Rests", N(0.1)), ("Map", C("Steps"))]),
+    p("Busy", &[("Formula", C("t*a|t>>b")), ("Rests", N(0.05)), ("Step", C("4"))]),
+    p("Never Again", &[("Loop", C("Off"))]),
+];
+static STAIRCASE: &[Preset] = &[
+    p("Rising", &[]),
+    p("Falling", &[("Direction", C("Down"))]),
+    p("Up and Down", &[("Direction", C("Up & Down"))]),
+    p("Wandering", &[("Direction", C("Wander"))]),
+    p("Climbing", &[("Play", C("Climb")), ("Rate", C("1/16")), ("Every", N(4.0))]),
+];
+static GAMELAN: &[Preset] = &[
+    p("Norot", &[]),
+    p("Nyog Cag", &[("Style", C("Nyog Cag"))]),
+    p("Telu", &[("Style", C("Telu")), ("Irama", C("3"))]),
+    p("Empat", &[("Style", C("Empat"))]),
+    p("Long Cycle", &[("Cycle", C("16")), ("Change", C("2 Cycles"))]),
+    p("All Seven", &[("Scale", C("Seven"))]),
+];
+static RAGA: &[Preset] = &[
+    p("Yaman Evening", &[]),
+    p("Bhairav Morning", &[("Raga", C("Bhairav"))]),
+    p("Bhupali", &[("Raga", C("Bhupali"))]),
+    p("Malkauns Night", &[("Raga", C("Malkauns")), ("Stage", C("Alap"))]),
+    p("Jhala", &[("Raga", C("Kafi")), ("Stage", C("Jhala"))]),
+    p("Raga of the Key", &[("Raga", C("Key"))]),
+];
+static CALL: &[Preset] = &[
+    p("Call and Home", &[]),
+    p("Echo", &[("Answer", C("Echo"))]),
+    p("Turns", &[("Answer", C("Turns"))]),
+    p("Big Choir", &[("Choir", N(3.0)), ("Octave", N(-1.0))]),
+    p("Quick Answers", &[("Length", N(4.0)), ("Gap", N(0.0)), ("Rate", C("1/16"))]),
 ];
 
 #[cfg(test)]

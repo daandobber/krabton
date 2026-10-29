@@ -180,6 +180,20 @@ pub enum MidiFxKind {
     MusicBox,
     Sing,
     Touch,
+    Fireflies,
+    Sandpile,
+    Pendulums,
+    Flock,
+    Plants,
+    Bells,
+    Canon,
+    Row,
+    Gears,
+    Formula,
+    Staircase,
+    Gamelan,
+    Raga,
+    Call,
 }
 
 const ARP_STYLES: &[&str] = &["Up", "Down", "Up Down", "Down Up", "Converge", "Diverge", "Random", "Played", "Chord"];
@@ -282,13 +296,13 @@ impl MidiFxKind {
     ];
 
     /// The sequencers' groups, in menu order.
-    pub const SEQUENCER_GROUPS: [&'static str; 8] = ["Classic", "Players", "Rhythm", "Played", "Generative", "Physics & Chaos", "Ambient", "Composers"];
+    pub const SEQUENCER_GROUPS: [&'static str; 11] = ["Classic", "Players", "Rhythm", "Played", "Generative", "Physics & Chaos", "Nature", "Systems", "Ambient", "Composers", "World"];
 
     /// Whether it is in a key by its nature (chords, the composers, the
     /// ambient ones): with the project's notes free (scale mode off) it
     /// stays in the song's key, where the others take all twelve notes.
     pub fn keeps_key(self) -> bool {
-        matches!(self.group(), "Composers" | "Players" | "Ambient") || matches!(self, MidiFxKind::Progression | MidiFxKind::Chord | MidiFxKind::Sing | MidiFxKind::Touch)
+        matches!(self.group(), "Composers" | "Players" | "Ambient" | "World") || matches!(self, MidiFxKind::Progression | MidiFxKind::Chord | MidiFxKind::Sing | MidiFxKind::Touch)
     }
 
     /// Which group a sequencer belongs to (see `SEQUENCER_GROUPS`).
@@ -301,13 +315,16 @@ impl MidiFxKind {
             K::Spinner | K::Endless | K::Hands | K::Draw | K::Touch => "Played",
             K::Polymeter | K::Turing | K::Life | K::Drunk | K::Markov | K::Words | K::Sing => "Generative",
             K::Bounce | K::Orbits | K::Pong | K::Rain | K::Chaos | K::Automaton | K::Ant | K::Lorenz => "Physics & Chaos",
+            K::Fireflies | K::Sandpile | K::Pendulums | K::Flock | K::Plants => "Nature",
+            K::Bells | K::Canon | K::Row | K::Gears | K::Formula | K::Staircase => "Systems",
+            K::Gamelan | K::Raga | K::Call => "World",
             K::Loops | K::Bloom | K::Chimes | K::DriftChords | K::Tintinnabuli | K::Pedal => "Ambient",
             K::Glass | K::Satie | K::Riley | K::Reich | K::Bach | K::Nancarrow | K::Debussy | K::Feldman | K::Mozart | K::Chopin | K::Ravel | K::Bartok | K::Messiaen | K::Ligeti | K::Cage | K::Einaudi => "Composers",
             _ => "MIDI Effects",
         }
     }
 
-    pub const SEQUENCERS: [MidiFxKind; 61] = [
+    pub const SEQUENCERS: [MidiFxKind; 75] = [
         MidiFxKind::Step,
         MidiFxKind::Acid,
         MidiFxKind::DrumGrid,
@@ -369,6 +386,20 @@ impl MidiFxKind {
         MidiFxKind::MusicBox,
         MidiFxKind::Sing,
         MidiFxKind::Touch,
+        MidiFxKind::Fireflies,
+        MidiFxKind::Sandpile,
+        MidiFxKind::Pendulums,
+        MidiFxKind::Flock,
+        MidiFxKind::Plants,
+        MidiFxKind::Bells,
+        MidiFxKind::Canon,
+        MidiFxKind::Row,
+        MidiFxKind::Gears,
+        MidiFxKind::Formula,
+        MidiFxKind::Staircase,
+        MidiFxKind::Gamelan,
+        MidiFxKind::Raga,
+        MidiFxKind::Call,
     ];
 
     pub fn is_sequencer(self) -> bool {
@@ -460,6 +491,20 @@ impl MidiFxKind {
             MidiFxKind::Banjo => "Banjo Roll",
             MidiFxKind::Section => "String Section",
             MidiFxKind::Ukulele => "Ukulele",
+            MidiFxKind::Fireflies => "Fireflies",
+            MidiFxKind::Sandpile => "Sandpile",
+            MidiFxKind::Pendulums => "Pendulums",
+            MidiFxKind::Flock => "Flock",
+            MidiFxKind::Plants => "Plants",
+            MidiFxKind::Bells => "Bells",
+            MidiFxKind::Canon => "Canon",
+            MidiFxKind::Row => "Row",
+            MidiFxKind::Gears => "Gears",
+            MidiFxKind::Formula => "Formula",
+            MidiFxKind::Staircase => "Staircase",
+            MidiFxKind::Gamelan => "Gamelan",
+            MidiFxKind::Raga => "Raga",
+            MidiFxKind::Call => "Call & Response",
 
             MidiFxKind::Arpeggiator => "Arpeggiator",
             MidiFxKind::Chord => "Chord",
@@ -540,6 +585,20 @@ impl MidiFxKind {
             MidiFxKind::BassPlayer => "A bass player on the chord progression: roots, root and fifth, octaves, a walking line that leans into the next chord, reggae, funk, Motown, eighths",
             MidiFxKind::Banjo => "A banjo on the chord progression: five strings in open tuning moved to the key, picked in rolls with the high drone string",
             MidiFxKind::Section => "A string section on the chord progression: three to five voices that move as little as they can, held, pulsing, tremolo, pizzicato, stabs or arpeggio",
+            MidiFxKind::Fireflies => "Fireflies flashing at their own pace, each pulled towards the others' rhythm: a little Coupling and they drift, more and they flash as one",
+            MidiFxKind::Sandpile => "Grains dropped on a board: a cell with four topples onto its neighbours, and every wave of the avalanche plays the cells that fell",
+            MidiFxKind::Pendulums => "A pendulum wave: a row of pendulums, each a little shorter, let go together; they drift through waves and chaos and meet again after the cycle",
+            MidiFxKind::Flock => "A flock of birds (separation, alignment, cohesion) flying over the notes: a bird crossing a line plays the note of its height",
+            MidiFxKind::Plants => "A plant grown by its rules (a Lindenmayer system) and walked as a melody: F a note, + and - a step, [ ] a branch that returns",
+            MidiFxKind::Bells => "Change ringing: four to eight bells in rounds, then changing order by Plain Hunt, Plain Bob, Grandsire or Stedman until they come round, with Bobs and Singles called",
+            MidiFxKind::Canon => "A phrase (its own, or what you play) and up to four voices following it: later, higher or lower, upside down, backwards, at half or double speed",
+            MidiFxKind::Row => "A twelve-tone row (or a row of the key's notes): prime, retrograde, inversion and both, moved round, as a line or in chords, in serial rhythms",
+            MidiFxKind::Gears => "Meshed gears turning a tooth a step; pegs on their teeth play as they pass the top: gears of different sizes make polyrhythms",
+            MidiFxKind::Formula => "A melody from a bytebeat formula like t*(t>>5|t>>8): each step's byte a note of the key, a rest or a long note, looped",
+            MidiFxKind::Staircase => "A stair that rises (or falls) for ever: one note in several octaves, the top ones fading out as new ones fade in below",
+            MidiFxKind::Gamelan => "A gamelan: a slow core melody, two parts that lock into each other above it in one fast line, and the gongs marking the cycle; irama sets how dense",
+            MidiFxKind::Raga => "A melody by a raga's rules: other notes going up than coming down, notes it rests on, its signature phrase; Alap, Jor and Jhala, grace notes, slides and a drone",
+            MidiFxKind::Call => "Call and response: a caller's phrase that ends open, answered by a choir: the same, higher, upside down or coming home to the key note",
             MidiFxKind::Ukulele => "Ukulele chords the way a ukulele player plays them: four strings (high G, low G, baritone or D tuning), real shapes in the key, strummed or picked in the same patterns as Guitar Chords",
 
             MidiFxKind::Arpeggiator => "Plays held notes one after another, tempo-synced",
@@ -622,6 +681,20 @@ impl MidiFxKind {
             MidiFxKind::BassPlayer => sequencers::players::BASS,
             MidiFxKind::Banjo => sequencers::players::BANJO,
             MidiFxKind::Section => sequencers::players::SECTION,
+            MidiFxKind::Fireflies => sequencers::nature::FIREFLIES,
+            MidiFxKind::Sandpile => sequencers::nature::SANDPILE,
+            MidiFxKind::Pendulums => sequencers::nature::PENDULUMS,
+            MidiFxKind::Flock => sequencers::nature::FLOCK,
+            MidiFxKind::Plants => sequencers::nature::PLANT,
+            MidiFxKind::Bells => sequencers::systems::BELLS,
+            MidiFxKind::Canon => sequencers::systems::CANON,
+            MidiFxKind::Row => sequencers::systems::ROW,
+            MidiFxKind::Gears => sequencers::systems::GEARS,
+            MidiFxKind::Formula => sequencers::systems::FORMULA,
+            MidiFxKind::Staircase => sequencers::systems::STAIRCASE,
+            MidiFxKind::Gamelan => sequencers::world::GAMELAN,
+            MidiFxKind::Raga => sequencers::world::RAGA,
+            MidiFxKind::Call => sequencers::world::CALL,
 
             MidiFxKind::Arpeggiator => ARP,
             MidiFxKind::Chord => CHORD,
