@@ -386,6 +386,22 @@ enum GarbageInner {
     PianoLibrary(Arc<PianoLibrary>),
 }
 
+/// A MIDI message for a track's MIDI To port, and when to send it: `at`
+/// nanoseconds after the engine's `epoch`, as its audio is heard.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MidiOut {
+    pub track: u64,
+    pub at: u64,
+    pub msg: [u8; 3],
+    pub len: u8,
+}
+
+impl MidiOut {
+    pub fn bytes(&self) -> &[u8] {
+        &self.msg[..self.len as usize]
+    }
+}
+
 /// The UI side of the engine.
 pub struct EngineHandle {
     pub commands: Sender<Command>,
@@ -395,6 +411,9 @@ pub struct EngineHandle {
     pub recorded: Receiver<RecChunk>,
     /// Notes armed tracks got from other tracks.
     pub midi_recorded: Receiver<MidiRec>,
+    /// What goes out to the tracks' MIDI To ports, stamped from `epoch`.
+    pub midi_out: Receiver<MidiOut>,
+    pub epoch: Instant,
 }
 
 impl EngineHandle {
@@ -1267,6 +1286,16 @@ pub struct Engine {
     capture: bool,
     rec_tx: Sender<RecChunk>,
     midi_rec_tx: Sender<MidiRec>,
+    midi_out_tx: Sender<MidiOut>,
+    /// When the engine began (MIDI out's times count from it), and where
+    /// this callback's audio will be heard: its start (ns from `epoch`, one
+    /// callback later) and its first frame.
+    epoch: Instant,
+    out_ns: u64,
+    out_frame: u64,
+    /// The transport started or stopped: Start or Stop goes out with the clocks.
+    out_start: bool,
+    out_stop: bool,
     /// The grand piano's samples, for every Grand Piano.
     piano_lib: Option<Arc<PianoLibrary>>,
     /// The arrangement looped back: the next block plays from the loop's
@@ -1285,6 +1314,8 @@ impl Engine {
         // About 20 seconds of one recording track; the UI drains it every frame.
         let (rec_tx, rec_rx) = bounded(4096);
         let (midi_rec_tx, midi_rec_rx) = bounded(4096);
+        let (midi_out_tx, midi_out_rx) = bounded(16384);
+        let epoch = Instant::now();
         let status = Arc::new(EngineStatus::new());
         status.sample_rate.store(sample_rate);
         status.reel.set_rate(sample_rate);
@@ -1320,13 +1351,19 @@ impl Engine {
             capture: false,
             rec_tx,
             midi_rec_tx,
+            midi_out_tx,
+            epoch,
+            out_ns: 0,
+            out_frame: 0,
+            out_start: false,
+            out_stop: false,
             midi_scratch: Vec::with_capacity(512),
             piano_lib: crate::piano::library::shared(),
             loop_from: None,
             tape: crate::tape::TapeRt::new(),
         };
         e.reconcile();
-        (e, EngineHandle { commands: cmd_tx, garbage: garbage_rx, status, recorded: rec_rx, midi_recorded: midi_rec_rx })
+        (e, EngineHandle { commands: cmd_tx, garbage: garbage_rx, status, recorded: rec_rx, midi_recorded: midi_rec_rx, midi_out: midi_out_rx, epoch })
     }
 
     pub fn sample_rate(&self) -> f32 {
@@ -1388,6 +1425,9 @@ impl Engine {
             self.handle(cmd);
         }
         let frames = out.len() / 2;
+        // MIDI out is heard with this audio: about one callback from now.
+        self.out_frame = self.clock;
+        self.out_ns = started.duration_since(self.epoch).as_nanos() as u64 + (frames as f64 / self.sr.max(1.0) as f64 * 1e9) as u64;
         let mut done = 0;
         while done < frames {
             let n = (frames - done).min(MAX_BLOCK);
@@ -1423,6 +1463,7 @@ impl Engine {
             Command::Stop => {
                 if self.playing {
                     self.playing = false;
+                    self.out_stop = true;
                     // Like Live, session clips stay launched: Play starts
                     // them again. Stop All Clips (or a track's stop) clears them.
                     for rt in self.tracks.iter_mut() {
@@ -1632,6 +1673,7 @@ impl Engine {
 
     fn start_transport(&mut self) {
         self.playing = true;
+        self.out_start = true;
         self.song_pos = self.start_marker;
         self.session_pos = self.song_pos;
         // Clips that were playing when the transport stopped start over; the
@@ -1951,6 +1993,8 @@ impl Engine {
         let any_solo = project.tracks.iter().any(|t| t.mixer.solo);
         let status = &self.status;
         let clock = self.clock;
+        // Start and Stop go out once, with this segment's clocks.
+        let (out_start, out_stop) = (std::mem::take(&mut self.out_start), std::mem::take(&mut self.out_stop));
         // Effects that keep time follow the session clock (it starts from the song position).
         let ctx = FxCtx { sr, bpm: project.bpm as f32, beat: s0, playing };
 
@@ -2249,6 +2293,37 @@ impl Engine {
 
             midi_out.clear();
             midi_out.extend_from_slice(events);
+
+            // MIDI To: its notes, and (the first on its port with Clock on) the clock.
+            if let Some(to) = &track.midi_to {
+                let ch = to.channel.min(15);
+                let ns_per_frame = 1e9 / sr.max(1.0) as f64;
+                let at = |frame: u64| self.out_ns + ((clock + frame).saturating_sub(self.out_frame) as f64 * ns_per_frame) as u64;
+                let send = |msg: [u8; 3], len: u8, frame: u64| {
+                    let _ = self.midi_out_tx.try_send(MidiOut { track: track.id, at: at(frame), msg, len });
+                };
+                let clocks = to.clock && !project.tracks[..ti].iter().any(|o| o.midi_to.as_ref().is_some_and(|m| m.clock && m.port == to.port));
+                if clocks && out_stop {
+                    send([0xFC, 0, 0], 1, 0);
+                }
+                if clocks && out_start {
+                    send([0xFA, 0, 0], 1, 0);
+                }
+                if clocks && playing {
+                    // 24 a beat, on its clock.
+                    let mut k = (t0 * 24.0 - 1e-9).ceil();
+                    while k / 24.0 < t1 - 1e-12 {
+                        let f = ((k / 24.0 - t0) * tspb).round().max(0.0) as u64;
+                        send([0xF8, 0, 0], 1, f.min(seg as u64 - 1));
+                        k += 1.0;
+                    }
+                }
+                for e in events.iter() {
+                    let vel = (e.vel * 127.0).round().clamp(1.0, 127.0) as u8;
+                    let msg = if e.on { [0x90 | ch, e.pitch.min(127), vel] } else { [0x80 | ch, e.pitch.min(127), 0] };
+                    send(msg, 3, e.offset as u64);
+                }
+            }
 
             if let Some(inst) = snd.instrument {
                 let ov = mods.params(ModOwner::Instrument(track.id)).filter(|_| own_sound);
@@ -2819,6 +2894,42 @@ mod tests {
 
     fn peak(buf: &[f32]) -> f32 {
         buf.iter().fold(0.0f32, |m, v| m.max(v.abs()))
+    }
+
+    #[test]
+    fn midi_to_sends_notes_and_a_clock_per_port_at_the_tracks_tempo() {
+        let mut p = crate::demo::demo_project();
+        p.bpm = 120.0;
+        p.launch_quantize = Quantize::None;
+        let midi: Vec<usize> = (0..p.tracks.len()).filter(|&i| p.tracks[i].kind == TrackKind::Midi).take(3).collect();
+        let to = |port: &str, channel: u8| Some(MidiTo { port: port.into(), channel, clock: true });
+        // A on port A, B on port B at its own 180, C on port A too (A gives that port its clock).
+        p.tracks[midi[0]].midi_to = to("A", 0);
+        p.tracks[midi[1]].midi_to = to("B", 3);
+        p.tracks[midi[1]].tempo = Some(180.0);
+        p.tracks[midi[2]].midi_to = to("A", 1);
+        let cid = p.alloc_id();
+        let t = &mut p.tracks[midi[1]];
+        let mut clip = Clip::new_midi(cid, "c", t.color, 1.0);
+        clip.notes_mut().unwrap().push(Note::new(62, 0.0, 0.25, 1.0));
+        t.slots[0] = Some(clip);
+        let ids: Vec<u64> = midi.iter().map(|&i| p.tracks[i].id).collect();
+        let (mut e, h) = Engine::new(48_000.0, Arc::new(p));
+        h.send(Command::LaunchClip { track: ids[1], slot: 0 });
+        run(&mut e, 2.0);
+        h.send(Command::Stop);
+        run(&mut e, 0.1);
+        let got: Vec<MidiOut> = std::iter::from_fn(|| h.midi_out.try_recv().ok()).collect();
+        let of = |id: u64, b: u8| got.iter().filter(|m| m.track == id && m.msg[0] == b).count();
+        assert_eq!((of(ids[0], 0xFA), of(ids[1], 0xFA), of(ids[2], 0xFA)), (1, 1, 0), "Start once per port");
+        assert_eq!((of(ids[0], 0xFC), of(ids[1], 0xFC)), (1, 1), "and Stop");
+        let (a, b) = (of(ids[0], 0xF8) as i64, of(ids[1], 0xF8) as i64);
+        assert!((a - 96).abs() <= 2, "two seconds at 120: {a} ticks");
+        assert!((b - 144).abs() <= 2, "and at its own 180: {b}");
+        assert_eq!(of(ids[2], 0xF8), 0, "port A's clock comes from A");
+        // B's one-beat clip at 180: three notes a second, on its channel (4).
+        let ons = got.iter().filter(|m| m.track == ids[1] && m.msg[0] == 0x93 && m.msg[1] == 62).count();
+        assert!((5..=7).contains(&ons), "{ons} notes");
     }
 
     #[test]

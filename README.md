@@ -135,6 +135,7 @@ For sound on Linux see [Building](#building) below: Krabton talks to PulseAudio/
 - *Monitor*: In (always hear the input), Auto (while armed and no clip plays) or Off (record without hearing it)
 - *Audio To*: the master or another audio track, which then plays it through its own effects and mixer (a bus)
 - *Clock* (also in each track's strip in the Studio): each track is in *Sync* with the project's tempo, or (Sync off) runs on a clock of its own at a tempo of its own: drag it, or *Tap* it (three taps or more; tapping takes a track out of Sync). Its session clips, its MIDI effects and sequencers (Touch too) and its effects that keep time (delays and the like) run at that tempo and drift against the other tracks, Steve Reich style; launches still wait for the project's grid, and in the arrangement it follows the song. Its clock starts in step with the others on Play; *Sync* on again puts it back in step
+- *MIDI To* (MIDI tracks): a MIDI out port (a hardware synth, a drum machine, another program), its channel and *Clock*. The track's notes, after its MIDI effects and sequencers, go out to it besides its own instrument (take the instrument out to only play the hardware). Any number of ports at once, a track each or several tracks on one port on their own channels. With Clock on the port gets the MIDI clock (24 a beat), Start and Stop at the track's tempo, so a track out of Sync gives its port a clock of its own: one machine at 124, another at 93. Of the tracks on one port with Clock on, the first gives it. Ports open when used; a port unplugged is opened again when it comes back (*Look again* in the list finds new ones). MIDI goes out timed to be heard with the audio
 - Right-click a track header and choose *Record into new audio track* for an armed audio track that listens to it, ready to record
 - Tracks are processed so that every track comes after the tracks it listens to, which makes track-to-track routing sample exact; routing that would loop back is not offered. Resampling hears the master one block late and is never monitored, so it cannot feed back
 - Recordings are WAV files (24-bit) in a *Recorded* folder next to the saved set, or in Documents/Krabton/Recorded for an unsaved one. The audio interface input opens when a track that listens to it is armed or monitoring, at the output's sample rate; input and output on different clocks are kept in step with a small buffer
@@ -562,7 +563,7 @@ Ideas that would make Krabton even more Live-like (contributions welcome):
 - Automation lanes in the arrangement (clip envelopes are there)
 - Effect plugins and VST3 hosting, plugin parameter automation
 - Time-stretching warp modes (Beats, Complex)
-- Groove pool, follow actions, MIDI output, MIDI mapping of controls
+- Groove pool, follow actions, MIDI mapping of controls
 - More file formats for samples (AIFF, MP3, OGG), and streaming large sample libraries from disk instead of loading them into memory
 
 ## Credits

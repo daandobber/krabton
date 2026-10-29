@@ -1,7 +1,9 @@
 //! The In/Out section of the session mixer, under the clip slots, laid out
 //! like Live's: Audio From (or MIDI From) with a second chooser for the
-//! channel or tap point, Monitor In/Auto/Off, and Audio To; then the track's
-//! clock: in Sync with the project, or a tempo of its own (with Tap).
+//! channel or tap point, Monitor In/Auto/Off, and Audio To; a MIDI track's
+//! MIDI To (a port of a synth or drum machine, its channel, and Clock); then
+//! the track's clock: in Sync with the project, or a tempo of its own (with
+//! Tap).
 
 use crate::app::App;
 use crate::theme::*;
@@ -11,7 +13,7 @@ use krabton_engine::engine::EngineStatus;
 use krabton_engine::{AudioInput, AudioOutput, MidiInput, Monitor, Tap, TrackKind};
 
 /// Height of the section.
-pub const IO_H: f32 = 162.0;
+pub const IO_H: f32 = 213.0;
 const ROW: f32 = 18.0;
 const LABEL: f32 = 12.0;
 
@@ -201,6 +203,13 @@ impl App {
         fixed_box(ui, row(y), if matches!(output, AudioOutput::Track(_)) { "Track In" } else { "" });
         y += ROW + 1.0;
 
+        // MIDI To: a port its notes (and the clock) go out to.
+        if kind == TrackKind::Midi {
+            label(ui, x, y, "MIDI To");
+            self.track_midi_to(ui, i, row(y + LABEL), row(y + LABEL + ROW));
+        }
+        y += LABEL + 2.0 * ROW + 2.0;
+
         // Its clock: Sync (the project's), or a tempo of its own; Tap taps one.
         label(ui, x, y, "Clock");
         y += LABEL;
@@ -224,6 +233,74 @@ impl App {
                         d.monitor = Monitor::In;
                     }
                 }
+            }
+        }
+    }
+
+    /// Track `i`'s MIDI To: the port in `r1`; its channel and Clock in `r2`.
+    fn track_midi_to(&mut self, ui: &mut Ui, i: usize, r1: Rect, r2: Rect) {
+        let Some(t) = self.project.tracks.get(i) else { return };
+        let (tid, to) = (t.id, t.midi_to.clone());
+        let mut new_to = to.clone();
+        let ports = self.midi_outs.ports.clone();
+        let shown = match &to {
+            None => "None".to_string(),
+            Some(m) if ports.contains(&m.port) => m.port.clone(),
+            Some(m) => format!("{} (not here)", m.port),
+        };
+        let mut look_again = false;
+        combo(ui, r1, Id::new(("io_midi_to", tid)), &shown, true, |ui| {
+            if ui.selectable_label(to.is_none(), "None").clicked() {
+                new_to = None;
+            }
+            for p in &ports {
+                if ui.selectable_label(to.as_ref().is_some_and(|m| &m.port == p), p).on_hover_text("Its notes (after its MIDI effects) go out to this port too").clicked() {
+                    new_to = Some(match &to {
+                        Some(m) => krabton_engine::MidiTo { port: p.clone(), ..m.clone() },
+                        None => krabton_engine::MidiTo { port: p.clone(), channel: 0, clock: true },
+                    });
+                }
+            }
+            if ports.is_empty() {
+                ui.label(RichText::new("No MIDI out ports").small().color(TEXT_DIM));
+            }
+            ui.separator();
+            if ui.selectable_label(false, "Look again").on_hover_text("Find ports plugged in since").clicked() {
+                look_again = true;
+            }
+        });
+        if look_again {
+            self.midi_outs.refresh();
+        }
+        let half = (r2.width() - 4.0) * 0.55;
+        let ch_r = Rect::from_min_size(r2.min, vec2(half, r2.height()));
+        let clk_r = Rect::from_min_max(pos2(r2.left() + half + 4.0, r2.top()), pos2(r2.right(), r2.bottom() - 2.0));
+        match &to {
+            Some(m) => {
+                let mut ch = m.channel;
+                combo(ui, ch_r, Id::new(("io_midi_to_ch", tid)), &format!("Ch. {}", m.channel + 1), true, |ui| {
+                    for c in 0..16u8 {
+                        ui.selectable_value(&mut ch, c, format!("Ch. {}", c + 1));
+                    }
+                });
+                if ch != m.channel {
+                    new_to = Some(krabton_engine::MidiTo { channel: ch, ..m.clone() });
+                }
+                if button(ui, clk_r, Id::new(("io_midi_clock", tid)), "Clock", m.clock, ACCENT)
+                    .on_hover_text("Send the port the clock, Start and Stop at this track's tempo (its own when Sync is off). Of the tracks on one port, the first with Clock on gives it")
+                    .clicked()
+                {
+                    new_to = Some(krabton_engine::MidiTo { clock: !m.clock, ..m.clone() });
+                }
+            }
+            None => {
+                fixed_box(ui, ch_r, "");
+                fixed_box(ui, clk_r, "");
+            }
+        }
+        if new_to != to {
+            if let Some(t) = self.project.tracks.get_mut(i) {
+                t.midi_to = new_to;
             }
         }
     }

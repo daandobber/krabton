@@ -429,6 +429,8 @@ pub struct App {
     /// The settings window (audio and MIDI devices).
     pub show_settings: bool,
     pub midi: Midi,
+    /// MIDI out to the tracks' MIDI To ports.
+    pub midi_outs: crate::midi_out::MidiOutputs,
     pending: Vec<Command>,
     /// Per track (by id): the clip whose sound it has taken, while that clip plays.
     sound_from: std::collections::HashMap<u64, u64>,
@@ -593,6 +595,7 @@ impl App {
 
         let mut midi = Midi::new();
         midi.auto_connect();
+        let midi_outs = crate::midi_out::MidiOutputs::start(engine.midi_out.clone(), engine.epoch);
 
         let mut plugins = PluginManager::new();
         plugins.scan();
@@ -628,6 +631,7 @@ impl App {
             audio_in_devices: None,
             show_settings: false,
             midi,
+            midi_outs,
             pending: Vec::new(),
             sound_from: std::collections::HashMap::new(),
             view: View::Studio,
@@ -752,6 +756,12 @@ impl App {
         }
         for c in self.pending.drain(..) {
             self.engine.send(c);
+        }
+        // Where the tracks' notes go out, and a port that would not open.
+        let routes = self.project.tracks.iter().filter_map(|t| t.midi_to.as_ref().map(|m| (t.id, (m.port.clone(), m.channel.min(15))))).collect();
+        self.midi_outs.set_routes(routes);
+        if let Some(e) = self.midi_outs.error.lock().ok().and_then(|mut e| e.take()) {
+            self.toast(e);
         }
         let pointer_down = ctx.input(|i| i.pointer.any_down());
         if !pointer_down && self.project != self.committed {
@@ -2418,6 +2428,7 @@ impl App {
         let old = self.engine_slot.lock().ok().and_then(|mut g| g.replace(eng));
         // The old engine (and the plugins' processors in it) goes here, off the audio thread.
         drop(old);
+        self.midi_outs.attach(handle.midi_out.clone(), handle.epoch);
         self.engine = handle;
         self.last_sent = snapshot;
         self.plugins.forget();

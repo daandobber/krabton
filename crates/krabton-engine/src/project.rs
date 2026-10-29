@@ -1279,6 +1279,24 @@ pub struct Track {
     /// drifting against the other tracks. None: in sync with the project.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tempo: Option<f64>,
+    /// Where its notes also go out (MIDI To): a MIDI port, with its clock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub midi_to: Option<MidiTo>,
+}
+
+/// A MIDI port a track plays (a synth, a drum machine): its notes after its
+/// MIDI effects, on a channel, and (Clock on) the clock, Start and Stop at
+/// the track's tempo, its own when it has one. Of the tracks on one port with
+/// Clock on, the first gives the port its clock.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MidiTo {
+    /// The port's name.
+    pub port: String,
+    /// 0..15.
+    #[serde(default)]
+    pub channel: u8,
+    #[serde(default = "default_true")]
+    pub clock: bool,
 }
 
 impl Track {
@@ -1855,6 +1873,7 @@ impl Project {
             kind,
             key_fixed: false,
             tempo: None,
+            midi_to: None,
             place: None,
             midi_devices: Vec::new(),
             instrument,
