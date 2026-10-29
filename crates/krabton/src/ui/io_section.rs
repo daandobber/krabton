@@ -1,6 +1,7 @@
 //! The In/Out section of the session mixer, under the clip slots, laid out
 //! like Live's: Audio From (or MIDI From) with a second chooser for the
-//! channel or tap point, Monitor In/Auto/Off, and Audio To.
+//! channel or tap point, Monitor In/Auto/Off, and Audio To; then the track's
+//! clock: in Sync with the project, or a tempo of its own (with Tap).
 
 use crate::app::App;
 use crate::theme::*;
@@ -10,7 +11,7 @@ use krabton_engine::engine::EngineStatus;
 use krabton_engine::{AudioInput, AudioOutput, MidiInput, Monitor, Tap, TrackKind};
 
 /// Height of the section.
-pub const IO_H: f32 = 132.0;
+pub const IO_H: f32 = 162.0;
 const ROW: f32 = 18.0;
 const LABEL: f32 = 12.0;
 
@@ -198,6 +199,12 @@ impl App {
         });
         y += ROW;
         fixed_box(ui, row(y), if matches!(output, AudioOutput::Track(_)) { "Track In" } else { "" });
+        y += ROW + 1.0;
+
+        // Its clock: Sync (the project's), or a tempo of its own; Tap taps one.
+        label(ui, x, y, "Clock");
+        y += LABEL;
+        self.track_clock(ui, i, Rect::from_min_size(pos2(x, y), vec2(w, ROW - 3.0)));
 
         // Picking an interface input again retries a device that failed.
         if new_input != input && matches!(new_input, AudioInput::Ext { .. }) {
@@ -217,6 +224,48 @@ impl App {
                         d.monitor = Monitor::In;
                     }
                 }
+            }
+        }
+    }
+
+    /// Track `i`'s clock in `r`: Sync (the project's tempo) or a tempo of its
+    /// own, dragged or tapped (here and in the Studio's strips).
+    pub(crate) fn track_clock(&mut self, ui: &mut Ui, i: usize, r: Rect) {
+        let Some(t) = self.project.tracks.get(i) else { return };
+        let (tid, tempo) = (t.id, t.tempo);
+        let mut new_tempo = tempo;
+        let (x, w, h) = (r.left(), r.width(), r.height());
+        let sw = (w * 0.34).max(30.0);
+        let tw = (w * 0.24).max(26.0);
+        let sync_r = Rect::from_min_size(pos2(x, r.top()), vec2(sw - 2.0, h));
+        if button(ui, sync_r, Id::new(("io_sync", tid)), "Sync", tempo.is_none(), ACCENT)
+            .on_hover_text("Sync: the track keeps the project's tempo. Off: a clock of its own, at its own tempo (drag it, or Tap it), its clips, sequencers and delays drifting against the others. On again: back in step")
+            .clicked()
+        {
+            new_tempo = if tempo.is_some() { None } else { Some(self.project.bpm) };
+        }
+        let val_r = Rect::from_min_max(pos2(x + sw, r.top()), pos2(r.right() - tw - 2.0, r.bottom()));
+        match tempo {
+            Some(bpm) => {
+                let mut v = bpm;
+                let mut c = ui.new_child(UiBuilder::new().max_rect(val_r));
+                c.set_clip_rect(val_r.expand(1.0).intersect(ui.clip_rect()));
+                c.spacing_mut().interact_size.y = h;
+                let resp = c.add_sized(val_r.size(), egui::DragValue::new(&mut v).range(20.0..=999.0).speed(0.2).fixed_decimals(1)).on_hover_text("Its own tempo. Drag or double-click to type");
+                if resp.changed() {
+                    new_tempo = Some(v);
+                }
+            }
+            None => fixed_box(ui, val_r, &format!("{:.1}", self.project.bpm)),
+        }
+        let tap_r = Rect::from_min_size(pos2(r.right() - tw, r.top()), vec2(tw, h));
+        if button(ui, tap_r, Id::new(("io_tap_tempo", tid)), "Tap", false, ACCENT).on_hover_text("Tap its own tempo (three taps or more); takes it out of Sync").clicked() {
+            let taps = self.session.track_taps.entry(tid).or_default();
+            new_tempo = Some(crate::ui::transport::tapped(taps).or(tempo).unwrap_or(self.project.bpm));
+        }
+        if new_tempo != tempo {
+            if let Some(t) = self.project.tracks.get_mut(i) {
+                t.tempo = new_tempo;
             }
         }
     }

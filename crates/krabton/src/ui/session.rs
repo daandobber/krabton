@@ -29,6 +29,8 @@ pub struct SessionState {
     pub scroll_x: f32,
     pub scroll_y: f32,
     pub taps: Vec<Instant>,
+    /// Taps on the tracks' own clocks, by track.
+    pub track_taps: std::collections::HashMap<u64, Vec<Instant>>,
     /// The In/Out section under the clip slots is hidden.
     pub hide_io: bool,
 }

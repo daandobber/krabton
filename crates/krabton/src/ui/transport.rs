@@ -198,23 +198,8 @@ impl App {
     }
 
     fn tap_tempo(&mut self) {
-        let now = Instant::now();
-        let taps = &mut self.session.taps;
-        if let Some(last) = taps.last() {
-            if now.duration_since(*last).as_secs_f64() > 2.0 {
-                taps.clear();
-            }
-        }
-        taps.push(now);
-        if taps.len() > 6 {
-            taps.remove(0);
-        }
-        if taps.len() >= 3 {
-            let span = taps.last().unwrap().duration_since(taps[0]).as_secs_f64();
-            let bpm = 60.0 * (taps.len() - 1) as f64 / span;
-            if (20.0..=999.0).contains(&bpm) {
-                self.project.bpm = (bpm * 100.0).round() / 100.0;
-            }
+        if let Some(bpm) = tapped(&mut self.session.taps) {
+            self.project.bpm = bpm;
         }
     }
 
@@ -428,4 +413,23 @@ impl App {
             });
         });
     }
+}
+
+/// A tap: the tempo the last few taps make (from the third on; a pause of
+/// two seconds starts over).
+pub(crate) fn tapped(taps: &mut Vec<Instant>) -> Option<f64> {
+    let now = Instant::now();
+    if taps.last().is_some_and(|last| now.duration_since(*last).as_secs_f64() > 2.0) {
+        taps.clear();
+    }
+    taps.push(now);
+    if taps.len() > 6 {
+        taps.remove(0);
+    }
+    if taps.len() < 3 {
+        return None;
+    }
+    let span = taps.last()?.duration_since(taps[0]).as_secs_f64();
+    let bpm = 60.0 * (taps.len() - 1) as f64 / span;
+    (20.0..=999.0).contains(&bpm).then(|| (bpm * 100.0).round() / 100.0)
 }

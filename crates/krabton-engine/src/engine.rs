@@ -425,7 +425,8 @@ type Ev = MidiEvent;
 #[derive(Clone, Copy)]
 struct PlayingClip {
     slot: usize,
-    /// Session-clock beat at which the clip started.
+    /// Beat at which the clip started: on the session clock, or on the
+    /// track's own clock when it has one.
     start: f64,
 }
 
@@ -971,6 +972,8 @@ struct TrackRt {
     /// Where the clip notes sent ahead of their time (to a Singer) reached
     /// last block; NaN after a stop or a jump, when it catches up.
     lead_until: f64,
+    /// Where its own clock is (a track with a tempo of its own), in its beats.
+    own_pos: f64,
     /// How far the Key drawer moved each pitch (its note-off goes there too).
     shifted: [i8; 128],
     /// Notes and level for the modulators.
@@ -1029,6 +1032,7 @@ impl TrackRt {
             fx_sig: FX_SIG_EMPTY,
             sounding: [0; 128],
             lead_until: f64::NAN,
+            own_pos: 0.0,
             shifted: [0; 128],
             bend: 0.0,
             signal: TrackSignal::default(),
@@ -1406,6 +1410,7 @@ impl Engine {
     pub fn handle(&mut self, cmd: Command) {
         match cmd {
             Command::SetProject(p) => {
+                self.retime(&p);
                 let old = std::mem::replace(&mut self.project, p);
                 self.trash(GarbageInner::Project(old));
                 self.reconcile();
@@ -1629,11 +1634,42 @@ impl Engine {
         self.playing = true;
         self.song_pos = self.start_marker;
         self.session_pos = self.song_pos;
-        // Clips that were playing when the transport stopped start over.
+        // Clips that were playing when the transport stopped start over; the
+        // tracks' own clocks start with the session's, in step.
         let start = self.session_pos;
         for rt in self.tracks.iter_mut() {
+            rt.own_pos = start;
             if let Some(pc) = &mut rt.playing {
                 pc.start = start;
+            }
+        }
+    }
+
+    /// Where track `ti`'s clock is: its own, or the session's.
+    fn track_now(&self, ti: usize) -> f64 {
+        match (self.project.tracks.get(ti).and_then(|t| t.tempo), self.tracks.get(ti)) {
+            (Some(_), Some(rt)) => rt.own_pos,
+            _ => self.session_pos,
+        }
+    }
+
+    /// A track's clock changed with the project coming in: one taking a
+    /// tempo of its own goes on from where it is; one synced again falls back
+    /// in step with the session (its clip as if launched on the first bar).
+    fn retime(&mut self, new: &Project) {
+        let now = self.session_pos;
+        for t in &new.tracks {
+            let was = self.project.tracks.iter().find(|o| o.id == t.id).map(|o| o.tempo);
+            let Some(rt) = self.tracks.iter_mut().find(|rt| rt.id == t.id) else { continue };
+            match (was, t.tempo) {
+                (Some(None), Some(_)) | (None, Some(_)) => rt.own_pos = now,
+                (Some(Some(_)), None) => {
+                    if let Some(pc) = &mut rt.playing {
+                        pc.start = 0.0;
+                        rt.release(Clock::Session);
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -1646,6 +1682,7 @@ impl Engine {
         let slot = slot.filter(|&s| self.slot_has_clip(ti, s));
         let q = self.project.launch_quantize.beats(self.project.beats_per_bar);
         let session_pos = self.session_pos;
+        let now = self.track_now(ti);
         if immediate {
             if let Some(clip) = slot.and_then(|s| self.slot_clip_id(ti, s)) {
                 self.follow_clip_sound(ti, clip);
@@ -1657,7 +1694,7 @@ impl Engine {
             if rt.playing.is_some() {
                 rt.release(Clock::Session);
             }
-            rt.playing = slot.map(|s| PlayingClip { slot: s, start: session_pos });
+            rt.playing = slot.map(|s| PlayingClip { slot: s, start: now });
             if slot.is_some() {
                 rt.overridden = true;
                 rt.release(Clock::Arrangement);
@@ -1678,13 +1715,14 @@ impl Engine {
     fn fire_due_launches(&mut self) {
         let pos = self.session_pos;
         for ti in 0..self.tracks.len() {
+            let now = self.track_now(ti);
             let rt = &mut self.tracks[ti];
             let Some(q) = rt.queued else { continue };
             if q.at > pos + 1e-9 {
                 continue;
             }
             rt.release(Clock::Session);
-            rt.playing = q.slot.map(|s| PlayingClip { slot: s, start: pos });
+            rt.playing = q.slot.map(|s| PlayingClip { slot: s, start: now });
             if q.slot.is_some() {
                 if !rt.overridden {
                     rt.release(Clock::Arrangement);
@@ -1878,6 +1916,13 @@ impl Engine {
                 let before = self.song_pos;
                 self.session_pos += adv;
                 self.song_pos += adv;
+                // The tracks with a clock of their own, at their tempo.
+                let sr = self.sr as f64;
+                for (rt, t) in self.tracks.iter_mut().zip(self.project.tracks.iter()) {
+                    if let Some(bpm) = t.tempo {
+                        rt.own_pos += seg as f64 / own_spb(sr, bpm);
+                    }
+                }
                 let p = &self.project;
                 if p.loop_enabled && p.loop_end > p.loop_start + 0.01 && before < p.loop_end && self.song_pos >= p.loop_end - 1e-9 {
                     self.song_pos = p.loop_start + (self.song_pos - p.loop_end).max(0.0);
@@ -1897,7 +1942,7 @@ impl Engine {
         let spb = sr as f64 * 60.0 / project.bpm.max(1.0);
         let playing = self.playing;
         let adv = if playing { seg as f64 / spb } else { 0.0 };
-        let (s0, s1) = (self.session_pos, self.session_pos + adv);
+        let s0 = self.session_pos;
         let a0 = match self.loop_from.take() {
             Some(from) if playing && from <= self.song_pos => from,
             _ => self.song_pos,
@@ -1921,8 +1966,9 @@ impl Engine {
         self.envs.clear();
         if playing {
             for (track, rt) in project.tracks.iter().zip(self.tracks.iter()) {
+                let now = if track.tempo.is_some() { rt.own_pos } else { s0 };
                 let at = match rt.playing {
-                    Some(pc) => track.slots.get(pc.slot).and_then(|s| s.as_ref()).map(|c| (c, (s0 - pc.start).max(0.0).rem_euclid(c.length.max(1e-6)))),
+                    Some(pc) => track.slots.get(pc.slot).and_then(|s| s.as_ref()).map(|c| (c, (now - pc.start).max(0.0).rem_euclid(c.length.max(1e-6)))),
                     None if !rt.overridden => track.arrangement.iter().find(|a| a.start <= a0 && a0 < a.end()).map(|a| (&a.clip, (a0 - a.start + a.offset).rem_euclid(a.clip.length.max(1e-6)))),
                     None => None,
                 };
@@ -2020,12 +2066,19 @@ impl Engine {
                 self.midi_scratch.extend_from_slice(&src.midi_out);
             }
             let Some(rt) = self.tracks.get_mut(ti) else { continue };
+            // Its clock: the session's, or its own at its own tempo.
+            let (tspb, t0) = match track.tempo {
+                Some(bpm) => (own_spb(sr as f64, bpm), rt.own_pos),
+                None => (spb, s0),
+            };
+            let t1 = t0 + if playing { seg as f64 / tspb } else { 0.0 };
+            let tctx = FxCtx { bpm: track.tempo.unwrap_or(project.bpm) as f32, beat: t0, ..ctx };
             let snd = track.sound(rt.sound_from);
             // The modulators move the track's own instrument (a clip's sound
             // is the track's own a moment later).
             let own_sound = rt.sound_from.is_none();
             // A Singer hears its clip notes early, so its consonants can start before the beat.
-            let lead = if matches!(snd.instrument, Some(Instrument::Singer { .. })) { crate::singer::LEAD_SECS * sr as f64 / spb } else { 0.0 };
+            let lead = if matches!(snd.instrument, Some(Instrument::Singer { .. })) { crate::singer::LEAD_SECS * sr as f64 / tspb } else { 0.0 };
             let TrackRt { instrument, devices, placer, placer_idle, playing: pc, overridden, offs, events, fx_buf, live, midi_fx, fx_sig, sounding, shifted, signal, bend, l, r, gain_l, gain_r, sends, pre_l, pre_r, post_l, post_r, out_l, out_r, to_master, midi_out, lead_until, .. } = &mut **rt;
             if !playing {
                 *lead_until = f64::NAN;
@@ -2039,11 +2092,11 @@ impl Engine {
                 if let Some((clip, start)) = session_clip {
                     match &clip.content {
                         ClipContent::Midi { notes } => {
-                            let catch_up = (*lead_until - (s0 + lead)).abs() > 1e-6;
-                            collect_notes(notes, clip.length, start, start, f64::INFINITY, s0, s1, spb, seg, Clock::Session, events, offs, (lead, catch_up));
-                            *lead_until = s1 + lead;
+                            let catch_up = (*lead_until - (t0 + lead)).abs() > 1e-6;
+                            collect_notes(notes, clip.length, start, start, f64::INFINITY, t0, t1, tspb, seg, Clock::Session, events, offs, (lead, catch_up));
+                            *lead_until = t1 + lead;
                         }
-                        ClipContent::Audio(a) => render_audio(clip.length, a, start, start, f64::INFINITY, (0.0, 0.0), s0, spb, seg, l, r),
+                        ClipContent::Audio(a) => render_audio(clip.length, a, start, start, f64::INFINITY, (0.0, 0.0), t0, tspb, seg, l, r),
                     }
                 } else if !*overridden {
                     let catch_up = (*lead_until - (a0 + lead)).abs() > 1e-6;
@@ -2079,12 +2132,12 @@ impl Engine {
             let mut i = 0;
             while i < offs.len() {
                 let o = offs[i];
-                let (c0, c1) = match o.clock {
-                    Clock::Session => (s0, s1),
-                    Clock::Arrangement => (a0, a1),
+                let (c0, c1, cspb) = match o.clock {
+                    Clock::Session => (t0, t1, tspb),
+                    Clock::Arrangement => (a0, a1, spb),
                 };
                 if o.at < c1 || !playing {
-                    let at = if o.at <= c0 { 0 } else { ((o.at - c0) * spb) as usize };
+                    let at = if o.at <= c0 { 0 } else { ((o.at - c0) * cspb) as usize };
                     events.push(Ev::off(at.min(seg.saturating_sub(1)) as u32, o.pitch));
                     offs.swap_remove(i);
                 } else {
@@ -2108,7 +2161,7 @@ impl Engine {
                     let clip = pc.and_then(|pc| track.slots.get(pc.slot).and_then(|s| s.as_ref()).map(|c| (pc.slot, pc.start, c.length.max(1.0 / 64.0))));
                     for e in &self.midi_scratch {
                         let (slot, pos) = match clip {
-                            Some((slot, start, len)) => (slot as i32, (s0 + e.offset as f64 / spb - start).rem_euclid(len)),
+                            Some((slot, start, len)) => (slot as i32, (t0 + e.offset as f64 / tspb - start).rem_euclid(len)),
                             None => (-1, 0.0),
                         };
                         let song = a0 + e.offset as f64 / spb;
@@ -2123,7 +2176,7 @@ impl Engine {
                 let drum_notes = snd.instrument.map(|i| i.drum_notes()).unwrap_or(0);
                 // A Singer hears what a sequencer sings early (its consonants before the beat).
                 let lead = if matches!(snd.instrument, Some(Instrument::Singer { .. })) { crate::singer::LEAD_SECS } else { 0.0 };
-                let ctx = MidiCtx { now: clock, len: seg, samples_per_beat: spb, scale: project.scale, scale_on: project.scale_mode, beat: s0, playing, sr, drum_notes, lead, touch: signal.press };
+                let ctx = MidiCtx { now: clock, len: seg, samples_per_beat: tspb, scale: project.scale, scale_on: project.scale_mode, beat: t0, playing, sr, drum_notes, lead, touch: signal.press };
                 // All notes free (scale mode off): the twelve of them, but for
                 // what is in a key by nature.
                 let free = MidiCtx { scale: crate::scale::Scale::new(project.scale.root, crate::scale::ScaleKind::Chromatic), ..ctx };
@@ -2317,7 +2370,7 @@ impl Engine {
             for (dev, (_, st)) in snd.devices.iter().zip(devices.iter_mut()) {
                 if dev.enabled {
                     let params = mods.params(ModOwner::Device(dev.id)).unwrap_or(&dev.params);
-                    run_device(st, dev, params, &mut l[..seg], &mut r[..seg], &ctx, status);
+                    run_device(st, dev, params, &mut l[..seg], &mut r[..seg], &tctx, status);
                 }
             }
             // The Map: where it stands, after its effects, before its fader.
@@ -2336,7 +2389,7 @@ impl Engine {
                         }
                     }
                     let params = crate::dsp::fx::stage::map_params(&project.map, &place);
-                    st.process(&params, &mut l[..seg], &mut r[..seg], &ctx);
+                    st.process(&params, &mut l[..seg], &mut r[..seg], &tctx);
                 }
                 None => *placer_idle = true,
             }
@@ -2501,7 +2554,8 @@ impl Engine {
             let mut arr_id = 0;
             if let Some(pc) = rt.playing {
                 if let Some(Some(clip)) = track.slots.get(pc.slot) {
-                    pos = (self.session_pos - pc.start).max(0.0).rem_euclid(clip.length.max(1e-6));
+                    let now = if track.tempo.is_some() { rt.own_pos } else { self.session_pos };
+                    pos = (now - pc.start).max(0.0).rem_euclid(clip.length.max(1e-6));
                 }
             } else if self.playing && !rt.overridden {
                 if let Some(ac) = track.arrangement.iter().find(|a| !a.muted && a.start <= self.song_pos && self.song_pos < a.end()) {
@@ -2597,6 +2651,11 @@ fn sync_chain(devs: &[Device], rts: &mut Vec<(u64, EffectState)>, sr: f32, trash
 }
 
 /// Runs an audio effect, sending what goes in and out of it to its display.
+/// Samples per beat at a track's own tempo.
+fn own_spb(sr: f64, bpm: f64) -> f64 {
+    sr * 60.0 / bpm.clamp(20.0, 999.0)
+}
+
 fn run_device(st: &mut EffectState, dev: &Device, params: &[f32], l: &mut [f32], r: &mut [f32], ctx: &FxCtx, status: &EngineStatus) {
     let id = dev.id;
     if let Some(t) = st.taps() {
@@ -2760,6 +2819,36 @@ mod tests {
 
     fn peak(buf: &[f32]) -> f32 {
         buf.iter().fold(0.0f32, |m, v| m.max(v.abs()))
+    }
+
+    #[test]
+    fn a_track_with_a_clock_of_its_own_drifts_at_its_tempo() {
+        // Two MIDI tracks of the demo, the same one-beat clip; the second at 180 against the project's 120.
+        let mut p = crate::demo::demo_project();
+        p.bpm = 120.0;
+        p.launch_quantize = Quantize::None;
+        let midi: Vec<usize> = (0..p.tracks.len()).filter(|&i| p.tracks[i].kind == TrackKind::Midi).take(2).collect();
+        for (k, &ti) in midi.iter().enumerate() {
+            let cid = p.alloc_id();
+            let t = &mut p.tracks[ti];
+            let mut clip = Clip::new_midi(cid, "c", t.color, 1.0);
+            clip.notes_mut().unwrap().push(Note::new(60, 0.0, 0.25, 1.0));
+            t.slots[0] = Some(clip);
+            t.tempo = (k == 1).then_some(180.0);
+        }
+        let (na, nb) = (midi[0], midi[1]);
+        let (a, b) = (p.tracks[na].id, p.tracks[nb].id);
+        let (mut e, h) = Engine::new(48_000.0, Arc::new(p));
+        h.send(Command::LaunchClip { track: a, slot: 0 });
+        h.send(Command::LaunchClip { track: b, slot: 0 });
+        run(&mut e, 2.0);
+        let (pa, pb) = (h.status.tracks[na].clip_pos.load(), h.status.tracks[nb].clip_pos.load());
+        // Two seconds: four beats at 120 (back at the start), six at 180 (also); a bit more shows the drift.
+        run(&mut e, 0.25);
+        let (qa, qb) = (h.status.tracks[na].clip_pos.load(), h.status.tracks[nb].clip_pos.load());
+        let moved = |x: f64, y: f64| (y - x).rem_euclid(1.0);
+        assert!((moved(pa, qa) - 0.5).abs() < 0.05, "half a beat at 120: {pa} {qa}");
+        assert!((moved(pb, qb) - 0.75).abs() < 0.05, "three quarters at 180: {pb} {qb}");
     }
 
     #[test]

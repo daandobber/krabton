@@ -1274,6 +1274,11 @@ pub struct Track {
     /// Its height in the arrangement (0: the one all lanes have).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub lane_h: f32,
+    /// A clock of its own (Sync off): its session clips, MIDI effects and
+    /// effects that keep time run at this tempo instead of the project's,
+    /// drifting against the other tracks. None: in sync with the project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tempo: Option<f64>,
 }
 
 impl Track {
@@ -1849,6 +1854,7 @@ impl Project {
             color,
             kind,
             key_fixed: false,
+            tempo: None,
             place: None,
             midi_devices: Vec::new(),
             instrument,

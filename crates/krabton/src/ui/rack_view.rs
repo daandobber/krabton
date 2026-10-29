@@ -3,8 +3,9 @@
 //! devices side by side, or (with the axes swapped) a track per column with
 //! its devices under each other. Returns and the master come last. Each
 //! track starts with its mixer (volume, pan, sends, mute, solo, arm) and
-//! buttons to add a sequencer or MIDI effect, an audio effect or an
-//! instrument; right-click its name to duplicate or delete the track.
+//! its clock (Sync, or a tempo of its own with Tap) and buttons to add a
+//! sequencer or MIDI effect, an audio effect or an instrument; right-click
+//! its name to duplicate or delete the track.
 
 use crate::app::{App, Deferred, TrackSel};
 use crate::theme::*;
@@ -176,7 +177,7 @@ impl App {
             TrackSel::Master => {}
         }
         // Volume with its meter on the left.
-        let buttons_h = if matches!(sel, TrackSel::Track(_)) { 48.0 } else { 26.0 };
+        let buttons_h = if matches!(sel, TrackSel::Track(_)) { 72.0 } else { 26.0 };
         let area = Rect::from_min_max(pos2(m.left() + 6.0, by + 26.0), pos2(m.left() + 52.0, r.bottom() - buttons_h - 18.0));
         let fr = Rect::from_min_size(area.min, vec2(22.0, area.height()));
         let (mut vol, meter_lr) = match sel {
@@ -254,6 +255,8 @@ impl App {
         let at = pos2(m.right() + 4.0, r.top());
         match sel {
             TrackSel::Track(i) => {
+                // Its clock, under the buttons.
+                self.track_clock(ui, i, Rect::from_min_size(pos2(row1.left(), r.bottom() - 24.0), vec2(row1.width(), 18.0)));
                 let half = (row1.width() - 4.0) / 2.0;
                 let midi_menu = Id::new(("rack_midi_menu", key));
                 let fx_menu = Id::new(("rack_fx_menu", key));
