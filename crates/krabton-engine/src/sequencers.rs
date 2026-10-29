@@ -13,7 +13,10 @@
 //!
 //! More in `more`: Orbits, Chaos, Automaton, Ant, Pong, Markov, Rain, Words
 //! and Lorenz. Drum Map (a topographic drum sequencer) and Marbles (a random
-//! sampler for triggers and notes) have their own modules.
+//! sampler for triggers and notes) have their own modules, as do the ones
+//! after nature (`nature`: Fireflies, Sandpile, Pendulums, Flock, Plants),
+//! after systems (`systems`: Bells, Canon, Row, Gears, Formula, Staircase)
+//! and from around the world (`world`: Gamelan, Raga, Call & Response).
 
 pub mod ambient;
 pub mod minimal;
@@ -32,6 +35,9 @@ pub mod played;
 pub mod players;
 pub mod sing;
 pub mod touch;
+pub mod nature;
+pub mod systems;
+pub mod world;
 
 use crate::dsp::Rng;
 use crate::midi_fx::{MidiCtx, MidiEvent};
@@ -334,6 +340,9 @@ pub struct SeqState {
     pub(crate) players: Box<players::PlayersState>,
     pub(crate) sing: Box<sing::SingState>,
     pub(crate) touch: Box<touch::TouchState>,
+    pub(crate) nature: Box<nature::NatureState>,
+    pub(crate) systems: Box<systems::SystemsState>,
+    pub(crate) world: Box<world::WorldState>,
     /// Touch's outputs, for its modulators (see `touch::OUTPUTS`).
     pub(crate) touch_out: [f32; touch::N_OUT],
     pos: i32,
@@ -383,6 +392,9 @@ impl SeqState {
             players: Box::default(),
             sing: Box::default(),
             touch: Box::default(),
+            nature: Box::default(),
+            systems: Box::default(),
+            world: Box::default(),
             touch_out: [0.0; touch::N_OUT],
             pos: 0,
             visual: [0; 4],
@@ -403,6 +415,9 @@ impl SeqState {
         self.played.restart();
         *self.sing = sing::SingState::default();
         *self.touch = touch::TouchState::default();
+        *self.nature = nature::NatureState::default();
+        *self.systems = systems::SystemsState::default();
+        *self.world = world::WorldState::default();
     }
 
     fn unit(&mut self) -> f32 {
@@ -493,8 +508,15 @@ impl SeqState {
         let (ti, hi) = keys_params(kind);
         // Endless takes what you play while it records (it sounds as you play).
         let recording = kind == K::Endless && p.get(played::endless::RECORD).is_some_and(|v| *v >= 0.5);
+        // Canon on what is played: the keys lead (and sound), the voices follow.
+        let canon_played = kind == K::Canon && p.get(systems::CA_SOURCE).is_some_and(|v| *v >= 0.5);
         if matches!(kind, K::Spinner | K::Hands) {
             self.played_keys(kind, p, out);
+        } else if canon_played {
+            self.keys.clear();
+            self.latched = None;
+            self.shift = None;
+            self.canon_keys(p, out, ctx);
         } else if p.get(ti).is_some_and(|v| *v >= 0.5) && !recording {
             for e in out.iter() {
                 self.keys.retain(|k| *k != e.pitch);
@@ -524,6 +546,10 @@ impl SeqState {
         if ctx.playing {
             self.flush_pending(ctx, out);
         }
+        if !ctx.playing && canon_played {
+            // Its answers come with the transport stopped too.
+            self.flush_pending(ctx, out);
+        }
         if !ctx.playing && kind == K::Bloom {
             // Your taps sound with the transport stopped too.
             let fresh = std::mem::replace(&mut self.next_beat, f64::NEG_INFINITY).is_finite();
@@ -540,7 +566,7 @@ impl SeqState {
             // It keeps its own (jittery) clock against the song's.
             self.marbles(p, out, ctx);
         } else if ctx.playing {
-            if matches!(kind, K::Bounce | K::Orbits | K::Pong | K::Rain | K::Loops | K::Bloom | K::Chimes | K::DriftChords | K::Pedal | K::Spinner) {
+            if matches!(kind, K::Bounce | K::Orbits | K::Pong | K::Rain | K::Loops | K::Bloom | K::Chimes | K::DriftChords | K::Pedal | K::Spinner | K::Fireflies | K::Pendulums | K::Flock) {
                 // Time-based: they keep their own time against the song's beat.
                 if (ctx.beat - self.next_beat).abs() > 1e-3 {
                     // The song jumped (a loop, a locate, a start): start over from here.
@@ -548,6 +574,7 @@ impl SeqState {
                     self.balls_ready = false;
                     self.extra.rain_next = ctx.beat;
                     self.ambient.restart();
+                    self.nature.restart();
                 }
                 self.next_beat = ctx.beat + ctx.len as f64 / ctx.samples_per_beat;
                 match kind {
@@ -560,6 +587,9 @@ impl SeqState {
                     K::DriftChords => self.drift_chords(p, out, ctx),
                     K::Pedal => self.pedal(p, out, ctx),
                     K::Spinner => self.spinner(p, out, ctx),
+                    K::Fireflies => self.fireflies(p, out, ctx),
+                    K::Pendulums => self.pendulums(p, out, ctx),
+                    K::Flock => self.flock(p, out, ctx),
                     _ => self.rain(p, out, ctx),
                 }
             } else {
@@ -569,6 +599,7 @@ impl SeqState {
                     K::Percussion => percussion::step_beats(p),
                     K::Drummer => rate_beats(p.get(drummer::RATE).copied().unwrap_or(2.0)),
                     K::Chaos | K::Automaton | K::Ant | K::Markov | K::Words | K::Lorenz | K::Tintinnabuli => rate_beats(p[0]),
+                    K::Sandpile | K::Plants | K::Bells | K::Canon | K::Row | K::Gears | K::Formula | K::Staircase | K::Gamelan | K::Raga | K::Call => rate_beats(p[0]),
                     K::Glass => rate_beats(p[0]) / minimal::GLASS_TICKS,
                     K::Satie => rate_beats(p[0]) / minimal::SATIE_TICKS,
                     K::Riley => rate_beats(p[0]) / minimal::RILEY_TICKS,
@@ -640,6 +671,17 @@ impl SeqState {
                             K::Ligeti => self.ligeti(k, p, at, step_frames, out, ctx),
                             K::Cage => self.cage(k, p, at, step_frames, out, ctx),
                             K::Einaudi => self.einaudi(k, p, at, step_frames, out, ctx),
+                            K::Sandpile => self.sandpile(p, at, step_frames, out, ctx),
+                            K::Plants => self.plant(k, p, at, step_frames, out, ctx),
+                            K::Bells => self.bells(k, p, at, step_frames, out, ctx),
+                            K::Canon if !canon_played => self.canon(k, p, at, step_frames, out, ctx),
+                            K::Row => self.row(k, p, at, step_frames, out, ctx),
+                            K::Gears => self.gears(k, p, at, step_frames, out, ctx),
+                            K::Formula => self.formula(k, p, at, step_frames, out, ctx),
+                            K::Staircase => self.staircase(k, p, at, step_frames, out, ctx),
+                            K::Gamelan => self.gamelan(k, p, at, step_frames, out, ctx),
+                            K::Raga => self.raga(k, p, at, step_frames, out, ctx),
+                            K::Call => self.call(k, p, at, step_frames, out, ctx),
                             _ => {}
                         }
                     }
