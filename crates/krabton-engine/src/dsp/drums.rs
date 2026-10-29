@@ -197,6 +197,8 @@ pub enum DrumVoice {
     ChipWoodTom,
     ChipWoodZap,
     ChipWoodBoom,
+    M909Ride,
+    M909Crash,
 }
 
 /// Where a voice comes from.
@@ -258,7 +260,17 @@ impl DrumVoice {
         DrumVoice::M808ClosedHat,
         DrumVoice::M808OpenHat,
     ];
-    pub const M909: [DrumVoice; 7] = [DrumVoice::M909Kick, DrumVoice::M909Snare, DrumVoice::M909Tom, DrumVoice::M909Rim, DrumVoice::M909Clap, DrumVoice::M909ClosedHat, DrumVoice::M909OpenHat];
+    pub const M909: [DrumVoice; 9] = [
+        DrumVoice::M909Kick,
+        DrumVoice::M909Snare,
+        DrumVoice::M909Tom,
+        DrumVoice::M909Rim,
+        DrumVoice::M909Clap,
+        DrumVoice::M909ClosedHat,
+        DrumVoice::M909OpenHat,
+        DrumVoice::M909Ride,
+        DrumVoice::M909Crash,
+    ];
     pub const CR78: [DrumVoice; 8] = [
         DrumVoice::Cr78Kick,
         DrumVoice::Cr78Snare,
@@ -376,6 +388,8 @@ impl DrumVoice {
             DrumVoice::M909Clap => "909 Clap",
             DrumVoice::M909ClosedHat => "909 Closed Hat",
             DrumVoice::M909OpenHat => "909 Open Hat",
+            DrumVoice::M909Ride => "909 Ride",
+            DrumVoice::M909Crash => "909 Crash",
             DrumVoice::Cr78Kick => "CR-78 Kick",
             DrumVoice::Cr78Snare => "CR-78 Snare",
             DrumVoice::Cr78Hat => "CR-78 Hat",
@@ -540,7 +554,8 @@ impl DrumVoice {
             DrumVoice::M808ClosedHat | DrumVoice::M909ClosedHat | DrumVoice::Cr78Hat => 42,
             DrumVoice::M808Tom | DrumVoice::M909Tom | DrumVoice::ElectroTom => 45,
             DrumVoice::M808OpenHat | DrumVoice::M909OpenHat => 46,
-            DrumVoice::M808Cymbal | DrumVoice::Cr78Cymbal => 49,
+            DrumVoice::M808Cymbal | DrumVoice::Cr78Cymbal | DrumVoice::M909Crash => 49,
+            DrumVoice::M909Ride => 51,
             DrumVoice::Cr78Tambourine => 54,
             DrumVoice::M808Cowbell | DrumVoice::Cr78Metal => 56,
             DrumVoice::Cr78Bongo => 60,
@@ -1631,6 +1646,8 @@ pub fn kit(name: &str) -> Vec<DrumPad> {
             pad("Low Tom", M909Tom, 45, |_| {}),
             pad("Open Hat", M909OpenHat, 46, hat),
             pad("High Tom", M909Tom, 50, |p| p.tune = 7.0),
+            pad("Crash", M909Crash, 49, |_| {}),
+            pad("Ride", M909Ride, 51, |_| {}),
         ],
         "909 House" => vec![
             pad("Kick", M909Kick, 36, |p| {
@@ -1647,6 +1664,7 @@ pub fn kit(name: &str) -> Vec<DrumPad> {
                 p.decay = 0.8;
             }),
             pad("High Tom", M909Tom, 50, |p| p.tune = 7.0),
+            pad("Ride", M909Ride, 51, |p| p.decay = 0.8),
         ],
         "909 Techno" => vec![
             pad("Kick", M909Kick, 36, |p| {
@@ -1675,6 +1693,7 @@ pub fn kit(name: &str) -> Vec<DrumPad> {
                 p.decay = 1.4;
             }),
             pad("Mid Tom", M909Tom, 47, |p| p.tune = 2.0),
+            pad("Crash", M909Crash, 49, |p| p.decay = 0.7),
         ],
         "909 Toms" => vec![
             pad("Kick", M909Kick, 36, |_| {}),
@@ -1906,8 +1925,30 @@ pub fn kit(name: &str) -> Vec<DrumPad> {
     }
 }
 
-/// Krabton's own drums (Classic 808, Classic 909, Classic Lo-Fi).
+/// The Rack's Classic 808 and Classic 909: the machines' own voices on the
+/// pads of Krabton's classic layout; Classic Lo-Fi: Krabton's own drums.
 fn classic_kit(name: &str) -> Vec<DrumPad> {
+    use DrumVoice::*;
+    let machine: Option<[DrumVoice; 8]> = match name {
+        "Classic 808" => Some([M808Kick, M808Rim, M808Snare, M808Clap, M808ClosedHat, M808Tom, M808OpenHat, M808Cowbell]),
+        "Classic 909" => Some([M909Kick, M909Rim, M909Snare, M909Clap, M909ClosedHat, M909Tom, M909OpenHat, M909Ride]),
+        _ => None,
+    };
+    if let Some(voices) = machine {
+        // Named for what they are in the layout (Kick, Snare, ...), as the
+        // samples of a folder find their pads by those names.
+        let roles = [Kick, Rim, Snare, Clap, ClosedHat, Tom, OpenHat, Cowbell];
+        let mut pads: Vec<DrumPad> = voices.iter().map(|&v| DrumPad::new(v)).collect();
+        for (pad, role) in pads.iter_mut().zip(roles) {
+            pad.name = if pad.voice == M909Ride { "Ride".to_string() } else { role.name().to_string() };
+        }
+        for pad in pads.iter_mut() {
+            if matches!(pad.voice, M808ClosedHat | M808OpenHat | M909ClosedHat | M909OpenHat) {
+                pad.choke = 1;
+            }
+        }
+        return pads;
+    }
     let order = [
         DrumVoice::Kick,
         DrumVoice::Rim,

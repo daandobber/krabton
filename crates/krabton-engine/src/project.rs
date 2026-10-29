@@ -602,6 +602,8 @@ impl DrumPad {
                 | DrumVoice::M808OpenHat
                 | DrumVoice::M909ClosedHat
                 | DrumVoice::M909OpenHat
+                | DrumVoice::M909Ride
+                | DrumVoice::M909Crash
                 | DrumVoice::Cr78Hat
                 | DrumVoice::M808Cymbal
                 | DrumVoice::Cr78Cymbal => -6.0,
