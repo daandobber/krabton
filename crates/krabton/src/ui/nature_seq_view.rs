@@ -237,8 +237,10 @@ pub(crate) fn sandpile(ui: &mut Ui, id: Id, params: &mut [f32], live: Live, acce
 // ---------------------------------------------------------------- pendulums
 
 /// The pendulums from above, a row each, longest at the top: each bob swings
-/// across the middle line; the ones that just played lit. Where in the
-/// cycle it is under them; two columns of settings: the wave and the notes.
+/// across the middle line. A bob that plays flashes white and swells, a ring
+/// goes out from where it played and its string glows, fading in under half
+/// a second. Where in the cycle it is under them; two columns of settings:
+/// the wave and the notes.
 pub(crate) fn pendulums(ui: &mut Ui, id: Id, params: &mut [f32], live: Live, accent: Color32, height: f32) -> bool {
     let (rect, p) = frame(ui, 480.0, height);
     let col_w = 128.0;
@@ -253,20 +255,51 @@ pub(crate) fn pendulums(ui: &mut Ui, id: Id, params: &mut [f32], live: Live, acc
     let n = (params[na::PE_COUNT].round() as usize).clamp(2, na::MAX_PENDULUMS);
     let vis = live.on();
     let pos = vis.map(|v| (v[0] & 0xffff) as f32 / 65536.0).unwrap_or(0.0);
-    let lit = vis.map(|v| v[1]).unwrap_or(0);
+    // Which played since the screen last looked: their counts moved on. Each
+    // keeps when it last played, and where.
+    let now = ui.input(|i| i.time);
+    let mem = id.with("pe_flash");
+    let (mut counts, mut flash) = ui.ctx().memory(|m| m.data.get_temp::<([u8; 16], [(f64, f32); 16])>(mem)).unwrap_or(([0; 16], [(f64::NEG_INFINITY, 0.0); 16]));
     let area = Rect::from_min_max(pic.min, pos2(pic.right(), pic.bottom() - 16.0));
     let mid = area.center().x;
     p.line_segment([pos2(mid, area.top()), pos2(mid, area.bottom())], Stroke::new(1.0_f32, LINE));
     let rh = area.height() / n as f32;
     let amp = area.width() * 0.44;
+    const GLOW: f64 = 0.45;
+    let mut glowing = false;
     for i in 0..n {
         let swings = na::pendulum_swings(params, i) as f32;
         let x = mid - amp * (TAU * swings * pos).cos();
         let y = area.top() + (i as f32 + 0.5) * rh;
-        p.line_segment([pos2(mid, y), pos2(x, y)], Stroke::new(1.0_f32, LINE_SOFT));
-        let on = lit >> i & 1 == 1;
+        if let Some(v) = vis {
+            let c = ((v[1] >> (4 * i)) & 0xf) as u8;
+            if c != counts[i] {
+                counts[i] = c;
+                flash[i] = (now, x);
+            }
+        }
+        // How far into its flash (1 just played, 0 done).
+        let f = (1.0 - (now - flash[i].0) / GLOW).clamp(0.0, 1.0) as f32;
+        glowing |= f > 0.0;
+        let col = mix(accent, SELECT, i as f32 / n as f32);
         let r = (rh * 0.38).clamp(2.5, 6.0);
-        p.circle_filled(pos2(x, y), r, if on { Color32::WHITE } else { mix(accent, SELECT, i as f32 / n as f32) });
+        // The string glows as it plays.
+        p.line_segment([pos2(mid, y), pos2(x, y)], Stroke::new(1.0 + 1.5 * f, mix(LINE_SOFT, col, f)));
+        if f > 0.0 {
+            // A ring goes out from where it played.
+            let at = pos2(flash[i].1, y);
+            let grow = 1.0 - f;
+            p.circle_stroke(at, r + grow * (rh * 1.4).clamp(8.0, 22.0), Stroke::new(1.5 * f + 0.5, Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), (200.0 * f) as u8)));
+            p.circle_filled(pos2(x, y), r * (1.0 + 1.2 * f), Color32::from_rgba_unmultiplied(255, 255, 255, (90.0 * f) as u8));
+        }
+        p.circle_filled(pos2(x, y), r * (1.0 + 0.5 * f * f), mix(col, Color32::WHITE, f));
+    }
+    if vis.is_none() {
+        counts = [0; 16];
+    }
+    ui.ctx().memory_mut(|m| m.data.insert_temp(mem, (counts, flash)));
+    if glowing {
+        ui.ctx().request_repaint();
     }
     // Where in the cycle: they are all together again at its end.
     let bar = Rect::from_min_max(pos2(pic.left(), pic.bottom() - 8.0), pic.max);

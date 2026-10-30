@@ -439,8 +439,11 @@ pub struct NatureState {
     pub(crate) sand_size: u32,
     pub(crate) sand_dropped: u64,
     pub(crate) sand_lost: u64,
-    // Pendulums: the last crossing played (beat) per pendulum.
+    // Pendulums: the last crossing played (beat) per pendulum, and how many
+    // times each has played (for the screen: it sees every one, however
+    // seldom it looks).
     pe_last: [f64; MAX_PENDULUMS],
+    pe_hits: [u8; MAX_PENDULUMS],
     // Flock.
     birds: [Bird; MAX_BIRDS],
     fl_last: [f64; MAX_BIRDS],
@@ -479,6 +482,7 @@ impl Default for NatureState {
             sand_dropped: 0,
             sand_lost: 0,
             pe_last: [f64::NEG_INFINITY; MAX_PENDULUMS],
+            pe_hits: [0; MAX_PENDULUMS],
             birds: [Bird::default(); MAX_BIRDS],
             fl_last: [f64::NEG_INFINITY; MAX_BIRDS],
             fl_t: f64::NEG_INFINITY,
@@ -790,7 +794,6 @@ impl SeqState {
         let steps = p[PE_STEPS].round() as i32;
         let reverse = p[PE_REVERSE] >= 0.5;
         let gate = p[PE_GATE].max(0.02) as f64 * ctx.samples_per_beat;
-        let mut lit = 0u64;
         for i in 0..n {
             let (every, first) = when(i);
             let mut k = ((b0 - first) / every - 1e-9).ceil();
@@ -829,16 +832,17 @@ impl SeqState {
                     let note = pitch(ctx, p[PE_BASE], degree);
                     let len = if hold { (if play == 2 { every } else { every * 2.0 }) * 0.97 * ctx.samples_per_beat } else { gate };
                     self.play(ctx, frame_of(ctx, on), note, vel.clamp(0.02, 1.0) as f32, len, out);
-                    lit |= 1 << i;
+                    self.nature.pe_hits[i] = self.nature.pe_hits[i].wrapping_add(1);
                     continue;
                 }
                 k += 1.0;
             }
         }
-        // For the screen: where in the cycle (it works out each swing from there) and who just played.
+        // For the screen: where in the cycle (it works out each swing from
+        // there), and each pendulum's count of notes (four bits each).
         let pos = (b1.rem_euclid(cycle) / cycle * 65536.0) as u64 & 0xffff;
         self.visual[0] = pos | (n as u64) << 16;
-        self.visual[1] = lit;
+        self.visual[1] = (0..MAX_PENDULUMS).fold(0u64, |a, i| a | ((self.nature.pe_hits[i] & 0xf) as u64) << (4 * i));
     }
 
     // ------------------------------------------------------------ flock
