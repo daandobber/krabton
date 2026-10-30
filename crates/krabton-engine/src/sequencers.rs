@@ -17,6 +17,7 @@
 //! after nature (`nature`: Fireflies, Sandpile, Pendulums, Flock, Plants),
 //! after systems (`systems`: Bells, Canon, Row, Gears, Formula, Staircase)
 //! and from around the world (`world`: Gamelan, Raga, Call & Response).
+//! Home Rhythms (`home`) is a home keyboard's rhythm section.
 
 pub mod ambient;
 pub mod minimal;
@@ -38,6 +39,7 @@ pub mod touch;
 pub mod nature;
 pub mod systems;
 pub mod world;
+pub mod home;
 
 use crate::dsp::Rng;
 use crate::midi_fx::{MidiCtx, MidiEvent};
@@ -357,6 +359,7 @@ pub struct SeqState {
     pub(crate) nature: Box<nature::NatureState>,
     pub(crate) systems: Box<systems::SystemsState>,
     pub(crate) world: Box<world::WorldState>,
+    pub(crate) home: home::HomeState,
     /// Touch's outputs, for its modulators (see `touch::OUTPUTS`).
     pub(crate) touch_out: [f32; touch::N_OUT],
     pos: i32,
@@ -410,6 +413,7 @@ impl SeqState {
             nature: Box::default(),
             systems: Box::default(),
             world: Box::default(),
+            home: home::HomeState::default(),
             touch_out: [0.0; touch::N_OUT],
             pos: 0,
             visual: [0; 4],
@@ -433,6 +437,7 @@ impl SeqState {
         *self.nature = nature::NatureState::default();
         *self.systems = systems::SystemsState::default();
         *self.world = world::WorldState::default();
+        self.home.restart();
     }
 
     fn unit(&mut self) -> f32 {
@@ -541,6 +546,12 @@ impl SeqState {
             self.latched = None;
             self.shift = None;
             self.canon_keys(p, out, ctx);
+        } else if kind == K::HomeRhythms {
+            // Its keys make the accompaniment's chord.
+            self.keys.clear();
+            self.latched = None;
+            self.shift = None;
+            self.home_keys(p, out);
         } else if p.get(ti).is_some_and(|v| *v >= 0.5) && !recording {
             for e in out.iter() {
                 self.keys.retain(|k| *k != e.pitch);
@@ -566,7 +577,7 @@ impl SeqState {
         // What came in and passes through is not shaped (only what it plays).
         let passing = out.len();
         // Acid and Guitar Chords move their own notes (a semitone line, chord shapes).
-        self.shift_in_note = !matches!(kind, K::Acid | K::GuitarChords | K::Ukulele | K::Drummer | K::DrumMap | K::Chance | K::Bits | K::Percussion);
+        self.shift_in_note = !matches!(kind, K::Acid | K::GuitarChords | K::Ukulele | K::Drummer | K::DrumMap | K::Chance | K::Bits | K::Percussion | K::HomeRhythms);
         if ctx.playing {
             self.flush_pending(ctx, out);
         }
@@ -622,6 +633,7 @@ impl SeqState {
                     K::Endless | K::Hands | K::Draw => rate_beats(p[0]),
                     K::Percussion => percussion::step_beats(p),
                     K::Drummer => rate_beats(p.get(drummer::RATE).copied().unwrap_or(2.0)),
+                    K::HomeRhythms => home::step_beats(p),
                     K::Chaos | K::Automaton | K::Ant | K::Markov | K::Words | K::Lorenz | K::Tintinnabuli => rate_beats(p[0]),
                     K::Sandpile | K::Plants | K::Bells | K::Canon | K::Row | K::Gears | K::Formula | K::Staircase | K::Gamelan | K::Raga | K::Call => rate_beats(p[0]),
                     K::Glass => rate_beats(p[0]) / minimal::GLASS_TICKS,
@@ -706,6 +718,7 @@ impl SeqState {
                             K::Gamelan => self.gamelan(k, p, at, step_frames, out, ctx),
                             K::Raga => self.raga(k, p, at, step_frames, out, ctx),
                             K::Call => self.call(k, p, at, step_frames, out, ctx),
+                            K::HomeRhythms => self.home(k, p, at, step_frames, out, ctx),
                             _ => {}
                         }
                     }
@@ -1132,8 +1145,8 @@ mod tests {
 
     #[test]
     fn every_sequencer_has_transpose_and_hold() {
-        // Spinner, Hands and Touch play the keys themselves: nothing to transpose.
-        for kind in MidiFxKind::SEQUENCERS.into_iter().filter(|k| !matches!(k, MidiFxKind::Spinner | MidiFxKind::Hands | MidiFxKind::Touch)) {
+        // Spinner, Hands, Touch and Home Rhythms play the keys themselves: nothing to transpose.
+        for kind in MidiFxKind::SEQUENCERS.into_iter().filter(|k| !matches!(k, MidiFxKind::Spinner | MidiFxKind::Hands | MidiFxKind::Touch | MidiFxKind::HomeRhythms)) {
             let (ti, hi) = keys_params(kind);
             assert_eq!(kind.specs()[ti].name, "Transpose", "{kind:?}");
             assert_eq!(kind.specs()[hi].name, "Hold", "{kind:?}");

@@ -517,6 +517,7 @@ enum InstState {
     Singer(Box<crate::singer::SingerState>),
     Hyper(Box<crate::hyper::HyperState>),
     Granulator(Box<crate::dsp::granulator::GranulatorState>),
+    Keytone(Box<crate::dsp::keytone::KeytoneState>),
     Plugin { instance: u64, proc: Option<Box<dyn AudioProcessor>>, pending: Vec<PluginEvent> },
     Theremin(Box<ThereminState>),
 }
@@ -565,6 +566,7 @@ impl InstState {
             InstState::Hyper(s) => s.pitch_bend = semis,
             InstState::Theremin(s) => s.pitch_bend = semis,
             InstState::Granulator(s) => s.pitch_bend = semis,
+            InstState::Keytone(s) => s.pitch_bend = semis,
             _ => {}
         }
     }
@@ -624,6 +626,7 @@ impl InstState {
             Some(Instrument::Hyper { engine, .. }) => InstState::Hyper(Box::new(crate::hyper::HyperState::new(engine))),
             Some(Instrument::Theremin { .. }) => InstState::Theremin(Box::new(ThereminState::new(sr))),
             Some(Instrument::Granulator { .. }) => InstState::Granulator(Box::new(crate::dsp::granulator::GranulatorState::new(sr))),
+            Some(Instrument::Keytone { .. }) => InstState::Keytone(Box::new(crate::dsp::keytone::KeytoneState::new(sr))),
         }
     }
 
@@ -695,6 +698,7 @@ impl InstState {
                 | (InstState::Singer(_), Some(Instrument::Singer { .. }))
                 | (InstState::Theremin(_), Some(Instrument::Theremin { .. }))
                 | (InstState::Granulator(_), Some(Instrument::Granulator { .. }))
+                | (InstState::Keytone(_), Some(Instrument::Keytone { .. }))
         ) || matches!((self, i), (InstState::Plugin { instance, .. }, Some(Instrument::Plugin(p))) if *instance == p.instance)
             // Another bank needs a player of its own.
             || matches!((self, i), (InstState::Sf2(s), Some(Instrument::Sf2 { font, .. })) if s.is_for(font.as_ref()))
@@ -757,6 +761,7 @@ impl InstState {
             (InstState::Silicon(s), Instrument::Silicon { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Theremin(s), Instrument::Theremin { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Granulator(s), Instrument::Granulator { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Keytone(s), Instrument::Keytone { params, sample, .. }) => s.note_on(ov.unwrap_or(params), sample.as_ref(), pitch, vel),
             _ => {}
         }
     }
@@ -815,6 +820,7 @@ impl InstState {
             (InstState::Silicon(s), Instrument::Silicon { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Theremin(s), Instrument::Theremin { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Granulator(s), Instrument::Granulator { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Keytone(s), Instrument::Keytone { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             _ => {}
         }
     }
@@ -873,6 +879,7 @@ impl InstState {
             InstState::Silicon(s) => s.all_off(),
             InstState::Theremin(s) => s.all_off(),
             InstState::Granulator(s) => s.all_off(),
+            InstState::Keytone(s) => s.all_off(),
             InstState::None => {}
         }
     }
@@ -920,6 +927,7 @@ impl InstState {
             InstState::Singer(s) => s.visual(out),
             InstState::Hyper(s) => s.visual(out),
             InstState::Granulator(s) => s.visual(out),
+            InstState::Keytone(s) => s.visual(out),
             _ => return false,
         }
         true
@@ -978,6 +986,7 @@ impl InstState {
             (InstState::Silicon(s), Instrument::Silicon { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Theremin(s), Instrument::Theremin { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Granulator(s), Instrument::Granulator { params, sample, .. }) => s.render(ov.unwrap_or(params), sample.as_ref(), l, r),
+            (InstState::Keytone(s), Instrument::Keytone { params, sample, .. }) => s.render(ov.unwrap_or(params), sample.as_ref(), l, r),
             (InstState::Plugin { proc, pending, .. }, Instrument::Plugin(_)) => {
                 if let Some(p) = proc {
                     p.process(pending, l, r);

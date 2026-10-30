@@ -239,6 +239,7 @@ pub fn midi(kind: MidiFxKind) -> &'static [Preset] {
         K::Gamelan => GAMELAN,
         K::Raga => RAGA,
         K::Call => CALL,
+        K::HomeRhythms => HOME_RHYTHMS,
         _ => crate::sequencers::players::presets(kind),
     }
 }
@@ -1347,6 +1348,21 @@ static CALL: &[Preset] = &[
     p("Turns", &[("Answer", C("Turns"))]),
     p("Big Choir", &[("Choir", N(3.0)), ("Octave", N(-1.0))]),
     p("Quick Answers", &[("Length", N(4.0)), ("Gap", N(0.0)), ("Rate", C("1/16"))]),
+];
+static HOME_RHYTHMS: &[Preset] = &[
+    p("Rock", &[]),
+    p("Dancehall Rock Drums", &[("Rhythm", C("Dancehall Rock")), ("Fill Every", C("Off"))]),
+    p("Dancehall Rock Bass", &[("Rhythm", C("Dancehall Rock")), ("Part", C("Bass")), ("Fill Every", C("Off"))]),
+    p("Reggae One Drop", &[("Rhythm", C("Reggae")), ("Fill Every", C("4 Bars"))]),
+    p("Reggae Skank", &[("Rhythm", C("Reggae")), ("Part", C("Bass & Chords"))]),
+    p("Bossa Nova", &[("Rhythm", C("Bossa Nova")), ("Variation", C("B")), ("Velocity", N(0.7))]),
+    p("Bossa Chords", &[("Rhythm", C("Bossa Nova")), ("Part", C("Chords")), ("Velocity", N(0.6))]),
+    p("Disco Night", &[("Rhythm", C("Disco")), ("Variation", C("B")), ("Fill Every", C("4 Bars"))]),
+    p("Slow Rock Ballad", &[("Rhythm", C("Slow Rock")), ("Start Intro", N(1.0))]),
+    p("Waltz", &[("Rhythm", C("Waltz")), ("Fill Every", C("8 Bars"))]),
+    p("Cha-Cha Band", &[("Rhythm", C("Cha-Cha")), ("Part", C("Bass & Chords")), ("Chords", C("Single Finger"))]),
+    p("Song Key Boogie", &[("Rhythm", C("Boogie")), ("Part", C("Bass")), ("Chords", C("Song Key"))]),
+    p("Salsa", &[("Rhythm", C("Salsa")), ("Fill Every", C("8 Bars"))]),
 ];
 
 #[cfg(test)]

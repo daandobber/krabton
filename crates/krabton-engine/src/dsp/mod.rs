@@ -71,6 +71,7 @@ pub mod tides;
 pub mod theremin;
 pub mod granulator;
 pub mod princess;
+pub mod keytone;
 
 use std::f32::consts::PI;
 

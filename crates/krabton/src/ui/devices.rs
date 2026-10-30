@@ -1968,6 +1968,11 @@ impl App {
                             self.toast(msg);
                         }
                     }
+                    Instrument::Keytone { preset, params, sample } => {
+                        if let Some(msg) = super::faces::keytone::panel(ui, Id::new(("keytone", track_id)), preset, params, sample, &live, h - 36.0, mv.as_mut()) {
+                            self.toast(msg);
+                        }
+                    }
                     Instrument::Facet { preset, params } => {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
@@ -2874,6 +2879,10 @@ impl App {
                                                             pad.name = v.name().to_string();
                                                         }
                                                         pad.voice = v;
+                                                        // The toy keyboard's samples made now, not on the audio thread.
+                                                        if v.family() == krabton_engine::dsp::drums::Family::Keytone {
+                                                            krabton_engine::dsp::keytone::warm();
+                                                        }
                                                     }
                                                 }
                                             }

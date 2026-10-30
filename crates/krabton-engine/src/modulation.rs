@@ -293,6 +293,7 @@ pub fn instrument_specs(i: &Instrument) -> Option<&'static [ParamSpec]> {
         Instrument::Silicon { .. } => Some(crate::dsp::silicon::SPECS),
         Instrument::Theremin { .. } => Some(crate::dsp::theremin::SPECS),
         Instrument::Granulator { .. } => Some(crate::dsp::granulator::SPECS),
+        Instrument::Keytone { .. } => Some(crate::dsp::keytone::SPECS),
         _ => None,
     }
 }
@@ -302,6 +303,7 @@ pub fn instrument_params(i: &Instrument) -> Option<&[f32]> {
         Instrument::Synth { params, .. } | Instrument::Sampler { params, .. } | Instrument::Fm { params, .. } | Instrument::Macro { params, .. } | Instrument::Braids { params, .. } | Instrument::Elements { params, .. } | Instrument::Analog { params, .. } | Instrument::Shakers { params, .. } | Instrument::Modular { params, .. } | Instrument::Voice { params, .. } | Instrument::Mallets { params, .. } | Instrument::Strings { params, .. } | Instrument::Winds { params, .. } | Instrument::Organ { params, .. } | Instrument::Rings { params, .. } | Instrument::Monk { params, .. } | Instrument::Piano { params, .. } | Instrument::Bassline { params, .. } | Instrument::Mono101 { params, .. } | Instrument::Drone { params, .. } | Instrument::Waves { params, .. } | Instrument::Guitar { params, .. } | Instrument::WindChimes { params, .. } | Instrument::Birds { params, .. } | Instrument::Nature { params, .. } | Instrument::PanFlute { params, .. } | Instrument::Melodica { params, .. } | Instrument::Harmonica { params, .. } | Instrument::Calculator { params, .. } | Instrument::Console { params, .. } | Instrument::Handheld { params, .. } | Instrument::Micro { params, .. } | Instrument::Warp { params, .. } | Instrument::Hybrid { params, .. } | Instrument::Quartet { params, .. } | Instrument::ChipFm { params, .. } | Instrument::V2 { params, .. } | Instrument::Oidos { params, .. } | Instrument::Orchestra { params, .. } | Instrument::Facet { params, .. } | Instrument::BeadsSynth { params, .. } | Instrument::Sf2 { params, .. } | Instrument::StreetOrgan { params, .. } | Instrument::Singer { params, .. } | Instrument::Hyper { params, .. } | Instrument::Coast { params, .. } | Instrument::Crimson { params, .. } | Instrument::Silicon { params, .. } => Some(params),
         Instrument::Theremin { params, .. } => Some(params),
         Instrument::Granulator { params, .. } => Some(params),
+        Instrument::Keytone { params, .. } => Some(params),
         _ => None,
     }
 }
@@ -312,6 +314,7 @@ pub fn instrument_params_mut(i: &mut Instrument) -> Option<&mut Vec<f32>> {
         Instrument::Synth { params, .. } | Instrument::Sampler { params, .. } | Instrument::Fm { params, .. } | Instrument::Macro { params, .. } | Instrument::Braids { params, .. } | Instrument::Elements { params, .. } | Instrument::Analog { params, .. } | Instrument::Shakers { params, .. } | Instrument::Modular { params, .. } | Instrument::Voice { params, .. } | Instrument::Mallets { params, .. } | Instrument::Strings { params, .. } | Instrument::Winds { params, .. } | Instrument::Organ { params, .. } | Instrument::Rings { params, .. } | Instrument::Monk { params, .. } | Instrument::Piano { params, .. } | Instrument::Bassline { params, .. } | Instrument::Mono101 { params, .. } | Instrument::Drone { params, .. } | Instrument::Waves { params, .. } | Instrument::Guitar { params, .. } | Instrument::WindChimes { params, .. } | Instrument::Birds { params, .. } | Instrument::Nature { params, .. } | Instrument::PanFlute { params, .. } | Instrument::Melodica { params, .. } | Instrument::Harmonica { params, .. } | Instrument::Calculator { params, .. } | Instrument::Console { params, .. } | Instrument::Handheld { params, .. } | Instrument::Micro { params, .. } | Instrument::Warp { params, .. } | Instrument::Hybrid { params, .. } | Instrument::Quartet { params, .. } | Instrument::ChipFm { params, .. } | Instrument::V2 { params, .. } | Instrument::Oidos { params, .. } | Instrument::Orchestra { params, .. } | Instrument::Facet { params, .. } | Instrument::BeadsSynth { params, .. } | Instrument::Sf2 { params, .. } | Instrument::StreetOrgan { params, .. } | Instrument::Singer { params, .. } | Instrument::Hyper { params, .. } | Instrument::Coast { params, .. } | Instrument::Crimson { params, .. } | Instrument::Silicon { params, .. } => Some(params),
         Instrument::Theremin { params, .. } => Some(params),
         Instrument::Granulator { params, .. } => Some(params),
+        Instrument::Keytone { params, .. } => Some(params),
         _ => None,
     }
 }

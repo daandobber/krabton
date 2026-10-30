@@ -588,6 +588,10 @@ fn half() -> f32 {
 
 impl DrumPad {
     pub fn new(voice: DrumVoice) -> Self {
+        if voice.family() == drums::Family::Keytone {
+            // The toy keyboard's samples made now, not on the audio thread.
+            crate::dsp::keytone::warm();
+        }
         Self {
             name: voice.name().to_string(),
             voice,
@@ -828,6 +832,14 @@ pub enum Instrument {
         #[serde(default)]
         sample: Option<SampleRef>,
     },
+    /// Keytone: a toy sampling keyboard, its 8-bit sounds and a sample of
+    /// your own in the user slot (see `dsp::keytone`).
+    Keytone {
+        preset: String,
+        params: Vec<f32>,
+        #[serde(default)]
+        sample: Option<SampleRef>,
+    },
 }
 
 impl Instrument {
@@ -1053,6 +1065,12 @@ impl Instrument {
         Instrument::Granulator { preset: preset.to_string(), params: crate::dsp::granulator::preset(preset), sample: None }
     }
 
+    pub fn keytone(preset: &str) -> Self {
+        // Its sounds made now, not on the audio thread.
+        crate::dsp::keytone::warm();
+        Instrument::Keytone { preset: preset.to_string(), params: crate::dsp::keytone::preset(preset), sample: None }
+    }
+
     pub fn kind_name(&self) -> &'static str {
         match self {
             Instrument::Synth { .. } => "Synth",
@@ -1107,6 +1125,7 @@ impl Instrument {
             Instrument::Hyper { .. } => "Hyper",
             Instrument::Theremin { .. } => "Theremin",
             Instrument::Granulator { .. } => "Granulator",
+            Instrument::Keytone { .. } => "Keytone",
         }
     }
 
@@ -1129,6 +1148,7 @@ impl Instrument {
             Instrument::Silicon { preset, .. } => preset.clone(),
             Instrument::Theremin { preset, .. } => preset.clone(),
             Instrument::Granulator { preset, .. } => preset.clone(),
+            Instrument::Keytone { preset, .. } => preset.clone(),
             Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Modular { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } | Instrument::Monk { preset, .. } | Instrument::Piano { preset, .. } | Instrument::Bassline { preset, .. } | Instrument::Mono101 { preset, .. } | Instrument::Drone { preset, .. } | Instrument::Waves { preset, .. } | Instrument::Guitar { preset, .. } | Instrument::WindChimes { preset, .. } | Instrument::Birds { preset, .. } | Instrument::Nature { preset, .. } | Instrument::PanFlute { preset, .. } | Instrument::Melodica { preset, .. } | Instrument::Harmonica { preset, .. } | Instrument::Calculator { preset, .. } | Instrument::Console { preset, .. } | Instrument::Handheld { preset, .. } | Instrument::Micro { preset, .. } | Instrument::Warp { preset, .. } | Instrument::Hybrid { preset, .. } | Instrument::Quartet { preset, .. } | Instrument::ChipFm { preset, .. } | Instrument::V2 { preset, .. } | Instrument::Oidos { preset, .. } | Instrument::Orchestra { preset, .. } | Instrument::Facet { preset, .. } | Instrument::BeadsSynth { preset, .. } | Instrument::StreetOrgan { preset, .. } => preset.clone(),
         }
     }
@@ -2262,6 +2282,12 @@ impl Project {
                         params::fix_len(params, crate::dsp::granulator::SPECS);
                         crate::dsp::granulator::warm();
                     }
+                    Some(Instrument::Keytone { params, .. }) => {
+                        params::fix_len(params, crate::dsp::keytone::SPECS);
+                        crate::dsp::keytone::warm();
+                    }
+                    // The toy keyboard's drums made now, not on the audio thread.
+                    Some(Instrument::Drums { pads, .. }) if pads.iter().any(|p| p.voice.family() == drums::Family::Keytone) => crate::dsp::keytone::warm(),
                     // Shakers became an instrument; their kits are the Drum Rack's.
                     Some(Instrument::Drums { engine, .. }) if *engine == drums::DrumEngine::Shakers => *engine = drums::DrumEngine::Rack,
                     Some(Instrument::Plugin(p)) => *max_id = (*max_id).max(p.instance + 1),

@@ -196,6 +196,7 @@ pub enum MidiFxKind {
     Gamelan,
     Raga,
     Call,
+    HomeRhythms,
 }
 
 const ARP_STYLES: &[&str] = &["Up", "Down", "Up Down", "Down Up", "Converge", "Diverge", "Random", "Played", "Chord"];
@@ -315,7 +316,7 @@ impl MidiFxKind {
         match self {
             K::Step | K::Acid | K::DrumGrid | K::Progression | K::Drummer => "Classic",
             K::GuitarChords | K::Ukulele | K::PianoPlayer | K::BassPlayer | K::Banjo | K::Section | K::OrganGrinder | K::MusicBox => "Players",
-            K::Euclid | K::DrumMap | K::Marbles | K::Chance | K::Bits | K::Percussion => "Rhythm",
+            K::Euclid | K::DrumMap | K::Marbles | K::Chance | K::Bits | K::Percussion | K::HomeRhythms => "Rhythm",
             K::Spinner | K::Endless | K::Hands | K::Draw | K::Touch => "Played",
             K::Polymeter | K::Turing | K::Life | K::Drunk | K::Markov | K::Words | K::Sing => "Generative",
             K::Bounce | K::Orbits | K::Pong | K::Rain | K::Chaos | K::Automaton | K::Ant | K::Lorenz => "Physics & Chaos",
@@ -328,7 +329,7 @@ impl MidiFxKind {
         }
     }
 
-    pub const SEQUENCERS: [MidiFxKind; 75] = [
+    pub const SEQUENCERS: [MidiFxKind; 76] = [
         MidiFxKind::Step,
         MidiFxKind::Acid,
         MidiFxKind::DrumGrid,
@@ -404,6 +405,7 @@ impl MidiFxKind {
         MidiFxKind::Gamelan,
         MidiFxKind::Raga,
         MidiFxKind::Call,
+        MidiFxKind::HomeRhythms,
     ];
 
     pub fn is_sequencer(self) -> bool {
@@ -509,6 +511,7 @@ impl MidiFxKind {
             MidiFxKind::Gamelan => "Gamelan",
             MidiFxKind::Raga => "Raga",
             MidiFxKind::Call => "Call & Response",
+            MidiFxKind::HomeRhythms => "Home Rhythms",
 
             MidiFxKind::Arpeggiator => "Arpeggiator",
             MidiFxKind::Chord => "Chord",
@@ -603,6 +606,7 @@ impl MidiFxKind {
             MidiFxKind::Gamelan => "A gamelan: a slow core melody, two parts that lock into each other above it in one fast line, and the gongs marking the cycle; irama sets how dense",
             MidiFxKind::Raga => "A melody by a raga's rules: other notes going up than coming down, notes it rests on, its signature phrase; Alap, Jor and Jhala, grace notes, slides and a drone",
             MidiFxKind::Call => "Call and response: a caller's phrase that ends open, answered by a choir: the same, higher, upside down or coming home to the key note",
+            MidiFxKind::HomeRhythms => "A home keyboard's rhythm section: forty preset rhythms (Rock to Bossa Nova, Reggae and Dancehall Rock) with Variation A and B, Fill In, Intro and Ending, on the kit's drums; or the accompaniment's bass and chords on a melodic track, from the keys held below the split or the song's key",
             MidiFxKind::Ukulele => "Ukulele chords the way a ukulele player plays them: four strings (high G, low G, baritone or D tuning), real shapes in the key, strummed or picked in the same patterns as Guitar Chords",
 
             MidiFxKind::Arpeggiator => "Plays held notes one after another, tempo-synced",
@@ -699,6 +703,7 @@ impl MidiFxKind {
             MidiFxKind::Gamelan => sequencers::world::GAMELAN,
             MidiFxKind::Raga => sequencers::world::RAGA,
             MidiFxKind::Call => sequencers::world::CALL,
+            MidiFxKind::HomeRhythms => sequencers::home::SPECS,
 
             MidiFxKind::Arpeggiator => ARP,
             MidiFxKind::Chord => CHORD,
