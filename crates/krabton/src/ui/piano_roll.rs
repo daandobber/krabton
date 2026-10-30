@@ -214,6 +214,11 @@ impl App {
     fn piano_rows(&self, track: usize) -> (Vec<u8>, Vec<String>, bool) {
         if let Some(Instrument::Drums { pads, .. }) = self.project.tracks.get(track).and_then(|t| t.instrument.as_ref()) {
             let mut v: Vec<(u8, String)> = pads.iter().map(|p| (p.note, p.name.clone())).collect();
+            // A kit with an 808 that takes the keys below the drums: those keys too.
+            if let Some(k) = krabton_engine::dsp::drums::keys_pad(pads) {
+                let name = &pads[k].name;
+                v.extend(krabton_engine::dsp::drums::KEYS_808.filter(|n| pads.iter().all(|p| p.note != *n)).map(|n| (n, format!("{name} {}", note_name(n)))));
+            }
             v.sort_by(|a, b| b.0.cmp(&a.0));
             v.dedup_by_key(|x| x.0);
             let (notes, names) = v.into_iter().unzip();

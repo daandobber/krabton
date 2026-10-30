@@ -2,7 +2,8 @@
 //! synthesis (Classic), a voice after a classic drum machine (808, 909,
 //! CR-78, electronic toms; see `machines`), a Mutable Instruments drum model (the 808-style and
 //! synthetic kicks, snares and hi-hats of Plaits, MIT licensed, through
-//! mi-plaits-dsp), a PhISEM shaker (see `shakers`), or a sample.
+//! mi-plaits-dsp), a PhISEM shaker (see `shakers`), deep-fried pluggnb
+//! drums (see `princess`), or a sample.
 
 use super::acoustic::AcousticVoice;
 use super::retro::RetroVoice;
@@ -11,6 +12,7 @@ use super::circuit_kick::{CircuitKick, KickKnobs};
 use super::macro_drums::{self, MacroVoice};
 use super::peaks::{self, PeaksVoice};
 use super::machines::MachineVoice;
+use super::princess::{self, PrincessVoice};
 use super::shakers::{self, Shaker, ShakerModel};
 use super::*;
 use crate::project::DrumPad;
@@ -199,6 +201,20 @@ pub enum DrumVoice {
     ChipWoodBoom,
     M909Ride,
     M909Crash,
+    ApFried808,
+    ApDouble808,
+    ApCrunch808,
+    ApKick,
+    ApSnare,
+    ApClap,
+    ApHat,
+    ApOpenHat,
+    ApHatRoll,
+    ApLaser,
+    ApBitPerc,
+    ApChannelSurf,
+    ApSubliminal,
+    ApBell,
 }
 
 /// Where a voice comes from.
@@ -218,6 +234,8 @@ pub enum Family {
     Macro,
     /// The old chips' drums (see `chip_drums`).
     Chip,
+    /// Deep-fried pluggnb drums (see `princess`).
+    Princess,
 }
 
 impl DrumVoice {
@@ -306,8 +324,24 @@ impl DrumVoice {
     pub const RESONANT: [DrumVoice; 6] = [DrumVoice::RsKick, DrumVoice::RsSnare, DrumVoice::RsHat, DrumVoice::RsFmKick, DrumVoice::RsFmSnare, DrumVoice::RsCircuitKick];
     pub const MACRO: [DrumVoice; 12] = [DrumVoice::MkKick, DrumVoice::MkSnare, DrumVoice::MkHat, DrumVoice::MkClap, DrumVoice::MkTom, DrumVoice::MkRim, DrumVoice::MkFm, DrumVoice::MkNoise, DrumVoice::MkCowbell, DrumVoice::MkCymbal, DrumVoice::MkShaker, DrumVoice::MkClave];
     pub const CHIP: [DrumVoice; 44] = [DrumVoice::ChipConsoleKick, DrumVoice::ChipConsoleSampleKick, DrumVoice::ChipConsoleSnare, DrumVoice::ChipConsoleSampleSnare, DrumVoice::ChipConsoleHat, DrumVoice::ChipConsoleOpenHat, DrumVoice::ChipConsoleTom, DrumVoice::ChipConsoleCrash, DrumVoice::ChipHandheldKick, DrumVoice::ChipHandheldSnare, DrumVoice::ChipHandheldHat, DrumVoice::ChipHandheldOpenHat, DrumVoice::ChipHandheldTom, DrumVoice::ChipHandheldClap, DrumVoice::ChipMicroKick, DrumVoice::ChipMicroSnare, DrumVoice::ChipMicroTom, DrumVoice::ChipMicroClap, DrumVoice::ChipMicroRim, DrumVoice::ChipMicroHat, DrumVoice::ChipMicroOpenHat, DrumVoice::ChipMicroPunchKick, DrumVoice::ChipMicroPunchSnare, DrumVoice::ChipMicroPunchClap, DrumVoice::ChipMicroPunchRim, DrumVoice::ChipMicroPunchHat, DrumVoice::ChipMicroPunchOpenHat, DrumVoice::ChipMicroPunchTom, DrumVoice::ChipArcadeKick, DrumVoice::ChipArcadeSnare, DrumVoice::ChipArcadeTom, DrumVoice::ChipArcadeHat, DrumVoice::ChipArcadeOpenHat, DrumVoice::ChipArcadeCowbell, DrumVoice::ChipBeeperKick, DrumVoice::ChipBeeperSnare, DrumVoice::ChipBeeperHat, DrumVoice::ChipBeeperTom, DrumVoice::ChipWoodKick, DrumVoice::ChipWoodSnare, DrumVoice::ChipWoodHat, DrumVoice::ChipWoodTom, DrumVoice::ChipWoodZap, DrumVoice::ChipWoodBoom];
+    pub const PRINCESS: [DrumVoice; 14] = [
+        DrumVoice::ApFried808,
+        DrumVoice::ApDouble808,
+        DrumVoice::ApCrunch808,
+        DrumVoice::ApKick,
+        DrumVoice::ApSnare,
+        DrumVoice::ApClap,
+        DrumVoice::ApHat,
+        DrumVoice::ApOpenHat,
+        DrumVoice::ApHatRoll,
+        DrumVoice::ApLaser,
+        DrumVoice::ApBitPerc,
+        DrumVoice::ApChannelSurf,
+        DrumVoice::ApSubliminal,
+        DrumVoice::ApBell,
+    ];
     /// The voices as the pad menu groups them.
-    pub const GROUPS: [(&'static str, &'static [DrumVoice]); 14] = [
+    pub const GROUPS: [(&'static str, &'static [DrumVoice]); 15] = [
         ("Acoustic", &Self::ACOUSTIC),
         ("Retro", &Self::RETRO),
         ("Classic", &Self::CLASSIC),
@@ -322,6 +356,7 @@ impl DrumVoice {
         ("Resonant", &Self::RESONANT),
         ("Macro", &Self::MACRO),
         ("Chip", &Self::CHIP),
+        ("Analog Princess", &Self::PRINCESS),
     ];
 
     pub fn family(self) -> Family {
@@ -341,6 +376,8 @@ impl DrumVoice {
             Family::Macro
         } else if Self::CHIP.contains(&self) {
             Family::Chip
+        } else if Self::PRINCESS.contains(&self) {
+            Family::Princess
         } else {
             Family::Classic
         }
@@ -519,6 +556,20 @@ impl DrumVoice {
             DrumVoice::ChipWoodTom => "Woodgrain Tom",
             DrumVoice::ChipWoodZap => "Woodgrain Zap",
             DrumVoice::ChipWoodBoom => "Woodgrain Boom",
+            DrumVoice::ApFried808 => "Fried 808",
+            DrumVoice::ApDouble808 => "808 Into 808",
+            DrumVoice::ApCrunch808 => "Crunch 808",
+            DrumVoice::ApKick => "Clipped Kick",
+            DrumVoice::ApSnare => "Plugg Snare",
+            DrumVoice::ApClap => "Ring Clap",
+            DrumVoice::ApHat => "Crispy Hat",
+            DrumVoice::ApOpenHat => "Crispy Open Hat",
+            DrumVoice::ApHatRoll => "Hat Roll",
+            DrumVoice::ApLaser => "Laser",
+            DrumVoice::ApBitPerc => "Bit Perc",
+            DrumVoice::ApChannelSurf => "Channel Surf",
+            DrumVoice::ApSubliminal => "Subliminal",
+            DrumVoice::ApBell => "Plugg Bell",
             _ => "",
         }
     }
@@ -683,6 +734,18 @@ impl DrumVoice {
             DrumVoice::ChipWoodTom => 45,
             DrumVoice::ChipWoodZap => 51,
             DrumVoice::ChipWoodBoom => 57,
+            DrumVoice::ApFried808 | DrumVoice::ApDouble808 | DrumVoice::ApCrunch808 => 35,
+            DrumVoice::ApKick => 36,
+            DrumVoice::ApBitPerc => 37,
+            DrumVoice::ApSnare => 38,
+            DrumVoice::ApClap => 39,
+            DrumVoice::ApHat => 42,
+            DrumVoice::ApHatRoll => 44,
+            DrumVoice::ApOpenHat => 46,
+            DrumVoice::ApLaser => 48,
+            DrumVoice::ApChannelSurf => 49,
+            DrumVoice::ApBell => 53,
+            DrumVoice::ApSubliminal => 55,
         }
     }
 
@@ -743,6 +806,20 @@ impl DrumVoice {
                 DrumVoice::SynthKick => [Some("Dirt"), Some("FM")],
                 DrumVoice::AnalogSnare | DrumVoice::SynthSnare => [Some("Snappy"), None],
                 _ => [Some("Noise"), None],
+            },
+            Family::Princess => match self {
+                DrumVoice::ApFried808 => [Some("Glide"), Some("Ring")],
+                DrumVoice::ApDouble808 => [Some("Glide"), Some("Feed")],
+                DrumVoice::ApCrunch808 => [Some("Glide"), Some("Fry")],
+                DrumVoice::ApKick => [Some("Punch"), Some("Clip")],
+                DrumVoice::ApSnare => [Some("Clap"), Some("Room")],
+                DrumVoice::ApClap | DrumVoice::ApHat | DrumVoice::ApOpenHat => [Some("Ring"), Some("Clip")],
+                DrumVoice::ApHatRoll => [Some("Ring"), Some("Roll")],
+                DrumVoice::ApLaser => [Some("Sweep"), Some("Fry")],
+                DrumVoice::ApBitPerc => [Some("Bits"), Some("Rate")],
+                DrumVoice::ApChannelSurf => [Some("Surf"), Some("Tones")],
+                DrumVoice::ApSubliminal => [Some("Swell"), Some("Whisper")],
+                _ => [Some("Shine"), Some("Detune")],
             },
         }
     }
@@ -825,6 +902,8 @@ pub enum DrumEngine {
     MacroDrums,
     /// The old chips' drums.
     Chip,
+    /// Deep-fried pluggnb drums: fried 808s that slide, ring and clip.
+    Princess,
 }
 
 static G606: [(&str, &[DrumVoice]); 1] = [("606", &DrumVoice::M606)];
@@ -842,11 +921,12 @@ static GRESONANT: [(&str, &[DrumVoice]); 1] = [("Resonant", &DrumVoice::RESONANT
 static GMACRO: [(&str, &[DrumVoice]); 1] = [("Macro", &DrumVoice::MACRO)];
 static GCHIP: [(&str, &[DrumVoice]); 1] = [("Chip", &DrumVoice::CHIP)];
 static GREAL: [(&str, &[DrumVoice]); 2] = [("Acoustic", &DrumVoice::ACOUSTIC), ("Percussion", &REAL_PERC)];
+static GPRINCESS: [(&str, &[DrumVoice]); 1] = [("Analog Princess", &DrumVoice::PRINCESS)];
 
 impl DrumEngine {
     /// The engines to choose from. `Shakers` is only kept for old projects:
     /// its kits are the Drum Rack's now, and Shakers is an instrument.
-    pub const ALL: [DrumEngine; 14] = [DrumEngine::RealDrums, DrumEngine::SampledMachines, DrumEngine::Acoustic, DrumEngine::Retro, DrumEngine::Chip, DrumEngine::Resonant, DrumEngine::MacroDrums, DrumEngine::M808, DrumEngine::M909, DrumEngine::M606, DrumEngine::Cr78, DrumEngine::Mutable, DrumEngine::FmDrums, DrumEngine::Rack];
+    pub const ALL: [DrumEngine; 15] = [DrumEngine::RealDrums, DrumEngine::SampledMachines, DrumEngine::Acoustic, DrumEngine::Retro, DrumEngine::Chip, DrumEngine::Resonant, DrumEngine::MacroDrums, DrumEngine::M808, DrumEngine::M909, DrumEngine::M606, DrumEngine::Cr78, DrumEngine::Mutable, DrumEngine::FmDrums, DrumEngine::Princess, DrumEngine::Rack];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -865,6 +945,7 @@ impl DrumEngine {
             DrumEngine::MacroDrums => "Macro Drums",
             DrumEngine::Chip => "Chip Drums",
             DrumEngine::SampledMachines => "Sampled Machines",
+            DrumEngine::Princess => "Analog Princess",
         }
     }
 
@@ -885,6 +966,7 @@ impl DrumEngine {
             DrumEngine::Retro => "More drum machines: a seventies rhythm box (bongos, claves, guiro), the hexagonal electronic kit with its sweeping toms, the crunchy 8-bit digital eighties, a pocket rhythm machine",
             DrumEngine::RealDrums => "Recorded drums: acoustic kits from rusty rock, classic rock, metal and a big room to garage, seventies, a jazz club, brushes and dry; hand and body percussion and tabla. With velocity layers and round robins (free samples, each kit downloaded on first use; until then Krabton's own drums stand in)",
             DrumEngine::Acoustic => "A real drum kit, modelled: kick, snare with its wires, side stick, three toms, hi-hat (closed, pedal, open), ride and its bell, crashes; every hit a little different, harder hits brighter",
+            DrumEngine::Princess => "Deep-fried pluggnb drums: an 808 put into another 808 (ring-modulated, or pushing its pitch around), clipped to the ceiling as in 2015, sliding from note to note (play it from the keys below the drums, 23 to 58 Hz); a clipped kick, a plugg snare with a clap and a room, crispy ring-modulated hats and rolls in the song's time, laser, bit perc, channel surfing static and a subliminal shadow, and the plugg bell",
         }
     }
 
@@ -906,6 +988,7 @@ impl DrumEngine {
             DrumEngine::MacroDrums => &GMACRO,
             DrumEngine::Chip => &GCHIP,
             DrumEngine::SampledMachines => &GMACHINES,
+            DrumEngine::Princess => &GPRINCESS,
         }
     }
 
@@ -926,6 +1009,7 @@ impl DrumEngine {
             DrumEngine::MacroDrums => &["Macro Kit", "Macro Electro", "Macro Industrial"],
             DrumEngine::Chip => &["Console Kit", "Handheld Kit", "Micro Kit", "Micro Punch Kit", "Arcade Kit", "Beeper Kit", "Woodgrain Kit"],
             DrumEngine::Rack => &["Classic 808", "Classic 909", "Classic Lo-Fi", "Hybrid", "Electro", "606 Electro", "Shaker Kit", "Hand Percussion", "Found Sounds"],
+            DrumEngine::Princess => &["Pluggnb", "Deep Fried", "2015 Clip", "Channel Surfing", "Subliminal"],
         }
     }
 }
@@ -1921,6 +2005,7 @@ pub fn kit(name: &str) -> Vec<DrumPad> {
             pad("Mid Tom", ElectroTom, 47, |_| {}),
             pad("High Tom", ElectroTom, 50, |p| p.tune = 5.0),
         ],
+        n @ ("Pluggnb" | "Deep Fried" | "2015 Clip" | "Channel Surfing" | "Subliminal") => princess_kit(n),
         other => classic_kit(other),
     }
 }
@@ -1990,6 +2075,295 @@ fn classic_kit(name: &str) -> Vec<DrumPad> {
         }
     }
     pads
+}
+
+/// Analog Princess's kits: the 808 first (it takes the keys below the
+/// drums), then the drums on their General MIDI notes.
+fn princess_kit(name: &str) -> Vec<DrumPad> {
+    use DrumVoice::*;
+    let hat = |p: &mut DrumPad| {
+        p.choke = 1;
+        p.level_db = -6.0;
+    };
+    match name {
+        "Pluggnb" => vec![
+            pad("808", ApFried808, 35, |p| {
+                p.tone = 0.45;
+                p.a = 0.45;
+                p.b = 0.2;
+                p.decay = 1.2;
+                p.level_db = 0.0;
+            }),
+            pad("Kick", ApKick, 36, |p| {
+                p.a = 0.5;
+                p.b = 0.35;
+                p.level_db = 0.0;
+            }),
+            pad("Rim", ApBitPerc, 37, |p| {
+                p.a = 0.3;
+                p.b = 0.3;
+                p.level_db = -7.0;
+            }),
+            pad("Snare", ApSnare, 38, |p| {
+                p.tune = 1.0;
+                p.a = 0.35;
+                p.b = 0.4;
+                p.level_db = -2.0;
+            }),
+            pad("Clap", ApClap, 39, |p| {
+                p.a = 0.3;
+                p.b = 0.3;
+            }),
+            pad("808 Tom", ApFried808, 41, |p| {
+                p.tune = 7.0;
+                p.decay = 0.35;
+                p.tone = 0.6;
+                p.b = 0.0;
+                p.level_db = -3.0;
+            }),
+            pad("Hat", ApHat, 42, |p| {
+                hat(p);
+                p.b = 0.4;
+            }),
+            pad("Hat Roll", ApHatRoll, 44, |p| {
+                hat(p);
+                p.b = 0.3;
+                p.level_db = -8.0;
+            }),
+            pad("Open Hat", ApOpenHat, 46, |p| {
+                hat(p);
+                p.level_db = -8.0;
+            }),
+            pad("Laser", ApLaser, 48, |p| p.level_db = -9.0),
+            pad("Channel Surf", ApChannelSurf, 49, |p| p.level_db = -11.0),
+            pad("Bell", ApBell, 53, |p| {
+                p.a = 0.35;
+                p.b = 0.6;
+                p.level_db = -6.0;
+            }),
+            pad("Subliminal", ApSubliminal, 55, |p| p.level_db = -12.0),
+        ],
+        "Deep Fried" => vec![
+            pad("808", ApDouble808, 35, |p| {
+                p.tone = 0.7;
+                p.a = 0.55;
+                p.b = 0.7;
+                p.decay = 1.3;
+                p.level_db = -1.0;
+            }),
+            pad("Kick", ApKick, 36, |p| {
+                p.a = 0.75;
+                p.b = 0.9;
+                p.level_db = -1.0;
+            }),
+            pad("Bit Perc", ApBitPerc, 37, |p| {
+                p.a = 0.8;
+                p.b = 0.7;
+                p.level_db = -6.0;
+            }),
+            pad("Snare", ApSnare, 38, |p| {
+                p.a = 0.6;
+                p.b = 0.7;
+                p.tone = 0.7;
+                p.level_db = -2.0;
+            }),
+            pad("Clap", ApClap, 39, |p| {
+                p.a = 0.8;
+                p.b = 0.8;
+            }),
+            pad("Fried 808", ApFried808, 41, |p| {
+                p.tone = 0.95;
+                p.b = 0.8;
+                p.tune = -2.0;
+                p.decay = 0.8;
+                p.level_db = -2.0;
+            }),
+            pad("Hat", ApHat, 42, |p| {
+                hat(p);
+                p.a = 0.9;
+                p.b = 0.9;
+            }),
+            pad("Crunch 808", ApCrunch808, 43, |p| {
+                p.tone = 0.8;
+                p.b = 0.75;
+                p.decay = 0.6;
+                p.level_db = -3.0;
+            }),
+            pad("Ratchet", ApHatRoll, 44, |p| {
+                hat(p);
+                p.a = 0.9;
+                p.b = 0.9;
+                p.level_db = -8.0;
+            }),
+            pad("Open Hat", ApOpenHat, 46, |p| {
+                hat(p);
+                p.a = 0.9;
+                p.b = 0.9;
+                p.level_db = -8.0;
+            }),
+            pad("Laser", ApLaser, 48, |p| {
+                p.a = 0.8;
+                p.b = 0.8;
+                p.level_db = -8.0;
+            }),
+            pad("Channel Surf", ApChannelSurf, 49, |p| {
+                p.a = 0.8;
+                p.level_db = -10.0;
+            }),
+        ],
+        "2015 Clip" => vec![
+            pad("808", ApFried808, 35, |p| {
+                p.tone = 1.0;
+                p.a = 0.3;
+                p.b = 0.0;
+                p.decay = 1.0;
+                p.level_db = -1.0;
+            }),
+            pad("Kick", ApKick, 36, |p| {
+                p.a = 0.6;
+                p.b = 1.0;
+                p.level_db = -1.0;
+            }),
+            pad("Rim", ApBitPerc, 37, |p| {
+                p.a = 0.2;
+                p.b = 0.1;
+                p.level_db = -7.0;
+            }),
+            pad("Snare", ApSnare, 38, |p| {
+                p.a = 0.2;
+                p.b = 0.2;
+                p.tone = 0.8;
+                p.level_db = -1.0;
+            }),
+            pad("Clap", ApClap, 39, |p| {
+                p.a = 0.1;
+                p.b = 1.0;
+            }),
+            pad("Hat", ApHat, 42, |p| {
+                hat(p);
+                p.b = 1.0;
+            }),
+            pad("Hat Roll", ApHatRoll, 44, |p| {
+                hat(p);
+                p.b = 0.6;
+                p.level_db = -8.0;
+            }),
+            pad("Open Hat", ApOpenHat, 46, |p| {
+                hat(p);
+                p.b = 1.0;
+                p.level_db = -8.0;
+            }),
+            pad("Laser", ApLaser, 48, |p| {
+                p.b = 0.2;
+                p.level_db = -9.0;
+            }),
+            pad("Bell", ApBell, 53, |p| {
+                p.a = 0.5;
+                p.b = 0.4;
+                p.level_db = -6.0;
+            }),
+        ],
+        "Channel Surfing" => vec![
+            pad("808", ApCrunch808, 35, |p| {
+                p.tone = 0.55;
+                p.a = 0.5;
+                p.b = 0.4;
+                p.level_db = 0.0;
+            }),
+            pad("Kick", ApKick, 36, |p| p.level_db = 0.0),
+            pad("Bit Perc", ApBitPerc, 37, |p| p.level_db = -6.0),
+            pad("Snare", ApSnare, 38, |p| p.level_db = -2.0),
+            pad("Clap", ApClap, 39, |p| p.a = 0.7),
+            pad("Hat", ApHat, 42, hat),
+            pad("Open Hat", ApOpenHat, 46, |p| {
+                hat(p);
+                p.level_db = -8.0;
+            }),
+            pad("Channel Surf", ApChannelSurf, 49, |p| p.level_db = -6.0),
+            pad("Static", ApChannelSurf, 51, |p| {
+                p.a = 0.85;
+                p.b = 0.0;
+                p.level_db = -7.0;
+            }),
+            pad("Tuning", ApChannelSurf, 52, |p| {
+                p.a = 0.3;
+                p.b = 1.0;
+                p.decay = 1.5;
+                p.level_db = -7.0;
+            }),
+            pad("Subliminal", ApSubliminal, 55, |p| p.level_db = -10.0),
+            pad("Flip", ApChannelSurf, 57, |p| {
+                p.a = 1.0;
+                p.decay = 0.3;
+                p.level_db = -6.0;
+            }),
+        ],
+        _ => vec![
+            pad("808", ApDouble808, 35, |p| {
+                p.tone = 0.3;
+                p.a = 0.7;
+                p.b = 0.4;
+                p.decay = 1.6;
+                p.level_db = 0.0;
+            }),
+            pad("Kick", ApKick, 36, |p| {
+                p.a = 0.4;
+                p.b = 0.2;
+                p.level_db = -1.0;
+            }),
+            pad("Snare", ApSnare, 38, |p| {
+                p.a = 0.4;
+                p.b = 0.85;
+                p.tune = -2.0;
+                p.level_db = -3.0;
+            }),
+            pad("Clap", ApClap, 39, |p| {
+                p.a = 0.5;
+                p.b = 0.2;
+                p.level_db = -4.0;
+            }),
+            pad("Hat", ApHat, 42, |p| {
+                hat(p);
+                p.tone = 0.3;
+                p.b = 0.2;
+            }),
+            pad("Open Hat", ApOpenHat, 46, |p| {
+                hat(p);
+                p.tone = 0.3;
+                p.level_db = -9.0;
+            }),
+            pad("Channel Surf", ApChannelSurf, 49, |p| {
+                p.tone = 0.3;
+                p.level_db = -14.0;
+            }),
+            pad("Whisper", ApSubliminal, 52, |p| {
+                p.a = 0.1;
+                p.b = 1.0;
+                p.level_db = -8.0;
+            }),
+            pad("Bell", ApBell, 53, |p| {
+                p.a = 0.25;
+                p.b = 0.85;
+                p.level_db = -7.0;
+            }),
+            pad("Subliminal", ApSubliminal, 55, |p| p.level_db = -6.0),
+            pad("Shadow", ApSubliminal, 57, |p| {
+                p.tune = -12.0;
+                p.a = 0.9;
+                p.b = 0.2;
+                p.level_db = -6.0;
+            }),
+        ],
+    }
+}
+
+/// Keys below the General MIDI drums (MIDI 18 to 34: 23 to 58 Hz, where 808s sit) play a
+/// kit's first 808 at their own pitch, so its notes can slide.
+pub const KEYS_808: std::ops::RangeInclusive<u8> = 18..=34;
+
+/// The pad the 808 keys play: the kit's first 808.
+pub fn keys_pad(pads: &[DrumPad]) -> Option<usize> {
+    pads.iter().take(MAX_PADS).position(|p| princess::is_808(p.voice) && p.sample.is_none() && p.layers.is_empty())
 }
 
 const MAX_PADS: usize = 16;
@@ -2091,6 +2465,7 @@ struct PadVoice {
     circuit: CircuitKick,
     macro_voice: MacroVoice,
     chip: ChipVoice,
+    princess: Box<PrincessVoice>,
 }
 
 impl PadVoice {
@@ -2127,10 +2502,13 @@ impl PadVoice {
             circuit: CircuitKick::default(),
             macro_voice: MacroVoice::default(),
             chip: ChipVoice::default(),
+            princess: Box::default(),
         }
     }
 
-    fn trigger(&mut self, pad: &DrumPad, vel: f32, sr: f32) {
+    /// Hits the pad. An 808 played from the keys gets `key` (Hz) and
+    /// `legato` (another of its keys still held: it slides).
+    fn trigger(&mut self, pad: &DrumPad, vel: f32, sr: f32, key: Option<f32>, legato: bool) {
         // A recording hit again: the last hit dies away under the new one
         // instead of stopping dead (a cymbal keeps ringing).
         self.tail = None;
@@ -2272,6 +2650,7 @@ impl PadVoice {
                 let k = ChipKnobs { tune: tr, decay: d, tone, sweep: pad.a, noise: pad.b };
                 self.chip.trigger(kind, k, 1.0, sr);
             }
+            Family::Princess => self.princess.trigger(pad.voice, vel, tr, key, legato, d, tone, pad.a, pad.b, sr),
             Family::Classic => {}
         }
         match pad.voice {
@@ -2402,6 +2781,13 @@ impl PadVoice {
                 }
                 return y;
             }
+            Family::Princess => {
+                let y = self.princess.tick(pad.voice, &mut self.rng);
+                if !self.princess.is_active() {
+                    self.active = false;
+                }
+                return y;
+            }
             _ => {}
         }
         if pad.voice.family() == Family::Retro {
@@ -2520,6 +2906,10 @@ fn played_sample(pad: &DrumPad, layer: usize, rr: usize) -> Option<&crate::sampl
 
 pub struct DrumState {
     voices: [PadVoice; MAX_PADS],
+    /// The keys held (an 808 slides while another of its keys is).
+    held: u128,
+    /// The song's tempo (rolls keep it).
+    pub bpm: f32,
 }
 
 impl Default for DrumState {
@@ -2543,28 +2933,54 @@ fn choke_group(pad: &DrumPad) -> u8 {
 impl DrumState {
     pub fn new() -> Self {
         let voices = std::array::from_fn(|i| PadVoice::new(0xC0FF_EE00 ^ (i as u32 * 104_729 + 7)));
-        Self { voices }
+        Self { voices, held: 0, bpm: 120.0 }
     }
 
     pub fn note_on(&mut self, pads: &[DrumPad], note: u8, vel: f32, sr: f32) {
+        let note = note & 127;
+        // The 808 the keys play, and whether another of its keys is held.
+        let keys = keys_pad(pads);
+        let legato = keys.is_some_and(|k| {
+            let range = (KEYS_808.into_iter().fold(0u128, |m, n| m | 1 << n)) | 1u128 << (pads[k].note & 127);
+            self.held & range & !(1u128 << note) != 0
+        });
+        self.held |= 1u128 << note;
+        let mut played = false;
         for (i, pad) in pads.iter().enumerate().take(MAX_PADS) {
-            if pad.note != note {
-                continue;
+            if pad.note == note {
+                self.hit(pads, i, vel, sr, None, legato && keys == Some(i));
+                played = true;
             }
-            // A hit cuts off the other pads of its choke group.
-            let group = choke_group(pad);
-            if group > 0 {
-                for (j, other) in pads.iter().enumerate().take(MAX_PADS) {
-                    if j != i && choke_group(other) == group && self.voices[j].active {
-                        self.voices[j].choking = true;
-                    }
-                }
+        }
+        if let (false, Some(k)) = (played, keys) {
+            if KEYS_808.contains(&note) {
+                self.hit(pads, k, vel, sr, Some(midi_to_freq(note as f32)), legato);
             }
-            self.voices[i].trigger(pad, vel, sr);
         }
     }
 
+    /// Hits pad `i` (`key`, `legato`: see `PadVoice::trigger`).
+    fn hit(&mut self, pads: &[DrumPad], i: usize, vel: f32, sr: f32, key: Option<f32>, legato: bool) {
+        let pad = &pads[i];
+        // A hit cuts off the other pads of its choke group.
+        let group = choke_group(pad);
+        if group > 0 {
+            for (j, other) in pads.iter().enumerate().take(MAX_PADS) {
+                if j != i && choke_group(other) == group && self.voices[j].active {
+                    self.voices[j].choking = true;
+                }
+            }
+        }
+        self.voices[i].princess.bpm = self.bpm;
+        self.voices[i].trigger(pad, vel, sr, key, legato);
+    }
+
+    pub fn note_off(&mut self, note: u8) {
+        self.held &= !(1u128 << (note & 127));
+    }
+
     pub fn all_off(&mut self) {
+        self.held = 0;
         for v in self.voices.iter_mut() {
             if v.active {
                 v.choking = true;
@@ -2863,6 +3279,83 @@ mod tests {
             d.render(&pads, &mut l, &mut r, 48000.0);
         }
         assert!(d.voices.iter().all(|v| !v.active));
+    }
+
+    #[test]
+    fn the_princess_kits_have_their_drums_on_the_general_midi_notes() {
+        use DrumVoice::*;
+        for &name in DrumEngine::Princess.kits() {
+            let pads = kit(name);
+            let on = |note: u8| pads.iter().find(|p| p.note == note).map(|p| p.voice);
+            assert_eq!(on(36), Some(ApKick), "{name}: kick");
+            assert_eq!(on(38), Some(ApSnare), "{name}: snare");
+            assert_eq!(on(39), Some(ApClap), "{name}: clap");
+            assert_eq!(on(42), Some(ApHat), "{name}: closed hat");
+            assert_eq!(on(46), Some(ApOpenHat), "{name}: open hat");
+            // The hats cut each other.
+            let group = |v: DrumVoice| pads.iter().find(|p| p.voice == v).map(|p| p.choke);
+            assert_eq!(group(ApHat), group(ApOpenHat), "{name}");
+            assert!(group(ApHat).unwrap() > 0, "{name}");
+            // The 808 comes first, on 35, and takes the keys.
+            let k = keys_pad(&pads).unwrap_or_else(|| panic!("{name} has an 808"));
+            assert_eq!((k, pads[k].note), (0, 35), "{name}");
+            // One pad a note, and none on the 808's keys.
+            let mut notes: Vec<u8> = pads.iter().map(|p| p.note).collect();
+            notes.sort();
+            notes.dedup();
+            assert_eq!(notes.len(), pads.len(), "{name}");
+            assert!(pads.iter().all(|p| !KEYS_808.contains(&p.note)), "{name}");
+        }
+        assert_eq!(engine_of("Deep Fried"), DrumEngine::Princess);
+        assert_eq!(DrumEngine::Princess.name(), "Analog Princess");
+    }
+
+    #[test]
+    fn the_keys_below_the_drums_play_the_808_and_slide_while_held() {
+        let sr = 48000.0;
+        let mut pads = kit("Pluggnb");
+        // Clean and without Ring, to count its cycles.
+        pads[0].tone = 0.0;
+        pads[0].b = 0.0;
+        pads[0].a = 0.6;
+        pads[0].decay = 2.0;
+        let mut d = DrumState::new();
+        let run = |d: &mut DrumState, secs: f32| {
+            let mut out = Vec::new();
+            for _ in 0..(secs * sr / 256.0) as usize {
+                let (mut l, mut r) = ([0.0f32; 256], [0.0f32; 256]);
+                d.render(&pads, &mut l, &mut r, sr);
+                out.extend_from_slice(&l);
+            }
+            out
+        };
+        let pitch = |x: &[f32]| {
+            let ups: Vec<f32> = x.windows(2).enumerate().filter(|(_, w)| w[0] <= 0.0 && w[1] > 0.0).map(|(i, w)| i as f32 + w[0] / (w[0] - w[1])).collect();
+            (ups.len() - 1) as f32 * sr / (ups[ups.len() - 1] - ups[0])
+        };
+        // A1 (55 Hz) from the keys.
+        d.note_on(&pads, 33, 1.0, sr);
+        let a1 = run(&mut d, 0.4);
+        assert!((pitch(&a1[(0.1 * sr) as usize..]) / 55.0 - 1.0).abs() < 0.03, "{}", pitch(&a1[(0.1 * sr) as usize..]));
+        // F1 while A1 is held: it slides down without a new hit.
+        d.note_on(&pads, 29, 1.0, sr);
+        let glide = princess::glide_secs(0.6);
+        let slide = run(&mut d, glide + 0.4);
+        let f1 = midi_to_freq(29.0);
+        let there = pitch(&slide[((glide + 0.05) * sr) as usize..]);
+        assert!((there / f1 - 1.0).abs() < 0.03, "slid to {there} Hz");
+        let late = a1[a1.len() - 2400..].iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        let fresh = slide[..2400].iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!(fresh < late * 1.6, "no new hit: {fresh} after {late}");
+        // Let go of both, and the next key is a new hit.
+        d.note_off(33);
+        d.note_off(29);
+        d.note_on(&pads, 31, 1.0, sr);
+        let hit = run(&mut d, 0.05);
+        let new = hit.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!(new > fresh * 1.3, "a new hit: {new} after {fresh}");
+        // The pad's own note plays it at its Tune (as key 31 at 0).
+        assert!(KEYS_808.contains(&31) && (princess::BASE_808 / midi_to_freq(31.0) - 1.0).abs() < 0.01);
     }
 }
 

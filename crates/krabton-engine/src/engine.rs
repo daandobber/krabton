@@ -759,6 +759,7 @@ impl InstState {
     fn note_off(&mut self, inst: &Instrument, ov: Option<&[f32]>, pitch: u8) {
         match (self, inst) {
             (InstState::Synth(s), Instrument::Synth { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Drums(s), Instrument::Drums { .. }) => s.note_off(pitch),
             (InstState::Sampler(s), Instrument::Sampler { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Sf2(s), Instrument::Sf2 { .. }) => s.note_off(pitch),
             (InstState::StreetOrgan(s), Instrument::StreetOrgan { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
@@ -2360,6 +2361,8 @@ impl Engine {
                 // birds and nature play while it plays.
                 match instrument {
                     InstState::Modular(m) => m.set_transport(ctx.bpm, ctx.beat, ctx.playing),
+                    // Hat rolls keep the song's time.
+                    InstState::Drums(s) => s.bpm = ctx.bpm,
                     InstState::WindChimes(s) => s.playing = ctx.playing,
                     InstState::BeadsSynth(s) => {
                         s.playing = ctx.playing;
