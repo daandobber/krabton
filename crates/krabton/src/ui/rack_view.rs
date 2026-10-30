@@ -46,20 +46,23 @@ impl App {
             } else {
                 ui.vertical(|ui| {
                     for sel in sels {
-                        ui.horizontal_top(|ui| {
-                            let row = self.rack_row_height(sel, h);
-                            self.rack_strip(ui, sel, vec2(STRIP_W, (row + 30.0).max(STRIP_H)));
-                            if wrap {
-                                // Devices side by side, onto the next line where the window ends.
-                                let wrap_w = (view_right - ui.cursor().left()).max(300.0);
-                                ui.allocate_ui_with_layout(vec2(wrap_w, 0.0), egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true), |ui| {
-                                    ui.set_max_width(wrap_w);
-                                    self.device_chain(ui, sel, h, true);
-                                });
-                            } else {
+                        if wrap {
+                            // The whole row packed: the strip first, top left, then the
+                            // devices wherever they fit, beside it and under it too.
+                            let start = ui.cursor().min;
+                            let area = Rect::from_min_max(start, pos2(view_right.max(start.x + 300.0), start.y + 100_000.0));
+                            let mut row = ui.new_child(egui::UiBuilder::new().id_salt(("rack_row", format!("{sel:?}"))).max_rect(area).layout(egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true)));
+                            let strip = row.scope(|ui| self.rack_strip(ui, sel, vec2(STRIP_W, STRIP_H))).response.rect;
+                            self.pack_strip = Some(strip);
+                            self.device_chain(&mut row, sel, h, true);
+                            ui.advance_cursor_after_rect(row.min_rect());
+                        } else {
+                            ui.horizontal_top(|ui| {
+                                let row = self.rack_row_height(sel, h);
+                                self.rack_strip(ui, sel, vec2(STRIP_W, (row + 30.0).max(STRIP_H)));
                                 self.device_chain(ui, sel, h, true);
-                            }
-                        });
+                            });
+                        }
                         ui.add_space(6.0);
                     }
                     // New tracks.

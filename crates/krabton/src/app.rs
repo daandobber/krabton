@@ -552,6 +552,9 @@ pub struct App {
     script_zoom: Option<f32>,
     /// A script opening a track's menu of sequencers and MIDI effects.
     script_menu: Option<usize>,
+    /// The Studio: where a track's strip is in its packed row (the rest of
+    /// the row is for its devices, under the strip too).
+    pub(crate) pack_strip: Option<egui::Rect>,
     pub(crate) auto_prev: std::collections::HashMap<(usize, krabton_engine::modulation::ModTarget), f32>,
     /// The knob moves being recorded: their clip, where they started and
     /// last wrote, and the frame of that write.
@@ -713,6 +716,7 @@ impl App {
             map_selected: None,
             script_zoom: None,
             script_menu: None,
+            pack_strip: None,
             auto_prev: Default::default(),
             auto_last: Default::default(),
             layout_dirty: false,
