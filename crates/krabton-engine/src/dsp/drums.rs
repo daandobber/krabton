@@ -999,7 +999,7 @@ impl DrumEngine {
             DrumEngine::MacroDrums => "Macro Drums",
             DrumEngine::Chip => "Chip Drums",
             DrumEngine::SampledMachines => "Sampled Machines",
-            DrumEngine::Princess => "Analog Princess",
+            DrumEngine::Princess => "Analog Princess Kits",
             DrumEngine::Keytone => "Keytone Drums",
         }
     }
@@ -3422,7 +3422,7 @@ mod tests {
             assert!(pads.iter().all(|p| !KEYS_808.contains(&p.note)), "{name}");
         }
         assert_eq!(engine_of("Deep Fried"), DrumEngine::Princess);
-        assert_eq!(DrumEngine::Princess.name(), "Analog Princess");
+        assert_eq!(DrumEngine::Princess.name(), "Analog Princess Kits");
     }
 
     #[test]

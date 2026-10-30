@@ -1200,7 +1200,7 @@ pub fn for_instrument(name: &str) -> Option<Skin> {
         "Retro Machines" => RETRO,
         "Macro Drums" => Skin { top: hex(0x1f3a2e), bottom: hex(0x12241c), accent: hex(0x5fe3a1), knob: Knob::Led, cap: hex(0x2c4a3c), logo: Font::Sport, ..BASE },
         "Chip Drums" => CHIP_DRUMS,
-        "Analog Princess" => PRINCESS,
+        "Analog Princess" | "Analog Princess Kits" => PRINCESS,
         "Sampled Machines" => SAMPLER,
         "Drum Rack" => DRUM_RACK,
         "Keytone Drums" => KEYTONE,
