@@ -95,6 +95,11 @@ pub struct Prefs {
     /// Knobs instead of sliders in the Touch view and on Coast (sliders, as
     /// on a mixing desk, unless this is set).
     pub knobs: bool,
+    /// An Ableton Move plugged in is not used as a controller.
+    pub move_off: bool,
+    /// The Move's MIDI input and output picked by hand (None: found by name).
+    pub move_in: Option<String>,
+    pub move_out: Option<String>,
 }
 
 impl Prefs {

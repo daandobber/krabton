@@ -90,6 +90,22 @@ impl App {
             if ui.small_button("Rescan MIDI ports").clicked() {
                 self.midi.refresh();
             }
+            ui.separator();
+            ui.label(RichText::new("Ableton Move").strong().color(ACCENT));
+            let mut on = !self.prefs.move_off;
+            if ui.checkbox(&mut on, "Use a Move as a controller (in Control Live mode, by USB)").changed() {
+                self.prefs.move_off = !on;
+                self.prefs.save();
+                self.move_ctl.set_enabled(on);
+            }
+            let status = match &self.move_ctl.connected {
+                Some((input, _)) => format!("Connected on {input}. Its ports and mapping are in the Move tab below."),
+                None => "Not plugged in. Ports can be picked by hand in the Move tab below.".to_string(),
+            };
+            ui.label(RichText::new(status).small().color(TEXT_DIM));
+            if ui.small_button("Open the Move tab").clicked() {
+                self.detail = crate::app::DetailTab::Move;
+            }
         });
         if rescan {
             self.audio_devices = Some(crate::audio::output_device_names());

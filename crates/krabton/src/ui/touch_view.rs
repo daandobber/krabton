@@ -734,12 +734,48 @@ impl App {
     pub(crate) fn touch_key(&mut self, step: i32) -> Option<(u8, Vec<u64>)> {
         let ti = self.touch_track()?;
         let di = self.touch_device(ti);
-        let params = &self.project.tracks[ti].midi_devices[di].params;
+        let vel = self.kb_velocity;
+        self.touch_plate(ti, di, step, vel)
+    }
+
+    /// The base note and the note set of a track's plates.
+    fn touch_base(&self, ti: usize) -> (i32, usize) {
+        let params = self.project.tracks.get(ti).and_then(|t| t.midi_devices.iter().find(|d| d.kind == MidiFxKind::Touch)).map(|d| d.params.as_slice()).unwrap_or(&[]);
         let base = params.get(touch::BASE).copied().unwrap_or(48.0).round() as i32;
         let set = params.get(touch::NOTES).copied().unwrap_or(0.0).round().clamp(0.0, 2.0) as usize;
+        (base, set)
+    }
+
+    /// The plate (counted from the base note) of a pad on the Move: `col`
+    /// along, `row` up, rows a fourth apart as the plates' grid.
+    fn touch_pad_step(&self, ti: usize, col: i32, row: i32) -> i32 {
+        let (base, set) = self.touch_base(ti);
+        let fourth = match per_octave(&self.project.sounding_key(), base, set) {
+            12 => 5,
+            5 => 2,
+            n => (n * 3 + 6) / 7,
+        };
+        col + row * fourth
+    }
+
+    /// The note of a pad on the Move in Touch.
+    pub(crate) fn touch_pad_pitch(&self, ti: usize, col: i32, row: i32) -> u8 {
+        let (base, set) = self.touch_base(ti);
+        plate_pitch(&self.project.sounding_key(), base, set, self.touch_pad_step(ti, col, row))
+    }
+
+    /// A plate pressed on the Move's pads, as hard as `vel`.
+    pub(crate) fn touch_pad(&mut self, ti: usize, col: i32, row: i32, vel: f32) -> Option<(u8, Vec<u64>)> {
+        let di = self.touch_device(ti);
+        let step = self.touch_pad_step(ti, col, row);
+        self.touch_plate(ti, di, step, vel)
+    }
+
+    /// Plate `step` pressed, as hard as `vel`.
+    fn touch_plate(&mut self, ti: usize, di: usize, step: i32, vel: f32) -> Option<(u8, Vec<u64>)> {
+        let (base, set) = self.touch_base(ti);
         let pitch = plate_pitch(&self.project.sounding_key(), base, set, step);
         let id = self.project.tracks[ti].id;
-        let vel = self.kb_velocity;
         let value = touch::plate_value(&self.project.tracks[ti].midi_devices[di].data, step.max(0) as usize);
         self.unbend();
         self.cmd(Command::TouchPlate { track: id, value });
@@ -765,6 +801,13 @@ impl App {
         let track = self.project.tracks[ti].id;
         self.cmd(Command::NoteOn { track, pitch, velocity: vel });
         self.rec_note_on(ti, pitch, vel);
+        self.capture_remember(ti, pitch, vel);
+    }
+
+    /// Capture remembers a note played on track `ti` (on the plates, or on
+    /// the Move's pads).
+    pub(crate) fn capture_remember(&mut self, ti: usize, pitch: u8, vel: f32) {
+        let track = self.project.tracks[ti].id;
         let (on_song, start) = self.touch_clock();
         let pl = &mut self.touch_view;
         if pl.played_on_song != on_song {
@@ -806,7 +849,7 @@ impl App {
         let now = if on_song == self.touch_view.played_on_song { now } else { mine.iter().map(|p| p.end.unwrap_or(p.start)).fold(0.0, f64::max) };
         let bar = self.project.beats_per_bar_f();
         let Some((length, notes)) = captured(&mine, now, bar, self.touch_view.played_on_song, self.rec_quantize) else {
-            self.toast("Nothing played on the plates yet to capture");
+            self.toast("Nothing played on the plates or pads yet to capture");
             return;
         };
         let ns = self.project.scenes.len();

@@ -82,9 +82,10 @@ impl Midi {
         Ok(())
     }
 
-    /// Connects to the first available port, if any.
+    /// Connects to the first available port, if any (an Ableton Move's are
+    /// left to the Move controller).
     pub fn auto_connect(&mut self) {
-        if let Some(first) = self.ports.first().cloned() {
+        if let Some(first) = self.ports.iter().find(|p| !crate::move_ctl::is_move_port(p)).cloned() {
             let _ = self.connect(&first);
         }
     }
