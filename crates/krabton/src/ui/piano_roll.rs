@@ -224,6 +224,15 @@ impl App {
             let (notes, names) = v.into_iter().unzip();
             return (notes, names, true);
         }
+        // Analog Princess: its tracks, and the keys below them that play its 808.
+        if let Some(Instrument::Princess { .. }) = self.project.tracks.get(track).and_then(|t| t.instrument.as_ref()) {
+            use krabton_engine::dsp::princess_machine as pm;
+            let mut v: Vec<(u8, String)> = pm::NOTES.iter().zip(pm::TRACK_NAMES).map(|(&n, name)| (n, name.to_string())).collect();
+            v.extend(pm::KEYS_808.map(|n| (n, format!("808 {}", note_name(n)))));
+            v.sort_by(|a, b| b.0.cmp(&a.0));
+            let (notes, names) = v.into_iter().unzip();
+            return (notes, names, true);
+        }
         let scale = self.project.scale;
         let fold = self.piano.fold && self.project.scale_mode;
         let notes: Vec<u8> = (0..=127u8).rev().filter(|&p| !fold || scale.contains(p)).collect();

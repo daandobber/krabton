@@ -20,6 +20,7 @@ pub mod hyper;
 pub mod coast;
 pub mod crimson;
 pub mod keytone;
+pub mod princess;
 pub mod silicon;
 pub mod street_organ;
 pub mod synth;

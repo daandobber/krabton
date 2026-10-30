@@ -840,6 +840,14 @@ pub enum Instrument {
         #[serde(default)]
         sample: Option<SampleRef>,
     },
+    /// Analog Princess, the machine: deep-fried pluggnb drums with a step
+    /// sequencer and a FRY section (see `dsp::princess_machine`).
+    Princess {
+        preset: String,
+        params: Vec<f32>,
+        #[serde(default)]
+        machine: crate::dsp::princess_machine::Machine,
+    },
 }
 
 impl Instrument {
@@ -1071,6 +1079,11 @@ impl Instrument {
         Instrument::Keytone { preset: preset.to_string(), params: crate::dsp::keytone::preset(preset), sample: None }
     }
 
+    pub fn princess(preset: &str) -> Self {
+        use crate::dsp::princess_machine as pm;
+        Instrument::Princess { preset: preset.to_string(), params: pm::preset(preset), machine: pm::preset_machine(preset) }
+    }
+
     pub fn kind_name(&self) -> &'static str {
         match self {
             Instrument::Synth { .. } => "Synth",
@@ -1126,6 +1139,7 @@ impl Instrument {
             Instrument::Theremin { .. } => "Theremin",
             Instrument::Granulator { .. } => "Granulator",
             Instrument::Keytone { .. } => "Keytone",
+            Instrument::Princess { .. } => "Analog Princess",
         }
     }
 
@@ -1149,6 +1163,7 @@ impl Instrument {
             Instrument::Theremin { preset, .. } => preset.clone(),
             Instrument::Granulator { preset, .. } => preset.clone(),
             Instrument::Keytone { preset, .. } => preset.clone(),
+            Instrument::Princess { preset, .. } => preset.clone(),
             Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Modular { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } | Instrument::Monk { preset, .. } | Instrument::Piano { preset, .. } | Instrument::Bassline { preset, .. } | Instrument::Mono101 { preset, .. } | Instrument::Drone { preset, .. } | Instrument::Waves { preset, .. } | Instrument::Guitar { preset, .. } | Instrument::WindChimes { preset, .. } | Instrument::Birds { preset, .. } | Instrument::Nature { preset, .. } | Instrument::PanFlute { preset, .. } | Instrument::Melodica { preset, .. } | Instrument::Harmonica { preset, .. } | Instrument::Calculator { preset, .. } | Instrument::Console { preset, .. } | Instrument::Handheld { preset, .. } | Instrument::Micro { preset, .. } | Instrument::Warp { preset, .. } | Instrument::Hybrid { preset, .. } | Instrument::Quartet { preset, .. } | Instrument::ChipFm { preset, .. } | Instrument::V2 { preset, .. } | Instrument::Oidos { preset, .. } | Instrument::Orchestra { preset, .. } | Instrument::Facet { preset, .. } | Instrument::BeadsSynth { preset, .. } | Instrument::StreetOrgan { preset, .. } => preset.clone(),
         }
     }
@@ -1172,6 +1187,7 @@ impl Instrument {
         match self {
             Instrument::Drums { pads, .. } => pads.iter().fold(0, |m, p| m | 1u128 << (p.note & 127)),
             Instrument::Sf2 { bank, .. } if *bank >= crate::dsp::sf2::DRUM_BANK => crate::dsp::sf2::GM_DRUM_NOTES,
+            Instrument::Princess { .. } => crate::dsp::princess_machine::NOTES.iter().fold(0, |m, &n| m | 1u128 << n),
             _ => 0,
         }
     }
@@ -2285,6 +2301,10 @@ impl Project {
                     Some(Instrument::Keytone { params, .. }) => {
                         params::fix_len(params, crate::dsp::keytone::SPECS);
                         crate::dsp::keytone::warm();
+                    }
+                    Some(Instrument::Princess { params, machine, .. }) => {
+                        params::fix_len(params, crate::dsp::princess_machine::SPECS);
+                        machine.fix();
                     }
                     // The toy keyboard's drums made now, not on the audio thread.
                     Some(Instrument::Drums { pads, .. }) if pads.iter().any(|p| p.voice.family() == drums::Family::Keytone) => crate::dsp::keytone::warm(),

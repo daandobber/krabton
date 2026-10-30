@@ -1973,6 +1973,10 @@ impl App {
                             self.toast(msg);
                         }
                     }
+                    Instrument::Princess { preset, params, machine } => {
+                        let key = self.project.scale;
+                        super::faces::princess::panel(ui, Id::new(("princess", track_id)), preset, params, machine, &live, key, h - 36.0, mv.as_mut());
+                    }
                     Instrument::Facet { preset, params } => {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));

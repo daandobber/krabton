@@ -72,6 +72,7 @@ pub mod theremin;
 pub mod granulator;
 pub mod princess;
 pub mod keytone;
+pub mod princess_machine;
 
 use std::f32::consts::PI;
 

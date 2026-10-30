@@ -371,7 +371,7 @@ pub(crate) fn device_names() -> Vec<&'static str> {
     devices().iter().map(|d| d.name).collect()
 }
 
-fn devices() -> [Dev; 48] {
+fn devices() -> [Dev; 49] {
     [
         Dev {
             name: "Analog",
@@ -457,6 +457,7 @@ fn devices() -> [Dev; 48] {
         Dev { name: "Theremin", hint: "Played without touching it: two radio oscillators beating, from nearly a sine to the reedy, nasal voice of the kit theremins (Waveform), through a tone filter and a formant. One voice, always gliding, swelling in and out (Attack, Release), with the player's vibrato after a delay and a hand that is never quite still. Play it in its field with the mouse or a finger: right is higher, up is louder; Snap pulls the hand onto the song's key", presets: krabton_engine::dsp::theremin::preset_names(), make: BrowserItem::Theremin, kind: None },
         Dev { name: "Granulator", hint: "Plays a sample as clouds of grains, a cloud for every key held: where the grains come from (Position, drag it on the sample), how far they spray about it, how long they are (1 ms to 2 s), how many come a second or on the beat, their pitch from the keys with a spray and octave jumps, some backwards, under five windows, spread over the stereo field. The place can scan forward, backward, to and fro or along while a key is held (a time stretch), or freeze. An envelope per key, a tone tilt, a smear and a reverb. Drop a WAV or FLAC on it, or play its own pad, choir, bells or breath", presets: krabton_engine::dsp::granulator::preset_names(), make: BrowserItem::Granulator, kind: None },
         Dev { name: "Keytone", hint: "A toy sampling keyboard of the mid-eighties: sixteen sounds as short 8-bit samples at 9.4 kHz (piano, trumpet, pipe organ, a voice singing ah, flute, brass ensemble, synth drum, jazz organ, strings, vibes, glockenspiel, synth bass, marimba, harpsichord, accordion, clarinet), stepped through with no filter, eight voices into an 8-bit converter: the aliasing and the grain are the sound. Its envelopes, sustain, vibrato and portamento; Rate and Bits from crushed to clean. Load a short WAV into the user slot and it is crushed the same way. Its drums are the Keytone Drums, its rhythms Home Rhythms", presets: krabton_engine::dsp::keytone::preset_names(), make: BrowserItem::Keytone, kind: None },
+        Dev { name: "Analog Princess", hint: "A drum machine for deep-fried pluggnb: twelve tracks (an 808 put into another 808 that rings it or pushes its pitch around, a clipped kick, a plugg snare, a ring clap, crispy hats, rim, perc, the plugg bell, laser, channel surfing static and a subliminal shadow), each with its own tune, decay, drop in pitch, drive, clip, ring, crusher, filter, room, pan and choke. A step sequencer of its own on the song's transport: patterns A to H of 16, 32 or 64 steps, per step velocity, accent, hat rolls and ramps, flams, chance, the 808's notes (in the song's key) and slides; swing, chains, a length per track. Then the FRY section: drive, clip into the ceiling, bits, downsample, ring, pump under the kick, stutter, tape stop and channel surfing, all at once with Deep Fry. It also plays from notes (the 808 on the keys below the drums)", presets: krabton_engine::dsp::princess_machine::preset_names(), make: BrowserItem::Princess, kind: None },
     ]
 }
 
