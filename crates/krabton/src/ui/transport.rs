@@ -3,7 +3,7 @@
 use crate::app::{App, View};
 use crate::theme::*;
 use crate::widgets::*;
-use egui::{pos2, vec2, Align2, Rect, RichText, Sense, Stroke, Ui};
+use egui::{pos2, vec2, Align2, Id, Rect, RichText, Sense, Stroke, Ui};
 use krabton_engine::{Command, Instrument, Quantize};
 use std::sync::atomic::Ordering;
 use std::time::Instant;
@@ -147,51 +147,94 @@ impl App {
             if ui.add(egui::Button::new(RichText::new("Loop").color(if lp { TEXT_DARK } else { TEXT })).fill(if lp { ACCENT } else { PANEL3 })).clicked() {
                 self.project.loop_enabled = !lp;
             }
-            let bar = self.project.beats_per_bar_f();
-            let mut start_bar = self.project.loop_start / bar + 1.0;
-            let mut len_bars = (self.project.loop_end - self.project.loop_start) / bar;
-            let a = ui.add(egui::DragValue::new(&mut start_bar).range(1.0..=999.0).speed(0.05).fixed_decimals(0).prefix("start "));
-            let b = ui.add(egui::DragValue::new(&mut len_bars).range(1.0..=256.0).speed(0.05).fixed_decimals(0).suffix(" bars"));
-            if a.changed() || b.changed() {
-                self.project.loop_start = (start_bar.round() - 1.0).max(0.0) * bar;
-                self.project.loop_end = self.project.loop_start + len_bars.round().max(1.0) * bar;
+            // Where it loops, while it does (out of the way otherwise).
+            if lp {
+                let bar = self.project.beats_per_bar_f();
+                let mut start_bar = self.project.loop_start / bar + 1.0;
+                let mut len_bars = (self.project.loop_end - self.project.loop_start) / bar;
+                let a = ui.add(egui::DragValue::new(&mut start_bar).range(1.0..=999.0).speed(0.05).fixed_decimals(0).prefix("start "));
+                let b = ui.add(egui::DragValue::new(&mut len_bars).range(1.0..=256.0).speed(0.05).fixed_decimals(0).suffix(" bars"));
+                if a.changed() || b.changed() {
+                    self.project.loop_start = (start_bar.round() - 1.0).max(0.0) * bar;
+                    self.project.loop_end = self.project.loop_start + len_bars.round().max(1.0) * bar;
+                }
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                // In a narrow window the CPU readout gives way and the views get short names.
+                // In a narrow window the views get shorter names, then fold
+                // into one list: as short as it takes for them to fit. How wide
+                // each way took is remembered from when it was drawn.
                 let room = ui.available_width();
-                if ui.add(egui::Button::new(RichText::new("Big Picture").color(TEXT)).fill(PANEL3)).on_hover_text("For controllers and touch screens (Start on a controller opens it too)").clicked() {
+                let mem = Id::new("views_width");
+                let took: [f32; 4] = ui.ctx().memory(|m| m.data.get_temp(mem)).unwrap_or([0.0; 4]);
+                let level = (0..3).find(|&k| took[k] <= room).unwrap_or(3);
+                let dragging_clip = egui::DragAndDrop::payload::<crate::app::SlotDrag>(ui.ctx()).is_some() || egui::DragAndDrop::payload::<crate::app::ArrClipDrag>(ui.ctx()).is_some();
+                let big_label = if level >= 2 { "Big Pic." } else { "Big Picture" };
+                if ui.add(egui::Button::new(RichText::new(big_label).color(TEXT)).fill(PANEL3)).on_hover_text("Big Picture: for controllers and touch screens (Start on a controller opens it too)").clicked() {
                     self.enter_big_picture();
                 }
                 ui.separator();
-                if room > 560.0 {
-                    let cpu = status.cpu_load.load();
-                    ui.label(RichText::new(format!("CPU {:>3.0}%", cpu * 100.0)).color(if cpu > 0.8 { REC } else { TEXT_DIM }).font(egui::FontId::monospace(10.5)));
-                    ui.separator();
-                }
-                let dragging_clip = egui::DragAndDrop::payload::<crate::app::SlotDrag>(ui.ctx()).is_some() || egui::DragAndDrop::payload::<crate::app::ArrClipDrag>(ui.ctx()).is_some();
-                let short = room < 470.0;
                 // The Map, in its window.
                 let map_on = self.map_window;
                 if ui.add(egui::Button::new(RichText::new("Map").color(if map_on { TEXT_DARK } else { TEXT })).fill(if map_on { ACCENT } else { PANEL3 })).on_hover_text("The Map: put the tracks where they stand in a room, with a mixer").clicked() {
                     self.map_window = !map_on;
                 }
-                for (v, label) in [(View::Touch, "Touch"), (View::Tape, "Tape"), (View::Arrangement, if short { "Arr." } else { "Arrangement" }), (View::Session, if short { "Sess." } else { "Session" }), (View::Studio, "Studio")] {
-                    let on = self.view == v;
-                    let tip = match v {
-                        View::Studio => "The studio: every track a machine on the shelf, its patterns and mixer beside it (Ctrl+Shift+R)",
-                        View::Tape => "The four-track tape: record what you play, at any speed, backwards, looped",
-                        View::Touch => "Touch: play the selected track with plates (higher up: harder), a pulser, five steps, chance, and cables to its knobs; the letter keys press the plates",
-                        _ => "Tab switches views (also while dragging a clip)",
-                    };
-                    let resp = ui.add(egui::Button::new(RichText::new(label).color(if on { TEXT_DARK } else { TEXT })).fill(if on { ACCENT } else { PANEL3 })).on_hover_text(tip);
-                    if resp.clicked() {
-                        self.view = v;
+                let views = [
+                    (View::Touch, "Touch", "Tch."),
+                    (View::Tape, "Tape", "Tape"),
+                    (View::Arrangement, "Arrangement", "Arr."),
+                    (View::Session, "Session", "Sess."),
+                    (View::Studio, "Studio", "Stu."),
+                ];
+                let tip = |v: View| match v {
+                    View::Studio => "The studio: every track a machine on the shelf, its patterns and mixer beside it (Ctrl+Shift+R)",
+                    View::Tape => "The four-track tape: record what you play, at any speed, backwards, looped",
+                    View::Touch => "Touch: play the selected track with plates (higher up: harder), a pulser, five steps, chance, and cables to its knobs; the letter keys press the plates",
+                    _ => "Tab switches views (also while dragging a clip)",
+                };
+                if level == 3 {
+                    // No room: the views in one list.
+                    let now = views.iter().find(|v| v.0 == self.view).map_or("View", |v| v.1);
+                    ui.menu_button(RichText::new(format!("{now} ...")).color(TEXT_DARK).background_color(ACCENT), |ui| {
+                        for (v, name, _) in views.iter().rev() {
+                            if ui.selectable_label(self.view == *v, *name).on_hover_text(tip(*v)).clicked() {
+                                self.view = *v;
+                                ui.close();
+                            }
+                        }
+                    });
+                } else {
+                    for (v, full, tight) in views {
+                        let on = self.view == v;
+                        let label = match (level, v) {
+                            (0, _) => full,
+                            (1, View::Arrangement | View::Session) => tight,
+                            (1, _) => full,
+                            _ => tight,
+                        };
+                        let resp = ui.add(egui::Button::new(RichText::new(label).color(if on { TEXT_DARK } else { TEXT })).fill(if on { ACCENT } else { PANEL3 })).on_hover_text(tip(v));
+                        if resp.clicked() {
+                            self.view = v;
+                        }
+                        // Dragging a clip over the other view's button switches to it.
+                        if dragging_clip && !on && resp.contains_pointer() {
+                            self.view = v;
+                        }
                     }
-                    // Dragging a clip over the other view's button switches to it.
-                    if dragging_clip && !on && resp.contains_pointer() {
-                        self.view = v;
-                    }
+                }
+                // With room to spare, the CPU readout.
+                let used = ui.min_rect().width();
+                if room - used > 90.0 {
+                    ui.separator();
+                    let cpu = status.cpu_load.load();
+                    ui.label(RichText::new(format!("CPU {:>3.0}%", cpu * 100.0)).color(if cpu > 0.8 { REC } else { TEXT_DIM }).font(egui::FontId::monospace(10.5)));
+                }
+                let mut took = took;
+                took[level] = used;
+                ui.ctx().memory_mut(|m| m.data.insert_temp(mem, took));
+                // Drawn too wide this time: the next frame tries a shorter way.
+                if used > room && level < 3 {
+                    ui.ctx().request_repaint();
                 }
             });
         });
