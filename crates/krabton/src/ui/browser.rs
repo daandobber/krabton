@@ -371,7 +371,7 @@ pub(crate) fn device_names() -> Vec<&'static str> {
     devices().iter().map(|d| d.name).collect()
 }
 
-fn devices() -> [Dev; 45] {
+fn devices() -> [Dev; 46] {
     [
         Dev {
             name: "Analog",
@@ -454,6 +454,7 @@ fn devices() -> [Dev; 45] {
         Dev { name: "Orchestra", hint: "Real orchestral instruments, recorded: solo violin, violin, viola and cello sections, double bass, harp, flute, piccolo, oboe, clarinet, bassoon, French horn, trumpet, trombone, tuba, timpani, glockenspiel, xylophone, marimba, tubular bells, orchestral percussion, a church organ and an upright piano (VS Chamber Orchestra 2, CC0), each in its articulations (sustained, plain, spiccato or staccato, pizzicato, tremolo, mutes). Dynamics swells through the recorded layers; held notes loop; Legato joins notes. Each instrument downloads once, the first time", presets: krabton_engine::orchestra::ORCHESTRA_NAMES, make: BrowserItem::Orchestra, kind: None },
         Dev { name: "Soloists", hint: "Real instruments, recorded solo, from free libraries: a solo cello (sustained, staccato, pizzicato), an upright bass (pizzicato, arco), soprano, alto, tenor and baritone saxophones, an electric guitar, a banjo, a medieval lyre (finger, nail, muted, sul tasto), an erhu, steel drums, bagpipes, an electric bass, and three electric pianos (an electric grand, a reed piano and a pluck piano). Dynamics swells held notes through their recorded layers; Legato joins them. Each instrument downloads once, the first time", presets: krabton_engine::orchestra::SOLOIST_NAMES, make: BrowserItem::Orchestra, kind: None },
         Dev { name: "Beads", hint: "The wavetable synth of Mutable Instruments Beads, played with keys: twelve banks of waves (sines, drawbars, voices, metal, FM and more), and grains of them seeded while you hold a key (or always, or with the song's clock), each randomized in wave, size, shape and pitch, with Beads' reverb and its tape and lo-fi qualities", presets: krabton_engine::dsp::beads_synth::preset_names(), make: BrowserItem::BeadsSynth, kind: None },
+        Dev { name: "Theremin", hint: "Played without touching it: two radio oscillators beating, from nearly a sine to the reedy, nasal voice of the kit theremins (Waveform), through a tone filter and a formant. One voice, always gliding, swelling in and out (Attack, Release), with the player's vibrato after a delay and a hand that is never quite still. Play it in its field with the mouse or a finger: right is higher, up is louder; Snap pulls the hand onto the song's key", presets: krabton_engine::dsp::theremin::preset_names(), make: BrowserItem::Theremin, kind: None },
     ]
 }
 

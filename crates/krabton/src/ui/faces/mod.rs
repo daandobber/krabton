@@ -22,6 +22,7 @@ pub mod crimson;
 pub mod silicon;
 pub mod street_organ;
 pub mod synth;
+pub mod theremin;
 
 use super::modulation::{knob_overlay, slider_overlay, ModView};
 use crate::theme::*;

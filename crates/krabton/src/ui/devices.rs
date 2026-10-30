@@ -1659,6 +1659,42 @@ impl App {
                             param_grid_mod(ui, Id::new(("coast", track_id)), krabton_engine::dsp::coast::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
                         }
                     }
+                    Instrument::Theremin { preset, params } => {
+                        // Its field plays it: the hand goes to the engine as it moves.
+                        let key = (self.project.scale.mask(), self.project.scale.root);
+                        let hand = if crate::skin::current().is_some() {
+                            super::faces::theremin::panel(ui, Id::new(("theremin", track_id)), preset, params, &live, key, h - 36.0, mv.as_mut()).1
+                        } else {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
+                                egui::ComboBox::from_id_salt(("theremin_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                    for name in krabton_engine::dsp::theremin::preset_names() {
+                                        if ui.selectable_label(preset == name, *name).clicked() {
+                                            *preset = name.to_string();
+                                            *params = krabton_engine::dsp::theremin::preset(name);
+                                        }
+                                    }
+                                });
+                                ui.label(RichText::new("play it in the field: right is higher, up is louder").small().color(crate::skin::ink_dim()));
+                            });
+                            ui.horizontal_top(|ui| {
+                                let fh = h - 48.0;
+                                let (rect, _) = ui.allocate_exact_size(vec2(fh * 2.0, fh), Sense::hover());
+                                let hand = super::faces::theremin::field(ui, rect, Id::new(("theremin_field", track_id)), params, &live, key);
+                                ui.add_space(6.0);
+                                param_grid_mod(ui, Id::new(("theremin", track_id)), krabton_engine::dsp::theremin::SPECS, params, accent_now(), fh, mv.as_mut());
+                                hand
+                            })
+                            .inner
+                        };
+                        if let Some(hand) = hand {
+                            let at = match hand {
+                                super::faces::theremin::Hand::At(pitch, height) => Some((pitch, height)),
+                                super::faces::theremin::Hand::Gone => None,
+                            };
+                            self.cmd(Command::Hand { track: track_id, at });
+                        }
+                    }
                     Instrument::Silicon { preset, params } => {
                         if crate::skin::current().is_some() {
                             super::faces::silicon::panel(ui, Id::new(("silicon", track_id)), preset, params, &live, h - 36.0, mv.as_mut());

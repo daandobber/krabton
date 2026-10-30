@@ -552,6 +552,26 @@ const COAST: Skin = Skin {
     ..BASE
 };
 
+/// Theremin: a walnut cabinet of the thirties, cream print, a soft green
+/// glow in its field.
+const THEREMIN: Skin = Skin {
+    top: hex(0x5e3a20),
+    bottom: hex(0x3a2212),
+    surface: Surface::Wood,
+    ink: hex(0xf3e4c8),
+    dim: hex(0xc9b08c),
+    well: hex(0x1e1209),
+    well_ink: hex(0xf3e4c8),
+    accent: hex(0x6fe3b4),
+    knob: Knob::Chrome,
+    cap: hex(0xe2d6bd),
+    logo: Font::Serif,
+    logo_size: 22.0,
+    logo_ink: hex(0xf0d49a),
+    heroes: &["Waveform"],
+    ..BASE
+};
+
 /// Crimson: deep red textured plastic, light ink, amber displays, dark caps,
 /// each group under a bar.
 const CRIMSON: Skin = Skin {
@@ -1090,6 +1110,7 @@ pub fn for_instrument(name: &str) -> Option<Skin> {
         "Coast" => COAST,
         "Crimson" => CRIMSON,
         "Silicon" => SILICON,
+        "Theremin" => THEREMIN,
         "Pan Flute" => PAN_FLUTE,
         "Melodica" => MELODICA,
         "Harmonica" => HARMONICA,

@@ -29,6 +29,7 @@ use crate::dsp::nature::NatureState;
 use crate::dsp::coast::CoastState;
 use crate::dsp::crimson::CrimsonState;
 use crate::dsp::silicon::SiliconState;
+use crate::dsp::theremin::ThereminState;
 use crate::dsp::facet::FacetState;
 use crate::dsp::pan_flute::PanFluteState;
 use crate::dsp::melodica::MelodicaState;
@@ -338,6 +339,10 @@ pub enum Command {
     TouchPlate { track: u64, value: f32 },
     /// The grand piano's samples (installed, or none).
     SetPianoLibrary(Option<Arc<PianoLibrary>>),
+    /// A hand over a track's Theremin: its pitch (a MIDI note, between notes
+    /// too) and its height over the volume loop (0..1), or None when it is
+    /// taken away. Sent again while it is there.
+    Hand { track: u64, at: Option<(f32, f32)> },
 }
 
 /// Frames per recorded block.
@@ -507,6 +512,7 @@ enum InstState {
     Singer(Box<crate::singer::SingerState>),
     Hyper(Box<crate::hyper::HyperState>),
     Plugin { instance: u64, proc: Option<Box<dyn AudioProcessor>>, pending: Vec<PluginEvent> },
+    Theremin(Box<ThereminState>),
 }
 
 impl InstState {
@@ -551,6 +557,7 @@ impl InstState {
             InstState::StreetOrgan(s) => s.pitch_bend = semis,
             InstState::Singer(s) => s.pitch_bend = semis,
             InstState::Hyper(s) => s.pitch_bend = semis,
+            InstState::Theremin(s) => s.pitch_bend = semis,
             _ => {}
         }
     }
@@ -608,6 +615,7 @@ impl InstState {
             Some(Instrument::StreetOrgan { .. }) => InstState::StreetOrgan(Box::new(crate::dsp::street_organ::StreetOrganState::new(sr))),
             Some(Instrument::Singer { .. }) => InstState::Singer(Box::new(crate::singer::SingerState::new(sr))),
             Some(Instrument::Hyper { engine, .. }) => InstState::Hyper(Box::new(crate::hyper::HyperState::new(engine))),
+            Some(Instrument::Theremin { .. }) => InstState::Theremin(Box::new(ThereminState::new(sr))),
         }
     }
 
@@ -677,6 +685,7 @@ impl InstState {
                 | (InstState::Silicon(_), Some(Instrument::Silicon { .. }))
                 | (InstState::StreetOrgan(_), Some(Instrument::StreetOrgan { .. }))
                 | (InstState::Singer(_), Some(Instrument::Singer { .. }))
+                | (InstState::Theremin(_), Some(Instrument::Theremin { .. }))
         ) || matches!((self, i), (InstState::Plugin { instance, .. }, Some(Instrument::Plugin(p))) if *instance == p.instance)
             // Another bank needs a player of its own.
             || matches!((self, i), (InstState::Sf2(s), Some(Instrument::Sf2 { font, .. })) if s.is_for(font.as_ref()))
@@ -737,6 +746,7 @@ impl InstState {
             (InstState::Coast(s), Instrument::Coast { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Crimson(s), Instrument::Crimson { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Silicon(s), Instrument::Silicon { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Theremin(s), Instrument::Theremin { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             _ => {}
         }
     }
@@ -792,6 +802,7 @@ impl InstState {
             (InstState::Coast(s), Instrument::Coast { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Crimson(s), Instrument::Crimson { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Silicon(s), Instrument::Silicon { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Theremin(s), Instrument::Theremin { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             _ => {}
         }
     }
@@ -848,6 +859,7 @@ impl InstState {
             InstState::Coast(s) => s.all_off(),
             InstState::Crimson(s) => s.all_off(),
             InstState::Silicon(s) => s.all_off(),
+            InstState::Theremin(s) => s.all_off(),
             InstState::None => {}
         }
     }
@@ -890,6 +902,7 @@ impl InstState {
             InstState::Coast(s) => s.visual(out),
             InstState::Crimson(s) => s.visual(out),
             InstState::Silicon(s) => s.visual(out),
+            InstState::Theremin(s) => s.visual(out),
             InstState::StreetOrgan(s) => s.visual(out),
             InstState::Singer(s) => s.visual(out),
             InstState::Hyper(s) => s.visual(out),
@@ -949,6 +962,7 @@ impl InstState {
             (InstState::Coast(s), Instrument::Coast { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Crimson(s), Instrument::Crimson { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Silicon(s), Instrument::Silicon { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Theremin(s), Instrument::Theremin { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Plugin { proc, pending, .. }, Instrument::Plugin(_)) => {
                 if let Some(p) = proc {
                     p.process(pending, l, r);
@@ -1668,6 +1682,11 @@ impl Engine {
                     self.trash(GarbageInner::PianoLibrary(o));
                 }
             }
+            Command::Hand { track, at } => {
+                if let Some(InstState::Theremin(s)) = self.project.track_index(track).and_then(|ti| self.tracks.get_mut(ti)).map(|rt| &mut rt.instrument) {
+                    s.hand(at);
+                }
+            }
         }
     }
 
@@ -2360,6 +2379,8 @@ impl Engine {
                         s.set_transport(ctx.bpm, ctx.beat, ctx.playing);
                         s.modwheel = signal.modwheel;
                     }
+                    // Snap pulls the hand onto the song's key now.
+                    InstState::Theremin(s) => s.key = key_new.filter(|_| !track.key_fixed).unwrap_or(project.scale).mask(),
                     _ => {}
                 }
                 // The Key drawer moves what it plays into its key (not drums).
@@ -3424,6 +3445,25 @@ mod tests {
         h.send(Command::NoteOff { track: id, pitch: 57 });
         run(&mut e, 0.05);
         assert_eq!(sounding(&e), 0, "let go, it stops");
+    }
+
+    #[test]
+    fn a_hand_over_the_theremin_plays_it_and_taken_away_it_fades() {
+        let mut p = Project::new_default();
+        let ti = p.tracks.iter().position(|t| matches!(t.instrument, Some(Instrument::Synth { .. }))).expect("a synth track");
+        let id = p.tracks[ti].id;
+        p.tracks[ti].instrument = Some(Instrument::theremin("Classic"));
+        p.tracks[ti].devices.clear();
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        run(&mut e, 0.05);
+        h.send(Command::Hand { track: id, at: Some((69.0, 1.0)) });
+        let out = run(&mut e, 0.3);
+        assert!(peak(&out) > 0.01, "the hand plays it with the song stopped");
+        let v = h.status.tracks[ti].inst_values();
+        assert!((v[3] - 69.0).abs() < 0.05 && v[4] == 1.0, "where the hand is: {}", v[3]);
+        h.send(Command::Hand { track: id, at: None });
+        run(&mut e, 2.0);
+        assert!(peak(&run(&mut e, 0.1)) < 1e-4, "taken away, it fades out");
     }
 
     #[test]
