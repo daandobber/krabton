@@ -820,6 +820,14 @@ pub enum Instrument {
     },
     /// Theremin: two radio oscillators beating, played gliding, with vibrato and a hand (see `dsp::theremin`).
     Theremin { preset: String, params: Vec<f32> },
+    /// Granulator: a sample played as clouds of grains, one per key (see
+    /// `dsp::granulator`); without a sample, a sound of its own (Source).
+    Granulator {
+        preset: String,
+        params: Vec<f32>,
+        #[serde(default)]
+        sample: Option<SampleRef>,
+    },
 }
 
 impl Instrument {
@@ -1039,6 +1047,12 @@ impl Instrument {
         Instrument::BeadsSynth { preset: preset.to_string(), params: crate::dsp::beads_synth::preset(preset) }
     }
 
+    pub fn granulator(preset: &str) -> Self {
+        // Its own sounds made now, not on the audio thread.
+        crate::dsp::granulator::warm();
+        Instrument::Granulator { preset: preset.to_string(), params: crate::dsp::granulator::preset(preset), sample: None }
+    }
+
     pub fn kind_name(&self) -> &'static str {
         match self {
             Instrument::Synth { .. } => "Synth",
@@ -1092,6 +1106,7 @@ impl Instrument {
             Instrument::Singer { .. } => "Singer",
             Instrument::Hyper { .. } => "Hyper",
             Instrument::Theremin { .. } => "Theremin",
+            Instrument::Granulator { .. } => "Granulator",
         }
     }
 
@@ -1113,6 +1128,7 @@ impl Instrument {
             Instrument::Crimson { preset, .. } => preset.clone(),
             Instrument::Silicon { preset, .. } => preset.clone(),
             Instrument::Theremin { preset, .. } => preset.clone(),
+            Instrument::Granulator { preset, .. } => preset.clone(),
             Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Modular { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } | Instrument::Monk { preset, .. } | Instrument::Piano { preset, .. } | Instrument::Bassline { preset, .. } | Instrument::Mono101 { preset, .. } | Instrument::Drone { preset, .. } | Instrument::Waves { preset, .. } | Instrument::Guitar { preset, .. } | Instrument::WindChimes { preset, .. } | Instrument::Birds { preset, .. } | Instrument::Nature { preset, .. } | Instrument::PanFlute { preset, .. } | Instrument::Melodica { preset, .. } | Instrument::Harmonica { preset, .. } | Instrument::Calculator { preset, .. } | Instrument::Console { preset, .. } | Instrument::Handheld { preset, .. } | Instrument::Micro { preset, .. } | Instrument::Warp { preset, .. } | Instrument::Hybrid { preset, .. } | Instrument::Quartet { preset, .. } | Instrument::ChipFm { preset, .. } | Instrument::V2 { preset, .. } | Instrument::Oidos { preset, .. } | Instrument::Orchestra { preset, .. } | Instrument::Facet { preset, .. } | Instrument::BeadsSynth { preset, .. } | Instrument::StreetOrgan { preset, .. } => preset.clone(),
         }
     }
@@ -2236,6 +2252,10 @@ impl Project {
                     Some(Instrument::Silicon { params, .. }) => {
                         params::fix_len(params, crate::dsp::silicon::SPECS);
                         let _ = crate::dsp::silicon::firmware();
+                    }
+                    Some(Instrument::Granulator { params, .. }) => {
+                        params::fix_len(params, crate::dsp::granulator::SPECS);
+                        crate::dsp::granulator::warm();
                     }
                     // Shakers became an instrument; their kits are the Drum Rack's.
                     Some(Instrument::Drums { engine, .. }) if *engine == drums::DrumEngine::Shakers => *engine = drums::DrumEngine::Rack,

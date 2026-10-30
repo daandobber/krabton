@@ -69,6 +69,7 @@ pub mod chip_drums;
 pub mod chipfm;
 pub mod tides;
 pub mod theremin;
+pub mod granulator;
 
 use std::f32::consts::PI;
 

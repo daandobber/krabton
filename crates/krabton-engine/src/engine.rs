@@ -511,6 +511,7 @@ enum InstState {
     StreetOrgan(Box<crate::dsp::street_organ::StreetOrganState>),
     Singer(Box<crate::singer::SingerState>),
     Hyper(Box<crate::hyper::HyperState>),
+    Granulator(Box<crate::dsp::granulator::GranulatorState>),
     Plugin { instance: u64, proc: Option<Box<dyn AudioProcessor>>, pending: Vec<PluginEvent> },
     Theremin(Box<ThereminState>),
 }
@@ -558,6 +559,7 @@ impl InstState {
             InstState::Singer(s) => s.pitch_bend = semis,
             InstState::Hyper(s) => s.pitch_bend = semis,
             InstState::Theremin(s) => s.pitch_bend = semis,
+            InstState::Granulator(s) => s.pitch_bend = semis,
             _ => {}
         }
     }
@@ -616,6 +618,7 @@ impl InstState {
             Some(Instrument::Singer { .. }) => InstState::Singer(Box::new(crate::singer::SingerState::new(sr))),
             Some(Instrument::Hyper { engine, .. }) => InstState::Hyper(Box::new(crate::hyper::HyperState::new(engine))),
             Some(Instrument::Theremin { .. }) => InstState::Theremin(Box::new(ThereminState::new(sr))),
+            Some(Instrument::Granulator { .. }) => InstState::Granulator(Box::new(crate::dsp::granulator::GranulatorState::new(sr))),
         }
     }
 
@@ -686,6 +689,7 @@ impl InstState {
                 | (InstState::StreetOrgan(_), Some(Instrument::StreetOrgan { .. }))
                 | (InstState::Singer(_), Some(Instrument::Singer { .. }))
                 | (InstState::Theremin(_), Some(Instrument::Theremin { .. }))
+                | (InstState::Granulator(_), Some(Instrument::Granulator { .. }))
         ) || matches!((self, i), (InstState::Plugin { instance, .. }, Some(Instrument::Plugin(p))) if *instance == p.instance)
             // Another bank needs a player of its own.
             || matches!((self, i), (InstState::Sf2(s), Some(Instrument::Sf2 { font, .. })) if s.is_for(font.as_ref()))
@@ -747,6 +751,7 @@ impl InstState {
             (InstState::Crimson(s), Instrument::Crimson { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Silicon(s), Instrument::Silicon { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Theremin(s), Instrument::Theremin { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Granulator(s), Instrument::Granulator { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             _ => {}
         }
     }
@@ -803,6 +808,7 @@ impl InstState {
             (InstState::Crimson(s), Instrument::Crimson { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Silicon(s), Instrument::Silicon { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Theremin(s), Instrument::Theremin { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Granulator(s), Instrument::Granulator { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             _ => {}
         }
     }
@@ -860,6 +866,7 @@ impl InstState {
             InstState::Crimson(s) => s.all_off(),
             InstState::Silicon(s) => s.all_off(),
             InstState::Theremin(s) => s.all_off(),
+            InstState::Granulator(s) => s.all_off(),
             InstState::None => {}
         }
     }
@@ -906,6 +913,7 @@ impl InstState {
             InstState::StreetOrgan(s) => s.visual(out),
             InstState::Singer(s) => s.visual(out),
             InstState::Hyper(s) => s.visual(out),
+            InstState::Granulator(s) => s.visual(out),
             _ => return false,
         }
         true
@@ -963,6 +971,7 @@ impl InstState {
             (InstState::Crimson(s), Instrument::Crimson { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Silicon(s), Instrument::Silicon { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Theremin(s), Instrument::Theremin { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Granulator(s), Instrument::Granulator { params, sample, .. }) => s.render(ov.unwrap_or(params), sample.as_ref(), l, r),
             (InstState::Plugin { proc, pending, .. }, Instrument::Plugin(_)) => {
                 if let Some(p) = proc {
                     p.process(pending, l, r);
@@ -2381,6 +2390,8 @@ impl Engine {
                     }
                     // Snap pulls the hand onto the song's key now.
                     InstState::Theremin(s) => s.key = key_new.filter(|_| !track.key_fixed).unwrap_or(project.scale).mask(),
+                    // Its grains on the song's beat (Sync).
+                    InstState::Granulator(s) => s.bpm = ctx.bpm,
                     _ => {}
                 }
                 // The Key drawer moves what it plays into its key (not drums).

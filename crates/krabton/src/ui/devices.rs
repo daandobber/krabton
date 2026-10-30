@@ -1734,6 +1734,11 @@ impl App {
                             param_grid_mod(ui, Id::new(("crimson", track_id)), krabton_engine::dsp::crimson::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
                         }
                     }
+                    Instrument::Granulator { preset, params, sample } => {
+                        if let Some(msg) = super::granulator_view::granulator_panel(ui, Id::new(("granulator", track_id)), preset, params, sample, &live, h - 36.0, mv.as_mut()) {
+                            self.toast(msg);
+                        }
+                    }
                     Instrument::Facet { preset, params } => {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
