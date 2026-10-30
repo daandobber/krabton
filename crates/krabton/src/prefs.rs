@@ -25,6 +25,9 @@ pub struct Layout {
     /// The Rack: the height of a row of devices, and tracks as columns.
     pub rack_h: f32,
     pub rack_columns: bool,
+    /// The Rack's rows on one long line (scrolled sideways) instead of
+    /// wrapping their devices onto more lines under each other.
+    pub rack_one_line: bool,
     /// The detail panel (clip editor, devices) folded away: in Session and
     /// Arrangement, and (shown) in the Rack, where it starts folded.
     pub detail_hidden: bool,

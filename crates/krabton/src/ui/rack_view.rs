@@ -1,7 +1,8 @@
 //! The Studio (the Rack): every track's devices at once, MIDI effects and
 //! sequencers, instrument and audio effects, a track per row with its
-//! devices side by side, or (with the axes swapped) a track per column with
-//! its devices under each other. Returns and the master come last. Each
+//! devices side by side (wrapping onto more lines as wide as the window, so
+//! a track is seen whole; or on one long line), or (with the axes swapped) a
+//! track per column with its devices under each other. Returns and the master come last. Each
 //! track starts with its mixer (volume, pan, sends, mute, solo, arm) and
 //! its clock (Sync, or a tempo of its own with Tap) and buttons to add a
 //! sequencer or MIDI effect, an audio effect or an instrument; right-click
@@ -23,11 +24,14 @@ const PADS_W: f32 = 88.0;
 impl App {
     pub(crate) fn ui_device_rack(&mut self, ui: &mut Ui) {
         let columns = self.prefs.layout.rack_columns;
+        let wrap = !columns && !self.prefs.layout.rack_one_line;
         let h = crate::prefs::Layout::or(self.prefs.layout.rack_h, 230.0);
         self.studio_bar(ui, columns, h);
         let mut sels: Vec<TrackSel> = (0..self.project.tracks.len()).map(TrackSel::Track).collect();
         sels.extend((0..self.project.returns.len()).map(TrackSel::Return));
         sels.push(TrackSel::Master);
+        // What a wrapped row's devices may take: the window, less the track's strip.
+        let wrap_w = (ui.available_width() - STRIP_W - 24.0).max(300.0);
         egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
             if columns {
                 ui.horizontal_top(|ui| {
@@ -45,7 +49,15 @@ impl App {
                         ui.horizontal_top(|ui| {
                             let row = self.rack_row_height(sel, h);
                             self.rack_strip(ui, sel, vec2(STRIP_W, (row + 30.0).max(STRIP_H)));
-                            self.device_chain(ui, sel, h, true);
+                            if wrap {
+                                // Devices side by side, onto the next line where the window ends.
+                                ui.allocate_ui_with_layout(vec2(wrap_w, 0.0), egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true), |ui| {
+                                    ui.set_max_width(wrap_w);
+                                    self.device_chain(ui, sel, h, true);
+                                });
+                            } else {
+                                self.device_chain(ui, sel, h, true);
+                            }
                         });
                         ui.add_space(6.0);
                     }
@@ -342,9 +354,23 @@ impl App {
                 if ui.add(egui::Button::new(RichText::new(if shown { "Hide clip view" } else { "Show clip view" }).color(TEXT)).fill(PANEL3)).on_hover_text("The clip editor, devices, modulation and grid at the bottom (Ctrl+Alt+L)").clicked() {
                     self.toggle_detail();
                 }
-                let label = if columns { "Tracks in columns" } else { "Tracks in rows" };
-                if ui.add(egui::Button::new(RichText::new(label).color(TEXT)).fill(PANEL3)).on_hover_text("Swap the axes: a track per row with its devices side by side, or a track per column with its devices under each other").clicked() {
-                    self.prefs.layout.rack_columns = !columns;
+                // Three ways round: rows that wrap, rows on one line, columns.
+                let one_line = self.prefs.layout.rack_one_line;
+                let label = match (columns, one_line) {
+                    (true, _) => "Tracks in columns",
+                    (false, false) => "Tracks in rows, wrapped",
+                    (false, true) => "Tracks in rows, one line",
+                };
+                let tip = "How the tracks lie: a row each with its devices side by side wrapping onto more lines (a track seen whole), a row each on one long line (scroll sideways), or a column each with its devices under each other. Click for the next";
+                if ui.add(egui::Button::new(RichText::new(label).color(TEXT)).fill(PANEL3)).on_hover_text(tip).clicked() {
+                    match (columns, one_line) {
+                        (false, false) => self.prefs.layout.rack_one_line = true,
+                        (false, true) => self.prefs.layout.rack_columns = true,
+                        (true, _) => {
+                            self.prefs.layout.rack_columns = false;
+                            self.prefs.layout.rack_one_line = false;
+                        }
+                    }
                     self.layout_dirty = true;
                 }
             });
