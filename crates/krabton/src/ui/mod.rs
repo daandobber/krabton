@@ -61,6 +61,7 @@ pub mod settings;
 pub mod map_view;
 pub mod windows;
 pub mod transport;
+pub mod granulator_view;
 
 use crate::app::{App, ArrClipDrag, BrowserItem, ClipSel, SlotDrag, View};
 use crate::theme::*;

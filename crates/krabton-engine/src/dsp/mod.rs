@@ -68,6 +68,7 @@ pub mod circuit_kick;
 pub mod chip_drums;
 pub mod chipfm;
 pub mod tides;
+pub mod granulator;
 
 use std::f32::consts::PI;
 

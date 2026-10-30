@@ -506,6 +506,7 @@ enum InstState {
     StreetOrgan(Box<crate::dsp::street_organ::StreetOrganState>),
     Singer(Box<crate::singer::SingerState>),
     Hyper(Box<crate::hyper::HyperState>),
+    Granulator(Box<crate::dsp::granulator::GranulatorState>),
     Plugin { instance: u64, proc: Option<Box<dyn AudioProcessor>>, pending: Vec<PluginEvent> },
 }
 
@@ -551,6 +552,7 @@ impl InstState {
             InstState::StreetOrgan(s) => s.pitch_bend = semis,
             InstState::Singer(s) => s.pitch_bend = semis,
             InstState::Hyper(s) => s.pitch_bend = semis,
+            InstState::Granulator(s) => s.pitch_bend = semis,
             _ => {}
         }
     }
@@ -608,6 +610,7 @@ impl InstState {
             Some(Instrument::StreetOrgan { .. }) => InstState::StreetOrgan(Box::new(crate::dsp::street_organ::StreetOrganState::new(sr))),
             Some(Instrument::Singer { .. }) => InstState::Singer(Box::new(crate::singer::SingerState::new(sr))),
             Some(Instrument::Hyper { engine, .. }) => InstState::Hyper(Box::new(crate::hyper::HyperState::new(engine))),
+            Some(Instrument::Granulator { .. }) => InstState::Granulator(Box::new(crate::dsp::granulator::GranulatorState::new(sr))),
         }
     }
 
@@ -677,6 +680,7 @@ impl InstState {
                 | (InstState::Silicon(_), Some(Instrument::Silicon { .. }))
                 | (InstState::StreetOrgan(_), Some(Instrument::StreetOrgan { .. }))
                 | (InstState::Singer(_), Some(Instrument::Singer { .. }))
+                | (InstState::Granulator(_), Some(Instrument::Granulator { .. }))
         ) || matches!((self, i), (InstState::Plugin { instance, .. }, Some(Instrument::Plugin(p))) if *instance == p.instance)
             // Another bank needs a player of its own.
             || matches!((self, i), (InstState::Sf2(s), Some(Instrument::Sf2 { font, .. })) if s.is_for(font.as_ref()))
@@ -737,6 +741,7 @@ impl InstState {
             (InstState::Coast(s), Instrument::Coast { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Crimson(s), Instrument::Crimson { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Silicon(s), Instrument::Silicon { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Granulator(s), Instrument::Granulator { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             _ => {}
         }
     }
@@ -792,6 +797,7 @@ impl InstState {
             (InstState::Coast(s), Instrument::Coast { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Crimson(s), Instrument::Crimson { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Silicon(s), Instrument::Silicon { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Granulator(s), Instrument::Granulator { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             _ => {}
         }
     }
@@ -848,6 +854,7 @@ impl InstState {
             InstState::Coast(s) => s.all_off(),
             InstState::Crimson(s) => s.all_off(),
             InstState::Silicon(s) => s.all_off(),
+            InstState::Granulator(s) => s.all_off(),
             InstState::None => {}
         }
     }
@@ -893,6 +900,7 @@ impl InstState {
             InstState::StreetOrgan(s) => s.visual(out),
             InstState::Singer(s) => s.visual(out),
             InstState::Hyper(s) => s.visual(out),
+            InstState::Granulator(s) => s.visual(out),
             _ => return false,
         }
         true
@@ -949,6 +957,7 @@ impl InstState {
             (InstState::Coast(s), Instrument::Coast { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Crimson(s), Instrument::Crimson { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Silicon(s), Instrument::Silicon { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Granulator(s), Instrument::Granulator { params, sample, .. }) => s.render(ov.unwrap_or(params), sample.as_ref(), l, r),
             (InstState::Plugin { proc, pending, .. }, Instrument::Plugin(_)) => {
                 if let Some(p) = proc {
                     p.process(pending, l, r);
@@ -2360,6 +2369,8 @@ impl Engine {
                         s.set_transport(ctx.bpm, ctx.beat, ctx.playing);
                         s.modwheel = signal.modwheel;
                     }
+                    // Its grains on the song's beat (Sync).
+                    InstState::Granulator(s) => s.bpm = ctx.bpm,
                     _ => {}
                 }
                 // The Key drawer moves what it plays into its key (not drums).

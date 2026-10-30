@@ -179,6 +179,8 @@ pub enum BrowserItem {
     Clip { id: u64, name: String },
     /// An SFZ instrument, played by the Sampler.
     SamplerPatch(PathBuf),
+    /// A Granulator preset.
+    Granulator(&'static str),
 }
 
 /// A bank of DX7 voices for FM.
@@ -255,6 +257,7 @@ impl BrowserItem {
             }
             BrowserItem::Clip { name, .. } => name.clone(),
             BrowserItem::SamplerPatch(p) => p.file_stem().map(|f| f.to_string_lossy().to_string()).unwrap_or_default(),
+            BrowserItem::Granulator(p) => format!("Granulator: {p}"),
         }
     }
 }
@@ -1207,7 +1210,7 @@ impl App {
                 }
                 self.toast(format!("Loading {} ...", info.name));
             }
-            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::StreetOrgan(_) | BrowserItem::Harmonica(_) | BrowserItem::Calculator(_) | BrowserItem::Console(_) | BrowserItem::Handheld(_) | BrowserItem::Micro(_) | BrowserItem::Warp(_) | BrowserItem::Hybrid(_) | BrowserItem::Quartet(_) | BrowserItem::ChipFm(_) | BrowserItem::V2(_) | BrowserItem::Oidos(_) | BrowserItem::Orchestra(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) | BrowserItem::Coast(_) | BrowserItem::Crimson(_) | BrowserItem::Silicon(_) => {
+            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::StreetOrgan(_) | BrowserItem::Harmonica(_) | BrowserItem::Calculator(_) | BrowserItem::Console(_) | BrowserItem::Handheld(_) | BrowserItem::Micro(_) | BrowserItem::Warp(_) | BrowserItem::Hybrid(_) | BrowserItem::Quartet(_) | BrowserItem::ChipFm(_) | BrowserItem::V2(_) | BrowserItem::Oidos(_) | BrowserItem::Orchestra(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) | BrowserItem::Coast(_) | BrowserItem::Crimson(_) | BrowserItem::Silicon(_) | BrowserItem::Granulator(_) => {
                 let inst = match item {
                     BrowserItem::Synth(p) => Instrument::synth(p),
                     BrowserItem::Macro(p) => Instrument::macro_osc(p),
@@ -1252,6 +1255,7 @@ impl App {
                     BrowserItem::Coast(p) => Instrument::coast(p),
                     BrowserItem::Crimson(p) => Instrument::crimson(p),
                     BrowserItem::Silicon(p) => Instrument::silicon(p),
+                    BrowserItem::Granulator(p) => Instrument::granulator(p),
                     BrowserItem::Drums(k) => Instrument::drums(k),
                     _ => Instrument::sampler(None),
                 };
@@ -1552,6 +1556,7 @@ impl App {
                                     *s = Some(sample);
                                     zones.clear();
                                 }
+                                Some(Instrument::Granulator { sample: s, .. }) => *s = Some(sample),
                                 Some(Instrument::Drums { pads, .. }) => {
                                     if let Some(pad) = pads.get_mut(self.sel_pad) {
                                         pad.name = sample.name.clone();
@@ -3916,6 +3921,12 @@ impl App {
                     let names = krabton_engine::dsp::facet::preset_names();
                     let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
                     self.apply_item(&BrowserItem::Facet(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "granulator" => {
+                    let names = krabton_engine::dsp::granulator::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Granulator(p), DropTarget::NewTrack);
                     self.detail = DetailTab::Devices;
                 }
                 "guitar" => {

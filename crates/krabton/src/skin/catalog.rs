@@ -1044,6 +1044,24 @@ const AIRWINDOWS: Skin = Skin {
     ..BASE
 };
 
+/// Granulator: a night-blue panel, light print, amber lights for the grains.
+const GRANULATOR: Skin = Skin {
+    top: hex(0x1b2130),
+    bottom: hex(0x0d1018),
+    ink: hex(0xe8ecf4),
+    dim: hex(0x9aa3b8),
+    well: hex(0x070910),
+    well_ink: hex(0xe8ecf4),
+    accent: hex(0xffb347),
+    knob: Knob::Led,
+    cap: hex(0x2a3044),
+    logo: Font::Future,
+    logo_ink: hex(0xffb347),
+    logo_case: Case::Lower,
+    heroes: &["Position", "Size"],
+    ..BASE
+};
+
 const UTILITY: Skin = Skin { accent: hex(0x9fd8ff), knob: Knob::Ring, logo_case: Case::Upper, ..BASE };
 
 const VA_FILTER: Skin = Skin { heroes: &["Cutoff", "Resonance"], ..ANALOG };
@@ -1104,6 +1122,7 @@ pub fn for_instrument(name: &str) -> Option<Skin> {
         "Oidos" => OIDOS,
         "Quartet" => QUARTET,
         "Orchestra" | "Soloists" => ORCHESTRA,
+        "Granulator" => GRANULATOR,
         // Drum machines.
         "808" => M808,
         "909" => M909,
