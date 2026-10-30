@@ -435,6 +435,28 @@ fn fold_button(ui: &mut Ui, open: bool) -> egui::Response {
 /// the Rack where devices lie under each other) with its name, its on/off
 /// light and the triangle to unfold it. Returns whether it is to unfold
 /// (a click on it, anywhere but the light).
+/// In a layout that wraps (the Studio's rows): a new line before a piece of a
+/// chain that would not fit on this one, by how wide it was drawn last time
+/// (a panel's width is only known once it is drawn).
+fn wrap_before(ui: &mut Ui, id: Id) {
+    if !ui.layout().main_wrap() {
+        return;
+    }
+    let w: f32 = ui.ctx().memory(|m| m.data.get_temp(id)).unwrap_or(0.0);
+    let (left, right) = (ui.max_rect().left(), ui.max_rect().right());
+    let x = ui.cursor().left();
+    if x > left + 1.0 && x + w > right {
+        ui.end_row();
+    }
+}
+
+/// How wide a piece of a chain was drawn, for `wrap_before` next time.
+fn wrap_after(ui: &Ui, id: Id, rect: Rect) {
+    if ui.layout().main_wrap() {
+        ui.ctx().memory_mut(|m| m.data.insert_temp(id, rect.width()));
+    }
+}
+
 fn folded_strip(ui: &mut Ui, id: Id, title: &str, enabled: Option<&mut bool>, h: f32) -> bool {
     let across = ui.layout().main_dir().is_horizontal();
     let size = if across { vec2(26.0, h) } else { vec2(ui.available_width().clamp(160.0, 420.0), 26.0) };
@@ -567,14 +589,19 @@ impl App {
                         for d in 0..n {
                             let key = self.project.tracks[i].midi_devices[d].id;
                             let hd = if resizable { self.rack_height(key, h) } else { h };
+                            let wid = Id::new(("chain_w", key));
+                            wrap_before(ui, wid);
                             if self.project.folded.contains(&key) {
                                 let dev = &mut self.project.tracks[i].midi_devices[d];
-                                if folded_strip(ui, Id::new(("folded", key)), dev.kind.name(), Some(&mut dev.enabled), hd) {
+                                let r = ui.scope(|ui| folded_strip(ui, Id::new(("folded", key)), dev.kind.name(), Some(&mut dev.enabled), hd));
+                                wrap_after(ui, wid, r.response.rect);
+                                if r.inner {
                                     self.project.folded.remove(&key);
                                 }
                                 continue;
                             }
                             let r = ui.scope(|ui| self.midi_fx_panel(ui, i, d, hd));
+                            wrap_after(ui, wid, r.response.rect);
                             if let Some(a) = r.inner {
                                 midi_actions.push(a);
                             }
@@ -582,44 +609,59 @@ impl App {
                                 self.rack_grip(ui, key, r.response.rect, hd);
                             }
                         }
-                        self.add_midi_fx_slot(ui, i, h);
+                        let wid = Id::new(("chain_w_midi_slot", i));
+                        wrap_before(ui, wid);
+                        let r = ui.scope(|ui| self.add_midi_fx_slot(ui, i, h));
+                        wrap_after(ui, wid, r.response.rect);
                     }
                     if self.project.tracks.get(i).map(|t| t.instrument.is_some()).unwrap_or(false) {
                         let key = self.project.tracks[i].id;
                         let hd = if resizable { self.rack_height(key, h) } else { h };
+                        let wid = Id::new(("chain_w", key));
+                        wrap_before(ui, wid);
                         if self.project.folded.contains(&key) {
                             let title = self.project.tracks[i].instrument.as_ref().map(|inst| inst.kind_name().to_string()).unwrap_or_default();
-                            if folded_strip(ui, Id::new(("folded", key)), &title, None, hd) {
+                            let r = ui.scope(|ui| folded_strip(ui, Id::new(("folded", key)), &title, None, hd));
+                            wrap_after(ui, wid, r.response.rect);
+                            if r.inner {
                                 self.project.folded.remove(&key);
                             }
                         } else {
                             let r = ui.scope(|ui| self.instrument_panel(ui, i, hd));
+                            wrap_after(ui, wid, r.response.rect);
                             if resizable {
                                 self.rack_grip(ui, key, r.response.rect, hd);
                             }
                         }
                     } else if self.project.tracks.get(i).map(|t| t.kind == krabton_engine::TrackKind::Midi).unwrap_or(false) {
-                        self.empty_instrument_slot(ui, i, h);
+                        let wid = Id::new(("chain_w_inst_slot", i));
+                        wrap_before(ui, wid);
+                        let r = ui.scope(|ui| self.empty_instrument_slot(ui, i, h));
+                        wrap_after(ui, wid, r.response.rect);
                     }
                 }
                 let n = self.chain_mut(sel).map(|c| c.len()).unwrap_or(0);
                 for d in 0..n {
                     let key = self.chain_mut(sel).and_then(|c| c.get(d)).map(|dev| dev.id).unwrap_or(0);
                     let hd = if resizable { self.rack_height(key, h) } else { h };
+                    let wid = Id::new(("chain_w", key));
+                    wrap_before(ui, wid);
                     if self.project.folded.contains(&key) {
-                        let unfold = match self.chain_mut(sel).and_then(|c| c.get_mut(d)) {
+                        let r = ui.scope(|ui| match self.chain_mut(sel).and_then(|c| c.get_mut(d)) {
                             Some(dev) => {
                                 let title = dev.name().to_string();
                                 folded_strip(ui, Id::new(("folded", key)), &title, Some(&mut dev.enabled), hd)
                             }
                             None => false,
-                        };
-                        if unfold {
+                        });
+                        wrap_after(ui, wid, r.response.rect);
+                        if r.inner {
                             self.project.folded.remove(&key);
                         }
                         continue;
                     }
                     let r = ui.scope(|ui| self.effect_panel(ui, sel, d, hd));
+                    wrap_after(ui, wid, r.response.rect);
                     if let Some(a) = r.inner {
                         actions.push(a);
                     }
@@ -627,7 +669,10 @@ impl App {
                         self.rack_grip(ui, key, r.response.rect, hd);
                     }
                 }
-                self.add_effect_slot(ui, sel, h);
+                let wid = Id::new(("chain_w_fx_slot", format!("{sel:?}")));
+                wrap_before(ui, wid);
+                let r = ui.scope(|ui| self.add_effect_slot(ui, sel, h));
+                wrap_after(ui, wid, r.response.rect);
             }
         }
         if let (TrackSel::Track(i), false) = (sel, midi_actions.is_empty()) {
