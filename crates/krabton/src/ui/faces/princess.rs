@@ -1,5 +1,6 @@
 //! Analog Princess as a drum machine: the pattern bank (A to H, the chain,
-//! the length and what to do with a pattern), the twelve tracks as buttons,
+//! the length and what to do with a pattern), the twelve tracks as buttons
+//! (each with its mute under it),
 //! the selected track's steps as big pads with the playhead going over them
 //! and its rows of velocity, roll, chance, accent, flam, note and slide under
 //! them, the selected track's sound in knobs, and the FRY section with Deep
@@ -317,7 +318,7 @@ pub(crate) fn panel(ui: &mut Ui, id: Id, preset: &mut String, params: &mut Vec<f
     let sx = SEQ_X + 0.3;
     let tw = (SEQ_W - 0.6) / TRACKS as f32;
     for t in 0..TRACKS {
-        let r = at(sx + t as f32 * tw, 0.3, tw, 1.9).shrink(0.1 * u);
+        let r = at(sx + t as f32 * tw, 0.3, tw, 1.6).shrink(0.1 * u);
         let resp = ui.interact(r, id.with(("track", t)), Sense::click());
         let muted = kn.params[pm::tp(t, pm::T_MUTE)] >= 0.5;
         let col = track_colour(t);
@@ -335,14 +336,14 @@ pub(crate) fn panel(ui: &mut Ui, id: Id, preset: &mut String, params: &mut Vec<f
         let f = fit(&p, &name, small_font(u), r.width() - 4.0);
         let ink = if on { text_on(fill) } else if muted { shade(well_ink, 0.45) } else { well_ink };
         p.text(r.center() + vec2(0.0, -1.0), Align2::CENTER_CENTER, name, f, ink);
-        if muted {
-            p.text(r.left_top() + vec2(3.0, 2.0), Align2::LEFT_TOP, "M", small_font(u * 0.8), REC);
-        }
         let resp = resp.on_hover_text(format!("{}: click to edit it, right-click to mute it", pm::TRACK_NAMES[t]));
         if resp.clicked() {
             st.track = t;
         }
-        if resp.secondary_clicked() {
+        // Its mute, under it.
+        let mr = at(sx + t as f32 * tw, 1.95, tw, 0.85).shrink(0.1 * u);
+        let mute = led_button(ui, mr, id.with(("mute", t)), "Mute", muted, false, u).on_hover_text(format!("Mute {}", pm::TRACK_NAMES[t]));
+        if resp.secondary_clicked() || mute.clicked() {
             kn.params[pm::tp(t, pm::T_MUTE)] = if muted { 0.0 } else { 1.0 };
         }
     }
@@ -362,7 +363,7 @@ pub(crate) fn panel(ui: &mut Ui, id: Id, preset: &mut String, params: &mut Vec<f
     let is_808 = kn.params[pm::tp(t, pm::T_VOICE)].round() as usize == 0;
     for c in 0..16 {
         let i = st.page * 16 + c;
-        let r = at(lx + c as f32 * pw, 2.5, pw, 3.6).shrink(0.13 * u);
+        let r = at(lx + c as f32 * pw, 2.95, pw, 3.3).shrink(0.13 * u);
         let inside = i < tlen;
         let s = pattern.lanes[t].steps[i];
         let resp = ui.interact(r, id.with(("pad", i)), Sense::click_and_drag());
