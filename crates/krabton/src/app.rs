@@ -4122,7 +4122,11 @@ impl App {
                 "gridup" if nums.len() == 2 => self.grid_key(nums[0] as u32, nums[1] as u32, false),
                 "seq" | "seqnew" => {
                     use krabton_engine::midi_fx::MidiFxKind;
-                    let k = MidiFxKind::SEQUENCERS[nums.first().copied().unwrap_or(0).min(MidiFxKind::SEQUENCERS.len() - 1)];
+                    // By its number in the list, or its name.
+                    let k = MidiFxKind::SEQUENCERS
+                        .into_iter()
+                        .find(|k| k.name().eq_ignore_ascii_case(arg.trim()))
+                        .unwrap_or(MidiFxKind::SEQUENCERS[nums.first().copied().unwrap_or(0).min(MidiFxKind::SEQUENCERS.len() - 1)]);
                     let target = match (name, self.sel_track) {
                         ("seq", TrackSel::Track(t)) => DropTarget::Track(t),
                         _ => DropTarget::NewTrack,

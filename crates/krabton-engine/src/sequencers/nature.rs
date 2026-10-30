@@ -11,10 +11,14 @@
 //!   toppled, by their row, column, diagonal or distance from the middle;
 //!   grains that fall off the edge are gone.
 //! - Pendulums: a pendulum wave. A row of pendulums, each a little shorter
-//!   than the last, let go together: each swings once more per cycle than
-//!   the one before, so they drift through waves, snakes and chaos and
-//!   meet again at the end of the cycle. A note whenever one passes the
-//!   middle (or turns at an end).
+//!   than the last, let go together: each swings Spread times more per
+//!   cycle than the one before, so they drift through waves, snakes and
+//!   chaos and meet again at the end of the cycle (up to 64 bars, slowed
+//!   down up to eight times more). A note whenever one passes the middle
+//!   (or turns at an end), another on the far side if Other Side says so;
+//!   Wobble puts each a hair out so they never quite meet again, Together
+//!   makes them louder where many pass at once, Hold Swing holds each note
+//!   until its pendulum comes by again.
 //! - Flock: birds flying over the notes (boids: Separation keeps them
 //!   apart, Alignment turns them the way their neighbours fly, Cohesion
 //!   pulls them together). A bird crossing one of the lines plays the note
@@ -168,15 +172,23 @@ pub const PE_REVERSE: usize = 8;
 pub const PE_BASE: usize = 9;
 pub const PE_GATE: usize = 10;
 pub const PE_VELOCITY: usize = 11;
+pub const PE_SLOW: usize = 18;
+pub const PE_SPREAD: usize = 19;
+pub const PE_WOBBLE: usize = 20;
+pub const PE_OTHER: usize = 21;
+pub const PE_TOGETHER: usize = 22;
+pub const PE_CHANCE: usize = 23;
+pub const PE_HOLD: usize = 24;
+pub const PE_TILT: usize = 25;
 pub const MAX_PENDULUMS: usize = 16;
-pub const CYCLES: &[&str] = &["1 Bar", "2 Bars", "4 Bars", "8 Bars", "16 Bars"];
-pub const CYCLE_BEATS: [f64; 5] = [4.0, 8.0, 16.0, 32.0, 64.0];
+pub const CYCLES: &[&str] = &["1 Bar", "2 Bars", "4 Bars", "8 Bars", "16 Bars", "32 Bars", "64 Bars"];
+pub const CYCLE_BEATS: [f64; 7] = [4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0];
 pub const PENDULUM_PLAYS: &[&str] = &["Middle", "Ends", "One Side"];
 
 pub static PENDULUMS: &[ParamSpec] = &[
     ParamSpec::int("Pendulums", "Wave", 2.0, MAX_PENDULUMS as f32, 8.0, Unit::None),
     ParamSpec::choice("Cycle", "Wave", CYCLES, 2),
-    ParamSpec::int("Swings", "Wave", 2.0, 24.0, 8.0, Unit::None),
+    ParamSpec::int("Swings", "Wave", 1.0, 24.0, 8.0, Unit::None),
     ParamSpec::choice("Play", "Wave", PENDULUM_PLAYS, 1),
     ParamSpec::choice("Sync", "Wave", super::more::SYNCS, 2),
     ParamSpec::lin("Fade", "Wave", 0.0, 1.0, 0.3, Unit::Percent),
@@ -192,11 +204,28 @@ pub static PENDULUMS: &[ParamSpec] = &[
     DYNAMICS[1],
     DYNAMICS[2],
     DYNAMICS[3],
+    ParamSpec::int("Slower", "Wave", 1.0, 8.0, 1.0, Unit::None),
+    ParamSpec::lin("Spread", "Wave", 0.25, 3.0, 1.0, Unit::None),
+    ParamSpec::lin("Wobble", "Wave", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::int("Other Side", "Notes", -7.0, 7.0, 0.0, Unit::None),
+    ParamSpec::lin("Together", "Notes", 0.0, 1.0, 0.3, Unit::Percent),
+    ParamSpec::lin("Chance", "Notes", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::toggle("Hold Swing", "Notes", false),
+    ParamSpec::lin("Tilt", "Notes", -1.0, 1.0, 0.0, Unit::None),
 ];
 
-/// How many times pendulum `i` swings to and fro in a cycle.
+/// How many times pendulum `i` swings to and fro in a cycle: Spread more
+/// than the one before, and (Wobble) a hair off.
 pub fn pendulum_swings(p: &[f32], i: usize) -> f64 {
-    p[PE_SWINGS].round().max(1.0) as f64 + i as f64
+    let spread = p.get(PE_SPREAD).copied().unwrap_or(1.0).max(0.05) as f64;
+    let wobble = p.get(PE_WOBBLE).copied().unwrap_or(0.0).clamp(0.0, 1.0) as f64;
+    let off = 1.0 + wobble * 0.03 * (hash(41, i as u32) as f64 * 2.0 - 1.0);
+    (p[PE_SWINGS].round().max(1.0) as f64 + i as f64 * spread) * off
+}
+
+/// The beats a cycle of the pendulums lasts (its bars, slowed down).
+pub fn pendulum_cycle(p: &[f32]) -> f64 {
+    CYCLE_BEATS[choose(p, PE_CYCLE, CYCLE_BEATS.len())] * p.get(PE_SLOW).copied().unwrap_or(1.0).round().clamp(1.0, 8.0) as f64
 }
 
 // ---------------------------------------------------------------- flock
@@ -739,8 +768,22 @@ impl SeqState {
     pub(crate) fn pendulums(&mut self, p: &[f32], out: &mut Vec<MidiEvent>, ctx: &MidiCtx) {
         let (b0, b1) = (ctx.beat, ctx.beat + ctx.len as f64 / ctx.samples_per_beat);
         let n = (p[PE_COUNT].round() as usize).clamp(2, MAX_PENDULUMS);
-        let cycle = CYCLE_BEATS[choose(p, PE_CYCLE, CYCLE_BEATS.len())];
+        let cycle = pendulum_cycle(p);
         let play = choose(p, PE_PLAY, PENDULUM_PLAYS.len());
+        let other = p[PE_OTHER].round() as i32;
+        let together = p[PE_TOGETHER].clamp(0.0, 1.0) as f64;
+        let chance = p[PE_CHANCE].clamp(0.0, 1.0);
+        let hold = p[PE_HOLD] >= 0.5;
+        let tilt = p[PE_TILT].clamp(-1.0, 1.0) as f64;
+        // When each plays: the beats between, and where the first is.
+        let when = |i: usize| {
+            let swings = pendulum_swings(p, i);
+            match play {
+                0 => (cycle / (2.0 * swings), cycle / (4.0 * swings)),
+                1 => (cycle / (2.0 * swings), 0.0),
+                _ => (cycle / swings, 0.0),
+            }
+        };
         let grid = super::more::sync_beats(p[PE_SYNC]);
         let fade = p[PE_FADE].clamp(0.0, 1.0) as f64;
         let layout = choose(p, PE_LAYOUT, LAYOUTS.len());
@@ -749,26 +792,45 @@ impl SeqState {
         let gate = p[PE_GATE].max(0.02) as f64 * ctx.samples_per_beat;
         let mut lit = 0u64;
         for i in 0..n {
-            let swings = pendulum_swings(p, i);
-            // The beats between the moments it plays, and where the first is.
-            let (every, first) = match play {
-                0 => (cycle / (2.0 * swings), cycle / (4.0 * swings)),
-                1 => (cycle / (2.0 * swings), 0.0),
-                _ => (cycle / swings, 0.0),
-            };
+            let (every, first) = when(i);
             let mut k = ((b0 - first) / every - 1e-9).ceil();
             while first + k * every < b1 {
                 let t = first + k * every;
                 let on = super::more::snap(t, grid);
                 if on > self.nature.pe_last[i] + 1e-6 {
                     self.nature.pe_last[i] = on;
+                    k += 1.0;
+                    // Chance leaves some out.
+                    if chance < 1.0 && hash(i as u32 + 7, (k as i64) as u32) >= chance {
+                        continue;
+                    }
                     // Through the middle fastest; slower as the swing dies away in the cycle.
                     let age = t.rem_euclid(cycle) / cycle;
-                    let vel = p[PE_VELOCITY] as f64 * (1.0 - fade * age * 0.85);
+                    let mut vel = p[PE_VELOCITY] as f64 * (1.0 - fade * age * 0.85);
+                    // Together: louder where many pass at once, softer alone.
+                    if together > 0.0 && n > 1 {
+                        let tol = 0.03;
+                        let with = (0..n)
+                            .filter(|&j| j != i)
+                            .filter(|&j| {
+                                let (e, f) = when(j);
+                                let x = (t - f) / e;
+                                (x - x.round()).abs() * e < tol
+                            })
+                            .count();
+                        vel *= 1.0 + together * (with as f64 / (n - 1) as f64 * 1.2 - 0.3);
+                    }
+                    // Tilt: the short ones louder (or the long ones).
+                    vel *= 1.0 + tilt * 0.6 * (i as f64 / (n - 1) as f64 - 0.5) * 2.0;
                     let voice = if reverse { n - 1 - i } else { i };
-                    let note = pitch(ctx, p[PE_BASE], voice_degree(layout, voice, steps));
-                    self.play(ctx, frame_of(ctx, on), note, vel as f32, gate, out);
+                    // The far side (every other pass) its own note.
+                    let far = play != 2 && (k as i64 - 1).rem_euclid(2) == 1;
+                    let degree = voice_degree(layout, voice, steps) + if far { other } else { 0 };
+                    let note = pitch(ctx, p[PE_BASE], degree);
+                    let len = if hold { (if play == 2 { every } else { every * 2.0 }) * 0.97 * ctx.samples_per_beat } else { gate };
+                    self.play(ctx, frame_of(ctx, on), note, vel.clamp(0.02, 1.0) as f32, len, out);
                     lit |= 1 << i;
+                    continue;
                 }
                 k += 1.0;
             }
@@ -1152,6 +1214,38 @@ mod tests {
         assert_eq!(first_bar, (0..4).map(|i| 2 * (4 + i)).sum::<usize>());
         // In between they are apart.
         assert!(ons.iter().filter(|o| (o.0 - 2.0).abs() > 1e-3 && o.0 > 0.1 && o.0 < 3.9).count() > 10);
+    }
+
+    #[test]
+    fn pendulums_slow_down_spread_and_play_their_far_side() {
+        let mut p = defaults(PENDULUMS);
+        (p[PE_COUNT], p[PE_CYCLE], p[PE_SWINGS], p[PE_SYNC], p[PE_LAYOUT]) = (2.0, 0.0, 2.0, 0.0, 3.0);
+        let count = |p: &[f32]| run(MidiFxKind::Pendulums, p, &[], 4.0).iter().filter(|o| o.0 < 4.0 - 1e-3).count();
+        assert_eq!(count(&p), 2 * 2 + 2 * 3, "a bar: 2 and 3 swings, at both ends");
+        p[PE_SLOW] = 2.0;
+        assert_eq!(count(&p), 2 + 3, "twice as slow: half as many");
+        p[PE_SLOW] = 1.0;
+        p[PE_SPREAD] = 2.0;
+        assert_eq!(count(&p), 2 * 2 + 2 * 4, "Spread 2: the second swings two more");
+        // Other Side: the far end plays its own note (One Note: the base, and four steps up there).
+        p[PE_SPREAD] = 1.0;
+        p[PE_OTHER] = 4.0;
+        let ons = run(MidiFxKind::Pendulums, &p, &[], 4.0);
+        let notes: std::collections::BTreeSet<u8> = ons.iter().map(|o| o.1).collect();
+        assert_eq!(notes.len(), 2, "{notes:?}");
+        let first: Vec<u8> = ons.iter().filter(|o| o.0 < 1e-3).map(|o| o.1).collect();
+        assert!(first.iter().all(|&n| n == *notes.iter().next().unwrap()), "let go from the near side");
+        // Wobble: they no longer meet at the end of the cycle.
+        p[PE_OTHER] = 0.0;
+        p[PE_COUNT] = 6.0;
+        p[PE_WOBBLE] = 1.0;
+        let ons = run(MidiFxKind::Pendulums, &p, &[], 4.5);
+        let at_bar = ons.iter().filter(|o| (o.0 - 4.0).abs() < 1e-3).count();
+        assert!(at_bar < 6, "{at_bar} together");
+        // A long cycle: 64 bars, slowed down 8 times, 2048 beats.
+        p[PE_CYCLE] = 6.0;
+        p[PE_SLOW] = 8.0;
+        assert_eq!(pendulum_cycle(&p), 2048.0);
     }
 
     #[test]

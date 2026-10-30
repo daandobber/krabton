@@ -237,39 +237,65 @@ pub(crate) fn sandpile(ui: &mut Ui, id: Id, params: &mut [f32], live: Live, acce
 // ---------------------------------------------------------------- pendulums
 
 /// The pendulums from above, a row each, longest at the top: each bob swings
-/// across the middle line; the ones that just played lit.
+/// across the middle line; the ones that just played lit. Where in the
+/// cycle it is under them; two columns of settings: the wave and the notes.
 pub(crate) fn pendulums(ui: &mut Ui, id: Id, params: &mut [f32], live: Live, accent: Color32, height: f32) -> bool {
-    let (rect, p) = frame(ui, 330.0, height);
-    let (pic, side) = split(rect);
+    let (rect, p) = frame(ui, 480.0, height);
+    let col_w = 128.0;
+    let cols = [
+        Rect::from_min_max(pos2(rect.right() - 2.0 * col_w - 8.0, rect.top() + 4.0), pos2(rect.right() - col_w - 8.0, rect.bottom() - 4.0)),
+        Rect::from_min_max(pos2(rect.right() - col_w - 4.0, rect.top() + 4.0), pos2(rect.right() - 4.0, rect.bottom() - 4.0)),
+    ];
+    let pic = Rect::from_min_max(rect.min + vec2(4.0, 4.0), pos2(cols[0].left() - 6.0, rect.bottom() - 4.0));
+    // As many rows of settings as the height holds (nine at most).
+    let row = ((cols[0].height() + 3.0) / 9.0 - 3.0).clamp(14.0, ROW);
+    let at = |c: usize, k: usize| Rect::from_min_size(pos2(cols[c].left(), cols[c].top() + k as f32 * (row + 3.0)), vec2(cols[c].width(), row));
     let n = (params[na::PE_COUNT].round() as usize).clamp(2, na::MAX_PENDULUMS);
     let vis = live.on();
     let pos = vis.map(|v| (v[0] & 0xffff) as f32 / 65536.0).unwrap_or(0.0);
     let lit = vis.map(|v| v[1]).unwrap_or(0);
-    let area = Rect::from_min_max(pic.min, pos2(pic.right(), pic.bottom() - 14.0));
+    let area = Rect::from_min_max(pic.min, pos2(pic.right(), pic.bottom() - 16.0));
     let mid = area.center().x;
     p.line_segment([pos2(mid, area.top()), pos2(mid, area.bottom())], Stroke::new(1.0_f32, LINE));
-    let row = area.height() / n as f32;
+    let rh = area.height() / n as f32;
     let amp = area.width() * 0.44;
     for i in 0..n {
         let swings = na::pendulum_swings(params, i) as f32;
         let x = mid - amp * (TAU * swings * pos).cos();
-        let y = area.top() + (i as f32 + 0.5) * row;
+        let y = area.top() + (i as f32 + 0.5) * rh;
         p.line_segment([pos2(mid, y), pos2(x, y)], Stroke::new(1.0_f32, LINE_SOFT));
         let on = lit >> i & 1 == 1;
-        let r = (row * 0.38).clamp(2.5, 6.0);
+        let r = (rh * 0.38).clamp(2.5, 6.0);
         p.circle_filled(pos2(x, y), r, if on { Color32::WHITE } else { mix(accent, SELECT, i as f32 / n as f32) });
     }
     // Where in the cycle: they are all together again at its end.
     let bar = Rect::from_min_max(pos2(pic.left(), pic.bottom() - 8.0), pic.max);
     rect_fill(&p, bar, 2.0, PANEL3);
     rect_fill(&p, Rect::from_min_size(bar.min, vec2(bar.width() * pos, bar.height())), 2.0, shade(accent, 0.7));
+    let bars = na::pendulum_cycle(params) / 4.0;
+    let label = format!("bar {} of {}", (pos as f64 * bars).floor() as i64 + 1, bars.round() as i64);
+    text(&p, pos2(pic.right(), bar.top() - 2.0), Align2::RIGHT_BOTTOM, label, small(), TEXT_DIM);
     let specs = na::PENDULUMS;
-    let mut changed = pick_count(ui, slot(side, 0), id.with("pe_n"), params, na::PE_COUNT, 2.0, na::MAX_PENDULUMS as f32, "Pendulums", accent);
-    changed |= pick_choice(ui, slot(side, 1), id.with("pe_cycle"), params, na::PE_CYCLE, na::CYCLES, "Cycle", accent);
-    changed |= pick_count(ui, slot(side, 2), id.with("pe_swings"), params, na::PE_SWINGS, 2.0, 24.0, "Swings", accent);
-    changed |= pick_choice(ui, slot(side, 3), id.with("pe_play"), params, na::PE_PLAY, na::PENDULUM_PLAYS, "Play", accent);
-    changed |= pick_choice(ui, slot(side, 4), id.with("pe_notes"), params, na::PE_LAYOUT, na::LAYOUTS, "Notes", accent);
-    changed |= fader_at(ui, slot(side, 5), id, params, specs, na::PE_FADE, accent);
+    // The wave.
+    let mut changed = pick_count(ui, at(0, 0), id.with("pe_n"), params, na::PE_COUNT, 2.0, na::MAX_PENDULUMS as f32, "Pendulums", accent);
+    changed |= pick_choice(ui, at(0, 1), id.with("pe_cycle"), params, na::PE_CYCLE, na::CYCLES, "Cycle", accent);
+    changed |= pick_count(ui, at(0, 2), id.with("pe_slow"), params, na::PE_SLOW, 1.0, 8.0, "Slower ×", accent);
+    changed |= pick_count(ui, at(0, 3), id.with("pe_swings"), params, na::PE_SWINGS, 1.0, 24.0, "Swings", accent);
+    changed |= pick_choice(ui, at(0, 4), id.with("pe_play"), params, na::PE_PLAY, na::PENDULUM_PLAYS, "Play", accent);
+    changed |= pick_choice(ui, at(0, 5), id.with("pe_sync"), params, na::PE_SYNC, krabton_engine::sequencers::more::SYNCS, "Sync", accent);
+    changed |= fader_at(ui, at(0, 6), id, params, specs, na::PE_SPREAD, accent);
+    changed |= fader_at(ui, at(0, 7), id, params, specs, na::PE_WOBBLE, accent);
+    changed |= fader_at(ui, at(0, 8), id, params, specs, na::PE_FADE, accent);
+    // The notes.
+    changed |= pick_choice(ui, at(1, 0), id.with("pe_notes"), params, na::PE_LAYOUT, na::LAYOUTS, "Notes", accent);
+    changed |= pick_count(ui, at(1, 1), id.with("pe_steps"), params, na::PE_STEPS, 1.0, 4.0, "Steps", accent);
+    changed |= pick_count(ui, at(1, 2), id.with("pe_other"), params, na::PE_OTHER, -7.0, 7.0, "Other Side", accent);
+    changed |= pick_choice(ui, at(1, 3), id.with("pe_hold"), params, na::PE_HOLD, &["Off", "On"], "Hold Swing", accent);
+    changed |= fader_at(ui, at(1, 4), id, params, specs, na::PE_TOGETHER, accent);
+    changed |= fader_at(ui, at(1, 5), id, params, specs, na::PE_CHANCE, accent);
+    changed |= fader_at(ui, at(1, 6), id, params, specs, na::PE_TILT, accent);
+    changed |= fader_at(ui, at(1, 7), id, params, specs, na::PE_GATE, accent);
+    changed |= fader_at(ui, at(1, 8), id, params, specs, na::PE_VELOCITY, accent);
     if vis.is_some() {
         ui.ctx().request_repaint();
     }

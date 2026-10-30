@@ -1259,6 +1259,11 @@ static PENDULUMS: &[Preset] = &[
     p("Through the Middle", &[("Play", C("Middle")), ("Sync", C("Free"))]),
     p("Dying Away", &[("Fade", N(0.9))]),
     p("Chords", &[("Notes", C("Chord")), ("Pendulums", N(12.0))]),
+    p("Slow Tide", &[("Cycle", C("64 Bars")), ("Slower", N(2.0)), ("Pendulums", N(12.0)), ("Swings", N(3.0)), ("Spread", N(0.5)), ("Hold Swing", N(1.0)), ("Other Side", N(2.0)), ("Velocity", N(0.5))]),
+    p("Never Quite", &[("Wobble", N(0.6)), ("Cycle", C("16 Bars")), ("Pendulums", N(10.0))]),
+    p("Gathering", &[("Together", N(1.0)), ("Fade", N(0.1)), ("Pendulums", N(12.0)), ("Play", C("Middle"))]),
+    p("Two Sides", &[("Other Side", N(4.0)), ("Notes", C("Scale")), ("Steps", N(2.0))]),
+    p("Sparse Bells", &[("Chance", N(0.35)), ("Hold Swing", N(1.0)), ("Cycle", C("32 Bars")), ("Swings", N(4.0)), ("Tilt", N(-0.6))]),
 ];
 static FLOCK: &[Preset] = &[
     p("Starlings", &[]),
