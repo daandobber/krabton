@@ -3,6 +3,7 @@
 pub mod ambient_view;
 pub mod arrangement;
 pub mod automation;
+pub mod band_view;
 pub mod beads_view;
 pub mod browser;
 pub mod chime_view;

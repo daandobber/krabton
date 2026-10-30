@@ -208,6 +208,8 @@ pub struct EngineStatus {
     pub reel: crate::tape::Reel,
     /// A new play key waits for the next bar.
     pub key_waiting: AtomicBool,
+    /// Where the band is (see `band::BandNow::pack`).
+    pub band: AtomicU64,
 }
 
 /// The visual state of every sequencer (see `MidiFxState::visual`), by
@@ -280,6 +282,7 @@ impl EngineStatus {
             seqs: SeqBank::new(),
             reel: crate::tape::Reel::new(),
             key_waiting: AtomicBool::new(false),
+            band: AtomicU64::new(0),
         }
     }
 }
@@ -343,6 +346,8 @@ pub enum Command {
     /// too) and its height over the volume loop (0..1), or None when it is
     /// taken away. Sent again while it is there.
     Hand { track: u64, at: Option<(f32, f32)> },
+    /// The band to another part when the one playing ends (None: not after all).
+    BandCue(Option<crate::band::Cue>),
 }
 
 /// Frames per recorded block.
@@ -1273,6 +1278,8 @@ pub struct Engine {
     sr: f32,
     /// The play key the music is in now (it may wait for a bar to follow the project's).
     key_now: Option<crate::scale::Scale>,
+    /// Where the band is in its parts.
+    band: crate::band::BandRt,
     project: Arc<Project>,
     cmd_rx: Receiver<Command>,
     garbage_tx: Sender<Garbage>,
@@ -1350,6 +1357,7 @@ impl Engine {
             status: status.clone(),
             playing: false,
             key_now: None,
+            band: Default::default(),
             song_pos: 0.0,
             session_pos: 0.0,
             start_marker: 0.0,
@@ -1696,6 +1704,7 @@ impl Engine {
                     s.hand(at);
                 }
             }
+            Command::BandCue(cue) => self.band.cue(cue),
         }
     }
 
@@ -2123,6 +2132,9 @@ impl Engine {
         }
         let sequencing = project.key_seq_on && playing && !project.key_seq.is_empty();
         status.key_waiting.store(!sequencing && project.play_key != self.key_now && key_at == usize::MAX, RELAXED);
+        // The band's chord and part: on the session clock, or stopped where the song starts.
+        let band = self.band.resolve(&project, if playing { s0 } else { a0 }, playing);
+        status.band.store(band.pack(), RELAXED);
 
         for oi in 0..self.order.len() {
             let ti = self.order[oi];
@@ -2248,7 +2260,7 @@ impl Engine {
                 let drum_notes = snd.instrument.map(|i| i.drum_notes()).unwrap_or(0);
                 // A Singer hears what a sequencer sings early (its consonants before the beat).
                 let lead = if matches!(snd.instrument, Some(Instrument::Singer { .. })) { crate::singer::LEAD_SECS } else { 0.0 };
-                let ctx = MidiCtx { now: clock, len: seg, samples_per_beat: tspb, scale: project.scale, scale_on: project.scale_mode, beat: t0, playing, sr, drum_notes, lead, touch: signal.press };
+                let ctx = MidiCtx { now: clock, len: seg, samples_per_beat: tspb, scale: project.scale, scale_on: project.scale_mode, beat: t0, playing, sr, drum_notes, lead, touch: signal.press, band };
                 // All notes free (scale mode off): the twelve of them, but for
                 // what is in a key by nature.
                 let free = MidiCtx { scale: crate::scale::Scale::new(project.scale.root, crate::scale::ScaleKind::Chromatic), ..ctx };

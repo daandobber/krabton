@@ -1490,6 +1490,10 @@ pub struct Project {
     /// instrument by its track's id). The engine ignores them.
     #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
     pub folded: std::collections::BTreeSet<u64>,
+    /// The band's parts (Verse, Chorus...) and its form (none: the chord
+    /// players' one progression).
+    #[serde(default, skip_serializing_if = "crate::band::BandSong::is_empty")]
+    pub band: crate::band::BandSong,
 }
 
 /// A part of the song on the arranger track (Intro, Verse, Chorus...), as in
@@ -1546,6 +1550,7 @@ impl Project {
             key_seq_on: false,
             rack_heights: Default::default(),
             folded: Default::default(),
+            band: Default::default(),
         };
         let mut reverb = p.make_device(EffectKind::Reverb);
         reverb.params[5] = 1.0;

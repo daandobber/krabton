@@ -57,6 +57,8 @@ pub static SING: &[ParamSpec] = &[
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 
 /// What it sings at first: an old Japanese song (Sakura Sakura).
@@ -381,7 +383,7 @@ mod tests {
         let mut ons = Vec::new();
         for b in 0..(beats * spb / 256.0) as u64 {
             let now = b * 256;
-            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48_000.0, drum_notes: 0, lead, touch: [0.0; 5] };
+            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48_000.0, drum_notes: 0, lead, touch: [0.0; 5], band: Default::default() };
             let mut out = Vec::new();
             st.process(MidiFxKind::Sing, p, data, &[], &mut out, &ctx);
             for e in out.iter().filter(|e| e.on) {

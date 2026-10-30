@@ -3698,6 +3698,19 @@ impl App {
                 "devices" => self.detail = DetailTab::Devices,
                 "settings" => self.show_settings = true,
                 "mapwin" => self.map_window = true,
+                "bandwin" => self.band.window = true,
+                // bandon[=1]: Band on in every device that can be in it (=1: and parts).
+                "bandon" => {
+                    for dev in self.project.tracks.iter_mut().flat_map(|t| t.midi_devices.iter_mut()) {
+                        let b = krabton_engine::sequencers::players::band_param(dev.kind).or(krabton_engine::band::follow_param(dev.kind));
+                        if let Some(v) = b.and_then(|b| dev.params.get_mut(b)) {
+                            *v = 1.0;
+                        }
+                    }
+                    if nums.first() == Some(&1) && self.project.band.parts.is_empty() {
+                        self.make_band_parts();
+                    }
+                }
                 "mapall" => {
                     for i in 0..self.project.tracks.len() {
                         self.set_on_map(i, true);

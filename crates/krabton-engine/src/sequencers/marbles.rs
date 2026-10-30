@@ -99,6 +99,8 @@ pub static SPECS: &[ParamSpec] = &[
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 
 // ---------------------------------------------------------------- distributions
@@ -759,6 +761,7 @@ pub fn deja_vu_amount(knob: f32) -> f32 {
 impl SeqState {
     pub(crate) fn marbles(&mut self, p: &[f32], out: &mut Vec<MidiEvent>, ctx: &MidiCtx) {
         let shift = self.shift;
+        let follow = self.follow;
         let m = &mut *self.marbles;
         let rate = super::rate_beats(p[RATE]);
         // Settings.
@@ -859,7 +862,12 @@ impl SeqState {
                     m.fired[c] = true;
                     if on && ctx.playing {
                         let note = if notes_mode {
-                            shifted_by(shift, ctx, m.notes[c] as i32)
+                            let note = shifted_by(shift, ctx, m.notes[c] as i32) as i32;
+                            // With the band: moved with its chord here.
+                            match follow {
+                                Some(mode) => crate::band::follow(ctx, mode, crate::band::beat_at(ctx, ctx.now + i as u64), note).clamp(0, 127) as u8,
+                                None => note as u8,
+                            }
                         } else {
                             p[T_NOTE + c].round().clamp(0.0, 127.0) as u8
                         };
@@ -917,7 +925,7 @@ mod tests {
     use crate::scale::{Scale, ScaleKind};
 
     fn ctx(beat: f64, len: usize) -> MidiCtx {
-        MidiCtx { now: (beat * 24_000.0) as u64, len, samples_per_beat: 24_000.0, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat, playing: true, sr: 48_000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5] }
+        MidiCtx { now: (beat * 24_000.0) as u64, len, samples_per_beat: 24_000.0, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat, playing: true, sr: 48_000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5], band: Default::default() }
     }
 
     /// Runs `bars` bars and returns (frame, pitch, velocity) of every note.

@@ -63,6 +63,8 @@ pub static POLYMETER: &[ParamSpec] = &[
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 pub static EUCLID: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
@@ -89,6 +91,8 @@ pub static EUCLID: &[ParamSpec] = &[
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 pub static TURING: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
@@ -105,6 +109,8 @@ pub static TURING: &[ParamSpec] = &[
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 pub static LIFE: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
@@ -118,6 +124,8 @@ pub static LIFE: &[ParamSpec] = &[
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 pub const DROPS: &[&str] = &["1/16", "1/8", "1/4", "1/2", "1 Bar", "2 Bars"];
 pub const DROP_BEATS: [f64; 6] = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0];
@@ -156,6 +164,8 @@ pub static BOUNCE: &[ParamSpec] = &[
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 pub static DRUNK: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
@@ -171,6 +181,8 @@ pub static DRUNK: &[ParamSpec] = &[
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 
 // ---------------------------------------------------------------- pattern data
@@ -310,6 +322,8 @@ pub struct SeqState {
     pub(crate) shift: Option<(i32, i32)>,
     /// False when the sequencer applies the shift itself (Acid).
     shift_in_note: bool,
+    /// How it follows the band (see `band::follow_mode`), if it does.
+    pub(crate) follow: Option<u8>,
     pub(crate) rng: Rng,
     reg: u16,
     cells: [u16; 8],
@@ -366,6 +380,7 @@ impl SeqState {
             latched: None,
             shift: None,
             shift_in_note: true,
+            follow: None,
             rng: Rng::new(0x7EA5_1234),
             reg: 0b1011_0010_0110_1001,
             cells: [0; 8],
@@ -439,8 +454,16 @@ impl SeqState {
         }
     }
 
+    /// `pitch` (at frame `at`) moved with the band's chord, if it follows the band.
+    pub(crate) fn followed(&self, ctx: &MidiCtx, at: u64, pitch: i32) -> i32 {
+        match self.follow {
+            Some(mode) => crate::band::follow(ctx, mode, crate::band::beat_at(ctx, at), pitch),
+            None => pitch,
+        }
+    }
+
     pub(crate) fn note(&mut self, ctx: &MidiCtx, at: u64, pitch: i32, vel: f32, len_frames: f64, out: &mut Vec<MidiEvent>) {
-        let pitch = if self.shift_in_note { self.shifted(ctx, pitch) } else { pitch };
+        let pitch = if self.shift_in_note { self.followed(ctx, at, self.shifted(ctx, pitch)) } else { pitch };
         let pitch = pitch.clamp(0, 127) as u8;
         let offset = at.saturating_sub(ctx.now).min(ctx.len.saturating_sub(1) as u64) as u32;
         // Retrigger: end a still-sounding copy first.
@@ -496,6 +519,7 @@ impl SeqState {
 
     pub fn process(&mut self, kind: crate::midi_fx::MidiFxKind, p: &[f32], data: &[u8], out: &mut Vec<MidiEvent>, ctx: &MidiCtx) {
         use crate::midi_fx::MidiFxKind as K;
+        self.follow = crate::band::follow_mode(kind, p);
         // Touch takes what comes in as its plates, playing or not.
         if kind == K::Touch {
             self.touch(p, data, out, ctx);
@@ -921,7 +945,7 @@ mod dynamics_tests {
         let mut out_v = Vec::new();
         for b in 0..(8.0 * spb / 256.0) as u64 {
             let now = b * 256;
-            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5] };
+            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5], band: Default::default() };
             let mut out: Vec<MidiEvent> = Vec::new();
             st.process(kind, &p, &data, &[], &mut out, &ctx);
             out_v.extend(out.iter().filter(|e| e.on).map(|e| e.vel));
@@ -966,7 +990,7 @@ mod tests {
         let blocks = (beats * spb / 256.0) as u64;
         for b in 0..blocks {
             let now = b * 256;
-            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5] };
+            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5], band: Default::default() };
             let mut out = Vec::new();
             st.process(kind, p, data, &[], &mut out, &ctx);
             for e in out.iter().filter(|e| e.on) {
@@ -1085,7 +1109,7 @@ mod tests {
             let release = (3.5 * spb / 256.0) as u64;
             for b in 0..(8.0 * spb / 256.0) as u64 {
                 let now = b * 256;
-                let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5] };
+                let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5], band: Default::default() };
                 // D3 pressed just after the first beat, let go halfway through the fourth.
                 let input = match b {
                     1 => vec![MidiEvent::on(0, 62, 0.8)],
@@ -1119,7 +1143,7 @@ mod tests {
     #[test]
     fn silent_when_stopped() {
         let mut st = MidiFxState::new(MidiFxKind::Euclid);
-        let ctx = MidiCtx { now: 0, len: 256, samples_per_beat: 24000.0, scale: Scale::default(), scale_on: true, beat: 0.0, playing: false, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5] };
+        let ctx = MidiCtx { now: 0, len: 256, samples_per_beat: 24000.0, scale: Scale::default(), scale_on: true, beat: 0.0, playing: false, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5], band: Default::default() };
         let mut out = Vec::new();
         st.process(MidiFxKind::Euclid, &defaults(EUCLID), &[], &[], &mut out, &ctx);
         assert!(out.is_empty());

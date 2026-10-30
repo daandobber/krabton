@@ -14,6 +14,7 @@ use crate::theme::*;
 use crate::widgets::*;
 use egui::{pos2, vec2, Align2, Color32, FontId, Id, Rect, RichText, Sense, Ui};
 use krabton_engine::modulation::ModTarget;
+use krabton_engine::band::NONE as NONE_PART;
 use krabton_engine::{fader_gain, TrackKind};
 
 /// The mixer strip's width in rows, and its height on top of a column.
@@ -354,6 +355,8 @@ impl App {
             if resp.on_hover_text("Stop all clips").clicked() {
                 self.cmd(krabton_engine::Command::StopAllClips);
             }
+            ui.add_space(6.0);
+            self.studio_band(ui);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(8.0);
                 let mut hh = h;
@@ -388,6 +391,59 @@ impl App {
             });
         });
         ui.add_space(4.0);
+    }
+
+    /// The band: its part and chord now (click for the Band window), and
+    /// with parts, the next part (right-click: not after all).
+    fn studio_band(&mut self, ui: &mut Ui) {
+        let live = self.band_live();
+        let st = live.st;
+        let (r, resp) = ui.allocate_exact_size(vec2(112.0, 34.0), Sense::click());
+        let p = ui.painter().clone();
+        let part = live.names.get(st.part as usize).filter(|_| st.parts).map(|_| st.part as usize);
+        let fill = if resp.hovered() { shade(PANEL3, 1.3) } else { PANEL3 };
+        p.rect_filled(r.translate(vec2(0.0, 2.0)), 4.0, Color32::from_black_alpha(110));
+        p.rect_filled(r, 4.0, fill);
+        if let Some(i) = part {
+            p.rect_filled(Rect::from_min_size(r.min, vec2(6.0, r.height())), 2.0, super::band_view::part_color(i));
+        }
+        p.text(pos2(r.left() + 12.0, r.top() + 10.0), Align2::LEFT_CENTER, "BAND", small(), TEXT_DIM);
+        let now = match part {
+            Some(i) => live.names[i].clone(),
+            None if st.on => "One progression".into(),
+            None => "Nobody yet".into(),
+        };
+        p.with_clip_rect(r.shrink(2.0)).text(pos2(r.left() + 12.0, r.bottom() - 10.0), Align2::LEFT_CENTER, now, small(), TEXT);
+        if st.on && st.degree > 0 {
+            let numeral = krabton_engine::classic_seq::chord_name(&live.scale, st.degree, st.quality);
+            p.text(pos2(r.right() - 8.0, r.center().y), Align2::RIGHT_CENTER, numeral, FontId::proportional(17.0), ACCENT);
+        }
+        if resp.on_hover_text("The band: the chords its players share, its parts and form. Click for the Band window").clicked() {
+            self.band.window = true;
+        }
+        if part.is_some() {
+            ui.add_space(4.0);
+            let cued = st.cued != NONE_PART;
+            let (r, resp) = ui.allocate_exact_size(vec2(34.0, 34.0), Sense::click());
+            let lit = cued && super::session::blink();
+            let fill = if lit { super::band_view::part_color(st.cued as usize) } else if resp.hovered() { shade(PANEL3, 1.3) } else { PANEL3 };
+            let p = ui.painter();
+            p.rect_filled(r.translate(vec2(0.0, 2.0)), 4.0, Color32::from_black_alpha(110));
+            p.rect_filled(r, 4.0, fill);
+            play_icon(p, r.center() + vec2(-4.0, 0.0), 9.0, text_on(fill));
+            play_icon(p, r.center() + vec2(4.0, 0.0), 9.0, text_on(fill));
+            let tip = match live.names.get(st.cued as usize).filter(|_| cued) {
+                Some(n) => format!("{n} comes next. Right-click: not after all"),
+                None => "The next part, when this one ends. Right-click: not after all".into(),
+            };
+            let resp = resp.on_hover_text(tip);
+            if resp.clicked() {
+                self.cmd(krabton_engine::Command::BandCue(Some(krabton_engine::band::Cue::Next)));
+            }
+            if resp.secondary_clicked() {
+                self.cmd(krabton_engine::Command::BandCue(None));
+            }
+        }
     }
 
     /// A track's patterns: a pad per scene with the clip in it (lit while it

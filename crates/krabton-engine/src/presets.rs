@@ -48,11 +48,12 @@ pub fn apply(specs: &[ParamSpec], preset: &Preset) -> Vec<f32> {
 }
 
 /// A preset over what a device has now: the Keys switches (Transpose,
-/// Hold, Band) stay as they are unless the preset sets them.
+/// Hold) and the Band (its switch, how it follows) stay as they are unless
+/// the preset sets them.
 pub fn apply_to(specs: &[ParamSpec], preset: &Preset, current: &[f32]) -> Vec<f32> {
     let mut params = apply(specs, preset);
     for (i, s) in specs.iter().enumerate() {
-        if s.group == "Keys" && !preset.set.iter().any(|(n, _)| *n == s.name) {
+        if (s.group == "Keys" || s.group == "Band") && !preset.set.iter().any(|(n, _)| *n == s.name) {
             if let (Some(v), Some(c)) = (params.get_mut(i), current.get(i)) {
                 *v = *c;
             }

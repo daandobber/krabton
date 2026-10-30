@@ -51,7 +51,7 @@ macro_rules! player_specs {
             ParamSpec::lin("Humanize", "Notes", 0.0, 1.0, 0.3, Unit::Percent),
             ParamSpec::toggle("Transpose", "Keys", false),
             ParamSpec::toggle("Hold", "Keys", false),
-            ParamSpec::toggle("Band", "Keys", false),
+            ParamSpec::toggle("Band", "Band", false),
             ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
             ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
             ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
@@ -75,7 +75,7 @@ pub static SECTION: &[ParamSpec] = &[
     ParamSpec::int("Voices", "Player", 3.0, 5.0, 4.0, Unit::None),
     ParamSpec::toggle("Transpose", "Keys", false),
     ParamSpec::toggle("Hold", "Keys", false),
-    ParamSpec::toggle("Band", "Keys", false),
+    ParamSpec::toggle("Band", "Band", false),
     ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
@@ -301,17 +301,6 @@ impl PlayersState {
     }
 }
 
-/// The chord on step `k` (sixteenths): (slot, degree, quality, inversion),
-/// and whether the next step starts another chord.
-fn chord_at(p: &[f32], data: &[u8], k: i64) -> (usize, u8, u8, u8, bool) {
-    let beats = [1.0, 2.0, 4.0, 8.0][(p[LENGTH].round().max(0.0) as usize).min(3)];
-    let steps = (beats * 4.0) as i64;
-    let n = (p[CHORDS].round().clamp(1.0, PROG_SLOTS as f32)) as i64;
-    let slot = (k.div_euclid(steps)).rem_euclid(n) as usize;
-    let (d, q, inv) = prog_slot(data, slot);
-    (slot, d, q, inv, (k + 1).rem_euclid(steps) == 0)
-}
-
 impl SeqState {
     #[allow(clippy::too_many_arguments)]
     fn player_note(&mut self, ctx: &MidiCtx, p: &[f32], at: u64, step_frames: f64, k: i64, pitch: i32, len_steps: f64, vel: f32, out: &mut Vec<MidiEvent>) {
@@ -338,7 +327,8 @@ impl SeqState {
 /// struck last (128 bits).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn player(&mut self, kind: MidiFxKind, k: i64, p: &[f32], data: &[u8], at: u64, step_frames: f64, out: &mut Vec<MidiEvent>, ctx: &MidiCtx) {
-        let (slot, degree, quality, inversion, _) = chord_at(p, data, k);
+        // Its own chords, or the band's while it plays parts.
+        let (slot, degree, quality, inversion, chord_steps, into) = crate::band::chord_for(kind, p, data, k, ctx);
         let style = p[STYLE].round().max(0.0) as usize;
         let step = k.rem_euclid(16) as u8;
         self.visual[0] = slot as u64 | (step as u64) << 8 | (style as u64) << 16;
@@ -381,8 +371,7 @@ impl SeqState {
             MidiFxKind::BassPlayer => {
                 // The root the line walks to: of the chord when this note is over.
                 let target_root = |len: u8| -> Option<i32> {
-                    let (target, ..) = chord_at(p, data, k + len as i64);
-                    let (d, q, _) = prog_slot(data, target);
+                    let (_, d, q, ..) = crate::band::chord_for(kind, p, data, k + len as i64, ctx);
                     chord_pitches(&ctx.scale, base, d, q, 0).first().map(|r| base + (r - base).rem_euclid(12))
                 };
                 for &(s, line, len, vel) in bass_pattern(style.min(BASS_STYLES.len() - 1)) {
@@ -424,8 +413,6 @@ impl SeqState {
                 let voicing = self.players.voice((degree, quality, inversion as i32), &pcs, voices, base, base + 7);
                 let pattern = section_pattern(style.min(SECTION_STYLES.len() - 1));
                 // Held chords last until the chord changes.
-                let chord_steps = ([1.0, 2.0, 4.0, 8.0][(p[LENGTH].round().max(0.0) as usize).min(3)] * 4.0) as i64;
-                let into = k.rem_euclid(chord_steps);
                 for &(s, voice, len, vel) in pattern {
                     let held = style == 0;
                     let fires = if held { into == 0 } else { s == step };
@@ -541,7 +528,7 @@ mod tests {
         let mut ons = Vec::new();
         let mut now = 0u64;
         while (now as f64) < bars * 4.0 * 24000.0 {
-            let c = MidiCtx { now, len: 512, samples_per_beat: 24000.0, scale: Scale::default(), scale_on: true, beat: now as f64 / 24000.0, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5] };
+            let c = MidiCtx { now, len: 512, samples_per_beat: 24000.0, scale: Scale::default(), scale_on: true, beat: now as f64 / 24000.0, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5], band: Default::default() };
             let mut out = Vec::new();
             s.process(kind, p, data, &mut out, &c);
             for e in out.iter().filter(|e| e.on) {
