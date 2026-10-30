@@ -180,7 +180,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "Krabton ${GITHUB_REF_NAME#v}" --notes "Download the file for your system:
+          notes="Download the file for your system:
 
           - **Windows**: Krabton-Setup-….exe (installer), or the portable zip
           - **Linux**: Krabton-….AppImage (make it executable and double-click it), or the tar.gz with install.sh (also on a Steam Deck, in Desktop Mode)
@@ -188,3 +188,11 @@ jobs:
           - **macOS**: Krabton-….dmg (drag Krabton to Applications; the first time, right-click it and choose Open)
 
           On Arch Linux you can also build it with packaging/arch/PKGBUILD (makepkg -si)."
+          # The release now and then fails on GitHub's side: try again (a half-made one is cleared first).
+          for i in 1 2 3 4 5; do
+            gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "Krabton ${GITHUB_REF_NAME#v}" --notes "$notes" && exit 0
+            echo "gh release create failed, trying again ($i)"
+            gh release delete "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --yes 2>/dev/null || true
+            sleep $((i * 15))
+          done
+          exit 1
