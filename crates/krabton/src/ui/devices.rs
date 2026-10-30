@@ -139,7 +139,8 @@ pub(crate) fn param_grid_screens(
     mut draw: impl FnMut(&mut Ui, &str, Rect, &mut [f32]) -> bool,
 ) -> bool {
     let mut groups: Vec<(&str, Vec<usize>)> = Vec::new();
-    for (i, s) in specs.iter().enumerate().filter(|(_, s)| s.shown()) {
+    // The Band has a section of its own (see `band_view`).
+    for (i, s) in specs.iter().enumerate().filter(|(_, s)| s.shown() && s.group != "Band") {
         match groups.iter_mut().find(|g| g.0 == s.group) {
             Some(g) => g.1.push(i),
             None => groups.push((s.group, vec![i])),
@@ -1063,11 +1064,27 @@ impl App {
         let mut enabled = dev.enabled;
         let mut params = dev.params.clone();
         let mut data = dev.data.clone();
+        // A chord player in a band with parts shows (and edits) the part playing.
+        if let Some(part) = self.band_shown_part(dev.kind, &params) {
+            krabton_engine::sequencers::players::set_band_part(&mut params, &mut data, &part);
+        }
         let id = Id::new(("midi_device", dev.id));
         let mut mv = self.mod_view(ModOwner::MidiDevice(dev.id));
         let mut picked = None;
         let menu = PresetMenu { id, list: presets::midi(dev.kind), current: &dev.preset, picked: &mut picked };
         let _skin = crate::skin::Scope::new(crate::skin::for_midi(dev.kind));
+        // Its Band section, for one that can be in the band.
+        let band = super::band_view::in_band_kind(dev.kind).then(|| self.band_live());
+        let mut band_window = false;
+        let mut band_cue = None;
+        let mut band_ui = |ui: &mut Ui, params: &mut Vec<f32>, accent: Color32, h: f32| -> bool {
+            let Some(live) = &band else { return false };
+            ui.add_space(6.0);
+            let (c, open, cue) = super::band_view::band_section(ui, id.with("band"), dev.kind, params, live, accent, h);
+            band_window |= open;
+            band_cue = band_cue.or(cue);
+            c
+        };
         let (changed, action) = if dev.kind.is_sequencer() {
             // Every sequencer reports its state.
             let status = self.status();
@@ -1080,9 +1097,10 @@ impl App {
             device_frame_presets(ui, dev.kind.name(), Some(&info), Some(&mut enabled), Some(menu), true, h, |ui| {
                 ui.horizontal_top(|ui| {
                     let a = super::seq_view::editor(ui, id.with("editor"), dev.kind, &mut params, &mut data, live, lane, accent, h - 32.0);
+                    let c = band_ui(ui, &mut params, accent, h - 32.0);
                     ui.add_space(6.0);
                     let b = param_grid_mod(ui, id, dev.kind.specs(), &mut params, accent, h - 28.0, mv.as_mut());
-                    a | b
+                    a | b | c
                 })
                 .inner
             })
@@ -1090,10 +1108,20 @@ impl App {
             let accent = if enabled { accent_now() } else { TEXT_DIM };
             let info = format!("MIDI effect · {}", dev.kind.description());
             device_frame_presets(ui, dev.kind.name(), Some(&info), Some(&mut enabled), Some(menu), false, h, |ui| {
-                param_grid_mod(ui, id, dev.kind.specs(), &mut params, accent, h - 28.0, mv.as_mut())
+                ui.horizontal_top(|ui| {
+                    let a = param_grid_mod(ui, id, dev.kind.specs(), &mut params, accent, h - 28.0, mv.as_mut());
+                    a | band_ui(ui, &mut params, accent, h - 32.0)
+                })
+                .inner
             })
         };
         self.apply_mod_view(mv);
+        if band_window {
+            self.band.window = true;
+        }
+        if let Some(cue) = band_cue {
+            self.cmd(krabton_engine::Command::BandCue(cue));
+        }
         let target = self.project.tracks.get_mut(track)?.midi_devices.get_mut(d)?;
         target.enabled = enabled;
         if changed {

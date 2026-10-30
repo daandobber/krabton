@@ -64,6 +64,8 @@ pub static ORBITS: &[ParamSpec] = &[
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 pub static CHAOS: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
@@ -80,6 +82,8 @@ pub static CHAOS: &[ParamSpec] = &[
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 pub static AUTOMATON: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
@@ -96,6 +100,8 @@ pub static AUTOMATON: &[ParamSpec] = &[
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 pub const ANT_PLAY: &[&str] = &["Always", "On Black", "On White"];
 pub static ANT: &[ParamSpec] = &[
@@ -111,6 +117,8 @@ pub static ANT: &[ParamSpec] = &[
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 pub static PONG: &[ParamSpec] = &[
     ParamSpec::lin("Speed", "Box", 0.25, 4.0, 1.0, Unit::None),
@@ -130,6 +138,8 @@ pub static PONG: &[ParamSpec] = &[
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 pub static MARKOV: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
@@ -149,6 +159,8 @@ pub static MARKOV: &[ParamSpec] = &[
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 pub static RAIN: &[ParamSpec] = &[
     ParamSpec::log("Density", "Rain", 0.1, 16.0, 2.0, Unit::None),
@@ -165,6 +177,8 @@ pub static RAIN: &[ParamSpec] = &[
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 pub const WORD_MODES: &[&str] = &["Letters", "Morse"];
 pub static WORDS: &[ParamSpec] = &[
@@ -180,6 +194,8 @@ pub static WORDS: &[ParamSpec] = &[
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 pub static LORENZ: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
@@ -196,6 +212,8 @@ pub static LORENZ: &[ParamSpec] = &[
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 
 pub fn words_default() -> Vec<u8> {
@@ -746,7 +764,7 @@ mod tests {
             for pass in passes.iter_mut() {
                 for b in 0..(8.0 * spb / 256.0) as u64 {
                     let now = b * 256;
-                    let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5] };
+                    let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5], band: Default::default() };
                     let mut out = Vec::new();
                     st.process(kind, &p, &[], &[], &mut out, &ctx);
                     pass.extend(out.iter().filter(|e| e.on).map(|e| (now + e.offset as u64, e.pitch)));
@@ -779,7 +797,7 @@ mod tests {
         let mut st = SeqState::new();
         st.extra.ca = 1 << 8;
         st.extra.ca_steps = 1;
-        let ctx = MidiCtx { now: 0, len: 256, samples_per_beat: 24000.0, scale: Default::default(), scale_on: true, beat: 0.0, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5] };
+        let ctx = MidiCtx { now: 0, len: 256, samples_per_beat: 24000.0, scale: Default::default(), scale_on: true, beat: 0.0, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5], band: Default::default() };
         let mut out = Vec::new();
         st.automaton(&p, 0, 6000.0, &mut out, &ctx);
         assert_eq!(st.extra.ca, (1 << 7) | (1 << 9));
@@ -794,7 +812,7 @@ mod tests {
         let ons = run(MidiFxKind::Ant, &p, &[], 4.0);
         assert_eq!(ons.len(), 16);
         let mut st = SeqState::new();
-        let ctx = MidiCtx { now: 0, len: 256, samples_per_beat: 24000.0, scale: Default::default(), scale_on: true, beat: 0.0, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5] };
+        let ctx = MidiCtx { now: 0, len: 256, samples_per_beat: 24000.0, scale: Default::default(), scale_on: true, beat: 0.0, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5], band: Default::default() };
         let mut out = Vec::new();
         for _ in 0..4 {
             st.ant(&p, 0, 6000.0, &mut out, &ctx);

@@ -197,6 +197,8 @@ pub static TOUCH: &[ParamSpec] = &[
     ParamSpec::log("Env Decay", "Motion", 0.005, 8.0, 0.5, Unit::Sec),
     ParamSpec::int("Random Steps", "Motion", 0.0, 12.0, 0.0, Unit::None),
     ParamSpec::toggle("Slide", "Plates", true),
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 
 /// A triangle of the Tonnetz. Its corners are points (a, b) of the lattice,
@@ -1405,7 +1407,7 @@ mod tests {
     const SPB: f64 = 24_000.0;
 
     fn ctx(now: u64, playing: bool, pressure: f32) -> MidiCtx {
-        MidiCtx { now, len: 256, samples_per_beat: SPB, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / SPB, playing, sr: 48_000.0, drum_notes: 0, lead: 0.0, touch: [pressure, 0.5, 0.25, 0.75, 0.4] }
+        MidiCtx { now, len: 256, samples_per_beat: SPB, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / SPB, playing, sr: 48_000.0, drum_notes: 0, lead: 0.0, touch: [pressure, 0.5, 0.25, 0.75, 0.4], band: Default::default() }
     }
 
     /// Runs `blocks` blocks with plate events at given blocks: (block, pitch, on).

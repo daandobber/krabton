@@ -72,6 +72,8 @@ pub static GAMELAN: &[ParamSpec] = &[
     DYNAMICS[1],
     DYNAMICS[2],
     DYNAMICS[3],
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 
 /// The core melody of cycle `cycle`: `n` notes (in the five or seven notes,
@@ -187,6 +189,8 @@ pub static RAGA: &[ParamSpec] = &[
     DYNAMICS[1],
     DYNAMICS[2],
     DYNAMICS[3],
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 
 /// A raga: the notes going up and going down (semitones above Sa), the ones
@@ -324,6 +328,8 @@ pub static CALL: &[ParamSpec] = &[
     DYNAMICS[1],
     DYNAMICS[2],
     DYNAMICS[3],
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 
 /// The call of round `round` and its answer (`answer` one of `ANSWERS`, but Turns).

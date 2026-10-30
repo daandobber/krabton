@@ -95,6 +95,8 @@ pub struct MidiCtx {
     /// The Touch view: how hard its plates are pressed, where along them the
     /// hand is, its XY pad, and the value of the plate pressed (0..1 each).
     pub touch: [f32; 5],
+    /// Where the band is: its chords, its parts (see `band`).
+    pub band: crate::band::BandNow,
 }
 
 impl MidiCtx {
@@ -235,6 +237,8 @@ static ARP: &[ParamSpec] = &[
     ParamSpec::int("Octaves", "Range", 1.0, 4.0, 1.0, Unit::None),
     ParamSpec::lin("Swing", "Range", 0.0, 0.75, 0.0, Unit::Percent),
     ParamSpec::toggle("Hold", "Range", false),
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 static CHORD: &[ParamSpec] = &[
     ParamSpec::choice("Type", "Chord", CHORD_TYPES, 0),
@@ -1140,6 +1144,7 @@ fn arp(a: &mut ArpState, p: &[f32], input: &[MidiEvent], out: &mut Vec<MidiEvent
     let octaves = p[3].round().clamp(1.0, 4.0) as u8;
     let swing = (p[4] as f64 * step_len as f64 * 0.5) as u64;
     let style = p[0].round() as usize;
+    let follow = crate::band::follow_mode(MidiFxKind::Arpeggiator, p);
     let end = ctx.now + ctx.len as u64;
     let offset_of = |t: u64| t.saturating_sub(ctx.now).min(ctx.len.saturating_sub(1) as u64) as u32;
 
@@ -1184,6 +1189,11 @@ fn arp(a: &mut ArpState, p: &[f32], input: &[MidiEvent], out: &mut Vec<MidiEvent
         // A step: pick the note(s).
         let s = a.step as usize;
         let mut play = |pitch: u8, vel: f32, a: &mut ArpState| {
+            // With the band: moved with its chord here.
+            let pitch = match follow {
+                Some(mode) => crate::band::follow(ctx, mode, crate::band::beat_at(ctx, t), pitch as i32).clamp(0, 127) as u8,
+                None => pitch,
+            };
             if let Some(pos) = a.sounding.iter().position(|x| x.0 == pitch) {
                 a.sounding.swap_remove(pos);
                 out.push(MidiEvent::off(offset_of(t), pitch));
@@ -1258,7 +1268,7 @@ pub fn render_notes(kind: MidiFxKind, params: &[f32], data: &[u8], beats: f64, b
     let spb = SR as f64 * 60.0 / bpm.clamp(20.0, 999.0);
     // As in the engine: with the key off, all twelve notes, unless the device keeps a key itself.
     let scale = if scale_on || kind.keeps_key() { scale } else { Scale::new(scale.root, ScaleKind::Chromatic) };
-    let base = MidiCtx { now: 0, len: BLOCK, samples_per_beat: spb, scale, scale_on, beat: 0.0, playing: true, sr: SR, drum_notes, lead: 0.0, touch: [0.0; 5] };
+    let base = MidiCtx { now: 0, len: BLOCK, samples_per_beat: spb, scale, scale_on, beat: 0.0, playing: true, sr: SR, drum_notes, lead: 0.0, touch: [0.0; 5], band: Default::default() };
     let mut st = MidiFxState::new(kind);
     let total = (beats.max(0.0) * spb).ceil() as u64;
     // Starts and ends land on a 1/960 beat grid, so a step is where it belongs.
@@ -1316,7 +1326,7 @@ mod tests {
     }
 
     fn ctx(now: u64, len: usize) -> MidiCtx {
-        MidiCtx { now, len, samples_per_beat: 24000.0, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: 0.0, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5] }
+        MidiCtx { now, len, samples_per_beat: 24000.0, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: 0.0, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5], band: Default::default() }
     }
 
     #[test]

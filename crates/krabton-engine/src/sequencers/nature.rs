@@ -112,6 +112,8 @@ pub static FIREFLIES: &[ParamSpec] = &[
     DYNAMICS[1],
     DYNAMICS[2],
     DYNAMICS[3],
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 
 // ---------------------------------------------------------------- sandpile
@@ -156,6 +158,8 @@ pub static SANDPILE: &[ParamSpec] = &[
     DYNAMICS[1],
     DYNAMICS[2],
     DYNAMICS[3],
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 
 // ---------------------------------------------------------------- pendulums
@@ -212,6 +216,8 @@ pub static PENDULUMS: &[ParamSpec] = &[
     ParamSpec::lin("Chance", "Notes", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::toggle("Hold Swing", "Notes", false),
     ParamSpec::lin("Tilt", "Notes", -1.0, 1.0, 0.0, Unit::None),
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 
 /// How many times pendulum `i` swings to and fro in a cycle: Spread more
@@ -265,6 +271,8 @@ pub static FLOCK: &[ParamSpec] = &[
     DYNAMICS[1],
     DYNAMICS[2],
     DYNAMICS[3],
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 
 // ---------------------------------------------------------------- plants
@@ -303,6 +311,8 @@ pub static PLANT: &[ParamSpec] = &[
     DYNAMICS[1],
     DYNAMICS[2],
     DYNAMICS[3],
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 
 /// A plant: its axiom, its rules (symbol, what it becomes) and the angle it
@@ -1149,7 +1159,7 @@ mod tests {
         let mut p = defaults(FIREFLIES);
         p[FF_COUPLING] = 0.0;
         p[FF_NUDGE] = 0.0;
-        let ctx = MidiCtx { now: 0, len: 256, samples_per_beat: 24000.0, scale: Scale::default(), scale_on: true, beat: 0.0, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5] };
+        let ctx = MidiCtx { now: 0, len: 256, samples_per_beat: 24000.0, scale: Scale::default(), scale_on: true, beat: 0.0, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5], band: Default::default() };
         let mut out = Vec::new();
         let mut orders = Vec::new();
         for b in 0..(32.0 * 24000.0 / 256.0) as u64 {
@@ -1175,7 +1185,7 @@ mod tests {
         p[SP_START] = 0.0; // empty
         p[SP_DROP] = 1.0;
         let mut st = SeqState::new();
-        let ctx = MidiCtx { now: 0, len: 256, samples_per_beat: 24000.0, scale: Scale::default(), scale_on: true, beat: 0.0, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5] };
+        let ctx = MidiCtx { now: 0, len: 256, samples_per_beat: 24000.0, scale: Scale::default(), scale_on: true, beat: 0.0, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5], band: Default::default() };
         let mut out = Vec::new();
         let mut toppled_any = false;
         for _ in 0..600 {

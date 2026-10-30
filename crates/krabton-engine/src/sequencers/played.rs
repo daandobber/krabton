@@ -64,6 +64,8 @@ pub static ENDLESS: &[ParamSpec] = &[
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 
 pub mod hands {
@@ -126,6 +128,8 @@ pub static DRAW: &[ParamSpec] = &[
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 
 // ---------------------------------------------------------------- data
@@ -403,7 +407,7 @@ mod tests {
     use crate::scale::Scale;
 
     fn ctx(now: u64, beat: f64) -> MidiCtx {
-        MidiCtx { now, len: 512, samples_per_beat: 24000.0, scale: Scale::default(), scale_on: false, beat, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5] }
+        MidiCtx { now, len: 512, samples_per_beat: 24000.0, scale: Scale::default(), scale_on: false, beat, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5], band: Default::default() }
     }
 
     /// Runs `kind` for `beats`, playing `keys` into it at the start; returns the note-ons.

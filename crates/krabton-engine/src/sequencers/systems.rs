@@ -76,6 +76,8 @@ pub static BELLS: &[ParamSpec] = &[
     DYNAMICS[1],
     DYNAMICS[2],
     DYNAMICS[3],
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 
 /// The method rung on `n` bells (Grandsire and Stedman need five; on fewer
@@ -225,6 +227,8 @@ pub static CANON: &[ParamSpec] = &[
     DYNAMICS[1],
     DYNAMICS[2],
     DYNAMICS[3],
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 
 pub const PHRASE_LEN: usize = 16;
@@ -419,6 +423,8 @@ pub static GEARS: &[ParamSpec] = &[
     DYNAMICS[1],
     DYNAMICS[2],
     DYNAMICS[3],
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 
 /// Whether gear `i`'s tooth at the top at step `k` carries a peg.
@@ -474,6 +480,8 @@ pub static FORMULA: &[ParamSpec] = &[
     DYNAMICS[1],
     DYNAMICS[2],
     DYNAMICS[3],
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 
 /// The byte formula `f` gives at `t`.
@@ -1163,7 +1171,7 @@ mod tests {
         let mut ons = Vec::new();
         for b in 0..(8.0 * spb / 256.0) as u64 {
             let now = b * 256;
-            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5] };
+            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5], band: Default::default() };
             let input = if b == 0 { vec![MidiEvent::on(0, 64, 0.8)] } else { Vec::new() };
             let mut out = Vec::new();
             st.process(MidiFxKind::Canon, &p, &[], &input, &mut out, &ctx);

@@ -4,6 +4,7 @@
 //! and used headless (e.g. for offline rendering).
 
 pub mod audio_in;
+pub mod band;
 pub mod classic_seq;
 pub mod demo;
 pub mod dsp;

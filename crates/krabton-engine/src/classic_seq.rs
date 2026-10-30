@@ -28,6 +28,8 @@ pub static STEP: &[ParamSpec] = &[
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 pub static ACID: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
@@ -44,6 +46,8 @@ pub static ACID: &[ParamSpec] = &[
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 pub static DRUM_GRID: &[ParamSpec] = &[
     ParamSpec::choice("Rate", "Clock", RATES, 2),
@@ -59,7 +63,6 @@ pub static DRUM_GRID: &[ParamSpec] = &[
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
 ];
 pub const CHORD_LENGTHS: &[&str] = &["1 beat", "2 beats", "1 bar", "2 bars"];
-const CHORD_BEATS: [f64; 4] = [1.0, 2.0, 4.0, 8.0];
 pub const RHYTHMS: &[&str] = &["Hold", "Quarters", "Eighths", "Offbeats", "Stabs", "Charleston", "Arp Up", "Arp Down"];
 pub static PROGRESSION: &[ParamSpec] = &[
     ParamSpec::choice("Length", "Chords", CHORD_LENGTHS, 2),
@@ -70,7 +73,7 @@ pub static PROGRESSION: &[ParamSpec] = &[
     ParamSpec::lin("Velocity", "Notes", 0.05, 1.0, 0.7, Unit::Percent),
     ParamSpec::toggle("Transpose", "Keys", false),
     ParamSpec::toggle("Hold", "Keys", false),
-    ParamSpec::toggle("Band", "Keys", false),
+    ParamSpec::toggle("Band", "Band", false),
     ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
@@ -333,6 +336,19 @@ pub fn prog_slot(data: &[u8], i: usize) -> (u8, u8, u8) {
     }
 }
 
+/// The scale steps above its root a chord of `quality` stacks.
+pub fn quality_steps(quality: u8) -> &'static [i32] {
+    match quality {
+        1 => &[0, 2, 4, 6],
+        2 => &[0, 1, 4],
+        3 => &[0, 3, 4],
+        4 => &[0, 4, 7],
+        5 => &[0, 2, 4, 8],
+        6 => &[0, 2, 4, 6, 8],
+        _ => &[0, 2, 4],
+    }
+}
+
 /// The pitches of a chord on `degree` (1-based) of the scale, built from
 /// the scale degree at or below `base`.
 pub fn chord_pitches(scale: &Scale, base: i32, degree: u8, quality: u8, inversion: u8) -> Vec<i32> {
@@ -343,16 +359,7 @@ pub fn chord_pitches(scale: &Scale, base: i32, degree: u8, quality: u8, inversio
     let n = scale.len().max(1) as i32;
     let (b, _) = scale.locate(base);
     let root = b.div_euclid(n) * n + degree as i32 - 1;
-    let steps: &[i32] = match quality {
-        1 => &[0, 2, 4, 6],
-        2 => &[0, 1, 4],
-        3 => &[0, 3, 4],
-        4 => &[0, 4, 7],
-        5 => &[0, 2, 4, 8],
-        6 => &[0, 2, 4, 6, 8],
-        _ => &[0, 2, 4],
-    };
-    let mut notes: Vec<i32> = steps.iter().map(|s| scale.pitch_at(root + s)).collect();
+    let mut notes: Vec<i32> = quality_steps(quality).iter().map(|s| scale.pitch_at(root + s)).collect();
     for _ in 0..inversion.min(notes.len() as u8 - 1) {
         let low = notes.remove(0);
         notes.push(low + 12);
@@ -460,6 +467,8 @@ impl SeqState {
         if in_key {
             pitch = ctx.scale.snap(pitch.clamp(0, 127) as u8) as i32;
         }
+        // With the band: moved with its chord here (Acid moves its own notes).
+        let pitch = self.followed(ctx, at, pitch).clamp(0, 127);
         let vel = if s.accent { (0.62 + 0.38 * p[5]).min(1.0) } else { 0.62 };
         // A slide or tie into this step keeps the previous note sounding.
         let previous = self.acid_open.take();
@@ -542,13 +551,9 @@ impl SeqState {
 
     /// Runs on a 1/16 grid.
     pub(crate) fn progression(&mut self, k: i64, p: &[f32], data: &[u8], at: u64, step_frames: f64, out: &mut Vec<MidiEvent>, ctx: &MidiCtx) {
-        let beats = CHORD_BEATS[(p[0].round().max(0.0) as usize).min(CHORD_BEATS.len() - 1)];
-        let sixteenths = (beats * 4.0).round() as i64;
-        let chords = p[1].round().clamp(1.0, PROG_SLOTS as f32) as i64;
-        let slot = (k.div_euclid(sixteenths)).rem_euclid(chords) as usize;
-        let pos = k.rem_euclid(sixteenths);
+        // Its own chords, or the band's while it plays parts.
+        let (slot, degree, quality, inversion, sixteenths, pos) = crate::band::chord_for(crate::midi_fx::MidiFxKind::Progression, p, data, k, ctx);
         self.visual[0] = slot as u64 | (pos as u64) << 8;
-        let (degree, quality, inversion) = prog_slot(data, slot);
         let notes = chord_pitches(&ctx.scale, p[3].round() as i32, degree, quality, inversion);
         if notes.is_empty() {
             return;
@@ -619,7 +624,7 @@ mod tests {
         let blocks = (beats * spb / 256.0) as u64;
         for b in 0..blocks {
             let now = b * 256;
-            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(9, ScaleKind::Minor), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5] };
+            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(9, ScaleKind::Minor), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5], band: Default::default() };
             let mut out = Vec::new();
             st.process(kind, p, data, &[], &mut out, &ctx);
             for e in &out {

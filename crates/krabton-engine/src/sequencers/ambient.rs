@@ -50,6 +50,8 @@ pub static LOOPS: &[ParamSpec] = &[
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 
 pub const ECHOES: &[&str] = &["1/2 Bar", "1 Bar", "1.5 Bars", "2 Bars", "3 Bars"];
@@ -122,6 +124,8 @@ pub static BLOOM: &[ParamSpec] = &[
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 
 pub static CHIMES: &[ParamSpec] = &[
@@ -141,6 +145,8 @@ pub static CHIMES: &[ParamSpec] = &[
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 
 /// The Chimes sequencer's tubes: how many, and the note of each, from a
@@ -183,6 +189,8 @@ pub static DRIFT_CHORDS: &[ParamSpec] = &[
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 
 pub const POSITIONS: &[&str] = &["1st Above", "1st Below", "Alternating", "2nd Above", "2nd Below"];
@@ -202,6 +210,8 @@ pub static TINTINNABULI: &[ParamSpec] = &[
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 
 pub const PEDAL_MOVES: &[&str] = &["Fifth", "Fourth", "Octave", "Anywhere"];
@@ -222,6 +232,8 @@ pub static PEDAL: &[ParamSpec] = &[
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::toggle("Band", "Band", false),
+    ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
 ];
 
 const SEEDS: usize = 32;
@@ -733,7 +745,7 @@ mod tests {
         let mut done = Vec::new();
         for b in 0..(beats * spb / 256.0) as u64 {
             let now = b * 256;
-            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5] };
+            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5], band: Default::default() };
             let mut out = Vec::new();
             st.process(kind, p, &[], &[], &mut out, &ctx);
             for e in &out {
@@ -778,7 +790,7 @@ mod tests {
             if b == (spb / 256.0) as u64 {
                 data.extend_from_slice(&[1, 0, 255, 128, 0, 0]);
             }
-            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5] };
+            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5], band: Default::default() };
             let mut out = Vec::new();
             st.process(MidiFxKind::Bloom, &p, &data, &[], &mut out, &ctx);
             ons.extend(out.iter().filter(|e| e.on).map(|e| ((now + e.offset as u64) as f64 / spb, e.pitch)));
@@ -797,7 +809,7 @@ mod tests {
             if b == 10 {
                 data.extend_from_slice(&[1, 0, 0, 0, 0, 0]);
             }
-            let ctx = MidiCtx { now: b * 256, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: 0.0, playing: false, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5] };
+            let ctx = MidiCtx { now: b * 256, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: 0.0, playing: false, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5], band: Default::default() };
             let mut out = Vec::new();
             st.process(MidiFxKind::Bloom, &p, &data, &[], &mut out, &ctx);
             heard += out.iter().filter(|e| e.on && e.pitch == 60).count();
@@ -814,7 +826,7 @@ mod tests {
         while beat < to {
             edit(beat, data);
             let now = (beat * spb) as u64;
-            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5] };
+            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5], band: Default::default() };
             let mut out = Vec::new();
             st.process(MidiFxKind::Bloom, p, data, &[], &mut out, &ctx);
             ons.extend(out.iter().filter(|e| e.on).map(|e| (beat + e.offset as f64 / spb, e.pitch)));

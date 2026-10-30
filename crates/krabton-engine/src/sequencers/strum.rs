@@ -36,7 +36,7 @@ pub static SPECS: &[ParamSpec] = &[
     ParamSpec::lin("Humanize", "Strokes", 0.0, 1.0, 0.3, Unit::Percent),
     ParamSpec::toggle("Transpose", "Keys", false),
     ParamSpec::toggle("Hold", "Keys", false),
-    ParamSpec::toggle("Band", "Keys", false),
+    ParamSpec::toggle("Band", "Band", false),
     ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
@@ -63,7 +63,7 @@ pub static UKE_SPECS: &[ParamSpec] = &[
     ParamSpec::choice("Tuning", "Strings", UKE_TUNINGS, 0),
     ParamSpec::toggle("Transpose", "Keys", false),
     ParamSpec::toggle("Hold", "Keys", false),
-    ParamSpec::toggle("Band", "Keys", false),
+    ParamSpec::toggle("Band", "Band", false),
     ParamSpec::lin("Vel Low", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
@@ -376,7 +376,11 @@ pub fn guitar_shape(root: i32, tones: &[i32], power: bool, neck: u8) -> Shape {
 /// The shape of chord slot `slot` of `data` in `scale`, moved by `shift`
 /// scale steps.
 pub fn slot_shape(scale: &crate::scale::Scale, data: &[u8], slot: usize, shift: i32) -> Option<(Shape, u8, u8)> {
-    let (degree, quality, neck) = prog_slot(data, slot);
+    guitar_chord(scale, prog_slot(data, slot), shift)
+}
+
+/// The guitar shape of a chord (degree, quality, neck), moved by `shift`.
+fn guitar_chord(scale: &crate::scale::Scale, (degree, quality, neck): (u8, u8, u8), shift: i32) -> Option<(Shape, u8, u8)> {
     if degree == 0 {
         return None;
     }
@@ -390,10 +394,14 @@ pub fn slot_shape(scale: &crate::scale::Scale, data: &[u8], slot: usize, shift: 
 /// The shape of chord slot `slot` on the device's strings (a guitar's or a
 /// ukulele's).
 pub fn slot_shape_for(kind: MidiFxKind, p: &[f32], scale: &crate::scale::Scale, data: &[u8], slot: usize, shift: i32) -> Option<(Shape, u8, u8)> {
+    shape_for(kind, p, scale, prog_slot(data, slot), shift)
+}
+
+/// The shape of a chord (degree, quality, neck) on the device's strings.
+pub fn shape_for(kind: MidiFxKind, p: &[f32], scale: &crate::scale::Scale, (degree, quality, neck): (u8, u8, u8), shift: i32) -> Option<(Shape, u8, u8)> {
     if kind != MidiFxKind::Ukulele {
-        return slot_shape(scale, data, slot, shift);
+        return guitar_chord(scale, (degree, quality, neck), shift);
     }
-    let (degree, quality, neck) = prog_slot(data, slot);
     if degree == 0 {
         return None;
     }
@@ -469,10 +477,8 @@ impl SeqState {
     /// Runs on a 1/16 grid.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn strum(&mut self, kind: MidiFxKind, k: i64, p: &[f32], data: &[u8], at: u64, step_frames: f64, out: &mut Vec<MidiEvent>, ctx: &MidiCtx) {
-        let beats = [1.0, 2.0, 4.0, 8.0][(p[LENGTH].round().max(0.0) as usize).min(3)];
-        let per_chord = (beats * 4.0f64).round() as i64;
-        let chords = p[CHORDS].round().clamp(1.0, PROG_SLOTS as f32) as i64;
-        let slot = k.div_euclid(per_chord).rem_euclid(chords) as usize;
+        // Its own chords, or the band's while it plays parts.
+        let (slot, degree, quality, neck, per_chord, into) = crate::band::chord_for(kind, p, data, k, ctx);
         let step = k.rem_euclid(PATTERN_STEPS as i64) as usize;
         // Transpose: a key moves the progression through the scale (or by
         // semitones with the scale off), from C.
@@ -485,9 +491,9 @@ impl SeqState {
             Some((key, reference)) => (0, key - reference),
             None => (0, 0),
         };
-        let shape = slot_shape_for(kind, p, &ctx.scale, data, slot, shift_steps);
+        let shape = shape_for(kind, p, &ctx.scale, (degree, quality, neck), shift_steps);
         let stroke = pattern_at(data, step);
-        self.visual[0] = slot as u64 | (step as u64) << 8 | (stroke as u64) << 16 | (k.rem_euclid(per_chord) as u64) << 24 | (per_chord as u64) << 40;
+        self.visual[0] = slot as u64 | (step as u64) << 8 | (stroke as u64) << 16 | (into as u64) << 24 | (per_chord as u64) << 40;
         self.visual[1] = shape.map(|s| pack_shape(&s.0)).unwrap_or(u64::MAX);
         let Some((shape, _, _)) = shape else { return };
         if stroke == REST {
@@ -512,7 +518,7 @@ impl SeqState {
         // How long it rings: to the next stroke (or the end of the chord
         // with Let Ring).
         let next = (1..=PATTERN_STEPS).find(|&j| pattern_at(data, step + j) != REST).unwrap_or(PATTERN_STEPS) as f64;
-        let to_chord_end = (per_chord - k.rem_euclid(per_chord)) as f64;
+        let to_chord_end = (per_chord - into) as f64;
         let ring = if p[LET_RING] >= 0.5 { to_chord_end.max(next) } else { next.min(to_chord_end) };
         let len = match stroke {
             MUTE => 0.12 * step_frames,
@@ -614,7 +620,7 @@ mod tests {
         let mut ons = Vec::new();
         for b in 0..(spb / 256.0) as u64 {
             let now = b * 256;
-            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5] };
+            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5], band: Default::default() };
             let mut out = Vec::new();
             st.process(MidiFxKind::Ukulele, &p, &data, &[], &mut out, &ctx);
             ons.extend(out.iter().filter(|e| e.on).map(|e| ((now + e.offset as u64) as f64 / spb, e.pitch)));
@@ -641,7 +647,7 @@ mod tests {
         let mut ons = Vec::new();
         for b in 0..(4.0 * spb / 256.0) as u64 {
             let now = b * 256;
-            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5] };
+            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5], band: Default::default() };
             let mut out = Vec::new();
             st.process(MidiFxKind::GuitarChords, &p, &data, &[], &mut out, &ctx);
             ons.extend(out.iter().filter(|e| e.on).map(|e| ((now + e.offset as u64) as f64 / spb, e.pitch)));
