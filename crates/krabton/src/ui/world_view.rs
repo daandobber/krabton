@@ -221,7 +221,7 @@ pub(crate) fn call(ui: &mut Ui, id: Id, params: &mut [f32], live: Live, accent: 
         let cw = (strip.width() - 8.0) / len as f32;
         let now = match (phase, pos) {
             (Some(0), Some(q)) if r == 0 => Some(q),
-            (Some(1), Some(q)) if r == 1 => Some(q - len - gap),
+            (Some(1), Some(q)) if r == 1 => q.checked_sub(len + gap),
             _ => None,
         };
         for i in 0..len {

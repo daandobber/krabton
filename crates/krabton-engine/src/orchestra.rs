@@ -1237,7 +1237,9 @@ impl OrchestraState {
                 let g = v.env * v.fade_gain * loud;
                 let mut ended = true;
                 for layer in v.layers.iter_mut().flatten() {
-                    let e = &lib.samples[layer.sample as usize];
+                    // A voice still sounding from another instrument's library (the
+                    // instrument changed under it) has nothing here: it stops.
+                    let Some(e) = lib.samples.get(layer.sample as usize) else { continue };
                     let frames = lib.frames(layer.sample);
                     let len = e.frames as f64;
                     let looping = v.held && e.loop_end > e.loop_start + 1000;
