@@ -371,7 +371,7 @@ pub(crate) fn device_names() -> Vec<&'static str> {
     devices().iter().map(|d| d.name).collect()
 }
 
-fn devices() -> [Dev; 47] {
+fn devices() -> [Dev; 48] {
     [
         Dev {
             name: "Analog",
@@ -456,6 +456,7 @@ fn devices() -> [Dev; 47] {
         Dev { name: "Beads", hint: "The wavetable synth of Mutable Instruments Beads, played with keys: twelve banks of waves (sines, drawbars, voices, metal, FM and more), and grains of them seeded while you hold a key (or always, or with the song's clock), each randomized in wave, size, shape and pitch, with Beads' reverb and its tape and lo-fi qualities", presets: krabton_engine::dsp::beads_synth::preset_names(), make: BrowserItem::BeadsSynth, kind: None },
         Dev { name: "Theremin", hint: "Played without touching it: two radio oscillators beating, from nearly a sine to the reedy, nasal voice of the kit theremins (Waveform), through a tone filter and a formant. One voice, always gliding, swelling in and out (Attack, Release), with the player's vibrato after a delay and a hand that is never quite still. Play it in its field with the mouse or a finger: right is higher, up is louder; Snap pulls the hand onto the song's key", presets: krabton_engine::dsp::theremin::preset_names(), make: BrowserItem::Theremin, kind: None },
         Dev { name: "Granulator", hint: "Plays a sample as clouds of grains, a cloud for every key held: where the grains come from (Position, drag it on the sample), how far they spray about it, how long they are (1 ms to 2 s), how many come a second or on the beat, their pitch from the keys with a spray and octave jumps, some backwards, under five windows, spread over the stereo field. The place can scan forward, backward, to and fro or along while a key is held (a time stretch), or freeze. An envelope per key, a tone tilt, a smear and a reverb. Drop a WAV or FLAC on it, or play its own pad, choir, bells or breath", presets: krabton_engine::dsp::granulator::preset_names(), make: BrowserItem::Granulator, kind: None },
+        Dev { name: "Keytone", hint: "A toy sampling keyboard of the mid-eighties: sixteen sounds as short 8-bit samples at 9.4 kHz (piano, trumpet, pipe organ, a voice singing ah, flute, brass ensemble, synth drum, jazz organ, strings, vibes, glockenspiel, synth bass, marimba, harpsichord, accordion, clarinet), stepped through with no filter, eight voices into an 8-bit converter: the aliasing and the grain are the sound. Its envelopes, sustain, vibrato and portamento; Rate and Bits from crushed to clean. Load a short WAV into the user slot and it is crushed the same way. Its drums are the Keytone Drums, its rhythms Home Rhythms", presets: krabton_engine::dsp::keytone::preset_names(), make: BrowserItem::Keytone, kind: None },
     ]
 }
 

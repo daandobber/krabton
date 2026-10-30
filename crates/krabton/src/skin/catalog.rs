@@ -1082,6 +1082,28 @@ const GRANULATOR: Skin = Skin {
     ..BASE
 };
 
+/// Keytone: the light grey plastic of a toy keyboard, dark print, red
+/// lights, the speaker grille's slots.
+const KEYTONE: Skin = Skin {
+    top: hex(0xc4c6c8),
+    bottom: hex(0xa9abae),
+    surface: Surface::Grain,
+    ink: hex(0x1c1d20),
+    dim: hex(0x45484d),
+    well: hex(0x2b2d31),
+    well_ink: hex(0xeceae4),
+    accent: hex(0xe8463a),
+    knob: Knob::Cap,
+    cap: hex(0x2b2c2f),
+    logo: Font::Block,
+    logo_size: 19.0,
+    logo_ink: hex(0x1c1d20),
+    logo_case: Case::Lower,
+    groups: Groups::Outline,
+    caps: true,
+    ..BASE
+};
+
 const UTILITY: Skin = Skin { accent: hex(0x9fd8ff), knob: Knob::Ring, logo_case: Case::Upper, ..BASE };
 
 const VA_FILTER: Skin = Skin { heroes: &["Cutoff", "Resonance"], ..ANALOG };
@@ -1144,6 +1166,7 @@ pub fn for_instrument(name: &str) -> Option<Skin> {
         "Quartet" => QUARTET,
         "Orchestra" | "Soloists" => ORCHESTRA,
         "Granulator" => GRANULATOR,
+        "Keytone" => KEYTONE,
         // Drum machines.
         "808" => M808,
         "909" => M909,
@@ -1159,6 +1182,7 @@ pub fn for_instrument(name: &str) -> Option<Skin> {
         "Chip Drums" => CHIP_DRUMS,
         "Sampled Machines" => SAMPLER,
         "Drum Rack" => DRUM_RACK,
+        "Keytone Drums" => KEYTONE,
         _ => return None,
     })
 }

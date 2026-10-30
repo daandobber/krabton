@@ -6,6 +6,7 @@
 
 use super::acoustic::AcousticVoice;
 use super::retro::RetroVoice;
+use super::keytone::KeytoneDrum;
 use super::chip_drums::{self, ChipKnobs, ChipVoice};
 use super::circuit_kick::{CircuitKick, KickKnobs};
 use super::macro_drums::{self, MacroVoice};
@@ -199,6 +200,20 @@ pub enum DrumVoice {
     ChipWoodBoom,
     M909Ride,
     M909Crash,
+    KtKick,
+    KtSnare,
+    KtRim,
+    KtClap,
+    KtHat,
+    KtOpenHat,
+    KtTomHigh,
+    KtTomLow,
+    KtCymbal,
+    KtClaves,
+    KtCowbell,
+    KtCongaHigh,
+    KtCongaLow,
+    KtMaracas,
 }
 
 /// Where a voice comes from.
@@ -218,6 +233,8 @@ pub enum Family {
     Macro,
     /// The old chips' drums (see `chip_drums`).
     Chip,
+    /// The toy sampling keyboard's drums (see `keytone`).
+    Keytone,
 }
 
 impl DrumVoice {
@@ -306,8 +323,10 @@ impl DrumVoice {
     pub const RESONANT: [DrumVoice; 6] = [DrumVoice::RsKick, DrumVoice::RsSnare, DrumVoice::RsHat, DrumVoice::RsFmKick, DrumVoice::RsFmSnare, DrumVoice::RsCircuitKick];
     pub const MACRO: [DrumVoice; 12] = [DrumVoice::MkKick, DrumVoice::MkSnare, DrumVoice::MkHat, DrumVoice::MkClap, DrumVoice::MkTom, DrumVoice::MkRim, DrumVoice::MkFm, DrumVoice::MkNoise, DrumVoice::MkCowbell, DrumVoice::MkCymbal, DrumVoice::MkShaker, DrumVoice::MkClave];
     pub const CHIP: [DrumVoice; 44] = [DrumVoice::ChipConsoleKick, DrumVoice::ChipConsoleSampleKick, DrumVoice::ChipConsoleSnare, DrumVoice::ChipConsoleSampleSnare, DrumVoice::ChipConsoleHat, DrumVoice::ChipConsoleOpenHat, DrumVoice::ChipConsoleTom, DrumVoice::ChipConsoleCrash, DrumVoice::ChipHandheldKick, DrumVoice::ChipHandheldSnare, DrumVoice::ChipHandheldHat, DrumVoice::ChipHandheldOpenHat, DrumVoice::ChipHandheldTom, DrumVoice::ChipHandheldClap, DrumVoice::ChipMicroKick, DrumVoice::ChipMicroSnare, DrumVoice::ChipMicroTom, DrumVoice::ChipMicroClap, DrumVoice::ChipMicroRim, DrumVoice::ChipMicroHat, DrumVoice::ChipMicroOpenHat, DrumVoice::ChipMicroPunchKick, DrumVoice::ChipMicroPunchSnare, DrumVoice::ChipMicroPunchClap, DrumVoice::ChipMicroPunchRim, DrumVoice::ChipMicroPunchHat, DrumVoice::ChipMicroPunchOpenHat, DrumVoice::ChipMicroPunchTom, DrumVoice::ChipArcadeKick, DrumVoice::ChipArcadeSnare, DrumVoice::ChipArcadeTom, DrumVoice::ChipArcadeHat, DrumVoice::ChipArcadeOpenHat, DrumVoice::ChipArcadeCowbell, DrumVoice::ChipBeeperKick, DrumVoice::ChipBeeperSnare, DrumVoice::ChipBeeperHat, DrumVoice::ChipBeeperTom, DrumVoice::ChipWoodKick, DrumVoice::ChipWoodSnare, DrumVoice::ChipWoodHat, DrumVoice::ChipWoodTom, DrumVoice::ChipWoodZap, DrumVoice::ChipWoodBoom];
+    /// In the order of `keytone::DRUMS`.
+    pub const KEYTONE: [DrumVoice; 14] = [DrumVoice::KtKick, DrumVoice::KtSnare, DrumVoice::KtRim, DrumVoice::KtClap, DrumVoice::KtHat, DrumVoice::KtOpenHat, DrumVoice::KtTomHigh, DrumVoice::KtTomLow, DrumVoice::KtCymbal, DrumVoice::KtClaves, DrumVoice::KtCowbell, DrumVoice::KtCongaHigh, DrumVoice::KtCongaLow, DrumVoice::KtMaracas];
     /// The voices as the pad menu groups them.
-    pub const GROUPS: [(&'static str, &'static [DrumVoice]); 14] = [
+    pub const GROUPS: [(&'static str, &'static [DrumVoice]); 15] = [
         ("Acoustic", &Self::ACOUSTIC),
         ("Retro", &Self::RETRO),
         ("Classic", &Self::CLASSIC),
@@ -322,6 +341,7 @@ impl DrumVoice {
         ("Resonant", &Self::RESONANT),
         ("Macro", &Self::MACRO),
         ("Chip", &Self::CHIP),
+        ("Keytone", &Self::KEYTONE),
     ];
 
     pub fn family(self) -> Family {
@@ -341,6 +361,8 @@ impl DrumVoice {
             Family::Macro
         } else if Self::CHIP.contains(&self) {
             Family::Chip
+        } else if Self::KEYTONE.contains(&self) {
+            Family::Keytone
         } else {
             Family::Classic
         }
@@ -519,6 +541,20 @@ impl DrumVoice {
             DrumVoice::ChipWoodTom => "Woodgrain Tom",
             DrumVoice::ChipWoodZap => "Woodgrain Zap",
             DrumVoice::ChipWoodBoom => "Woodgrain Boom",
+            DrumVoice::KtKick => "Keytone Bass Drum",
+            DrumVoice::KtSnare => "Keytone Snare",
+            DrumVoice::KtRim => "Keytone Rim",
+            DrumVoice::KtClap => "Keytone Clap",
+            DrumVoice::KtHat => "Keytone Hi-Hat",
+            DrumVoice::KtOpenHat => "Keytone Open Hat",
+            DrumVoice::KtTomHigh => "Keytone High Tom",
+            DrumVoice::KtTomLow => "Keytone Low Tom",
+            DrumVoice::KtCymbal => "Keytone Cymbal",
+            DrumVoice::KtClaves => "Keytone Claves",
+            DrumVoice::KtCowbell => "Keytone Cowbell",
+            DrumVoice::KtCongaHigh => "Keytone High Conga",
+            DrumVoice::KtCongaLow => "Keytone Low Conga",
+            DrumVoice::KtMaracas => "Keytone Maracas",
             _ => "",
         }
     }
@@ -683,6 +719,20 @@ impl DrumVoice {
             DrumVoice::ChipWoodTom => 45,
             DrumVoice::ChipWoodZap => 51,
             DrumVoice::ChipWoodBoom => 57,
+            DrumVoice::KtKick => 36,
+            DrumVoice::KtRim => 37,
+            DrumVoice::KtSnare => 38,
+            DrumVoice::KtClap => 39,
+            DrumVoice::KtHat => 42,
+            DrumVoice::KtTomLow => 45,
+            DrumVoice::KtOpenHat => 46,
+            DrumVoice::KtTomHigh => 48,
+            DrumVoice::KtCymbal => 49,
+            DrumVoice::KtCowbell => 56,
+            DrumVoice::KtCongaHigh => 62,
+            DrumVoice::KtCongaLow => 64,
+            DrumVoice::KtMaracas => 70,
+            DrumVoice::KtClaves => 75,
         }
     }
 
@@ -723,6 +773,7 @@ impl DrumVoice {
                 _ => [None, None],
             },
             Family::Chip => [Some("Sweep"), Some("Noise")],
+            Family::Keytone => [Some("Rate"), Some("Bits")],
             Family::Retro => match self {
                 DrumVoice::HxKick => [Some("Drop"), None],
                 DrumVoice::HxTomHigh | DrumVoice::HxTomMid | DrumVoice::HxTomLow => [Some("Sweep"), None],
@@ -825,6 +876,8 @@ pub enum DrumEngine {
     MacroDrums,
     /// The old chips' drums.
     Chip,
+    /// The toy sampling keyboard's drums (see `keytone`).
+    Keytone,
 }
 
 static G606: [(&str, &[DrumVoice]); 1] = [("606", &DrumVoice::M606)];
@@ -841,12 +894,13 @@ static GRETRO: [(&str, &[DrumVoice]); 1] = [("Retro", &DrumVoice::RETRO)];
 static GRESONANT: [(&str, &[DrumVoice]); 1] = [("Resonant", &DrumVoice::RESONANT)];
 static GMACRO: [(&str, &[DrumVoice]); 1] = [("Macro", &DrumVoice::MACRO)];
 static GCHIP: [(&str, &[DrumVoice]); 1] = [("Chip", &DrumVoice::CHIP)];
+static GKEYTONE: [(&str, &[DrumVoice]); 1] = [("Keytone", &DrumVoice::KEYTONE)];
 static GREAL: [(&str, &[DrumVoice]); 2] = [("Acoustic", &DrumVoice::ACOUSTIC), ("Percussion", &REAL_PERC)];
 
 impl DrumEngine {
     /// The engines to choose from. `Shakers` is only kept for old projects:
     /// its kits are the Drum Rack's now, and Shakers is an instrument.
-    pub const ALL: [DrumEngine; 14] = [DrumEngine::RealDrums, DrumEngine::SampledMachines, DrumEngine::Acoustic, DrumEngine::Retro, DrumEngine::Chip, DrumEngine::Resonant, DrumEngine::MacroDrums, DrumEngine::M808, DrumEngine::M909, DrumEngine::M606, DrumEngine::Cr78, DrumEngine::Mutable, DrumEngine::FmDrums, DrumEngine::Rack];
+    pub const ALL: [DrumEngine; 15] = [DrumEngine::RealDrums, DrumEngine::SampledMachines, DrumEngine::Acoustic, DrumEngine::Retro, DrumEngine::Chip, DrumEngine::Resonant, DrumEngine::MacroDrums, DrumEngine::M808, DrumEngine::M909, DrumEngine::M606, DrumEngine::Cr78, DrumEngine::Mutable, DrumEngine::FmDrums, DrumEngine::Rack, DrumEngine::Keytone];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -865,6 +919,7 @@ impl DrumEngine {
             DrumEngine::MacroDrums => "Macro Drums",
             DrumEngine::Chip => "Chip Drums",
             DrumEngine::SampledMachines => "Sampled Machines",
+            DrumEngine::Keytone => "Keytone Drums",
         }
     }
 
@@ -885,6 +940,7 @@ impl DrumEngine {
             DrumEngine::Retro => "More drum machines: a seventies rhythm box (bongos, claves, guiro), the hexagonal electronic kit with its sweeping toms, the crunchy 8-bit digital eighties, a pocket rhythm machine",
             DrumEngine::RealDrums => "Recorded drums: acoustic kits from rusty rock, classic rock, metal and a big room to garage, seventies, a jazz club, brushes and dry; hand and body percussion and tabla. With velocity layers and round robins (free samples, each kit downloaded on first use; until then Krabton's own drums stand in)",
             DrumEngine::Acoustic => "A real drum kit, modelled: kick, snare with its wires, side stick, three toms, hi-hat (closed, pedal, open), ride and its bell, crashes; every hit a little different, harder hits brighter",
+            DrumEngine::Keytone => "The rhythm section of the toy sampling keyboards and small home keyboards of the eighties: bass drum, snare, rim, clap, hi-hats, two toms, cymbal, claves, cowbell, congas and maracas as crunchy 8-bit samples at about 9.4 kHz (Rate and Bits on every pad). Play them with Home Rhythms",
         }
     }
 
@@ -906,6 +962,7 @@ impl DrumEngine {
             DrumEngine::MacroDrums => &GMACRO,
             DrumEngine::Chip => &GCHIP,
             DrumEngine::SampledMachines => &GMACHINES,
+            DrumEngine::Keytone => &GKEYTONE,
         }
     }
 
@@ -926,6 +983,7 @@ impl DrumEngine {
             DrumEngine::MacroDrums => &["Macro Kit", "Macro Electro", "Macro Industrial"],
             DrumEngine::Chip => &["Console Kit", "Handheld Kit", "Micro Kit", "Micro Punch Kit", "Arcade Kit", "Beeper Kit", "Woodgrain Kit"],
             DrumEngine::Rack => &["Classic 808", "Classic 909", "Classic Lo-Fi", "Hybrid", "Electro", "606 Electro", "Shaker Kit", "Hand Percussion", "Found Sounds"],
+            DrumEngine::Keytone => &["Keytone Kit", "Home Keyboard Kit", "Toy Crunch Kit"],
         }
     }
 }
@@ -1107,6 +1165,47 @@ fn acoustic_kit(name: &str) -> Vec<DrumPad> {
 }
 
 /// A pad playing `voice` on `note`, named `name`, set up by `f`.
+/// The toy keyboard's kit: as it is, cleaner (a home keyboard's faster
+/// converter), or crushed further.
+fn keytone_kit(name: &str) -> Vec<DrumPad> {
+    use DrumVoice::*;
+    // Its samples made now, not on the audio thread.
+    super::keytone::warm();
+    let (rate, bits, tone) = match name {
+        "Home Keyboard Kit" => (0.8, 0.75, 0.75),
+        "Toy Crunch Kit" => (0.2, 0.25, 0.45),
+        _ => (0.5, 0.5, 0.6),
+    };
+    let mut pads = vec![
+        pad("Bass Drum", KtKick, 36, |p| p.level_db = 0.0),
+        pad("Rim", KtRim, 37, |p| p.level_db = -6.0),
+        pad("Snare", KtSnare, 38, |p| p.level_db = -1.0),
+        pad("Clap", KtClap, 39, |p| p.level_db = -4.0),
+        pad("Hi-Hat", KtHat, 42, |p| {
+            p.choke = 1;
+            p.level_db = -7.0;
+        }),
+        pad("Low Tom", KtTomLow, 45, |p| p.level_db = -2.0),
+        pad("Open Hat", KtOpenHat, 46, |p| {
+            p.choke = 1;
+            p.level_db = -7.0;
+        }),
+        pad("High Tom", KtTomHigh, 48, |p| p.level_db = -2.0),
+        pad("Cymbal", KtCymbal, 49, |p| p.level_db = -8.0),
+        pad("Cowbell", KtCowbell, 56, |p| p.level_db = -8.0),
+        pad("High Conga", KtCongaHigh, 62, |p| p.level_db = -4.0),
+        pad("Low Conga", KtCongaLow, 64, |p| p.level_db = -4.0),
+        pad("Maracas", KtMaracas, 70, |p| p.level_db = -8.0),
+        pad("Claves", KtClaves, 75, |p| p.level_db = -7.0),
+    ];
+    for p in pads.iter_mut() {
+        p.a = rate;
+        p.b = bits;
+        p.tone = tone;
+    }
+    pads
+}
+
 fn pad(name: &str, voice: DrumVoice, note: u8, f: impl FnOnce(&mut DrumPad)) -> DrumPad {
     let mut p = DrumPad::new(voice);
     p.name = name.to_string();
@@ -1385,6 +1484,8 @@ pub fn kit(name: &str) -> Vec<DrumPad> {
             pad("Open Hat", ChipWoodHat, 46, |p| p.decay = 6.0),
             pad("High Tom", ChipWoodTom, 48, |p| p.tune = 5.0),
         ],
+        // ---------------------------------------------------------- Keytone
+        n @ ("Keytone Kit" | "Home Keyboard Kit" | "Toy Crunch Kit") => keytone_kit(n),
         // ---------------------------------------------------------- Retro
         "Rhythm Box" => vec![
             pad("Bass Drum", RbKick, 36, |p| p.level_db = 0.0),
@@ -2091,6 +2192,7 @@ struct PadVoice {
     circuit: CircuitKick,
     macro_voice: MacroVoice,
     chip: ChipVoice,
+    keytone: KeytoneDrum,
 }
 
 impl PadVoice {
@@ -2127,6 +2229,7 @@ impl PadVoice {
             circuit: CircuitKick::default(),
             macro_voice: MacroVoice::default(),
             chip: ChipVoice::default(),
+            keytone: KeytoneDrum::default(),
         }
     }
 
@@ -2272,6 +2375,11 @@ impl PadVoice {
                 let k = ChipKnobs { tune: tr, decay: d, tone, sweep: pad.a, noise: pad.b };
                 self.chip.trigger(kind, k, 1.0, sr);
             }
+            Family::Keytone => {
+                let drum = DrumVoice::KEYTONE.iter().position(|v| *v == pad.voice).unwrap_or(0);
+                // (velocity sets its loudness in the rack)
+                self.keytone.trigger(drum, tr, d, tone, pad.a, pad.b, sr);
+            }
             Family::Classic => {}
         }
         match pad.voice {
@@ -2398,6 +2506,13 @@ impl PadVoice {
             Family::Chip => {
                 let y = self.chip.tick() * 1.4;
                 if !self.chip.is_active() {
+                    self.active = false;
+                }
+                return y;
+            }
+            Family::Keytone => {
+                let y = self.keytone.tick() * 0.9;
+                if !self.keytone.is_active() {
                     self.active = false;
                 }
                 return y;

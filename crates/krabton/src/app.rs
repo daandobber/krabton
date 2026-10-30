@@ -183,6 +183,8 @@ pub enum BrowserItem {
     Theremin(&'static str),
     /// A Granulator preset.
     Granulator(&'static str),
+    /// A Keytone preset.
+    Keytone(&'static str),
 }
 
 /// A bank of DX7 voices for FM.
@@ -261,6 +263,7 @@ impl BrowserItem {
             BrowserItem::SamplerPatch(p) => p.file_stem().map(|f| f.to_string_lossy().to_string()).unwrap_or_default(),
             BrowserItem::Theremin(p) => format!("Theremin: {p}"),
             BrowserItem::Granulator(p) => format!("Granulator: {p}"),
+            BrowserItem::Keytone(p) => format!("Keytone: {p}"),
         }
     }
 }
@@ -1125,6 +1128,7 @@ impl App {
                             K::Euclid | K::DrumGrid | K::DrumMap | K::Marbles | K::Chance | K::Bits => Instrument::drums("909 Classic"),
                             K::Percussion => Instrument::drums("808 Latin"),
                             K::Drummer => Instrument::drums("Studio Kit"),
+                            K::HomeRhythms => Instrument::drums("Keytone Kit"),
                             K::Acid => Instrument::synth("Acid"),
                             K::Progression => Instrument::synth("Soft Pad"),
                             K::PianoPlayer => Instrument::synth("Keys"),
@@ -1217,7 +1221,7 @@ impl App {
                 }
                 self.toast(format!("Loading {} ...", info.name));
             }
-            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::StreetOrgan(_) | BrowserItem::Harmonica(_) | BrowserItem::Calculator(_) | BrowserItem::Console(_) | BrowserItem::Handheld(_) | BrowserItem::Micro(_) | BrowserItem::Warp(_) | BrowserItem::Hybrid(_) | BrowserItem::Quartet(_) | BrowserItem::ChipFm(_) | BrowserItem::V2(_) | BrowserItem::Oidos(_) | BrowserItem::Orchestra(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) | BrowserItem::Coast(_) | BrowserItem::Crimson(_) | BrowserItem::Silicon(_) | BrowserItem::Theremin(_) | BrowserItem::Granulator(_) => {
+            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::StreetOrgan(_) | BrowserItem::Harmonica(_) | BrowserItem::Calculator(_) | BrowserItem::Console(_) | BrowserItem::Handheld(_) | BrowserItem::Micro(_) | BrowserItem::Warp(_) | BrowserItem::Hybrid(_) | BrowserItem::Quartet(_) | BrowserItem::ChipFm(_) | BrowserItem::V2(_) | BrowserItem::Oidos(_) | BrowserItem::Orchestra(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) | BrowserItem::Coast(_) | BrowserItem::Crimson(_) | BrowserItem::Silicon(_) | BrowserItem::Theremin(_) | BrowserItem::Granulator(_) | BrowserItem::Keytone(_) => {
                 let inst = match item {
                     BrowserItem::Synth(p) => Instrument::synth(p),
                     BrowserItem::Macro(p) => Instrument::macro_osc(p),
@@ -1264,6 +1268,7 @@ impl App {
                     BrowserItem::Silicon(p) => Instrument::silicon(p),
                     BrowserItem::Theremin(p) => Instrument::theremin(p),
                     BrowserItem::Granulator(p) => Instrument::granulator(p),
+                    BrowserItem::Keytone(p) => Instrument::keytone(p),
                     BrowserItem::Drums(k) => Instrument::drums(k),
                     _ => Instrument::sampler(None),
                 };
@@ -1565,6 +1570,12 @@ impl App {
                                     zones.clear();
                                 }
                                 Some(Instrument::Granulator { sample: s, .. }) => *s = Some(sample),
+                                Some(Instrument::Keytone { sample: s, params, .. }) => {
+                                    *s = Some(sample);
+                                    if let Some(v) = params.get_mut(krabton_engine::dsp::keytone::SOUND) {
+                                        *v = krabton_engine::dsp::keytone::SAMPLE_SLOT as f32;
+                                    }
+                                }
                                 Some(Instrument::Drums { pads, .. }) => {
                                     if let Some(pad) = pads.get_mut(self.sel_pad) {
                                         pad.name = sample.name.clone();
@@ -3941,6 +3952,13 @@ impl App {
                     let names = krabton_engine::dsp::granulator::preset_names();
                     let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
                     self.apply_item(&BrowserItem::Granulator(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                // keytone=N: a new track with Keytone preset N.
+                "keytone" => {
+                    let names = krabton_engine::dsp::keytone::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Keytone(p), DropTarget::NewTrack);
                     self.detail = DetailTab::Devices;
                 }
                 "guitar" => {
