@@ -106,6 +106,10 @@ pub struct PrincessVoice {
     taps: [usize; 4],
     /// The song's tempo (the Hat Roll keeps it).
     pub bpm: f32,
+    /// How far the drop in pitch at the hit goes and how long it takes, as
+    /// multiples of the voice's own (1: as designed; the machine sets them).
+    pub pitch_amt: f32,
+    pub pitch_time: f32,
 }
 
 impl Default for PrincessVoice {
@@ -154,6 +158,8 @@ impl Default for PrincessVoice {
             room_pos: 0,
             taps: ROOM_TAPS,
             bpm: 120.0,
+            pitch_amt: 1.0,
+            pitch_time: 1.0,
         }
     }
 }
@@ -289,6 +295,19 @@ impl PrincessVoice {
     /// decay (1 = as designed), `tone`, `a` and `b` are the pad's knobs.
     #[allow(clippy::too_many_arguments)]
     pub fn trigger(&mut self, voice: DrumVoice, vel: f32, tune: f32, key_hz: Option<f32>, legato: bool, decay: f32, tone: f32, a: f32, b: f32, sr: f32) {
+        self.hit(voice, vel, tune, key_hz, legato, decay, tone, a, b, sr);
+        // A new hit (not a slide): its drop in pitch as the machine shapes it.
+        if self.t == 0 && (self.pitch_amt != 1.0 || self.pitch_time != 1.0) {
+            let time = self.pitch_time.max(0.05);
+            for k in 0..2 {
+                self.bend[k] *= self.pitch_amt.max(0.0);
+                self.bend_coef[k] = self.bend_coef[k].powf(1.0 / time);
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn hit(&mut self, voice: DrumVoice, vel: f32, tune: f32, key_hz: Option<f32>, legato: bool, decay: f32, tone: f32, a: f32, b: f32, sr: f32) {
         use DrumVoice::*;
         let ringing = self.active && self.sr == sr;
         self.sr = sr;
@@ -650,6 +669,224 @@ impl PrincessVoice {
     }
 }
 
+/// How the machine's 808 is distorted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Dist {
+    /// A round saturation, never quite square.
+    Soft,
+    /// Soft into a hard clip at the ceiling (the 2015 808).
+    Hard,
+    /// Folded back on itself past the ceiling (808 into 808).
+    Fold,
+    /// Lopsided, as a valve: the even harmonics come up.
+    Tube,
+}
+
+impl Dist {
+    pub fn from_index(i: f32) -> Self {
+        match i.round() as i32 {
+            0 => Dist::Soft,
+            2 => Dist::Fold,
+            3 => Dist::Tube,
+            _ => Dist::Hard,
+        }
+    }
+}
+
+/// The knobs of the machine's 808 at a hit.
+#[derive(Clone, Copy, Debug)]
+pub struct Knobs808 {
+    /// How hard it is driven into its distortion (0..1).
+    pub drive: f32,
+    pub dist: Dist,
+    /// The second 808 multiplying the first (0..1), and how far the first
+    /// pushes the second one's pitch around (Feed, 0..1).
+    pub ring: f32,
+    pub feed: f32,
+    /// The second 808's pitch above the first (semitones) and its decay (a
+    /// multiple of the first's).
+    pub ring_semis: f32,
+    pub ring_decay: f32,
+    /// The decay (a multiple of the designed one).
+    pub decay: f32,
+    /// How long a slide takes (s).
+    pub glide: f32,
+    /// A sine an octave down (0..1) and the click at the hit (0..1).
+    pub sub: f32,
+    pub click: f32,
+    /// The drop in pitch at the hit: how far and how long (multiples).
+    pub pitch_amt: f32,
+    pub pitch_time: f32,
+}
+
+impl Default for Knobs808 {
+    fn default() -> Self {
+        Self { drive: 0.5, dist: Dist::Hard, ring: 0.3, feed: 0.0, ring_semis: 7.0, ring_decay: 1.0, decay: 1.0, glide: 0.12, sub: 0.0, click: 0.5, pitch_amt: 1.0, pitch_time: 1.0 }
+    }
+}
+
+/// The machine's 808: one voice with all of Analog Princess's 808s in it.
+/// A sine dropping into its note, a second 808 above it that rings it
+/// (Ring) or is pushed around by it (Feed), a sub an octave down, a click,
+/// then one of four distortions. A slide glides to the next note without a
+/// new hit.
+pub struct Princess808 {
+    sr: f32,
+    active: bool,
+    quiet: u32,
+    t: u32,
+    phase: [f32; 3],
+    /// The first 808, the second, the click.
+    env: [f32; 3],
+    coef: [f32; 3],
+    bend: [f32; 2],
+    bend_coef: [f32; 2],
+    pitch: f32,
+    target: f32,
+    glide_step: f32,
+    glide_left: u32,
+    lp: OnePole,
+    dc: OnePole,
+    k: Knobs808,
+    ratio: f32,
+}
+
+impl Default for Princess808 {
+    fn default() -> Self {
+        Self {
+            sr: 48000.0,
+            active: false,
+            quiet: 0,
+            t: 0,
+            phase: [0.0; 3],
+            env: [0.0; 3],
+            coef: [0.0; 3],
+            bend: [0.0; 2],
+            bend_coef: [0.0; 2],
+            pitch: BASE_808.log2(),
+            target: BASE_808.log2(),
+            glide_step: 0.0,
+            glide_left: 0,
+            lp: OnePole::default(),
+            dc: OnePole::default(),
+            k: Knobs808::default(),
+            ratio: 1.5,
+        }
+    }
+}
+
+impl Princess808 {
+    pub fn is_active(&self) -> bool {
+        self.active
+    }
+
+    /// Its pitch now (Hz).
+    pub fn hz(&self) -> f32 {
+        self.pitch.exp2()
+    }
+
+    /// Plays `hz`. With `slide` (and while it still rings) it glides there
+    /// in `k.glide` without a new hit.
+    pub fn trigger(&mut self, hz: f32, vel: f32, slide: bool, k: Knobs808, sr: f32) {
+        let ringing = self.active && self.sr == sr;
+        self.sr = sr;
+        self.k = k;
+        self.ratio = 2f32.powf(k.ring_semis / 12.0);
+        let to = hz.max(1.0).log2();
+        self.target = to;
+        if slide && ringing {
+            let n = (k.glide.max(0.005) * sr).max(1.0);
+            self.glide_step = (to - self.pitch) / n;
+            self.glide_left = n as u32;
+            // No new hit: it only comes up a little.
+            self.env[0] = self.env[0].max(0.6 * vel.clamp(0.3, 1.0));
+            self.env[1] = self.env[1].max(0.4);
+            return;
+        }
+        self.pitch = to;
+        self.glide_left = 0;
+        self.active = true;
+        self.quiet = 0;
+        self.t = 0;
+        if !ringing {
+            self.phase = [0.0; 3];
+        }
+        let d = k.decay.max(0.05);
+        let dc = |s: f32| decay_coef(s, sr);
+        self.env = [1.0, 1.0, 1.0];
+        self.coef = [dc(1.4 * d), dc(0.6 * d * k.ring_decay.max(0.05)), dc(0.004)];
+        // Both drop into their notes, the second more slowly.
+        let time = k.pitch_time.max(0.05);
+        self.bend = [1.2 * k.pitch_amt.max(0.0), 0.6 * k.pitch_amt.max(0.0)];
+        self.bend_coef = [dc(0.03 * time), dc(0.06 * time)];
+        self.lp.set(1500.0 + 4000.0 * k.drive, sr);
+        self.lp.z = 0.0;
+        self.dc.set(12.0, sr);
+    }
+
+    #[inline]
+    fn adv(&mut self, i: usize, f: f32) -> f32 {
+        let p = self.phase[i] + f / self.sr;
+        self.phase[i] = p - p.floor();
+        self.phase[i]
+    }
+
+    #[inline]
+    pub fn tick(&mut self, rng: &mut Rng) -> f32 {
+        if !self.active {
+            return 0.0;
+        }
+        let k = self.k;
+        if self.glide_left > 0 {
+            self.pitch += self.glide_step;
+            self.glide_left -= 1;
+            if self.glide_left == 0 {
+                self.pitch = self.target;
+            }
+        }
+        let f = self.pitch.exp2();
+        let out1 = sine(self.adv(0, f * (1.0 + self.bend[0]))) * self.env[0];
+        // Feed: the first 808 pushes the second's pitch around.
+        let f2 = f * self.ratio * (1.0 + self.bend[1]) * (1.0 + 3.0 * k.feed * out1);
+        let s2 = sine(self.adv(1, f2)) * self.env[1];
+        let sub = sine(self.adv(2, f * 0.5)) * self.env[0] * k.sub * 0.8;
+        let click = self.lp.lp(rng.bipolar()) * self.env[2] * k.click * 1.2;
+        let x = out1 * (1.0 - 0.6 * k.ring - 0.3 * k.feed) + out1 * s2 * 1.6 * k.ring + s2 * 0.6 * k.feed * self.env[0] + sub + click;
+        let drive = k.drive;
+        let y = match k.dist {
+            Dist::Soft => fast_tanh(x * (1.0 + 4.0 * drive)) * CEILING,
+            Dist::Hard => fry(x, drive),
+            Dist::Fold => fast_tanh(fold(x * (1.0 + 5.0 * drive)) * 1.3) * CEILING,
+            Dist::Tube => {
+                let t = x * (1.0 + 4.0 * drive);
+                let y = fast_tanh(t + 0.45 * (0.3 + drive) * t * t);
+                // (the lopsided part's offset, taken out)
+                ((y - self.dc.lp(y)) * CEILING).clamp(-CEILING, CEILING)
+            }
+        };
+        for (e, c) in self.env.iter_mut().zip(self.coef) {
+            *e *= c;
+        }
+        self.bend[0] *= self.bend_coef[0];
+        self.bend[1] *= self.bend_coef[1];
+        self.t = self.t.saturating_add(1);
+        if self.t as f32 > 0.02 * self.sr && y.abs() < 2e-4 {
+            self.quiet += 1;
+        } else {
+            self.quiet = 0;
+        }
+        if self.quiet as f32 > 0.05 * self.sr || !y.is_finite() {
+            self.active = false;
+            return 0.0;
+        }
+        y
+    }
+
+    pub fn stop(&mut self) {
+        self.active = false;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -872,6 +1109,49 @@ mod tests {
         };
         let (soft, hard) = (hat(0.2), hat(1.0));
         assert!(rms(&hard[1200..]) > 1.5 * rms(&soft[1200..]), "a hard hit is longer");
+    }
+
+    #[test]
+    fn the_machines_808_slides_and_distorts_four_ways() {
+        let (c1, g1) = (midi_to_freq(24.0), midi_to_freq(31.0));
+        let mut v = Princess808::default();
+        let mut rng = Rng::new(5);
+        let k = Knobs808 { drive: 0.0, ring: 0.0, click: 0.0, decay: 2.0, glide: 0.2, ..Knobs808::default() };
+        v.trigger(c1, 1.0, false, k, SR);
+        let x: Vec<f32> = (0..(0.4 * SR) as usize).map(|_| v.tick(&mut rng)).collect();
+        assert!((pitch(at(&x, 0.15, 0.4)) / c1 - 1.0).abs() < 0.03);
+        v.trigger(g1, 1.0, true, k, SR);
+        let y: Vec<f32> = (0..(0.6 * SR) as usize).map(|_| v.tick(&mut rng)).collect();
+        let mid = pitch(at(&y, 0.05, 0.15));
+        assert!(mid > c1 * 1.12 && mid < g1 * 0.92, "on its way: {mid}");
+        assert!((pitch(at(&y, 0.25, 0.55)) / g1 - 1.0).abs() < 0.03);
+        assert!(peak(&y) < peak(&x) * 1.05, "a slide is no new hit");
+        // Every distortion stays under the ceiling and brings up harmonics.
+        for dist in [Dist::Soft, Dist::Hard, Dist::Fold, Dist::Tube] {
+            let mut v = Princess808::default();
+            v.trigger(BASE_808, 1.0, false, Knobs808 { drive: 1.0, dist, ring: 0.0, click: 0.0, ..Knobs808::default() }, SR);
+            let x: Vec<f32> = (0..(0.5 * SR) as usize).map(|_| v.tick(&mut rng)).collect();
+            assert!(x.iter().all(|s| s.is_finite()));
+            assert!(peak(&x) <= CEILING + 1e-4, "{dist:?}: {}", peak(&x));
+            let w = at(&x, 0.1, 0.4);
+            let partials = (magnitude(w, BASE_808 * 2.0) + magnitude(w, BASE_808 * 3.0)) / magnitude(w, BASE_808);
+            assert!(partials > 0.15, "{dist:?}: {partials}");
+        }
+    }
+
+    #[test]
+    fn the_machine_shapes_the_drop_in_pitch() {
+        // The kick's drop, twice as far: higher at the start, the same after.
+        let run = |amt: f32| {
+            let mut v = PrincessVoice::default();
+            v.pitch_amt = amt;
+            let mut rng = Rng::new(2);
+            v.trigger(DrumVoice::ApKick, 1.0, 1.0, None, false, 1.0, 0.0, 0.5, 0.0, SR);
+            (0..(0.3 * SR) as usize).map(|_| v.tick(DrumVoice::ApKick, &mut rng)).collect::<Vec<f32>>()
+        };
+        let (plain, far) = (run(1.0), run(2.0));
+        assert!(pitch(at(&far, 0.0, 0.02)) > 1.3 * pitch(at(&plain, 0.0, 0.02)));
+        assert!((pitch(at(&far, 0.2, 0.3)) / pitch(at(&plain, 0.2, 0.3)) - 1.0).abs() < 0.05);
     }
 
     /// Levels of every voice (cargo test -- --ignored --nocapture princess_levels).

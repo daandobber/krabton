@@ -294,6 +294,7 @@ pub fn instrument_specs(i: &Instrument) -> Option<&'static [ParamSpec]> {
         Instrument::Theremin { .. } => Some(crate::dsp::theremin::SPECS),
         Instrument::Granulator { .. } => Some(crate::dsp::granulator::SPECS),
         Instrument::Keytone { .. } => Some(crate::dsp::keytone::SPECS),
+        Instrument::Princess { .. } => Some(crate::dsp::princess_machine::SPECS),
         _ => None,
     }
 }
@@ -304,6 +305,7 @@ pub fn instrument_params(i: &Instrument) -> Option<&[f32]> {
         Instrument::Theremin { params, .. } => Some(params),
         Instrument::Granulator { params, .. } => Some(params),
         Instrument::Keytone { params, .. } => Some(params),
+        Instrument::Princess { params, .. } => Some(params),
         _ => None,
     }
 }
@@ -315,6 +317,7 @@ pub fn instrument_params_mut(i: &mut Instrument) -> Option<&mut Vec<f32>> {
         Instrument::Theremin { params, .. } => Some(params),
         Instrument::Granulator { params, .. } => Some(params),
         Instrument::Keytone { params, .. } => Some(params),
+        Instrument::Princess { params, .. } => Some(params),
         _ => None,
     }
 }
