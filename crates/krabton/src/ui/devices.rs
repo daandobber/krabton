@@ -441,6 +441,8 @@ struct Pack {
     /// The free rectangles, from the origin.
     free: Vec<Rect>,
     bottom: f32,
+    /// Where each piece goes, worked out before any is drawn.
+    planned: Vec<(Id, egui::Pos2)>,
 }
 
 const PACK_GAP: f32 = 6.0;
@@ -450,7 +452,49 @@ const PACK_DEPTH: f32 = 100_000.0;
 impl Pack {
     fn new(origin: egui::Pos2, width: f32) -> Self {
         let width = width.max(100.0);
-        Self { origin, width, free: vec![Rect::from_min_size(egui::Pos2::ZERO, vec2(width, PACK_DEPTH))], bottom: 0.0 }
+        Self { origin, width, free: vec![Rect::from_min_size(egui::Pos2::ZERO, vec2(width, PACK_DEPTH))], bottom: 0.0, planned: Vec::new() }
+    }
+
+    /// The pieces' places, by their sizes: laid in their order, the biggest
+    /// first, the tallest first and the widest first, and the way that ends
+    /// highest up (the least room left empty) kept.
+    fn plan(origin: egui::Pos2, width: f32, pieces: &[(Id, egui::Vec2)]) -> Self {
+        let n = pieces.len();
+        let mut orders: Vec<Vec<usize>> = vec![(0..n).collect()];
+        for key in [0, 1, 2] {
+            let mut o: Vec<usize> = (0..n).collect();
+            o.sort_by(|&a, &b| {
+                let (sa, sb) = (pieces[a].1, pieces[b].1);
+                let (ka, kb) = match key {
+                    0 => (sa.x * sa.y, sb.x * sb.y),
+                    1 => (sa.y, sb.y),
+                    _ => (sa.x, sb.x),
+                };
+                kb.total_cmp(&ka).then(a.cmp(&b))
+            });
+            orders.push(o);
+        }
+        let mut best: Option<Pack> = None;
+        for order in orders {
+            let mut pk = Pack::new(origin, width);
+            for &i in &order {
+                let (id, size) = pieces[i];
+                let at = pk.spot(size);
+                pk.take(Rect::from_min_size(at, size));
+                pk.planned.push((id, at));
+            }
+            if best.as_ref().is_none_or(|b| pk.bottom < b.bottom - 0.5) {
+                best = Some(pk);
+            }
+        }
+        let mut pk = best.unwrap_or_else(|| Pack::new(origin, width));
+        pk.bottom = 0.0;
+        pk
+    }
+
+    /// A piece's size as drawn last time (a guess before it ever was).
+    fn size_of(ui: &Ui, id: Id) -> egui::Vec2 {
+        ui.ctx().memory(|m| m.data.get_temp(id.with("size"))).unwrap_or(vec2(300.0, 200.0))
     }
 
     /// Where a piece of `size` goes: the highest free place it fits, then the leftmost.
@@ -512,18 +556,19 @@ fn place<R>(ui: &mut Ui, pack: &mut Option<Pack>, id: Id, draw: impl FnOnce(&mut
         return (r.inner, r.response.rect);
     };
     let mem = id.with("size");
-    let size: egui::Vec2 = ui.ctx().memory(|m| m.data.get_temp(mem)).unwrap_or(vec2(300.0, 200.0));
-    let at = pk.spot(size);
+    let size = Pack::size_of(ui, id);
+    // Its planned place (a piece the plan did not know goes under the rest).
+    let at = pk.planned.iter().find(|p| p.0 == id).map(|p| p.1).unwrap_or(pk.origin + vec2(0.0, pk.bottom));
     let room = Rect::from_min_size(at, vec2((pk.origin.x + pk.width - at.x).max(size.x), 4000.0));
     let mut child = ui.new_child(UiBuilder::new().id_salt(id).max_rect(room).layout(egui::Layout::left_to_right(egui::Align::Min)));
     let inner = draw(&mut child);
     let rect = child.min_rect();
     if (rect.size() - size).length() > 1.0 {
-        // Its size moved: the others find their places again next frame.
+        // Its size moved: the pieces are planned again next frame.
         ui.ctx().memory_mut(|m| m.data.insert_temp(mem, rect.size()));
         ui.ctx().request_repaint();
     }
-    pk.take(rect);
+    pk.bottom = pk.bottom.max(rect.bottom() - pk.origin.y + PACK_GAP);
     (inner, rect)
 }
 
@@ -650,12 +695,41 @@ impl App {
         }
     }
 
+    /// The ids of a chain's pieces as `device_chain` draws them: MIDI effects
+    /// and their slot, the instrument (or its slot), the effects and their slot.
+    fn chain_pieces(&mut self, sel: TrackSel) -> Vec<Id> {
+        let mut ids = Vec::new();
+        if let TrackSel::Track(i) = sel {
+            if let Some(t) = self.project.tracks.get(i) {
+                if t.kind == krabton_engine::TrackKind::Midi {
+                    ids.extend(t.midi_devices.iter().map(|d| Id::new(("chain_piece", d.id))));
+                    ids.push(Id::new(("chain_midi_slot", i)));
+                }
+                if t.instrument.is_some() {
+                    ids.push(Id::new(("chain_piece", t.id)));
+                } else if t.kind == krabton_engine::TrackKind::Midi {
+                    ids.push(Id::new(("chain_inst_slot", i)));
+                }
+            }
+        }
+        let fx: Vec<u64> = self.chain_mut(sel).map(|c| c.iter().map(|d| d.id).collect()).unwrap_or_default();
+        ids.extend(fx.into_iter().map(|k| Id::new(("chain_piece", k))));
+        ids.push(Id::new(("chain_fx_slot", format!("{sel:?}"))));
+        ids
+    }
+
     pub(crate) fn device_chain(&mut self, ui: &mut Ui, sel: TrackSel, h: f32, resizable: bool) {
         let _accent = AccentScope::new(self.track_accent(sel));
         let mut actions = Vec::new();
         let mut midi_actions = Vec::new();
-        // The Studio's packed rows (a layout that wraps): every piece where it fits.
-        let mut pack = ui.layout().main_wrap().then(|| Pack::new(ui.cursor().min, ui.max_rect().right() - ui.cursor().min.x));
+        // The Studio's packed rows (a layout that wraps): every piece where it
+        // fits, planned from their sizes before any is drawn; the empty slots small there.
+        let packing = ui.layout().main_wrap();
+        let mut pack = packing.then(|| {
+            let pieces: Vec<(Id, egui::Vec2)> = self.chain_pieces(sel).into_iter().map(|id| (id, Pack::size_of(ui, id))).collect();
+            Pack::plan(ui.cursor().min, ui.max_rect().right() - ui.cursor().min.x, &pieces)
+        });
+        let slot_h = if packing { 64.0 } else { h };
         {
             {
                 if let TrackSel::Track(i) = sel {
@@ -682,7 +756,7 @@ impl App {
                                 self.rack_grip(ui, key, rect, hd);
                             }
                         }
-                        place(ui, &mut pack, Id::new(("chain_midi_slot", i)), |ui| self.add_midi_fx_slot(ui, i, h));
+                        place(ui, &mut pack, Id::new(("chain_midi_slot", i)), |ui| self.add_midi_fx_slot(ui, i, slot_h));
                     }
                     if self.project.tracks.get(i).map(|t| t.instrument.is_some()).unwrap_or(false) {
                         let key = self.project.tracks[i].id;
@@ -701,7 +775,7 @@ impl App {
                             }
                         }
                     } else if self.project.tracks.get(i).map(|t| t.kind == krabton_engine::TrackKind::Midi).unwrap_or(false) {
-                        place(ui, &mut pack, Id::new(("chain_inst_slot", i)), |ui| self.empty_instrument_slot(ui, i, h));
+                        place(ui, &mut pack, Id::new(("chain_inst_slot", i)), |ui| self.empty_instrument_slot(ui, i, slot_h));
                     }
                 }
                 let n = self.chain_mut(sel).map(|c| c.len()).unwrap_or(0);
@@ -730,7 +804,7 @@ impl App {
                         self.rack_grip(ui, key, rect, hd);
                     }
                 }
-                place(ui, &mut pack, Id::new(("chain_fx_slot", format!("{sel:?}"))), |ui| self.add_effect_slot(ui, sel, h));
+                place(ui, &mut pack, Id::new(("chain_fx_slot", format!("{sel:?}"))), |ui| self.add_effect_slot(ui, sel, slot_h));
             }
         }
         // What the packed pieces took, for what comes after.

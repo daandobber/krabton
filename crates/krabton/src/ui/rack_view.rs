@@ -31,7 +31,7 @@ impl App {
         sels.extend((0..self.project.returns.len()).map(TrackSel::Return));
         sels.push(TrackSel::Master);
         // Where a wrapped row's devices end: the window's right edge.
-        let view_right = ui.max_rect().right() - 14.0;
+        let view_right = ui.max_rect().right() - 4.0;
         egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
             if columns {
                 ui.horizontal_top(|ui| {
