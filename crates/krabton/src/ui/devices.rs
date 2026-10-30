@@ -730,6 +730,11 @@ impl App {
         ids
     }
 
+    /// How wide a chain's widest piece was drawn (the Studio's columns are that wide).
+    pub(crate) fn chain_width(&mut self, ui: &Ui, sel: TrackSel) -> f32 {
+        self.chain_pieces(sel).into_iter().map(|(id, _)| Pack::size_of(ui, id).x).fold(0.0, f32::max)
+    }
+
     pub(crate) fn device_chain(&mut self, ui: &mut Ui, sel: TrackSel, h: f32, resizable: bool) {
         let _accent = AccentScope::new(self.track_accent(sel));
         let mut actions = Vec::new();

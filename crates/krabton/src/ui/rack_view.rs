@@ -2,7 +2,8 @@
 //! sequencers, instrument and audio effects, a track per row with its
 //! devices side by side (wrapping onto more lines as wide as the window, so
 //! a track is seen whole; or on one long line), or (with the axes swapped) a
-//! track per column with its devices under each other. Returns and the master come last. Each
+//! track per column as wide as its widest device, the narrower ones packed
+//! side by side in it. Returns and the master come last. Each
 //! track starts with its mixer (volume, pan, sends, mute, solo, arm) and
 //! its clock (Sync, or a tempo of its own with Tap) and buttons to add a
 //! sequencer or MIDI effect, an audio effect or an instrument; right-click
@@ -36,10 +37,17 @@ impl App {
             if columns {
                 ui.horizontal_top(|ui| {
                     for sel in sels {
-                        ui.vertical(|ui| {
-                            self.rack_strip(ui, sel, vec2(STRIP_W + 20.0, STRIP_H));
-                            self.device_chain(ui, sel, h, true);
-                        });
+                        // A column as wide as the track's widest piece, packed: what
+                        // is narrower goes side by side in it, not only under each other.
+                        let strip_w = STRIP_W + 20.0;
+                        let col_w = self.chain_width(ui, sel).max(strip_w);
+                        let start = ui.cursor().min;
+                        let area = Rect::from_min_size(start, vec2(col_w, 100_000.0));
+                        let mut col = ui.new_child(egui::UiBuilder::new().id_salt(("rack_col", format!("{sel:?}"))).max_rect(area).layout(egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true)));
+                        let strip = col.scope(|ui| self.rack_strip(ui, sel, vec2(strip_w, STRIP_H))).response.rect;
+                        self.pack_strip = Some(strip);
+                        self.device_chain(&mut col, sel, h, true);
+                        ui.advance_cursor_after_rect(col.min_rect());
                         ui.add_space(10.0);
                     }
                 });
