@@ -153,7 +153,13 @@ jobs:
           # Not signed by Apple: an ad-hoc signature, so it runs after "Open" in the Finder.
           codesign --force --deep -s - "$app"
           ln -s /Applications dmg/Applications
-          hdiutil create -volname Krabton -srcfolder dmg -ov -format UDZO "dist/Krabton-$VERSION-macOS.dmg"
+          # hdiutil now and then fails with "Resource busy" on the runners: try again.
+          for i in 1 2 3 4 5; do
+            hdiutil create -volname Krabton -srcfolder dmg -ov -format UDZO "dist/Krabton-$VERSION-macOS.dmg" && break
+            if [ "$i" = 5 ]; then exit 1; fi
+            echo "hdiutil failed, trying again ($i)"
+            sleep $((i * 10))
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: macos
