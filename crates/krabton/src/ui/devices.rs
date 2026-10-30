@@ -952,36 +952,54 @@ impl App {
             let mut close = false;
             egui::Area::new(menu_id.with("area")).fixed_pos(at).order(egui::Order::Foreground).constrain(true).show(ui.ctx(), |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    // A column per group of sequencers, then the MIDI effects,
-                    // side by side like the audio effects' menu.
+                    // The groups of sequencers, then the MIDI effects, packed
+                    // into columns as tall as the window allows: a group
+                    // starts under the one before while it fits.
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                    ui.spacing_mut().item_spacing = vec2(4.0, 2.0);
+                    ui.spacing_mut().button_padding = vec2(5.0, 1.0);
+                    let row = ui.spacing().interact_size.y.max(16.0) + 2.0;
+                    let room = (ui.ctx().screen_rect().bottom() - at.y - 70.0).max(row * 12.0);
+                    let mut sections: Vec<(&str, egui::Color32, Vec<MidiFxKind>, bool)> =
+                        MidiFxKind::SEQUENCER_GROUPS.iter().map(|&g| (g, PLAY, MidiFxKind::SEQUENCERS.into_iter().filter(|k| k.group() == g).collect(), true)).collect();
+                    sections.push(("MIDI Effects", SELECT, MidiFxKind::ALL.to_vec(), false));
+                    let mut columns: Vec<Vec<usize>> = vec![Vec::new()];
+                    let mut used = 0.0;
+                    for (i, (_, _, items, _)) in sections.iter().enumerate() {
+                        let h = row * (items.len() as f32 + 1.0) + 6.0;
+                        if used > 0.0 && used + h > room {
+                            columns.push(Vec::new());
+                            used = 0.0;
+                        }
+                        columns.last_mut().unwrap().push(i);
+                        used += h;
+                    }
                     ui.horizontal_top(|ui| {
-                        for group in MidiFxKind::SEQUENCER_GROUPS {
+                        for col in &columns {
                             ui.vertical(|ui| {
-                                ui.set_min_width(118.0);
-                                ui.label(RichText::new(group).small().color(PLAY));
-                                for k in MidiFxKind::SEQUENCERS.into_iter().filter(|k| k.group() == group) {
-                                    if ui.button(k.name()).on_hover_text(k.description()).clicked() {
-                                        self.apply_item(&BrowserItem::MidiFx(k), crate::app::DropTarget::Track(track));
-                                        close = true;
+                                ui.set_min_width(104.0);
+                                for (n, &i) in col.iter().enumerate() {
+                                    let (name, color, items, seq) = &sections[i];
+                                    if n > 0 {
+                                        ui.add_space(6.0);
+                                    }
+                                    ui.label(RichText::new(*name).small().color(*color));
+                                    for &k in items {
+                                        if ui.button(k.name()).on_hover_text(k.description()).clicked() {
+                                            if *seq {
+                                                self.apply_item(&BrowserItem::MidiFx(k), crate::app::DropTarget::Track(track));
+                                            } else {
+                                                let dev = self.project.make_midi_device(k);
+                                                if let Some(t) = self.project.tracks.get_mut(track) {
+                                                    t.midi_devices.push(dev);
+                                                }
+                                            }
+                                            close = true;
+                                        }
                                     }
                                 }
                             });
                         }
-                        ui.add_space(10.0);
-                        ui.vertical(|ui| {
-                            ui.set_min_width(118.0);
-                            ui.label(RichText::new("MIDI Effects").small().color(SELECT));
-                            for k in MidiFxKind::ALL {
-                                if ui.button(k.name()).on_hover_text(k.description()).clicked() {
-                                    let dev = self.project.make_midi_device(k);
-                                    if let Some(t) = self.project.tracks.get_mut(track) {
-                                        t.midi_devices.push(dev);
-                                    }
-                                    close = true;
-                                }
-                            }
-                        });
                     });
                     ui.add_space(4.0);
                     if ui.button("Cancel").clicked() {

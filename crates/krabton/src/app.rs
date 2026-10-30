@@ -544,6 +544,8 @@ pub struct App {
     pub(crate) map_selected: Option<u64>,
     /// Size of everything asked for by a script (see `run_script`).
     script_zoom: Option<f32>,
+    /// A script opening a track's menu of sequencers and MIDI effects.
+    script_menu: Option<usize>,
     pub(crate) auto_prev: std::collections::HashMap<(usize, krabton_engine::modulation::ModTarget), f32>,
     /// The knob moves being recorded: their clip, where they started and
     /// last wrote, and the frame of that write.
@@ -704,6 +706,7 @@ impl App {
             map_window: false,
             map_selected: None,
             script_zoom: None,
+            script_menu: None,
             auto_prev: Default::default(),
             auto_last: Default::default(),
             layout_dirty: false,
@@ -4050,6 +4053,8 @@ impl App {
                     }
                 }
                 // touchdown=x1,y1,x2,y2...: fingers on a touch screen there (pressing at 60%); touchup: they let go.
+                // midifxmenu=N: opens the menu of sequencers and MIDI effects of track N.
+                "midifxmenu" => self.script_menu = nums.first().copied(),
                 // touchcapture: the Touch view's Capture, on the selected track.
                 "touchcapture" => {
                     if let Some(ti) = self.touch_track() {
@@ -4374,6 +4379,14 @@ impl eframe::App for App {
         self.run_script();
         if let Some(z) = self.script_zoom.take() {
             ctx.set_zoom_factor(z);
+        }
+        if let Some(t) = self.script_menu.take() {
+            // The Devices tab's menu and the Studio's (+ MIDI).
+            let id = self.project.tracks.get(t).map_or(0, |t| t.id);
+            ctx.memory_mut(|m| {
+                m.data.insert_temp(egui::Id::new(("midi_fx_menu", t)), true);
+                m.data.insert_temp(egui::Id::new(("rack_midi_menu", id)), true);
+            });
         }
         self.take_shot(ctx);
         self.record_automation();
