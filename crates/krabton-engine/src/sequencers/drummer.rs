@@ -52,6 +52,7 @@ pub static SPECS: &[ParamSpec] = &[
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::toggle("Band", "Band", false),
 ];
 
 // ---------------------------------------------------------------- lanes
@@ -460,9 +461,23 @@ pub struct DrummerState {
     /// The fill being played: its bar and which kind.
     fill_bar: i64,
     fill_kind: u8,
+    /// A fill for the band's part played: a crash on the next part's one.
+    band_fill: bool,
 }
 
 impl SeqState {
+    /// In the band, in the bar a part fills: how many of its steps are left
+    /// of the part from this one (this one too).
+    pub(crate) fn band_fill(&self, ctx: &MidiCtx, at: u64, step_frames: f64) -> Option<usize> {
+        let b = &ctx.band;
+        if self.role.is_none() || !b.parts {
+            return None;
+        }
+        let place = b.place(crate::band::beat_at(ctx, at));
+        let step = step_frames / ctx.samples_per_beat.max(1.0);
+        place.fill(b.bar.max(1.0)).then(|| (place.left / step.max(1e-6)).round().max(1.0) as usize)
+    }
+
     /// Runs on a 1/16 grid.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn drummer(&mut self, k: i64, p: &[f32], data: &[u8], at: u64, step_frames: f64, out: &mut Vec<MidiEvent>, ctx: &MidiCtx) {
@@ -479,8 +494,17 @@ impl SeqState {
         let flavor = flavor_of(data);
         let every = [0i64, 2, 4, 8][(p[FILLS].round().max(0.0) as usize).min(3)];
         let fill_len = [4usize, 8, 16][(p[FILL_LENGTH].round().max(0.0) as usize).min(2)];
-        let in_fill = every > 0 && bar_no.rem_euclid(every) == every - 1 && step >= STEPS - fill_len;
+        let own_fill = every > 0 && bar_no.rem_euclid(every) == every - 1 && step >= STEPS - fill_len;
         let after_fill = every > 0 && bar_no > 0 && bar_no.rem_euclid(every) == 0 && step == 0;
+        // In the band, the part's fill: over its last steps (as long as Fill Length), whatever bar it is.
+        let band_left = self.band_fill(ctx, at, step_frames).filter(|&l| l <= fill_len);
+        let in_fill = own_fill || band_left.is_some();
+        let fill_step = match band_left {
+            Some(l) => fill_len - l,
+            None => step.saturating_sub(STEPS - fill_len),
+        };
+        let after_fill = after_fill || (self.drum.band_fill && band_left.is_none());
+        self.drum.band_fill = band_left.is_some();
         if in_fill && self.drum.fill_bar != bar_no {
             self.drum.fill_bar = bar_no;
             self.drum.fill_kind = (self.unit() * 4.0) as u8;
@@ -517,8 +541,7 @@ impl SeqState {
         }
         // The fill takes over the hands (and keeps the kick on the beats).
         if in_fill {
-            let j = step - (STEPS - fill_len);
-            let fill = fill_hits(flavor, self.drum.fill_kind, j, fill_len);
+            let fill = fill_hits(flavor, self.drum.fill_kind, fill_step, fill_len);
             for l in [SNARE, STICK, CLAP, HAT, OPEN, RIDE, TOM_HI, TOM_MID, TOM_FLOOR, TAMB] {
                 hits[l] = OFF;
             }

@@ -3713,7 +3713,7 @@ impl App {
                 // bandon[=1]: Band on in every device that can be in it (=1: and parts).
                 "bandon" => {
                     for dev in self.project.tracks.iter_mut().flat_map(|t| t.midi_devices.iter_mut()) {
-                        let b = krabton_engine::sequencers::players::band_param(dev.kind).or(krabton_engine::band::follow_param(dev.kind));
+                        let b = krabton_engine::band::switch_param(dev.kind);
                         if let Some(v) = b.and_then(|b| dev.params.get_mut(b)) {
                             *v = 1.0;
                         }

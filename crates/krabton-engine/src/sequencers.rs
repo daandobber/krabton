@@ -326,6 +326,10 @@ pub struct SeqState {
     shift_in_note: bool,
     /// How it follows the band (see `band::follow_mode`), if it does.
     pub(crate) follow: Option<u8>,
+    /// What it plays in the band as (None: it is not in it), and what the
+    /// part does to its notes.
+    pub(crate) role: Option<crate::band::Role>,
+    shaper: crate::band::Shaper,
     pub(crate) rng: Rng,
     reg: u16,
     cells: [u16; 8],
@@ -384,6 +388,8 @@ impl SeqState {
             shift: None,
             shift_in_note: true,
             follow: None,
+            role: None,
+            shaper: crate::band::Shaper::default(),
             rng: Rng::new(0x7EA5_1234),
             reg: 0b1011_0010_0110_1001,
             cells: [0; 8],
@@ -423,6 +429,7 @@ impl SeqState {
     pub fn reset(&mut self) {
         self.offs.clear();
         self.pending.clear();
+        self.shaper.reset();
         self.acid_open = None;
         self.seeded = false;
         self.balls_ready = false;
@@ -523,14 +530,30 @@ impl SeqState {
     }
 
     pub fn process(&mut self, kind: crate::midi_fx::MidiFxKind, p: &[f32], data: &[u8], out: &mut Vec<MidiEvent>, ctx: &MidiCtx) {
+        // In the band: the part's key and swing, its energy on a drum's own
+        // knobs, its feel on the steps; then the part shapes the notes.
+        self.role = crate::band::role(kind, p, ctx.drum_notes != 0);
+        self.follow = match self.role {
+            Some(crate::band::Role::Follows(m)) => Some(m),
+            _ => None,
+        };
+        let mut buf = [0f32; crate::band::MAX_PARAMS];
+        let p = if crate::band::part_params(kind, self.role, p, ctx, &mut buf) { &buf[..p.len()] } else { p };
+        let keyed = crate::band::part_ctx(self.role, ctx);
+        let ctx = keyed.as_ref().unwrap_or(ctx);
+        let from = self.play_block(kind, p, data, out, ctx);
+        self.shaper.shape(kind, self.role, ctx, out, from);
+    }
+
+    /// Plays this block; returns where what it played starts in `out`.
+    fn play_block(&mut self, kind: crate::midi_fx::MidiFxKind, p: &[f32], data: &[u8], out: &mut Vec<MidiEvent>, ctx: &MidiCtx) -> usize {
         use crate::midi_fx::MidiFxKind as K;
-        self.follow = crate::band::follow_mode(kind, p);
         // Touch takes what comes in as its plates, playing or not.
         if kind == K::Touch {
             self.touch(p, data, out, ctx);
             self.flush_offs(ctx, out);
             self.dynamics(kind, p, &mut out[..], ctx);
-            return;
+            return 0;
         }
         // Transpose: notes coming in move the pattern instead of sounding;
         // with Hold the last one stays, otherwise only while it is held.
@@ -654,15 +677,21 @@ impl SeqState {
                     K::Einaudi => rate_beats(p[0]) / masters::EINAUDI_TICKS,
                     _ => 0.25,
                 };
+                // The band's part in half or double time: steps twice or half
+                // as long, counted on from where the part starts.
+                let (rate, origin, base) = match crate::band::feel(self.role, ctx) {
+                    Some((f, origin)) => (rate * f, origin, (origin / rate).round() as i64),
+                    None => (rate, 0.0, 0),
+                };
                 let beat0 = ctx.beat;
                 let beat1 = beat0 + ctx.len as f64 / ctx.samples_per_beat;
-                let mut k = (beat0 / rate - 1e-9).ceil() as i64;
-                while (k as f64) * rate < beat1 {
+                let mut k = base + ((beat0 - origin) / rate - 1e-9).ceil() as i64;
+                while origin + ((k - base) as f64) * rate < beat1 {
                     // A step on the edge between two blocks can land in both
                     // (rounding): it plays once.
                     if k >= 0 && k != self.last_step {
                         self.last_step = k;
-                        let at = ctx.now + (((k as f64) * rate - beat0).max(0.0) * ctx.samples_per_beat) as u64;
+                        let at = ctx.now + ((origin + ((k - base) as f64) * rate - beat0).max(0.0) * ctx.samples_per_beat) as u64;
                         let step_frames = rate * ctx.samples_per_beat;
                         match kind {
                             K::Polymeter => self.polymeter(k, p, data, at, step_frames, out, ctx),
@@ -735,6 +764,7 @@ impl SeqState {
             self.visual[0] = pack_rows(&seed[0..4]);
             self.visual[1] = pack_rows(&seed[4..8]);
         }
+        from
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -61,6 +61,7 @@ pub static DRUM_GRID: &[ParamSpec] = &[
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::toggle("Band", "Band", false),
 ];
 pub const CHORD_LENGTHS: &[&str] = &["1 beat", "2 beats", "1 bar", "2 bars"];
 pub const RHYTHMS: &[&str] = &["Hold", "Quarters", "Eighths", "Offbeats", "Stabs", "Charleston", "Arp Up", "Arp Down"];
