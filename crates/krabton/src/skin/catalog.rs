@@ -960,6 +960,26 @@ const CHIP_DRUMS: Skin = Skin {
     ..BASE
 };
 
+/// Analog Princess: a deep-fried screen at night, hot pink on violet.
+const PRINCESS: Skin = Skin {
+    top: hex(0x2a1233),
+    bottom: hex(0x12071a),
+    surface: Surface::Scan,
+    stripes: &[hex(0xff4fb0), hex(0xb04fff), hex(0x4fe0ff)],
+    ink: hex(0xffe6f4),
+    dim: hex(0xc99bbb),
+    well: hex(0x0c040f),
+    well_ink: hex(0xffe6f4),
+    accent: hex(0xff4fb0),
+    knob: Knob::Neon,
+    cap: hex(0xff8fd0),
+    logo: Font::Script,
+    logo_size: 24.0,
+    logo_ink: hex(0xff7ac8),
+    pads: &[hex(0xff4fb0), hex(0xb04fff), hex(0x4fe0ff), hex(0xffe14f)],
+    ..BASE
+};
+
 const DRUM_RACK: Skin = Skin { accent: hex(0xffa733), knob: Knob::Led, cap: hex(0x45484e), logo_size: 22.0, logo_case: Case::Upper, ..BASE };
 
 // Effects.
@@ -1157,6 +1177,7 @@ pub fn for_instrument(name: &str) -> Option<Skin> {
         "Retro Machines" => RETRO,
         "Macro Drums" => Skin { top: hex(0x1f3a2e), bottom: hex(0x12241c), accent: hex(0x5fe3a1), knob: Knob::Led, cap: hex(0x2c4a3c), logo: Font::Sport, ..BASE },
         "Chip Drums" => CHIP_DRUMS,
+        "Analog Princess" => PRINCESS,
         "Sampled Machines" => SAMPLER,
         "Drum Rack" => DRUM_RACK,
         _ => return None,

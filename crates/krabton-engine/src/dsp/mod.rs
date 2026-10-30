@@ -70,6 +70,7 @@ pub mod chipfm;
 pub mod tides;
 pub mod theremin;
 pub mod granulator;
+pub mod princess;
 
 use std::f32::consts::PI;
 
