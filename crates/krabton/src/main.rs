@@ -11,6 +11,7 @@ mod grid;
 mod history;
 mod midi;
 mod midi_out;
+mod move_ctl;
 mod mp3;
 mod drum_lib;
 mod firmware_lib;

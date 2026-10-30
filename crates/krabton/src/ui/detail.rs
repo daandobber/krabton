@@ -22,7 +22,7 @@ impl App {
         ui.painter().line_segment([pos2(full.left(), full.top()), pos2(full.right(), full.top())], Stroke::new(1.0_f32, LINE));
 
         let mut x = tabs.left() + 6.0;
-        for (tab, label) in [(DetailTab::Clip, "Clip"), (DetailTab::Devices, "Devices"), (DetailTab::Mod, "Mod"), (DetailTab::Grid, "Grid")] {
+        for (tab, label) in [(DetailTab::Clip, "Clip"), (DetailTab::Devices, "Devices"), (DetailTab::Mod, "Mod"), (DetailTab::Grid, "Grid"), (DetailTab::Move, "Move")] {
             let r = Rect::from_min_size(pos2(x, tabs.top() + 3.0), vec2(70.0, TABS_H - 6.0));
             if button(ui, r, Id::new(("detail_tab", label)), label, self.detail == tab, accent_now()).on_hover_text("Shift+Tab toggles").clicked() {
                 self.detail = tab;
@@ -40,6 +40,10 @@ impl App {
             DetailTab::Grid => match self.grid.monome.as_ref().and_then(|m| m.grid_id()) {
                 Some(id) => format!("monome grid {id}"),
                 None => "Virtual grid (plug in a monome grid)".into(),
+            },
+            DetailTab::Move => match &self.move_ctl.connected {
+                Some((input, _)) => format!("Ableton Move on {input}"),
+                None => "Ableton Move on screen (plug one in, in Control Live mode)".into(),
             },
         };
         if self.mod_learn.is_some() {
@@ -65,6 +69,7 @@ impl App {
             }
             DetailTab::Devices => self.ui_devices(ui, content),
             DetailTab::Grid => self.ui_grid_panel(ui, content),
+            DetailTab::Move => self.ui_move_panel(ui, content),
             DetailTab::Mod => self.ui_mod_panel(ui, content),
         }
     }

@@ -23,6 +23,7 @@ pub mod io_section;
 pub mod key_drawer;
 pub mod lens;
 pub mod grid_panel;
+pub mod move_panel;
 pub mod modulation;
 pub mod mono101_view;
 pub mod composers_view;

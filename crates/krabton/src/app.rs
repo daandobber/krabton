@@ -39,6 +39,8 @@ pub enum DetailTab {
     Devices,
     Mod,
     Grid,
+    /// The Ableton Move: the one on screen, its ports and its screen.
+    Move,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -410,6 +412,8 @@ pub struct App {
     pub(crate) lyric_text: String,
     /// monome grid/arc and the virtual grid.
     pub grid: crate::grid::GridState,
+    /// An Ableton Move as a controller, and the one on screen.
+    pub(crate) move_ctl: crate::move_ctl::MoveState,
     /// Modulator in map mode: clicking or dragging knobs connects it.
     pub mod_learn: Option<u64>,
     /// Modulator shown in the Mod tab editor.
@@ -613,6 +617,7 @@ impl App {
 
         let mut plugins = PluginManager::new();
         plugins.scan();
+        let move_ctl = crate::move_ctl::MoveState::new(&prefs);
         let mut app = Self {
             deferred: Vec::new(),
             plugins,
@@ -624,6 +629,7 @@ impl App {
             firmware_unpack: None,
             lyric_text: String::new(),
             grid: crate::grid::GridState::new(),
+            move_ctl,
             mod_learn: None,
             sel_mod: None,
             mod_history: HashMap::new(),
@@ -779,7 +785,8 @@ impl App {
         if let Some(e) = self.midi_outs.error.lock().ok().and_then(|mut e| e.take()) {
             self.toast(e);
         }
-        let pointer_down = ctx.input(|i| i.pointer.any_down());
+        // A knob of the Move touched is one edit until it is let go.
+        let pointer_down = ctx.input(|i| i.pointer.any_down()) || self.move_ctl.holds_edit();
         if !pointer_down && self.project != self.committed {
             // Notes of a pitch never overlap (as in Live), once an edit is done.
             self.tidy_clip_notes();
@@ -2629,7 +2636,7 @@ impl App {
     /// Shows the device chain, unless the Grid tab is open (selecting a
     /// track there picks what the grid edits).
     pub fn show_devices(&mut self) {
-        if self.detail != DetailTab::Grid {
+        if !matches!(self.detail, DetailTab::Grid | DetailTab::Move) {
             self.detail = DetailTab::Devices;
         }
     }
@@ -3737,6 +3744,16 @@ impl App {
                     eprintln!("now: {}", self.audio_desc);
                 }
                 "grid" => self.detail = DetailTab::Grid,
+                // move: the Move tab; movemode=N (Notes, Session, Touch); movemidi=STATUS,D1,D2
+                // in decimal, as if the Move had sent it.
+                "move" => self.detail = DetailTab::Move,
+                "movemode" => self.move_ctl.mode = [crate::move_ctl::PadMode::Notes, crate::move_ctl::PadMode::Session, crate::move_ctl::PadMode::Touch][nums.first().copied().unwrap_or(0).min(2)],
+                "movemidi" => {
+                    let bytes: Vec<u8> = nums.iter().map(|&n| n.min(255) as u8).collect();
+                    if let Some(m) = crate::move_ctl::parse(&bytes) {
+                        self.move_input(m);
+                    }
+                }
                 "press" => {
                     // Keyboard input for this window only, e.g. press=ctrl+c, press=shift+up.
                     let mut mods = Modifiers::NONE;
@@ -4500,6 +4517,7 @@ impl eframe::App for App {
         self.validate_selection();
         self.update_meters();
         self.grid_frame();
+        self.move_frame();
         self.mod_frame();
         if self.big.on {
             self.ui_big(ctx, pad_input);
@@ -4604,6 +4622,7 @@ impl eframe::App for App {
             View::Touch => self.ui_touch(ui),
             View::Tape => self.ui_tape(ui),
         });
+        self.move_hud(ctx);
         self.ui_dialogs(ctx);
         self.draw_drag_ghost(ctx);
         self.apply_deferred();
