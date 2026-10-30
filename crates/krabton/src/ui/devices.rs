@@ -431,32 +431,106 @@ fn fold_button(ui: &mut Ui, open: bool) -> egui::Response {
     resp.on_hover_text(if open { "Fold this device away" } else { "Unfold" })
 }
 
+/// The Studio's rows, packed: every piece of a chain goes in the highest
+/// place it fits, beside the others or into any gap left between them (the
+/// free rectangles of the row are kept, as in MaxRects packing), by its size
+/// as drawn last time (a panel's size is only known once it is drawn).
+struct Pack {
+    origin: egui::Pos2,
+    width: f32,
+    /// The free rectangles, from the origin.
+    free: Vec<Rect>,
+    bottom: f32,
+}
+
+const PACK_GAP: f32 = 6.0;
+/// How far down a row may go (only to have an end to its free space).
+const PACK_DEPTH: f32 = 100_000.0;
+
+impl Pack {
+    fn new(origin: egui::Pos2, width: f32) -> Self {
+        let width = width.max(100.0);
+        Self { origin, width, free: vec![Rect::from_min_size(egui::Pos2::ZERO, vec2(width, PACK_DEPTH))], bottom: 0.0 }
+    }
+
+    /// Where a piece of `size` goes: the highest free place it fits, then the leftmost.
+    fn spot(&self, size: egui::Vec2) -> egui::Pos2 {
+        let w = size.x.min(self.width);
+        let best = self
+            .free
+            .iter()
+            .filter(|f| f.width() + 0.5 >= w && f.height() + 0.5 >= size.y)
+            .map(|f| f.min)
+            .min_by(|a, b| a.y.total_cmp(&b.y).then(a.x.total_cmp(&b.x)));
+        self.origin + best.unwrap_or(egui::pos2(0.0, self.bottom)).to_vec2()
+    }
+
+    /// A piece took `rect`: what it covers (and a gap round it) is no longer free.
+    fn take(&mut self, rect: Rect) {
+        let used = Rect::from_min_max((rect.min - self.origin).to_pos2(), (rect.max - self.origin).to_pos2() + vec2(PACK_GAP, PACK_GAP));
+        let mut free = Vec::with_capacity(self.free.len() + 4);
+        for f in &self.free {
+            if !f.intersects(used) {
+                free.push(*f);
+                continue;
+            }
+            // What is left of it on each side.
+            if used.left() > f.left() {
+                free.push(Rect::from_min_max(f.min, egui::pos2(used.left(), f.bottom())));
+            }
+            if used.right() < f.right() {
+                free.push(Rect::from_min_max(egui::pos2(used.right(), f.top()), f.max));
+            }
+            if used.top() > f.top() {
+                free.push(Rect::from_min_max(f.min, egui::pos2(f.right(), used.top())));
+            }
+            if used.bottom() < f.bottom() {
+                free.push(Rect::from_min_max(egui::pos2(f.left(), used.bottom()), f.max));
+            }
+        }
+        // Rectangles inside others say nothing more.
+        free.retain(|r| r.width() > 1.0 && r.height() > 1.0);
+        let mut keep = vec![true; free.len()];
+        for a in 0..free.len() {
+            for b in 0..free.len() {
+                if a != b && keep[b] && free[b].contains_rect(free[a]) && (free[a] != free[b] || a > b) {
+                    keep[a] = false;
+                    break;
+                }
+            }
+        }
+        self.free = free.into_iter().zip(keep).filter(|(_, k)| *k).map(|(r, _)| r).collect();
+        self.bottom = self.bottom.max(used.bottom());
+    }
+}
+
+/// Draws a piece of a chain with `draw`: in turn (no packing), or (packing)
+/// in its place. Its result, and the rect it took.
+fn place<R>(ui: &mut Ui, pack: &mut Option<Pack>, id: Id, draw: impl FnOnce(&mut Ui) -> R) -> (R, Rect) {
+    let Some(pk) = pack else {
+        let r = ui.scope(draw);
+        return (r.inner, r.response.rect);
+    };
+    let mem = id.with("size");
+    let size: egui::Vec2 = ui.ctx().memory(|m| m.data.get_temp(mem)).unwrap_or(vec2(300.0, 200.0));
+    let at = pk.spot(size);
+    let room = Rect::from_min_size(at, vec2((pk.origin.x + pk.width - at.x).max(size.x), 4000.0));
+    let mut child = ui.new_child(UiBuilder::new().id_salt(id).max_rect(room).layout(egui::Layout::left_to_right(egui::Align::Min)));
+    let inner = draw(&mut child);
+    let rect = child.min_rect();
+    if (rect.size() - size).length() > 1.0 {
+        // Its size moved: the others find their places again next frame.
+        ui.ctx().memory_mut(|m| m.data.insert_temp(mem, rect.size()));
+        ui.ctx().request_repaint();
+    }
+    pk.take(rect);
+    (inner, rect)
+}
+
 /// A folded device: a narrow strip as tall as the chain (a bar as wide as
 /// the Rack where devices lie under each other) with its name, its on/off
 /// light and the triangle to unfold it. Returns whether it is to unfold
 /// (a click on it, anywhere but the light).
-/// In a layout that wraps (the Studio's rows): a new line before a piece of a
-/// chain that would not fit on this one, by how wide it was drawn last time
-/// (a panel's width is only known once it is drawn).
-fn wrap_before(ui: &mut Ui, id: Id) {
-    if !ui.layout().main_wrap() {
-        return;
-    }
-    let w: f32 = ui.ctx().memory(|m| m.data.get_temp(id)).unwrap_or(0.0);
-    let (left, right) = (ui.max_rect().left(), ui.max_rect().right());
-    let x = ui.cursor().left();
-    if x > left + 1.0 && x + w > right {
-        ui.end_row();
-    }
-}
-
-/// How wide a piece of a chain was drawn, for `wrap_before` next time.
-fn wrap_after(ui: &Ui, id: Id, rect: Rect) {
-    if ui.layout().main_wrap() {
-        ui.ctx().memory_mut(|m| m.data.insert_temp(id, rect.width()));
-    }
-}
-
 fn folded_strip(ui: &mut Ui, id: Id, title: &str, enabled: Option<&mut bool>, h: f32) -> bool {
     let across = ui.layout().main_dir().is_horizontal();
     let size = if across { vec2(26.0, h) } else { vec2(ui.available_width().clamp(160.0, 420.0), 26.0) };
@@ -580,6 +654,8 @@ impl App {
         let _accent = AccentScope::new(self.track_accent(sel));
         let mut actions = Vec::new();
         let mut midi_actions = Vec::new();
+        // The Studio's packed rows (a layout that wraps): every piece where it fits.
+        let mut pack = ui.layout().main_wrap().then(|| Pack::new(ui.cursor().min, ui.max_rect().right() - ui.cursor().min.x));
         {
             {
                 if let TrackSel::Track(i) = sel {
@@ -589,91 +665,77 @@ impl App {
                         for d in 0..n {
                             let key = self.project.tracks[i].midi_devices[d].id;
                             let hd = if resizable { self.rack_height(key, h) } else { h };
-                            let wid = Id::new(("chain_w", key));
-                            wrap_before(ui, wid);
+                            let wid = Id::new(("chain_piece", key));
                             if self.project.folded.contains(&key) {
                                 let dev = &mut self.project.tracks[i].midi_devices[d];
-                                let r = ui.scope(|ui| folded_strip(ui, Id::new(("folded", key)), dev.kind.name(), Some(&mut dev.enabled), hd));
-                                wrap_after(ui, wid, r.response.rect);
-                                if r.inner {
+                                let (unfold, _) = place(ui, &mut pack, wid, |ui| folded_strip(ui, Id::new(("folded", key)), dev.kind.name(), Some(&mut dev.enabled), hd));
+                                if unfold {
                                     self.project.folded.remove(&key);
                                 }
                                 continue;
                             }
-                            let r = ui.scope(|ui| self.midi_fx_panel(ui, i, d, hd));
-                            wrap_after(ui, wid, r.response.rect);
-                            if let Some(a) = r.inner {
+                            let (a, rect) = place(ui, &mut pack, wid, |ui| self.midi_fx_panel(ui, i, d, hd));
+                            if let Some(a) = a {
                                 midi_actions.push(a);
                             }
                             if resizable {
-                                self.rack_grip(ui, key, r.response.rect, hd);
+                                self.rack_grip(ui, key, rect, hd);
                             }
                         }
-                        let wid = Id::new(("chain_w_midi_slot", i));
-                        wrap_before(ui, wid);
-                        let r = ui.scope(|ui| self.add_midi_fx_slot(ui, i, h));
-                        wrap_after(ui, wid, r.response.rect);
+                        place(ui, &mut pack, Id::new(("chain_midi_slot", i)), |ui| self.add_midi_fx_slot(ui, i, h));
                     }
                     if self.project.tracks.get(i).map(|t| t.instrument.is_some()).unwrap_or(false) {
                         let key = self.project.tracks[i].id;
                         let hd = if resizable { self.rack_height(key, h) } else { h };
-                        let wid = Id::new(("chain_w", key));
-                        wrap_before(ui, wid);
+                        let wid = Id::new(("chain_piece", key));
                         if self.project.folded.contains(&key) {
                             let title = self.project.tracks[i].instrument.as_ref().map(|inst| inst.kind_name().to_string()).unwrap_or_default();
-                            let r = ui.scope(|ui| folded_strip(ui, Id::new(("folded", key)), &title, None, hd));
-                            wrap_after(ui, wid, r.response.rect);
-                            if r.inner {
+                            let (unfold, _) = place(ui, &mut pack, wid, |ui| folded_strip(ui, Id::new(("folded", key)), &title, None, hd));
+                            if unfold {
                                 self.project.folded.remove(&key);
                             }
                         } else {
-                            let r = ui.scope(|ui| self.instrument_panel(ui, i, hd));
-                            wrap_after(ui, wid, r.response.rect);
+                            let (_, rect) = place(ui, &mut pack, wid, |ui| self.instrument_panel(ui, i, hd));
                             if resizable {
-                                self.rack_grip(ui, key, r.response.rect, hd);
+                                self.rack_grip(ui, key, rect, hd);
                             }
                         }
                     } else if self.project.tracks.get(i).map(|t| t.kind == krabton_engine::TrackKind::Midi).unwrap_or(false) {
-                        let wid = Id::new(("chain_w_inst_slot", i));
-                        wrap_before(ui, wid);
-                        let r = ui.scope(|ui| self.empty_instrument_slot(ui, i, h));
-                        wrap_after(ui, wid, r.response.rect);
+                        place(ui, &mut pack, Id::new(("chain_inst_slot", i)), |ui| self.empty_instrument_slot(ui, i, h));
                     }
                 }
                 let n = self.chain_mut(sel).map(|c| c.len()).unwrap_or(0);
                 for d in 0..n {
                     let key = self.chain_mut(sel).and_then(|c| c.get(d)).map(|dev| dev.id).unwrap_or(0);
                     let hd = if resizable { self.rack_height(key, h) } else { h };
-                    let wid = Id::new(("chain_w", key));
-                    wrap_before(ui, wid);
+                    let wid = Id::new(("chain_piece", key));
                     if self.project.folded.contains(&key) {
-                        let r = ui.scope(|ui| match self.chain_mut(sel).and_then(|c| c.get_mut(d)) {
+                        let (unfold, _) = place(ui, &mut pack, wid, |ui| match self.chain_mut(sel).and_then(|c| c.get_mut(d)) {
                             Some(dev) => {
                                 let title = dev.name().to_string();
                                 folded_strip(ui, Id::new(("folded", key)), &title, Some(&mut dev.enabled), hd)
                             }
                             None => false,
                         });
-                        wrap_after(ui, wid, r.response.rect);
-                        if r.inner {
+                        if unfold {
                             self.project.folded.remove(&key);
                         }
                         continue;
                     }
-                    let r = ui.scope(|ui| self.effect_panel(ui, sel, d, hd));
-                    wrap_after(ui, wid, r.response.rect);
-                    if let Some(a) = r.inner {
+                    let (a, rect) = place(ui, &mut pack, wid, |ui| self.effect_panel(ui, sel, d, hd));
+                    if let Some(a) = a {
                         actions.push(a);
                     }
                     if resizable {
-                        self.rack_grip(ui, key, r.response.rect, hd);
+                        self.rack_grip(ui, key, rect, hd);
                     }
                 }
-                let wid = Id::new(("chain_w_fx_slot", format!("{sel:?}")));
-                wrap_before(ui, wid);
-                let r = ui.scope(|ui| self.add_effect_slot(ui, sel, h));
-                wrap_after(ui, wid, r.response.rect);
+                place(ui, &mut pack, Id::new(("chain_fx_slot", format!("{sel:?}"))), |ui| self.add_effect_slot(ui, sel, h));
             }
+        }
+        // What the packed pieces took, for what comes after.
+        if let Some(pk) = &pack {
+            ui.advance_cursor_after_rect(Rect::from_min_size(pk.origin, vec2(pk.width, (pk.bottom - PACK_GAP).max(0.0))));
         }
         if let (TrackSel::Track(i), false) = (sel, midi_actions.is_empty()) {
             for a in &midi_actions {

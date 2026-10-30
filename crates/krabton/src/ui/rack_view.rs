@@ -30,8 +30,8 @@ impl App {
         let mut sels: Vec<TrackSel> = (0..self.project.tracks.len()).map(TrackSel::Track).collect();
         sels.extend((0..self.project.returns.len()).map(TrackSel::Return));
         sels.push(TrackSel::Master);
-        // What a wrapped row's devices may take: the window, less the track's strip.
-        let wrap_w = (ui.available_width() - STRIP_W - 24.0).max(300.0);
+        // Where a wrapped row's devices end: the window's right edge.
+        let view_right = ui.max_rect().right() - 14.0;
         egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
             if columns {
                 ui.horizontal_top(|ui| {
@@ -51,6 +51,7 @@ impl App {
                             self.rack_strip(ui, sel, vec2(STRIP_W, (row + 30.0).max(STRIP_H)));
                             if wrap {
                                 // Devices side by side, onto the next line where the window ends.
+                                let wrap_w = (view_right - ui.cursor().left()).max(300.0);
                                 ui.allocate_ui_with_layout(vec2(wrap_w, 0.0), egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true), |ui| {
                                     ui.set_max_width(wrap_w);
                                     self.device_chain(ui, sel, h, true);
