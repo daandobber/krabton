@@ -104,6 +104,7 @@ pub static SPECS: &[ParamSpec] = &[
     ParamSpec::lin("Vel High", "Dynamics", 0.0, 1.0, 1.0, Unit::Percent),
     ParamSpec::lin("Vel Random", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Vel Accent", "Dynamics", 0.0, 1.0, 0.0, Unit::Percent),
+    ParamSpec::toggle("Band", "Band", false),
 ];
 
 // ---------------------------------------------------------------- lanes
@@ -547,6 +548,8 @@ impl SeqState {
         let bar_no = k.div_euclid(steps as i64);
         let j = k.rem_euclid(steps as i64) as usize;
         let var = pick(p, VARIATION, 2);
+        // In the band, the part's last bar is a fill.
+        let band_fill = self.band_fill(ctx, at, step_frames).is_some();
         let h = &mut self.home;
 
         // A jump in the song (a loop, a locate, a start) starts over.
@@ -582,6 +585,9 @@ impl SeqState {
         }
         // A new bar: what plays in it.
         if bar_no != h.bar {
+            if band_fill {
+                h.want |= WANT_FILL;
+            }
             let prev = h.section;
             let prev_intro = h.intro_bar;
             h.bar = bar_no;

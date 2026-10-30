@@ -807,6 +807,8 @@ pub struct ArpState {
     sounding: Vec<(u8, u64)>,
     rng: Rng,
     seq: Vec<(u8, f32)>,
+    /// What the band's part does to its notes.
+    shaper: crate::band::Shaper,
 }
 
 impl ArpState {
@@ -820,6 +822,7 @@ impl ArpState {
             sounding: Vec::with_capacity(64),
             rng: Rng::new(0x5EED_A2B1),
             seq: Vec::with_capacity(128),
+            shaper: crate::band::Shaper::default(),
         }
     }
 }
@@ -890,6 +893,7 @@ impl MidiFxState {
                 a.sounding.clear();
                 a.physical = 0;
                 a.next_step = None;
+                a.shaper.reset();
             }
             MidiFxState::Mapped(m, _) => m.clear(),
             MidiFxState::Scheduled(s) => s.events.clear(),
@@ -923,7 +927,16 @@ impl MidiFxState {
                 out.extend_from_slice(input);
                 s.process(kind, p, data, out, ctx);
             }
-            (MidiFxState::Arp(a), MidiFxKind::Arpeggiator) => arp(a, p, input, out, ctx),
+            (MidiFxState::Arp(a), MidiFxKind::Arpeggiator) => {
+                // In the band: the part's key and swing, then its shape on the notes.
+                let role = crate::band::role(kind, p, ctx.drum_notes != 0);
+                let mut buf = [0f32; crate::band::MAX_PARAMS];
+                let p = if crate::band::part_params(kind, role, p, ctx, &mut buf) { &buf[..p.len()] } else { p };
+                let keyed = crate::band::part_ctx(role, ctx);
+                let ctx = keyed.as_ref().unwrap_or(ctx);
+                arp(a, p, input, out, ctx);
+                a.shaper.shape(kind, role, ctx, out, 0);
+            }
             (MidiFxState::Mapped(map, rng), kind) => {
                 let scale = scale_for(kind, p, ctx);
                 for e in input {
@@ -1149,7 +1162,10 @@ fn arp(a: &mut ArpState, p: &[f32], input: &[MidiEvent], out: &mut Vec<MidiEvent
     let octaves = p[3].round().clamp(1.0, 4.0) as u8;
     let swing = (p[4] as f64 * step_len as f64 * 0.5) as u64;
     let style = p[0].round() as usize;
-    let follow = crate::band::follow_mode(MidiFxKind::Arpeggiator, p);
+    let follow = match crate::band::role(MidiFxKind::Arpeggiator, p, ctx.drum_notes != 0) {
+        Some(crate::band::Role::Follows(m)) => Some(m),
+        _ => None,
+    };
     let end = ctx.now + ctx.len as u64;
     let offset_of = |t: u64| t.saturating_sub(ctx.now).min(ctx.len.saturating_sub(1) as u64) as u32;
 

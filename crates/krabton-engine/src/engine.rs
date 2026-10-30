@@ -2282,6 +2282,16 @@ impl Engine {
                     fx_buf.clear();
                     let params = mods.params(ModOwner::MidiDevice(dev.id)).unwrap_or(&dev.params);
                     let dctx = if !ctx.scale_on && !dev.kind.keeps_key() { &free } else { &ctx };
+                    // Whether it sits out the part playing, or the next one.
+                    let mut seated;
+                    let dctx = if band.parts {
+                        seated = *dctx;
+                        seated.band.sits_out = project.band.sits_out(band.part, dev.id);
+                        seated.band.sits_out_next = project.band.sits_out(band.next_part, dev.id);
+                        &seated
+                    } else {
+                        dctx
+                    };
                     st.process(dev.kind, params, &dev.data, events, fx_buf, dctx);
                     fx_buf.sort_by_key(|e| (e.offset, e.on));
                     std::mem::swap(events, fx_buf);

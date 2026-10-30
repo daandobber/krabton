@@ -12,14 +12,20 @@
 //!   where it plays a note: *Root* moves the note by the chord's root (in
 //!   steps of the key, the nearer way round), *Chord* also pulls it onto the
 //!   nearest note of the chord, *Bass* onto the chord's root or fifth.
+//! - Drums: the drum and rhythm sequencers can be in the band too; their
+//!   notes stay drums, they play the parts the way the parts say.
+//! - Arranging: each part says how the band plays it (`PartPlay`): how full
+//!   (Energy), how hard (Dynamics), in which key, with which swing and feel,
+//!   and how it ends (a fill, a build, a break); and who sits it out. The
+//!   `Shaper` does it to each member's notes on their way out.
 //!
 //! The engine works out where the band is once a block (`BandRt`) and hands
 //! it to every MIDI effect in `MidiCtx::band`, without allocating.
 
 use crate::classic_seq::{prog_slot, quality_steps, PROG_SLOTS};
-use crate::midi_fx::{MidiCtx, MidiFxKind};
+use crate::midi_fx::{MidiCtx, MidiEvent, MidiFxKind};
 use crate::project::Project;
-use crate::scale::Scale;
+use crate::scale::{Scale, ScaleKind};
 use crate::sequencers::players::{band_param, CHORDS, LENGTH};
 use serde::{Deserialize, Serialize};
 
@@ -82,6 +88,102 @@ pub const FOLLOWERS: [MidiFxKind; 40] = {
     ]
 };
 
+/// The drum and rhythm sequencers that can be in the band (a Band switch,
+/// last; no Follow: their notes are drums).
+pub const DRUMS: [MidiFxKind; 7] = {
+    use MidiFxKind as K;
+    [K::Drummer, K::HomeRhythms, K::DrumMap, K::Chance, K::Percussion, K::Bits, K::DrumGrid]
+};
+
+/// A part's feel: its steps as written, twice as long, or half as long.
+pub const FEELS: &[&str] = &["Normal", "Half Time", "Double Time"];
+/// A part's key: the song's, its parallel (C major to C minor) or its
+/// relative (C major to A minor).
+pub const MODES: &[&str] = &["Song's key", "Parallel", "Relative"];
+/// A build over the part's last bars, and a break at its end.
+pub const BUILDS: &[&str] = &["Off", "1 Bar", "2 Bars"];
+pub const BREAKS: &[&str] = &["Off", "Last Beat", "Last Bar"];
+
+/// How the band plays a part. At the defaults it plays as written.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PartPlay {
+    /// How full (0..1): 0.5 as written, lower fewer notes, higher more
+    /// (octaves on top, busier drums).
+    pub energy: f32,
+    /// Softer or harder, in dB (-12 to +6).
+    pub dynamics: f32,
+    /// Semitones up or down, and the key (see MODES).
+    pub transpose: i8,
+    pub mode: u8,
+    /// Swing for everyone in it (0..1; 0: each their own).
+    pub swing: f32,
+    /// See FEELS.
+    pub feel: u8,
+    /// The drums fill the last bar.
+    pub fill: bool,
+    /// Louder and fuller over the last bars (see BUILDS), and silent at the
+    /// end (see BREAKS).
+    pub build: u8,
+    #[serde(rename = "break")]
+    pub brk: u8,
+}
+
+impl Default for PartPlay {
+    fn default() -> Self {
+        Self { energy: 0.5, dynamics: 0.0, transpose: 0, mode: 0, swing: 0.0, feel: 0, fill: false, build: 0, brk: 0 }
+    }
+}
+
+impl PartPlay {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The key it plays in before the transposition (the song's, or its
+    /// parallel or relative major or minor).
+    pub fn mode_key(&self, song: Scale) -> Scale {
+        let major = song.intervals().contains(&4);
+        let pent = matches!(song.kind, ScaleKind::MajorPentatonic | ScaleKind::MinorPentatonic);
+        let other = match (major, pent) {
+            (true, true) => ScaleKind::MinorPentatonic,
+            (false, true) => ScaleKind::MajorPentatonic,
+            (true, false) => ScaleKind::Minor,
+            (false, false) => ScaleKind::Major,
+        };
+        match self.mode {
+            1 if song.kind != ScaleKind::Chromatic => Scale::new(song.root, other),
+            2 if song.kind != ScaleKind::Chromatic => Scale::new(song.root + if major { 9 } else { 3 }, other),
+            _ => song,
+        }
+    }
+
+    /// The key it sounds in (for the chords' names).
+    pub fn key(&self, song: Scale) -> Scale {
+        let k = self.mode_key(song);
+        Scale::new((k.root as i32 + self.transpose as i32).rem_euclid(12) as u8, k.kind)
+    }
+
+    /// Its dynamics as a factor on each note's velocity (-12 dB: half as hard).
+    pub fn gain(&self) -> f32 {
+        10f32.powf(self.dynamics.clamp(-24.0, 12.0) / 40.0)
+    }
+
+    /// How many beats its build lasts and its break (0: none).
+    pub fn build_beats(&self, bar: f64) -> f64 {
+        bar * self.build.min(2) as f64
+    }
+
+    pub fn break_beats(&self, bar: f64) -> f64 {
+        [0.0, 1.0, bar][self.brk.min(2) as usize]
+    }
+
+    /// Its steps' length against the written one (Half Time: twice as long).
+    pub fn feel_factor(&self) -> f64 {
+        [1.0, 2.0, 0.5][self.feel.min(2) as usize]
+    }
+}
+
 /// A part of the song: its name and its progression.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BandPart {
@@ -93,12 +195,18 @@ pub struct BandPart {
     pub count: u8,
     /// Each chord: its degree (1 to 7, 0 a rest) and quality.
     pub chords: [(u8, u8); PROG_SLOTS],
+    /// How the band plays it.
+    #[serde(default, skip_serializing_if = "PartPlay::is_default")]
+    pub play: PartPlay,
+    /// The members who sit it out (their devices' ids).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub out: Vec<u64>,
 }
 
 impl BandPart {
     /// A part from what the band shares (see `players::band_part`).
     pub fn from_part(name: &str, part: &[u8]) -> Self {
-        let mut p = Self { name: name.to_string(), length: 2, count: 4, chords: [(0, 0); PROG_SLOTS] };
+        let mut p = Self { name: name.to_string(), length: 2, count: 4, chords: [(0, 0); PROG_SLOTS], play: PartPlay::default(), out: Vec::new() };
         p.set_part(part);
         p
     }
@@ -163,6 +271,15 @@ impl BandSong {
             Some(p) => p.prog(),
             None => Prog::default(),
         }
+    }
+
+    fn play(&self, part: usize) -> PartPlay {
+        self.parts.get(part).map(|p| p.play).unwrap_or_default()
+    }
+
+    /// Whether member `id` (a device) sits part `part` out.
+    pub fn sits_out(&self, part: u8, id: u64) -> bool {
+        self.parts.get(part as usize).is_some_and(|p| p.out.contains(&id))
     }
 
     /// What moves the parts in time (not the chords themselves).
@@ -250,11 +367,89 @@ pub struct BandNow {
     pub step: u8,
     pub pass: u8,
     pub cued: u8,
+    /// How the band plays the part now and the next one, and which the next is.
+    pub play: PartPlay,
+    pub next_play: PartPlay,
+    pub next_part: u8,
+    /// This time round is the part's last before another (or a cue): its
+    /// end fills, builds or breaks.
+    pub ends: bool,
+    /// Beats in a bar.
+    pub bar: f64,
+    /// For one member (the engine sets it per device): it sits out the part
+    /// now, the next one.
+    pub sits_out: bool,
+    pub sits_out_next: bool,
 }
 
 impl Default for BandNow {
     fn default() -> Self {
-        Self { on: false, parts: false, key: Scale::default(), beat: 0.0, prog: Prog::default(), from: 0.0, until: f64::INFINITY, next: Prog::default(), part: NONE, step: NONE, pass: 0, cued: NONE }
+        Self {
+            on: false,
+            parts: false,
+            key: Scale::default(),
+            beat: 0.0,
+            prog: Prog::default(),
+            from: 0.0,
+            until: f64::INFINITY,
+            next: Prog::default(),
+            part: NONE,
+            step: NONE,
+            pass: 0,
+            cued: NONE,
+            play: PartPlay::default(),
+            next_play: PartPlay::default(),
+            next_part: NONE,
+            ends: false,
+            bar: 4.0,
+            sits_out: false,
+            sits_out_next: false,
+        }
+    }
+}
+
+/// Where a beat is in its part (see `BandNow::place`).
+#[derive(Clone, Copy, Debug)]
+pub struct Place {
+    pub play: PartPlay,
+    /// Beats into the part, and beats left of it.
+    pub since: f64,
+    pub left: f64,
+    /// The member sits this part out.
+    pub out: bool,
+    /// Its end is the part's end (see `BandNow::ends`).
+    pub ends: bool,
+}
+
+impl Place {
+    /// How far into its build (0..1), in a build.
+    pub fn build_at(&self, bar: f64) -> Option<f32> {
+        let b = self.play.build_beats(bar);
+        (self.ends && b > 0.0 && self.left > 1e-9 && self.left <= b + 1e-9).then(|| (1.0 - self.left / b).clamp(0.0, 1.0) as f32)
+    }
+
+    /// How full the band plays here: the part's energy, from low to high through a build.
+    pub fn energy(&self, bar: f64) -> f32 {
+        let e = self.play.energy.clamp(0.0, 1.0);
+        match self.build_at(bar) {
+            Some(f) => e.min(0.3) + (e.max(0.9) - e.min(0.3)) * f,
+            None => e,
+        }
+    }
+
+    /// The factor on a note's velocity here: the part's dynamics, rising through a build.
+    pub fn gain(&self, bar: f64) -> f32 {
+        self.play.gain() * self.build_at(bar).map(|f| 0.6 + 0.5 * f).unwrap_or(1.0)
+    }
+
+    /// Silent here: the member sits the part out, or it is the part's break.
+    pub fn silent(&self, bar: f64) -> bool {
+        self.out || (self.ends && self.left > 1e-9 && self.left <= self.play.break_beats(bar) + 1e-9)
+    }
+
+    /// In the bar the drums fill (the part's last).
+    pub fn fill(&self, bar: f64) -> bool {
+        self.ends && self.play.fill && self.left > 1e-9 && self.left <= bar + 1e-9
     }
 }
 
@@ -272,11 +467,24 @@ impl BandNow {
         Some(Chord { slot, degree, quality, start: origin + i as f64 * len, beats: len })
     }
 
-    /// For the UI: the part, step, time round, cue and the chord now, in one word.
+    /// Where `beat` is in its part: the part now, or from its end the next.
+    pub fn place(&self, beat: f64) -> Place {
+        if beat >= self.until {
+            let since = beat - self.until;
+            Place { play: self.next_play, since, left: self.next.beats() - since, out: self.sits_out_next, ends: false }
+        } else {
+            Place { play: self.play, since: beat - self.from, left: self.until - beat, out: self.sits_out, ends: self.ends }
+        }
+    }
+
+    /// For the UI: the part, step, time round, cue, the chord now and how
+    /// far through the part, in one word.
     pub fn pack(&self) -> u64 {
         let c = self.at(self.beat + 1e-6);
         let (slot, degree, quality) = c.map(|c| (c.slot as u64, c.degree as u64, c.quality as u64)).unwrap_or((NONE as u64, 0, 0));
-        self.part as u64 | (self.step as u64) << 8 | (self.pass as u64) << 16 | (self.cued as u64) << 24 | slot << 32 | (degree & 15) << 40 | (quality & 15) << 44 | (self.on as u64) << 48 | (self.parts as u64) << 49
+        let len = self.until - self.from;
+        let through = if self.parts && len.is_finite() && len > 0.0 { ((self.beat - self.from) / len).clamp(0.0, 1.0) } else { 0.0 };
+        self.part as u64 | (self.step as u64) << 8 | (self.pass as u64) << 16 | (self.cued as u64) << 24 | slot << 32 | (degree & 15) << 40 | (quality & 15) << 44 | (self.on as u64) << 48 | (self.parts as u64) << 49 | ((through * 255.0) as u64) << 50
     }
 }
 
@@ -292,12 +500,14 @@ pub struct BandStatus {
     pub slot: u8,
     pub degree: u8,
     pub quality: u8,
+    /// How far through the part playing (0..255).
+    pub through: u8,
 }
 
 impl BandStatus {
     pub fn unpack(v: u64) -> Self {
         let b = |s: u32| ((v >> s) & 0xff) as u8;
-        Self { on: v >> 48 & 1 == 1, parts: v >> 49 & 1 == 1, part: b(0), step: b(8), pass: b(16), cued: b(24), slot: b(32), degree: ((v >> 40) & 15) as u8, quality: ((v >> 44) & 15) as u8 }
+        Self { on: v >> 48 & 1 == 1, parts: v >> 49 & 1 == 1, part: b(0), step: b(8), pass: b(16), cued: b(24), slot: b(32), degree: ((v >> 40) & 15) as u8, quality: ((v >> 44) & 15) as u8, through: b(50) }
     }
 }
 
@@ -312,6 +522,309 @@ pub fn follow_param(kind: MidiFxKind) -> Option<usize> {
 pub fn follow_mode(kind: MidiFxKind, p: &[f32]) -> Option<u8> {
     let i = follow_param(kind)?;
     (p.get(i)? >= &0.5).then(|| p.get(i + 1).map(|v| v.round().clamp(0.0, FOLLOWS.len() as f32 - 1.0) as u8).unwrap_or(0))
+}
+
+/// Where a drum or rhythm sequencer keeps its Band switch (last).
+pub fn drum_param(kind: MidiFxKind) -> Option<usize> {
+    DRUMS.contains(&kind).then(|| kind.specs().iter().position(|s| s.name == "Band")).flatten()
+}
+
+/// Where any device that can be in the band keeps its Band switch.
+pub fn switch_param(kind: MidiFxKind) -> Option<usize> {
+    band_param(kind).or(follow_param(kind)).or(drum_param(kind))
+}
+
+/// What a member plays in the band as.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Role {
+    /// A chord player: the band's chords.
+    Chords,
+    /// A follower, and how it follows (see FOLLOWS).
+    Follows(u8),
+    /// Drums: its notes stay where they are.
+    Drums,
+}
+
+/// What a device plays in the band as (None: it is not in it). A follower
+/// on a drum kit plays drums.
+pub fn role(kind: MidiFxKind, p: &[f32], kit: bool) -> Option<Role> {
+    let on = |i: Option<usize>| i.and_then(|i| p.get(i)).is_some_and(|v| *v >= 0.5);
+    if on(band_param(kind)) {
+        Some(Role::Chords)
+    } else if let Some(m) = follow_mode(kind, p) {
+        Some(if kit { Role::Drums } else { Role::Follows(m) })
+    } else {
+        on(drum_param(kind)).then_some(Role::Drums)
+    }
+}
+
+/// Most parameters a device has (see `part_params`).
+pub const MAX_PARAMS: usize = 160;
+
+/// A member's parameters as the part playing has them, into `buf`: the
+/// knobs a drum sequencer has for how much it plays (Drummer's Energy and
+/// Complexity, Drum Map's fills, Chance's chance, Percussion's Density, Home
+/// Rhythms' variation) moved by the part's energy, its fill, and the part's
+/// swing. False: as they are.
+pub fn part_params(kind: MidiFxKind, role: Option<Role>, p: &[f32], ctx: &MidiCtx, buf: &mut [f32; MAX_PARAMS]) -> bool {
+    use crate::sequencers::{chance, drum_map, drummer, home, percussion};
+    use MidiFxKind as K;
+    let b = &ctx.band;
+    if role.is_none() || !b.parts || p.len() > MAX_PARAMS {
+        return false;
+    }
+    let bar = b.bar.max(1.0);
+    let place = b.place(b.beat + 1e-6);
+    let e = place.energy(bar);
+    let fill = place.fill(bar);
+    let specs = kind.specs();
+    let swing = place.play.swing.clamp(0.0, 1.0);
+    let swing_at = (swing > 0.0).then(|| specs.iter().position(|s| s.name == "Swing")).flatten();
+    if (e - 0.5).abs() < 1e-6 && !fill && swing_at.is_none() {
+        return false;
+    }
+    let q = &mut buf[..p.len()];
+    q.copy_from_slice(p);
+    let lift = e - 0.5;
+    let nudge = |q: &mut [f32], i: usize, by: f32| {
+        if let Some(v) = q.get_mut(i) {
+            *v = (*v + by).clamp(0.0, 1.0);
+        }
+    };
+    match kind {
+        K::Drummer => {
+            nudge(q, drummer::COMPLEXITY, lift * 1.2);
+            nudge(q, drummer::ENERGY, lift * 1.2);
+        }
+        K::DrumMap => {
+            for i in drum_map::FILL..drum_map::FILL + 3 {
+                nudge(q, i, lift * 0.8);
+                if fill {
+                    q[i] = q[i].max(0.9);
+                }
+            }
+        }
+        K::Chance => {
+            q[chance::CHANCE] = (q[chance::CHANCE] * (0.4 + 1.2 * e)).clamp(0.0, 1.0);
+            if fill {
+                q[chance::FILL] = 1.0;
+            }
+        }
+        K::Percussion => nudge(q, percussion::DENSITY, lift),
+        K::HomeRhythms if e > 0.6 => q[home::VARIATION] = 1.0,
+        K::HomeRhythms if e < 0.4 => q[home::VARIATION] = 0.0,
+        _ => {}
+    }
+    if let Some(i) = swing_at {
+        q[i] = specs[i].min + swing * (specs[i].max - specs[i].min);
+    }
+    true
+}
+
+/// A member's block in a part in another key (its parallel or relative):
+/// the key it plays in and the band's chords count in. None: the song's.
+pub fn part_ctx(role: Option<Role>, ctx: &MidiCtx) -> Option<MidiCtx> {
+    let b = &ctx.band;
+    if role.is_none() || !b.parts {
+        return None;
+    }
+    let play = b.place(b.beat + 1e-6).play;
+    if play.mode == 0 {
+        return None;
+    }
+    let key = play.mode_key(b.key);
+    // All twelve notes free stays free.
+    let scale = if ctx.scale.kind == ScaleKind::Chromatic { ctx.scale } else { key };
+    Some(MidiCtx { scale, band: BandNow { key, ..*b }, ..*ctx })
+}
+
+/// Whether the shaper thins a member's notes for a low energy itself (the
+/// drums with a knob for how much they play do it with that).
+fn thins(kind: MidiFxKind) -> bool {
+    !matches!(kind, MidiFxKind::Drummer | MidiFxKind::DrumMap | MidiFxKind::Chance | MidiFxKind::Percussion)
+}
+
+/// A member's steps in the part's feel: how long a step is against the
+/// written one, and the beat (the session clock's) from which it counts.
+/// None: as written (a chord player keeps the band's chords in time).
+pub fn feel(role: Option<Role>, ctx: &MidiCtx) -> Option<(f64, f64)> {
+    let b = &ctx.band;
+    if !b.parts || !matches!(role, Some(Role::Follows(_) | Role::Drums)) {
+        return None;
+    }
+    let beat = b.beat + 1e-6;
+    let (play, from) = if beat >= b.until { (b.next_play, b.until) } else { (b.play, b.from) };
+    let f = play.feel_factor();
+    (f != 1.0).then(|| (f, from - b.beat + ctx.beat))
+}
+
+/// How strong a place in the bar is (a note's beat): the bar's one, the
+/// beats, the eighths, the rest, with a little of each note's own (so a low
+/// energy leaves the strong ones and a few others, always the same).
+fn strength(beat: f64, bar: f64, pitch: u8) -> f32 {
+    let s = (beat * 4.0).round();
+    let off_grid = (beat * 4.0 - s).abs() > 0.15;
+    let s = s as i64;
+    let per_bar = ((bar * 4.0).round() as i64).max(1);
+    let place = if off_grid {
+        0.25
+    } else if s.rem_euclid(per_bar) == 0 {
+        1.0
+    } else if s.rem_euclid(4) == 0 {
+        0.75
+    } else if s.rem_euclid(2) == 0 {
+        0.5
+    } else {
+        0.25
+    };
+    let h = (s as u64 ^ (pitch as u64) << 40).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    place * 0.75 + ((h >> 40) & 0xffff) as f32 / 65535.0 * 0.25
+}
+
+/// What a part does to a member's notes on their way out: silence where it
+/// sits the part out or in the break, fewer notes for a low energy and
+/// octaves on top for a high one, the dynamics and a build, and the
+/// transposition. It remembers where each note went, so its note-off
+/// follows it and nothing hangs.
+#[derive(Clone, Debug)]
+pub struct Shaper {
+    /// Each note as it went out (+1; 0: it did not), and the ones doubled.
+    sent: [u8; 128],
+    doubled: u128,
+    /// The notes it has sounding.
+    sounding: u128,
+}
+
+impl Default for Shaper {
+    fn default() -> Self {
+        Self { sent: [0; 128], doubled: 0, sounding: 0 }
+    }
+}
+
+impl Shaper {
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    /// Shapes the notes from `from` on (what the member plays; what came in
+    /// before it passes as it is).
+    pub fn shape(&mut self, kind: MidiFxKind, role: Option<Role>, ctx: &MidiCtx, out: &mut Vec<MidiEvent>, from: usize) {
+        let b = &ctx.band;
+        let shaping = role.is_some() && b.parts;
+        if !shaping && self.sounding == 0 {
+            return;
+        }
+        let drums = role == Some(Role::Drums);
+        let bar = b.bar.max(1.0);
+        let from = from.min(out.len());
+        let n = out.len();
+        // Silence comes (the part sat out, the break, the next part sat out): let go of what sounds.
+        if shaping && self.sounding != 0 {
+            if let Some(at) = self.quiet_at(ctx) {
+                self.let_go(at, out);
+            }
+        }
+        let mut w = from;
+        for r in from..n {
+            let e = out[r];
+            let i = e.pitch as usize;
+            if !e.on {
+                match self.sent[i] {
+                    // Its note-on did not go out, and another note sounds there.
+                    0 if self.sounding >> i & 1 == 1 => {}
+                    0 => {
+                        out[w] = e;
+                        w += 1;
+                    }
+                    s => {
+                        out[w] = MidiEvent { pitch: s - 1, ..e };
+                        w += 1;
+                        self.release(i, e.offset, out);
+                    }
+                }
+                continue;
+            }
+            if !shaping {
+                out[w] = e;
+                w += 1;
+                continue;
+            }
+            let beat = beat_at(ctx, ctx.now + e.offset as u64);
+            let place = b.place(beat);
+            if place.silent(bar) {
+                continue;
+            }
+            let energy = place.energy(bar);
+            let strength = strength(beat, bar, e.pitch);
+            if energy < 0.5 && thins(kind) && strength < (0.5 - energy) * 1.6 {
+                continue;
+            }
+            let to = if drums { e.pitch as i32 } else { e.pitch as i32 + place.play.transpose as i32 }.clamp(0, 127) as u8;
+            if self.sent[i] != 0 {
+                // Played again before its note-off: the one sounding ends first.
+                out.push(MidiEvent::off(e.offset, self.sent[i] - 1));
+                self.release(i, e.offset, out);
+            }
+            let vel = (e.vel * place.gain(bar)).clamp(0.01, 1.0);
+            out[w] = MidiEvent { pitch: to, vel, ..e };
+            w += 1;
+            self.sent[i] = to + 1;
+            self.sounding |= 1u128 << to;
+            // A high energy: the strong notes an octave up as well.
+            if !drums && energy > 0.5 && to <= 115 && strength >= 1.0 - (energy - 0.5) * 1.2 {
+                out.push(MidiEvent::on(e.offset, to + 12, vel * 0.8));
+                self.doubled |= 1u128 << i;
+                self.sounding |= 1u128 << (to + 12);
+            }
+        }
+        out.drain(w..n);
+    }
+
+    /// Note `i` (as it came) has ended: its octave too.
+    fn release(&mut self, i: usize, offset: u32, out: &mut Vec<MidiEvent>) {
+        let to = self.sent[i].saturating_sub(1);
+        self.sent[i] = 0;
+        self.sounding &= !(1u128 << to);
+        if self.doubled >> i & 1 == 1 {
+            self.doubled &= !(1u128 << i);
+            out.push(MidiEvent::off(offset, to + 12));
+            self.sounding &= !(1u128 << (to + 12));
+        }
+    }
+
+    /// Every note it has sounding ends at `offset`.
+    fn let_go(&mut self, offset: u32, out: &mut Vec<MidiEvent>) {
+        for i in 0..128 {
+            if self.sent[i] != 0 {
+                out.push(MidiEvent::off(offset, self.sent[i] - 1));
+                self.release(i, offset, out);
+            }
+        }
+        self.sounding = 0;
+    }
+
+    /// Where in this block the member goes silent (its frame offset): at once
+    /// when it is silent now, where the break starts, or where a part it sits
+    /// out begins.
+    fn quiet_at(&self, ctx: &MidiCtx) -> Option<u32> {
+        let b = &ctx.band;
+        let bar = b.bar.max(1.0);
+        let spb = ctx.samples_per_beat.max(1.0);
+        let beat0 = beat_at(ctx, ctx.now);
+        let beat1 = b.beat + ctx.len as f64 / spb;
+        let offset = |beat: f64| ((beat - b.beat) * spb).clamp(0.0, ctx.len.saturating_sub(1) as f64) as u32;
+        let now = b.place(beat0);
+        if now.silent(bar) {
+            return Some(0);
+        }
+        let brk = now.play.break_beats(bar);
+        let starts = beat0 + now.left - brk;
+        if brk > 0.0 && starts > beat0 && starts < beat1 {
+            return Some(offset(starts));
+        }
+        let next = beat0 + now.left;
+        (next < beat1 && b.place(next + 1e-6).silent(bar)).then(|| offset(next))
+    }
 }
 
 /// The band's beat at frame `at` of the block.
@@ -551,6 +1064,13 @@ impl BandRt {
             step: if self.at.held.is_some() || song.form.is_empty() { NONE } else { self.at.step as u8 },
             pass: self.at.pass.min(255) as u8,
             cued: if self.cue.is_some() { part_of(song, &next) as u8 } else { NONE },
+            play: song.play(part),
+            next_play: song.play(part_of(song, &next)),
+            next_part: part_of(song, &next) as u8,
+            ends: next.pass == 0,
+            bar: project.beats_per_bar_f(),
+            sits_out: false,
+            sits_out_next: false,
         }
     }
 }
@@ -558,7 +1078,7 @@ impl BandRt {
 /// Without parts: the progression of the first chord player with Band on
 /// (the others play the same), from the song's start.
 fn one_progression(project: &Project, beat: f64) -> BandNow {
-    let none = BandNow { key: project.scale, beat, ..BandNow::default() };
+    let none = BandNow { key: project.scale, beat, bar: project.beats_per_bar_f(), ..BandNow::default() };
     for t in &project.tracks {
         for d in &t.midi_devices {
             if band_param(d.kind).and_then(|b| d.params.get(b)).is_some_and(|v| *v >= 0.5) {
@@ -583,7 +1103,7 @@ mod tests {
     fn part(name: &str, length: u8, chords: &[(u8, u8)]) -> BandPart {
         let mut c = [(0, 0); PROG_SLOTS];
         c[..chords.len()].copy_from_slice(chords);
-        BandPart { name: name.into(), length, count: chords.len() as u8, chords: c }
+        BandPart { name: name.into(), length, count: chords.len() as u8, chords: c, play: PartPlay::default(), out: Vec::new() }
     }
 
     /// Verse (I V, a bar each) and Chorus (IV, a bar), Verse twice, Chorus once.
@@ -597,22 +1117,31 @@ mod tests {
     /// Runs `kind` (with the band resolved per block from `project`) for
     /// `beats`; returns (beat, pitch) of every note-on.
     fn run(project: &Project, kind: MidiFxKind, p: &[f32], data: &[u8], beats: f64) -> Vec<(f64, u8)> {
+        run_events(project, kind, p, data, beats, 0).into_iter().filter(|e| e.1).map(|e| (e.0, e.2)).collect()
+    }
+
+    /// The same as device `id` (who sits out which part, as the engine
+    /// tells it): (beat, on, pitch, velocity) of every note.
+    fn run_events(project: &Project, kind: MidiFxKind, p: &[f32], data: &[u8], beats: f64, id: u64) -> Vec<(f64, bool, u8, f32)> {
         let mut band = BandRt::default();
         let mut st = MidiFxState::new(kind);
-        let mut ons = Vec::new();
+        let mut evs = Vec::new();
         let mut now = 0u64;
         while (now as f64) < beats * SPB {
             let beat = now as f64 / SPB;
-            let b = band.resolve(project, beat, true);
+            let mut b = band.resolve(project, beat, true);
+            b.sits_out = project.band.sits_out(b.part, id);
+            b.sits_out_next = project.band.sits_out(b.next_part, id);
             let ctx = MidiCtx { now, len: 256, samples_per_beat: SPB, scale: project.scale, scale_on: true, beat, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5], band: b };
             let mut out = Vec::new();
             st.process(kind, p, data, &[], &mut out, &ctx);
-            for e in out.iter().filter(|e| e.on) {
-                ons.push(((now + e.offset as u64) as f64 / SPB, e.pitch));
+            out.sort_by_key(|e| (e.offset, e.on));
+            for e in &out {
+                evs.push(((now + e.offset as u64) as f64 / SPB, e.on, e.pitch, e.vel));
             }
             now += 256;
         }
-        ons
+        evs
     }
 
     /// A Step sequencer playing C4 on every quarter, following the band.
@@ -802,5 +1331,240 @@ mod tests {
         let mut a_data = player_default();
         set_band_part(&mut a, &mut a_data, &project.band.parts[1].part());
         assert_eq!(band_part(&a, &a_data), project.band.parts[1].part());
+    }
+
+    /// A Step sequencer in the band playing C4 on every sixteenth.
+    fn busy_step() -> (Vec<f32>, Vec<u8>) {
+        let (mut p, data) = steady_step(0);
+        p[0] = 2.0; // 1/16
+        (p, data)
+    }
+
+    /// One part, Verse (I V vi IV, a bar each), played as `play` says.
+    fn one_part(play: PartPlay) -> Project {
+        let mut p = Project::blank();
+        p.band.parts = vec![part("Verse", 2, &[(1, 0), (5, 0), (6, 0), (4, 0)])];
+        p.band.parts[0].play = play;
+        p
+    }
+
+    fn ons_in(evs: &[(f64, bool, u8, f32)], from: f64, to: f64) -> Vec<(f64, bool, u8, f32)> {
+        evs.iter().filter(|e| e.1 && e.0 >= from - 0.01 && e.0 < to - 0.01).copied().collect()
+    }
+
+    /// A Drummer in the band, without fills of its own.
+    fn drummer() -> (MidiFxKind, Vec<f32>, Vec<u8>) {
+        let kind = MidiFxKind::Drummer;
+        let mut p = defaults(kind.specs());
+        p[crate::sequencers::drummer::FILLS] = 0.0;
+        p[drum_param(kind).unwrap()] = 1.0;
+        (kind, p, crate::sequencers::drummer::drummer_default())
+    }
+
+    #[test]
+    fn a_part_at_its_defaults_plays_as_written() {
+        // The same chords as one progression (a Piano Player's) and as a part: the same notes.
+        let mut piano = Project::blank();
+        let t = piano.add_midi_track(None);
+        let mut pp = defaults(MidiFxKind::PianoPlayer.specs());
+        pp[band_param(MidiFxKind::PianoPlayer).unwrap()] = 1.0;
+        piano.tracks[t].midi_devices.push(crate::project::MidiDevice { id: 9001, kind: MidiFxKind::PianoPlayer, params: pp, data: player_default(), enabled: true, preset: String::new() });
+        let (p, data) = busy_step();
+        let one = run_events(&piano, MidiFxKind::Step, &p, &data, 16.0, 0);
+        assert_eq!(one.len(), 128);
+        assert_eq!(one, run_events(&one_part(PartPlay::default()), MidiFxKind::Step, &p, &data, 16.0, 0));
+    }
+
+    #[test]
+    fn energy_thins_and_fills_up() {
+        let (p, data) = busy_step();
+        let at = |energy: f32| run(&one_part(PartPlay { energy, ..PartPlay::default() }), MidiFxKind::Step, &p, &data, 16.0);
+        let (low, mid, high) = (at(0.1), at(0.5), at(0.95));
+        assert_eq!(mid.len(), 64);
+        assert!(!low.is_empty() && low.len() < 32, "{}", low.len());
+        // What stays is the strong places: every bar's one.
+        for bar in 0..4 {
+            assert!(low.iter().any(|o| (o.0 - bar as f64 * 4.0).abs() < 0.01), "bar {bar}");
+        }
+        assert!(low.iter().all(|o| (o.0 * 2.0 - (o.0 * 2.0).round()).abs() < 0.01), "no sixteenths left");
+        // Full: every note, and the strong ones an octave up too.
+        assert!(high.len() > 64);
+        assert!(high.iter().any(|o| o.0 < 0.01 && o.1 == 72));
+        // Always the same notes.
+        assert_eq!(low, at(0.1));
+    }
+
+    #[test]
+    fn dynamics_scale_the_velocity() {
+        let (p, data) = steady_step(0);
+        let vel = |dynamics: f32| run_events(&one_part(PartPlay { dynamics, ..PartPlay::default() }), MidiFxKind::Step, &p, &data, 8.0, 0).iter().find(|e| e.1).map(|e| e.3).unwrap();
+        let (soft, flat, hard) = (vel(-12.0), vel(0.0), vel(6.0));
+        assert!((soft / flat - 0.5).abs() < 0.01, "{soft} {flat}");
+        assert!(hard > flat && hard <= 1.0);
+    }
+
+    #[test]
+    fn a_part_in_another_key_moves_chords_and_followers() {
+        // Up a half step: the follower and the bass player both.
+        let (p, data) = steady_step(0);
+        let up = one_part(PartPlay { transpose: 1, ..PartPlay::default() });
+        let plain = run(&one_part(PartPlay::default()), MidiFxKind::Step, &p, &data, 16.0);
+        let moved = run(&up, MidiFxKind::Step, &p, &data, 16.0);
+        assert_eq!(plain.len(), moved.len());
+        assert!(plain.iter().zip(&moved).all(|(a, b)| b.1 == a.1 + 1));
+        let kind = MidiFxKind::BassPlayer;
+        let mut bass = defaults(kind.specs());
+        bass[crate::sequencers::players::HUMANIZE] = 0.0;
+        bass[band_param(kind).unwrap()] = 1.0;
+        let a = run(&one_part(PartPlay::default()), kind, &bass, &player_default(), 16.0);
+        let b = run(&up, kind, &bass, &player_default(), 16.0);
+        assert!(!a.is_empty() && a.len() == b.len() && a.iter().zip(&b).all(|(x, y)| y.1 == x.1 + 1));
+        // Parallel: C major to C minor, the line's E an E flat.
+        let (p, mut data) = steady_step(0);
+        for s in data.chunks_mut(5) {
+            s[1] = 2;
+        }
+        let first = |mode: u8| run(&one_part(PartPlay { mode, ..PartPlay::default() }), MidiFxKind::Step, &p, &data, 4.0)[0].1;
+        assert_eq!((first(0), first(1)), (64, 63));
+        // Relative: A minor, the same notes, but the chords count from A (I is A minor).
+        assert_eq!(first(2), 64);
+        let rel = run(&one_part(PartPlay { mode: 2, ..PartPlay::default() }), kind, &bass, &player_default(), 4.0);
+        assert_eq!(first_in_bar(&rel, 0).map(|p| p % 12), Some(9));
+        assert_eq!(PartPlay { mode: 2, transpose: 2, ..PartPlay::default() }.key(Scale::new(0, ScaleKind::Major)), Scale::new(11, ScaleKind::Minor));
+    }
+
+    #[test]
+    fn a_member_that_sits_a_part_out_is_silent_there_and_comes_back() {
+        // The Step (device 7) sits out the chorus (beats 16 to 20); its
+        // notes last a beat and a half, so one still sounds as it comes.
+        let mut project = song();
+        project.band.parts[1].out = vec![7];
+        let (p, mut data) = steady_step(0);
+        for s in data.chunks_mut(5) {
+            s[3] = 6;
+        }
+        let evs = run_events(&project, MidiFxKind::Step, &p, &data, 28.0, 7);
+        assert!(!ons_in(&evs, 0.0, 16.0).is_empty());
+        assert!(ons_in(&evs, 16.0, 20.0).is_empty());
+        assert!(!ons_in(&evs, 20.0, 28.0).is_empty(), "back for the verse");
+        // Nothing sounds once the chorus starts.
+        let mut sounding = std::collections::BTreeSet::new();
+        for e in evs.iter().filter(|e| e.0 < 16.0 + 1e-6) {
+            if e.1 {
+                sounding.insert(e.2);
+            } else {
+                sounding.remove(&e.2);
+            }
+        }
+        assert!(sounding.is_empty(), "{sounding:?}");
+        // Another member plays it.
+        assert!(!ons_in(&run_events(&project, MidiFxKind::Step, &p, &data, 28.0, 8), 16.0, 20.0).is_empty());
+    }
+
+    #[test]
+    fn breaks_and_builds_come_at_the_end_of_the_part() {
+        // Verse twice (8 beats each), then the chorus: the verse breaks on
+        // its last beat, the second time round only; the chorus builds.
+        let mut project = song();
+        project.band.parts[0].play.brk = 1;
+        project.band.parts[1].play.build = 1;
+        let (p, data) = steady_step(0);
+        let evs = run_events(&project, MidiFxKind::Step, &p, &data, 24.0, 0);
+        let on_at = |b: f64| evs.iter().find(|e| e.1 && (e.0 - b).abs() < 0.01).map(|e| e.3);
+        assert!(on_at(7.0).is_some(), "the first time round goes on");
+        assert!(on_at(15.0).is_none(), "the break");
+        assert!(on_at(14.0).is_some() && on_at(16.0).is_some());
+        // Softer where the build starts, louder towards its end.
+        let (a, z) = (on_at(16.0).unwrap(), on_at(19.0).unwrap());
+        assert!(a < z && a < on_at(14.0).unwrap(), "{a} {z}");
+        // A break of the last bar.
+        project.band.parts[0].play.brk = 2;
+        let evs = run_events(&project, MidiFxKind::Step, &p, &data, 24.0, 0);
+        assert!(ons_in(&evs, 12.0, 16.0).is_empty() && !ons_in(&evs, 4.0, 8.0).is_empty());
+    }
+
+    #[test]
+    fn the_drummer_fills_the_parts_last_bar() {
+        let (kind, p, data) = drummer();
+        let mut project = song();
+        let plain = run_events(&project, kind, &p, &data, 24.0, 0);
+        project.band.parts[0].play.fill = true;
+        let filled = run_events(&project, kind, &p, &data, 24.0, 0);
+        // The same up to the verse's last bar the second time round (beats
+        // 12 to 16), a fill there, and a crash on the chorus's one.
+        assert_eq!(ons_in(&plain, 0.0, 12.0), ons_in(&filled, 0.0, 12.0));
+        assert_ne!(ons_in(&plain, 12.0, 16.0), ons_in(&filled, 12.0, 16.0));
+        assert!(ons_in(&filled, 16.0, 16.5).iter().any(|e| e.2 == 49), "a crash after it");
+        assert!(!ons_in(&plain, 16.0, 16.5).iter().any(|e| e.2 == 49));
+        // Home Rhythms fills it too.
+        let kind = MidiFxKind::HomeRhythms;
+        let mut hp = defaults(kind.specs());
+        hp[crate::sequencers::home::FILL_EVERY] = 0.0;
+        hp[drum_param(kind).unwrap()] = 1.0;
+        let mut project = song();
+        let plain = run_events(&project, kind, &hp, &[], 24.0, 0);
+        project.band.parts[0].play.fill = true;
+        let filled = run_events(&project, kind, &hp, &[], 24.0, 0);
+        assert_eq!(ons_in(&plain, 0.0, 12.0), ons_in(&filled, 0.0, 12.0));
+        assert_ne!(ons_in(&plain, 12.0, 16.0), ons_in(&filled, 12.0, 16.0));
+    }
+
+    #[test]
+    fn drums_in_the_band_follow_energy_and_who_plays() {
+        let (kind, p, data) = drummer();
+        let hits = |energy: f32| {
+            let evs = run_events(&one_part(PartPlay { energy, ..PartPlay::default() }), kind, &p, &data, 16.0, 0);
+            let ons = ons_in(&evs, 0.0, 16.0);
+            (ons.len(), ons.iter().map(|e| e.3).sum::<f32>())
+        };
+        let (lo, mid, hi) = (hits(0.0), hits(0.5), hits(1.0));
+        assert!(lo.1 < mid.1 && mid.1 < hi.1, "{lo:?} {mid:?} {hi:?}");
+        assert!(lo.0 <= mid.0 && mid.0 < hi.0, "{lo:?} {mid:?} {hi:?}");
+        // A drum grid has no knob for it: fewer hits when low, none added when high.
+        let grid = MidiFxKind::DrumGrid;
+        let mut gp = defaults(grid.specs());
+        gp[drum_param(grid).unwrap()] = 1.0;
+        let gd = crate::classic_seq::drum_default();
+        let n = |energy: f32| run(&one_part(PartPlay { energy, ..PartPlay::default() }), grid, &gp, &gd, 16.0).len();
+        assert!(n(0.1) < n(0.5) && n(0.9) == n(0.5));
+        // Sitting the part out: nothing.
+        let mut project = one_part(PartPlay::default());
+        project.band.parts[0].out = vec![3];
+        assert!(run_events(&project, kind, &p, &data, 16.0, 3).iter().all(|e| !e.1));
+        // With Band off it plays as it always did, parts or not.
+        let mut off = p.clone();
+        off[drum_param(kind).unwrap()] = 0.0;
+        assert_eq!(run(&one_part(PartPlay { energy: 0.0, fill: true, ..PartPlay::default() }), kind, &off, &data, 16.0), run(&Project::blank(), kind, &off, &data, 16.0));
+    }
+
+    #[test]
+    fn half_time_and_double_time() {
+        // Quarters: half as many steps in a part in half time, twice as many in double.
+        let (p, data) = steady_step(0);
+        let n = |feel: u8| run(&one_part(PartPlay { feel, ..PartPlay::default() }), MidiFxKind::Step, &p, &data, 16.0).len();
+        assert_eq!((n(0), n(1), n(2)), (16, 8, 32));
+        // Swing for everyone: the Step's off-beat sixteenths come later.
+        let (p, data) = busy_step();
+        let straight = run(&one_part(PartPlay::default()), MidiFxKind::Step, &p, &data, 4.0);
+        let swung = run(&one_part(PartPlay { swing: 0.5, ..PartPlay::default() }), MidiFxKind::Step, &p, &data, 4.0);
+        assert_eq!(straight[0], swung[0]);
+        assert!(swung[1].0 > straight[1].0 + 0.01);
+    }
+
+    #[test]
+    fn parts_saved_before_load_as_they_were() {
+        // A part saved before it had settings: as written, everyone in it.
+        let json = r#"{"name":"Verse","length":2,"count":4,"chords":[[1,0],[5,0],[6,0],[4,0],[0,0],[0,0],[0,0],[0,0]]}"#;
+        let p: BandPart = serde_json::from_str(json).unwrap();
+        assert!(p.play.is_default() && p.out.is_empty());
+        assert_eq!(serde_json::to_string(&p).unwrap(), json);
+        // A drum sequencer of before: its new Band switch off.
+        for kind in DRUMS {
+            let mut params = defaults(kind.specs());
+            params.pop();
+            crate::params::fix_len(&mut params, kind.specs());
+            assert_eq!(params[drum_param(kind).unwrap()], 0.0, "{}", kind.name());
+            assert_eq!(drum_param(kind), Some(kind.specs().len() - 1));
+        }
     }
 }
