@@ -16,12 +16,12 @@
 //! its velocity how loud it is.
 //!
 //! Harmony cuts the sound at its hits and its beats and finds the notes of
-//! each piece in its spectrum (after Klapuri's iterative estimation, 2006):
-//! the pitch whose harmonics sum the loudest, its partials then taken out
-//! (as much as a smooth spectrum of it would have, so a partial it shares
-//! with another note keeps the rest), again until what is left is weak. A
-//! chord of three to five notes, the bass among them; pieces with the same
-//! chord in a row are one.
+//! each piece in its spectrum (after Mauch and Dixon's NNLS Chroma, 2010):
+//! its peaks on semitones, fitted with a template of harmonics per note by
+//! non-negative least squares, so a note an octave or a twelfth above
+//! another is heard by what it adds. A chord of three to five notes (the
+//! chord shape that fits them best sorts out strays), the bass among them;
+//! pieces with the same chord in a row are one.
 //!
 //! Drums takes the hits (see `analysis`) and hears what each adds below
 //! 150 Hz (a kick), in the middle (the noise of a snare) and in the highs
@@ -643,7 +643,7 @@ const HARMONICS: usize = 10;
 /// At most this many notes in a chord.
 const MAX_CHORD: usize = 5;
 
-/// A peak of a spectrum: Hz, and how loud (compressed).
+/// A peak of a spectrum: Hz, and how loud (of the loudest).
 #[derive(Clone, Copy, Debug)]
 struct Peak {
     hz: f64,
@@ -691,64 +691,80 @@ fn peaks(x: &[f32], fs: f64, a: usize, b: usize, ffts: &mut [(usize, Fft)]) -> V
             let den = l - 2.0 * c + r;
             let off = if den < -1e-12 { (0.5 * (l - r) / den).clamp(-0.5, 0.5) } else { 0.0 };
             let peak = (c - 0.25 * (l - r) * off).exp();
-            out.push(Peak { hz: (k as f64 + off) * bin, amp: (peak / most).powf(0.6) });
+            out.push(Peak { hz: (k as f64 + off) * bin, amp: peak / most });
         }
     }
     out
 }
 
+/// How much softer each harmonic of a note's template is than the one
+/// before (Mauch's NNLS Chroma takes 0.6 to 0.7).
+const TEMPLATE_DECAY: f64 = 0.7;
+
 /// The notes of a chord in `peaks` (MIDI, with how strongly each is
-/// heard), the strongest first.
+/// heard), the strongest first: the semitone spectrum fitted (non-negative
+/// least squares, by multiplicative updates) with a template of harmonics
+/// per note, so a note an octave or a twelfth above another is heard by
+/// what it adds beyond that note's own harmonics.
 fn chord_notes(peaks: &[Peak], fs: f64) -> Vec<(u8, f64)> {
     if peaks.is_empty() {
         return Vec::new();
     }
-    let mut left: Vec<f64> = peaks.iter().map(|p| p.amp).collect();
-    let top = (fs * 0.45).min(6000.0);
-    // The peak nearest `hz` within a quarter tone.
-    let near = |hz: f64| -> Option<usize> {
-        let i = peaks.partition_point(|p| p.hz < hz);
-        [i.wrapping_sub(1), i].iter().filter_map(|&j| peaks.get(j).map(|p| (j, (p.hz - hz).abs()))).filter(|(_, dd)| *dd < hz * 0.029).min_by(|a, b| a.1.total_cmp(&b.1)).map(|x| x.0)
-    };
-    let weight = |h: usize| 0.85f64.powi(h as i32 - 1);
-    let mut picked: Vec<(u8, f64)> = Vec::new();
-    let mut first = 0.0f64;
-    while picked.len() < MAX_CHORD + 1 {
-        let mut best: Option<(u8, f64, Vec<Option<usize>>)> = None;
-        for p in LOW_NOTE..=HIGH_NOTE {
-            if picked.iter().any(|(q, _)| q.abs_diff(p) <= 1) {
-                continue;
-            }
-            let f0 = hz_of(p as f64);
-            let parts: Vec<Option<usize>> = (1..=HARMONICS).map(|h| if f0 * h as f64 > top { None } else { near(f0 * h as f64) }).collect();
-            // A note sounds its own pitch.
-            let Some(Some(fund)) = parts.first() else { continue };
-            if left[*fund] < 0.05 {
-                continue;
-            }
-            let s: f64 = parts.iter().enumerate().filter_map(|(h, j)| j.map(|j| weight(h + 1) * left[j])).sum();
-            if best.as_ref().is_none_or(|b| s > b.1) {
-                best = Some((p, s, parts));
-            }
-        }
-        let Some((p, s, parts)) = best else { break };
-        if picked.is_empty() {
-            first = s;
-        } else if s < first * 0.3 {
-            break;
-        }
-        picked.push((p, s));
-        // Its partials out, as much as a smooth spectrum of it would have
-        // (a partial it shares with another note keeps the rest).
-        let amps: Vec<f64> = parts.iter().map(|j| j.map_or(0.0, |j| left[j])).collect();
-        for (h, j) in parts.iter().enumerate() {
-            let Some(j) = *j else { continue };
-            let lo = if h > 0 { amps[h - 1] } else { amps[h] };
-            let hi = amps.get(h + 1).copied().unwrap_or(amps[h]);
-            let smooth = amps[h].min((lo + amps[h] + hi) / 3.0);
-            left[j] = (left[j] - smooth).max(0.0);
+    let top = midi_of((fs * 0.45).min(6000.0)).floor();
+    let low = LOW_NOTE as f64;
+    let bins = ((top - low) as usize + 1).max(1);
+    // The spectrum on semitones (linear amplitude).
+    let mut v = vec![0.0f64; bins];
+    for p in peaks {
+        let m = midi_of(p.hz);
+        let b = m.round();
+        if (m - b).abs() < 0.4 && b >= low && b <= top {
+            v[(b - low) as usize] += p.amp;
         }
     }
+    let notes = (HIGH_NOTE - LOW_NOTE) as usize + 1;
+    // Each note's harmonics on the semitones: (bin, weight).
+    let w: Vec<Vec<(usize, f64)>> = (0..notes)
+        .map(|j| {
+            (1..=HARMONICS)
+                .filter_map(|h| {
+                    let b = (low + j as f64 + 12.0 * (h as f64).log2()).round();
+                    (b <= top).then(|| ((b - low) as usize, TEMPLATE_DECAY.powi(h as i32 - 1)))
+                })
+                .collect()
+        })
+        .collect();
+    let most = v.iter().copied().fold(0.0f64, f64::max);
+    if most <= 0.0 {
+        return Vec::new();
+    }
+    let wtv: Vec<f64> = w.iter().map(|t| t.iter().map(|&(b, x)| x * v[b]).sum()).collect();
+    let mut h = vec![most * 0.1; notes];
+    let mut model = vec![0.0f64; bins];
+    // A little sparsity: few notes explain it rather than many.
+    let lambda = most * 0.002;
+    for _ in 0..400 {
+        model.iter_mut().for_each(|m| *m = 0.0);
+        for (j, t) in w.iter().enumerate() {
+            for &(b, x) in t {
+                model[b] += x * h[j];
+            }
+        }
+        for (j, t) in w.iter().enumerate() {
+            let den: f64 = t.iter().map(|&(b, x)| x * model[b]).sum::<f64>() + lambda + 1e-12;
+            h[j] *= wtv[j] / den;
+        }
+    }
+    let strongest = h.iter().copied().fold(0.0f64, f64::max);
+    eprintln!("DBG {:?}", (0..notes).filter(|&j| h[j] > strongest * 0.05).map(|j| (LOW_NOTE as usize + j, (100.0 * h[j] / strongest).round(), (100.0 * v[j] / most).round())).collect::<Vec<_>>());
+    let mut picked: Vec<(u8, f64)> = (0..notes)
+        // A note sounds its own pitch, and is not a neighbour's spill.
+        .filter(|&j| h[j] >= strongest * 0.15 && v[j] >= most * 0.03)
+        .filter(|&j| (j == 0 || h[j] >= h[j - 1]) && (j + 1 >= notes || h[j] >= h[j + 1]))
+        .map(|j| (LOW_NOTE + j as u8, h[j]))
+        .collect();
+    picked.sort_by(|a, b| b.1.total_cmp(&a.1));
+    picked.truncate(MAX_CHORD + 1);
     picked
 }
 
@@ -1124,7 +1140,7 @@ mod tests {
             assert_eq!(got[0], want[0], "chord {k}'s bass: {got:?}");
             // One chord over its two beats.
             let starts: Vec<f64> = heard.iter().filter(|h| h.start <= t && h.end > t).map(|h| h.start).collect();
-            assert!(starts.iter().all(|s| (s - k as f64).abs() < 0.05), "chord {k} starts {starts:?}");
+            assert!(starts.iter().all(|s| (s - k as f64).abs() < 0.05), "chord {k} starts {starts:?}: heard {:?}", heard.iter().filter(|h| h.end > k as f64 && h.start < k as f64 + 1.0).map(|h| (h.pitch, h.start, h.end)).collect::<Vec<_>>());
         }
     }
 

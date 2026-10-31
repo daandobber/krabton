@@ -3153,7 +3153,7 @@ mod tests {
             let ons = clip_ons(&notes, p.feel(&clip).as_ref(), 4.0, 2);
             assert_eq!(ons.len(), 32);
             for (k, o) in ons.iter().enumerate() {
-                let want = k as f64 * 0.25 + if k % 2 == 1 { 0.08 * amount } else { 0.0 };
+                let want = k as f64 * 0.25 + if k % 2 == 1 { 0.08 * amount as f64 } else { 0.0 };
                 assert!(close(o.0, want), "{amount}: note {k} at {} not {want}", o.0);
             }
         }
