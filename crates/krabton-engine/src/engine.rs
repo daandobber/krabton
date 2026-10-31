@@ -348,6 +348,8 @@ pub enum Command {
     Hand { track: u64, at: Option<(f32, f32)> },
     /// The band to another part when the one playing ends (None: not after all).
     BandCue(Option<crate::band::Cue>),
+    /// The Key drawer's effect buttons held now, a bit each (see `dsp::perform`).
+    Perform(u16),
 }
 
 /// Frames per recorded block.
@@ -1353,6 +1355,8 @@ pub struct Engine {
     /// The notes the current track takes from another track.
     midi_scratch: Vec<Ev>,
     tape: crate::tape::TapeRt,
+    /// The held effects on the whole song.
+    perform: crate::dsp::perform::Perform,
 }
 
 impl Engine {
@@ -1410,6 +1414,7 @@ impl Engine {
             piano_lib: crate::piano::library::shared(),
             loop_from: None,
             tape: crate::tape::TapeRt::new(),
+            perform: crate::dsp::perform::Perform::new(sample_rate),
         };
         e.reconcile();
         (e, EngineHandle { commands: cmd_tx, garbage: garbage_rx, status, recorded: rec_rx, midi_recorded: midi_rec_rx, midi_out: midi_out_rx, epoch })
@@ -1662,6 +1667,7 @@ impl Engine {
             Command::TapeLocate(secs) => self.tape.locate(secs * self.sr as f64),
             Command::TapeFollow(track) => self.tape.follow = track,
             Command::TapeBrake(on) => self.tape.brake = on,
+            Command::Perform(held) => self.perform.set_held(held),
             Command::TapeStutter(beats) => {
                 let spb = self.samples_per_beat();
                 self.tape.stutter(beats.map(|b| b * spb));
@@ -2633,6 +2639,7 @@ impl Engine {
                     run_device(st, dev, params, &mut m.l[..seg], &mut m.r[..seg], &ctx, status);
                 }
             }
+            self.perform.process(&mut m.l[..seg], &mut m.r[..seg], spb);
             let vol = fader_gain(project.master.volume_db);
             let (pk_l, pk_r) = apply_gain_ramp(&mut m.l[..seg], &mut m.r[..seg], &mut m.gain_l, &mut m.gain_r, vol, vol);
             status.master.peak_l.store_max(pk_l);

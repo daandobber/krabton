@@ -460,6 +460,10 @@ pub struct App {
     pub(crate) transpose_open: bool,
     /// The step of the key sequence the next press fills.
     pub(crate) key_seq_sel: Option<usize>,
+    /// The Key drawer's effect buttons: those left on (right-clicked), and
+    /// what the engine was last told is held.
+    pub(crate) perform_latched: u16,
+    pub(crate) perform_sent: u16,
     pub sel_clip: Option<ClipSel>,
     pub sel_scene: usize,
     pub file_path: Option<PathBuf>,
@@ -663,6 +667,8 @@ impl App {
             sel_more: Vec::new(),
             transpose_open: false,
             key_seq_sel: None,
+            perform_latched: 0,
+            perform_sent: 0,
             sel_clip: Some(ClipSel::Slot { track: 0, scene: 1 }),
             sel_scene: 0,
             file_path: None,
@@ -4221,6 +4227,8 @@ impl App {
                 "track" => self.sel_track = TrackSel::Track(nums.first().copied().unwrap_or(0)),
                 "master" => self.sel_track = TrackSel::Master,
                 "transposeopen" => self.transpose_open = true,
+                // perform=BITS: the Key drawer's effects left on.
+                "perform" => self.perform_latched = nums.first().copied().unwrap_or(0) as u16,
                 // keyseq=D1,D2,..: a key sequence of degrees of the song's key, running.
                 "keyseq" => {
                     let song = self.project.scale;
@@ -4556,6 +4564,12 @@ impl eframe::App for App {
             .resizable(false)
             .frame(egui::Frame::new().fill(theme::PANEL2).inner_margin(egui::Margin::symmetric(12, 8)))
             .show_animated(ctx, self.transpose_open, |ui| self.ui_transpose_drawer(ui));
+        // Its effects stop when it closes.
+        if !self.transpose_open && self.perform_sent != 0 {
+            self.perform_latched = 0;
+            self.perform_sent = 0;
+            self.cmd(Command::Perform(0));
+        }
         // The browser runs from top to bottom, next to the detail view, as in Live.
         let fg = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("panel_grips")));
         if self.browser.visible {

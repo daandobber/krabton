@@ -15,12 +15,17 @@
 //! step every 1, 2 or 4 bars, changing on the bar. Click a step, then press
 //! chords to fill it; or start from a progression. Drums stay; what you
 //! play sounds as you play it.
+//!
+//! *Hold*: effects on the whole song (tape stop, stutter, a filter sweep...),
+//! on while a button is held down and off when it is let go; right-click
+//! leaves one on.
 
 use crate::app::App;
 use crate::theme::*;
 use crate::widgets::*;
 use egui::{pos2, vec2, Align2, Color32, FontId, Id, Pos2, Rect, RichText, Sense, Shape, Stroke, Ui};
-use krabton_engine::{Scale, ScaleKind};
+use krabton_engine::dsp::perform;
+use krabton_engine::{Command, Scale, ScaleKind};
 use std::sync::atomic::Ordering;
 
 const NAMES: [&str; 12] = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
@@ -93,6 +98,47 @@ impl App {
         let w = avail.width().min(1060.0);
         let col = Rect::from_min_size(pos2(avail.left() + (avail.width() - w) * 0.5, avail.top()), vec2(w, avail.height()));
         ui.scope_builder(egui::UiBuilder::new().max_rect(col).layout(egui::Layout::top_down(egui::Align::Min)), |ui| self.key_drawer_body(ui));
+    }
+
+    /// The effect buttons: held down, on; let go, off (right-click: left on
+    /// until clicked again).
+    fn perform_row(&mut self, ui: &mut Ui) {
+        let mut held = 0u16;
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.label(RichText::new("Hold").small().color(TEXT_DIM)).on_hover_text("Effects on the whole song while you hold a button down");
+            for k in 0..perform::COUNT {
+                let bit = 1u16 << k;
+                let latched = self.perform_latched & bit != 0;
+                let on = self.perform_sent & bit != 0;
+                let (r, resp) = ui.allocate_exact_size(vec2(92.0, 34.0), Sense::click());
+                let down = resp.is_pointer_button_down_on() && ui.input(|i| i.pointer.primary_down());
+                if resp.secondary_clicked() {
+                    self.perform_latched ^= bit;
+                }
+                if resp.clicked() && latched {
+                    self.perform_latched &= !bit;
+                }
+                if down {
+                    held |= bit;
+                }
+                let p = ui.painter();
+                let fill = if on { ACCENT } else if resp.hovered() { PANEL3.gamma_multiply(1.5) } else { PANEL3 };
+                p.rect_filled(r, 5.0, fill);
+                if latched {
+                    p.rect_stroke(r, 5.0, Stroke::new(1.5_f32, TEXT), egui::StrokeKind::Inside);
+                }
+                text(p, r.center(), Align2::CENTER_CENTER, perform::NAMES[k], FontId::proportional(13.0), if on { TEXT_DARK } else { TEXT });
+                resp.on_hover_text(format!("{}. Hold it down; right-click: leave it on", perform::HINTS[k]));
+            }
+        });
+        let now = held | self.perform_latched;
+        if now != self.perform_sent {
+            self.perform_sent = now;
+            self.cmd(Command::Perform(now));
+        }
+        if now != 0 {
+            ui.ctx().request_repaint();
+        }
     }
 
     fn key_drawer_body(&mut self, ui: &mut Ui) {
@@ -298,6 +344,9 @@ impl App {
                 ui.label(RichText::new(hint).small().color(if self.key_seq_sel.is_some() { ACCENT } else { TEXT_DIM }));
             });
         });
+
+        ui.add_space(6.0);
+        self.perform_row(ui);
 
         // A press: into the chosen step of the sequence, or the key now.
         if let Some(k) = pick {
