@@ -260,6 +260,21 @@ impl App {
             let (notes, names) = v.into_iter().unzip();
             return (notes, names, true);
         }
+        // Grit: its sixteen pads.
+        if let Some(Instrument::Grit { pads, .. }) = self.project.tracks.get(track).and_then(|t| t.instrument.as_ref()) {
+            use krabton_engine::dsp::grit as gr;
+            let mut v: Vec<(u8, String)> = (0..gr::PADS).map(|k| (gr::FIRST_NOTE + k as u8, pads.get(k).map(|p| p.label()).filter(|l| !l.is_empty()).map_or(format!("Pad {}", k + 1), |l| format!("{} {l}", k + 1)))).collect();
+            v.sort_by(|a, b| b.0.cmp(&a.0));
+            let (notes, names) = v.into_iter().unzip();
+            return (notes, names, true);
+        }
+        // Turntable: the notes that play the deck.
+        if let Some(Instrument::Turntable { .. }) = self.project.tracks.get(track).and_then(|t| t.instrument.as_ref()) {
+            let mut v = krabton_engine::dsp::turntable::note_names();
+            v.sort_by(|a, b| b.0.cmp(&a.0));
+            let (notes, names) = v.into_iter().unzip();
+            return (notes, names, true);
+        }
         let scale = self.project.scale;
         let fold = self.piano.fold && self.project.scale_mode;
         let notes: Vec<u8> = (0..=127u8).rev().filter(|&p| !fold || scale.contains(p)).collect();

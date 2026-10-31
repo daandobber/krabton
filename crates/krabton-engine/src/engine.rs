@@ -380,6 +380,8 @@ pub enum Command {
     BandCue(Option<crate::band::Cue>),
     /// The Key drawer's effect buttons held now, a bit each (see `dsp::perform`).
     Perform(u16),
+    /// The face of a track's Turntable: the hand on the platter, its buttons.
+    Deck { track: u64, act: crate::dsp::turntable::DeckAct },
 }
 
 /// Frames per recorded block.
@@ -553,6 +555,8 @@ enum InstState {
     Keytone(Box<crate::dsp::keytone::KeytoneState>),
     Princess(Box<crate::dsp::princess_machine::PrincessState>),
     Stretch(Box<crate::dsp::stretch::StretchState>),
+    Turntable(Box<crate::dsp::turntable::TurntableState>),
+    Grit(Box<crate::dsp::grit::GritState>),
     Plugin { instance: u64, proc: Option<Box<dyn AudioProcessor>>, pending: Vec<PluginEvent> },
     Theremin(Box<ThereminState>),
 }
@@ -665,6 +669,8 @@ impl InstState {
             Some(Instrument::Keytone { .. }) => InstState::Keytone(Box::new(crate::dsp::keytone::KeytoneState::new(sr))),
             Some(Instrument::Princess { .. }) => InstState::Princess(Box::new(crate::dsp::princess_machine::PrincessState::new(sr))),
             Some(Instrument::Stretch { .. }) => InstState::Stretch(Box::new(crate::dsp::stretch::StretchState::new(sr))),
+            Some(Instrument::Turntable { .. }) => InstState::Turntable(Box::new(crate::dsp::turntable::TurntableState::new(sr))),
+            Some(Instrument::Grit { .. }) => InstState::Grit(Box::new(crate::dsp::grit::GritState::new(sr))),
         }
     }
 
@@ -739,6 +745,8 @@ impl InstState {
                 | (InstState::Keytone(_), Some(Instrument::Keytone { .. }))
                 | (InstState::Princess(_), Some(Instrument::Princess { .. }))
                 | (InstState::Stretch(_), Some(Instrument::Stretch { .. }))
+                | (InstState::Turntable(_), Some(Instrument::Turntable { .. }))
+                | (InstState::Grit(_), Some(Instrument::Grit { .. }))
         ) || matches!((self, i), (InstState::Plugin { instance, .. }, Some(Instrument::Plugin(p))) if *instance == p.instance)
             // Another bank needs a player of its own.
             || matches!((self, i), (InstState::Sf2(s), Some(Instrument::Sf2 { font, .. })) if s.is_for(font.as_ref()))
@@ -804,6 +812,8 @@ impl InstState {
             (InstState::Keytone(s), Instrument::Keytone { params, sample, .. }) => s.note_on(ov.unwrap_or(params), sample.as_ref(), pitch, vel),
             (InstState::Princess(s), Instrument::Princess { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Stretch(s), Instrument::Stretch { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Turntable(s), Instrument::Turntable { params, record, .. }) => s.note_on(ov.unwrap_or(params), record, pitch, vel),
+            (InstState::Grit(s), Instrument::Grit { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             _ => {}
         }
     }
@@ -865,6 +875,8 @@ impl InstState {
             (InstState::Keytone(s), Instrument::Keytone { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Princess(s), Instrument::Princess { .. }) => s.note_off(pitch),
             (InstState::Stretch(s), Instrument::Stretch { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Turntable(s), Instrument::Turntable { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Grit(s), Instrument::Grit { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             _ => {}
         }
     }
@@ -926,6 +938,8 @@ impl InstState {
             InstState::Keytone(s) => s.all_off(),
             InstState::Princess(s) => s.all_off(),
             InstState::Stretch(s) => s.all_off(),
+            InstState::Turntable(s) => s.all_off(),
+            InstState::Grit(s) => s.all_off(),
             InstState::None => {}
         }
     }
@@ -976,6 +990,8 @@ impl InstState {
             InstState::Keytone(s) => s.visual(out),
             InstState::Princess(s) => s.visual(out),
             InstState::Stretch(s) => s.visual(out),
+            InstState::Turntable(s) => s.visual(out),
+            InstState::Grit(s) => s.visual(out),
             _ => return false,
         }
         true
@@ -1037,6 +1053,8 @@ impl InstState {
             (InstState::Keytone(s), Instrument::Keytone { params, sample, .. }) => s.render(ov.unwrap_or(params), sample.as_ref(), l, r),
             (InstState::Princess(s), Instrument::Princess { params, machine, .. }) => s.render(ov.unwrap_or(params), machine, l, r),
             (InstState::Stretch(s), Instrument::Stretch { params, sample, .. }) => s.render(ov.unwrap_or(params), sample.as_ref(), l, r),
+            (InstState::Turntable(s), Instrument::Turntable { params, sample, record, .. }) => s.render(ov.unwrap_or(params), sample.as_ref(), record, l, r),
+            (InstState::Grit(s), Instrument::Grit { params, pads, .. }) => s.render(ov.unwrap_or(params), pads, l, r),
             (InstState::Plugin { proc, pending, .. }, Instrument::Plugin(_)) => {
                 if let Some(p) = proc {
                     p.process(pending, l, r);
@@ -1776,6 +1794,11 @@ impl Engine {
                 }
             }
             Command::BandCue(cue) => self.band.cue(cue),
+            Command::Deck { track, act } => {
+                if let Some(InstState::Turntable(s)) = self.project.track_index(track).and_then(|ti| self.tracks.get_mut(ti)).map(|rt| &mut rt.instrument) {
+                    s.act(act);
+                }
+            }
         }
     }
 
@@ -2514,6 +2537,10 @@ impl Engine {
                         s.set_transport(ctx.bpm, ctx.beat, ctx.playing);
                         s.key = key_new.filter(|_| !track.key_fixed).unwrap_or(project.scale);
                     }
+                    // Its motor starts with the song, Sync follows its tempo, scratches keep its time.
+                    InstState::Turntable(s) => s.set_transport(ctx.bpm, ctx.beat, ctx.playing),
+                    // Its note repeat keeps the song's grid.
+                    InstState::Grit(s) => s.set_transport(ctx.bpm, ctx.beat, ctx.playing),
                     _ => {}
                 }
                 // The Key drawer moves what it plays into its key (not drums).

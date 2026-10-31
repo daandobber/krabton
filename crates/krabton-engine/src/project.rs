@@ -1050,6 +1050,24 @@ pub enum Instrument {
         #[serde(default)]
         sample: Option<SampleRef>,
     },
+    /// Turntable: a DJ deck with a record of any sample on it, scratched
+    /// by hand, synced to the song, with hot cues (see `dsp::turntable`).
+    Turntable {
+        preset: String,
+        params: Vec<f32>,
+        #[serde(default)]
+        sample: Option<SampleRef>,
+        #[serde(default)]
+        record: crate::dsp::turntable::Record,
+    },
+    /// Grit: a pad sampler of the old kind, sixteen pads through the
+    /// signal path of the late-eighties machines (see `dsp::grit`).
+    Grit {
+        preset: String,
+        params: Vec<f32>,
+        #[serde(default)]
+        pads: Vec<crate::dsp::grit::GritPad>,
+    },
 }
 
 impl Instrument {
@@ -1281,6 +1299,15 @@ impl Instrument {
         Instrument::Keytone { preset: preset.to_string(), params: crate::dsp::keytone::preset(preset), sample: None }
     }
 
+    pub fn turntable(preset: &str) -> Self {
+        Instrument::Turntable { preset: preset.to_string(), params: crate::dsp::turntable::preset(preset), sample: None, record: Default::default() }
+    }
+
+    pub fn grit(preset: &str) -> Self {
+        crate::dsp::grit::warm();
+        Instrument::Grit { preset: preset.to_string(), params: crate::dsp::grit::preset(preset), pads: crate::dsp::grit::preset_pads(preset) }
+    }
+
     pub fn princess(preset: &str) -> Self {
         use crate::dsp::princess_machine as pm;
         Instrument::Princess { preset: preset.to_string(), params: pm::preset(preset), machine: pm::preset_machine(preset) }
@@ -1349,6 +1376,8 @@ impl Instrument {
             Instrument::Keytone { .. } => "Keytone",
             Instrument::Princess { .. } => "Analog Princess",
             Instrument::Stretch { .. } => "Stretch",
+            Instrument::Turntable { .. } => "Turntable",
+            Instrument::Grit { .. } => "Grit",
         }
     }
 
@@ -1374,6 +1403,9 @@ impl Instrument {
             Instrument::Keytone { preset, .. } => preset.clone(),
             Instrument::Princess { preset, .. } => preset.clone(),
             Instrument::Stretch { preset, .. } => preset.clone(),
+            Instrument::Turntable { sample: Some(s), .. } => s.name.clone(),
+            Instrument::Turntable { preset, .. } => preset.clone(),
+            Instrument::Grit { preset, .. } => preset.clone(),
             Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Modular { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } | Instrument::Monk { preset, .. } | Instrument::Piano { preset, .. } | Instrument::Bassline { preset, .. } | Instrument::Mono101 { preset, .. } | Instrument::Drone { preset, .. } | Instrument::Waves { preset, .. } | Instrument::Guitar { preset, .. } | Instrument::WindChimes { preset, .. } | Instrument::Birds { preset, .. } | Instrument::Nature { preset, .. } | Instrument::PanFlute { preset, .. } | Instrument::Melodica { preset, .. } | Instrument::Harmonica { preset, .. } | Instrument::Calculator { preset, .. } | Instrument::Console { preset, .. } | Instrument::Handheld { preset, .. } | Instrument::Micro { preset, .. } | Instrument::Warp { preset, .. } | Instrument::Hybrid { preset, .. } | Instrument::Quartet { preset, .. } | Instrument::ChipFm { preset, .. } | Instrument::V2 { preset, .. } | Instrument::Oidos { preset, .. } | Instrument::Orchestra { preset, .. } | Instrument::Facet { preset, .. } | Instrument::BeadsSynth { preset, .. } | Instrument::StreetOrgan { preset, .. } => preset.clone(),
         }
     }
@@ -1398,6 +1430,8 @@ impl Instrument {
             Instrument::Drums { pads, .. } => pads.iter().fold(0, |m, p| m | 1u128 << (p.note & 127)),
             Instrument::Sf2 { bank, .. } if *bank >= crate::dsp::sf2::DRUM_BANK => crate::dsp::sf2::GM_DRUM_NOTES,
             Instrument::Princess { .. } => crate::dsp::princess_machine::NOTES.iter().fold(0, |m, &n| m | 1u128 << n),
+            Instrument::Turntable { .. } => crate::dsp::turntable::note_names().iter().fold(0, |m, &(n, _)| m | 1u128 << n),
+            Instrument::Grit { .. } => (0..crate::dsp::grit::PADS).fold(0, |m, k| m | 1u128 << (crate::dsp::grit::FIRST_NOTE as usize + k)),
             _ => 0,
         }
     }
@@ -2541,6 +2575,12 @@ impl Project {
                     Some(Instrument::Princess { params, machine, .. }) => {
                         params::fix_len(params, crate::dsp::princess_machine::SPECS);
                         machine.fix();
+                    }
+                    Some(Instrument::Turntable { params, .. }) => params::fix_len(params, crate::dsp::turntable::SPECS),
+                    Some(Instrument::Grit { params, pads, .. }) => {
+                        params::fix_len(params, crate::dsp::grit::SPECS);
+                        crate::dsp::grit::fix_pads(pads);
+                        crate::dsp::grit::warm();
                     }
                     // The toy keyboard's drums made now, not on the audio thread.
                     Some(Instrument::Drums { pads, .. }) if pads.iter().any(|p| p.voice.family() == drums::Family::Keytone) => crate::dsp::keytone::warm(),

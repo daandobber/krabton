@@ -191,6 +191,10 @@ pub enum BrowserItem {
     Princess(&'static str),
     /// A Stretch preset.
     Stretch(&'static str),
+    /// A Turntable preset.
+    Turntable(&'static str),
+    /// A Grit preset.
+    Grit(&'static str),
 }
 
 /// A bank of DX7 voices for FM.
@@ -272,6 +276,8 @@ impl BrowserItem {
             BrowserItem::Keytone(p) => format!("Keytone: {p}"),
             BrowserItem::Princess(p) => format!("Analog Princess: {p}"),
             BrowserItem::Stretch(p) => format!("Stretch: {p}"),
+            BrowserItem::Turntable(p) => format!("Turntable: {p}"),
+            BrowserItem::Grit(p) => format!("Grit: {p}"),
         }
     }
 }
@@ -1308,7 +1314,7 @@ impl App {
                 }
                 self.toast(format!("Loading {} ...", info.name));
             }
-            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::StreetOrgan(_) | BrowserItem::Harmonica(_) | BrowserItem::Calculator(_) | BrowserItem::Console(_) | BrowserItem::Handheld(_) | BrowserItem::Micro(_) | BrowserItem::Warp(_) | BrowserItem::Hybrid(_) | BrowserItem::Quartet(_) | BrowserItem::ChipFm(_) | BrowserItem::V2(_) | BrowserItem::Oidos(_) | BrowserItem::Orchestra(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) | BrowserItem::Coast(_) | BrowserItem::Crimson(_) | BrowserItem::Silicon(_) | BrowserItem::Theremin(_) | BrowserItem::Granulator(_) | BrowserItem::Keytone(_) | BrowserItem::Princess(_) | BrowserItem::Stretch(_) => {
+            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::StreetOrgan(_) | BrowserItem::Harmonica(_) | BrowserItem::Calculator(_) | BrowserItem::Console(_) | BrowserItem::Handheld(_) | BrowserItem::Micro(_) | BrowserItem::Warp(_) | BrowserItem::Hybrid(_) | BrowserItem::Quartet(_) | BrowserItem::ChipFm(_) | BrowserItem::V2(_) | BrowserItem::Oidos(_) | BrowserItem::Orchestra(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) | BrowserItem::Coast(_) | BrowserItem::Crimson(_) | BrowserItem::Silicon(_) | BrowserItem::Theremin(_) | BrowserItem::Granulator(_) | BrowserItem::Keytone(_) | BrowserItem::Princess(_) | BrowserItem::Turntable(_) | BrowserItem::Grit(_) | BrowserItem::Stretch(_) => {
                 let inst = match item {
                     BrowserItem::Synth(p) => Instrument::synth(p),
                     BrowserItem::Macro(p) => Instrument::macro_osc(p),
@@ -1358,6 +1364,8 @@ impl App {
                     BrowserItem::Keytone(p) => Instrument::keytone(p),
                     BrowserItem::Princess(p) => Instrument::princess(p),
                     BrowserItem::Stretch(p) => Instrument::stretch(p),
+                    BrowserItem::Turntable(p) => Instrument::turntable(p),
+                    BrowserItem::Grit(p) => Instrument::grit(p),
                     BrowserItem::Drums(k) => Instrument::drums(k),
                     _ => Instrument::sampler(None),
                 };
@@ -1665,6 +1673,16 @@ impl App {
                                 }
                                 Some(Instrument::Granulator { sample: s, .. }) => *s = Some(sample),
                                 Some(Instrument::Stretch { sample: s, .. }) => *s = Some(sample),
+                                // A record on the deck: listened to for its tempo and cues.
+                                Some(Instrument::Turntable { sample: s, record, .. }) => {
+                                    *record = krabton_engine::dsp::turntable::listen(&sample);
+                                    *s = Some(sample);
+                                }
+                                // On Grit's chosen pad.
+                                Some(Instrument::Grit { pads, .. }) => {
+                                    krabton_engine::dsp::grit::fix_pads(pads);
+                                    crate::ui::faces::grit::put_on(&mut pads[self.sel_pad.min(krabton_engine::dsp::grit::PADS - 1)], sample);
+                                }
                                 Some(Instrument::Keytone { sample: s, params, .. }) => {
                                     *s = Some(sample);
                                     if let Some(v) = params.get_mut(krabton_engine::dsp::keytone::SOUND) {
@@ -3695,6 +3713,14 @@ impl App {
                     let item = if name == "hyper" { BrowserItem::Hyper } else { BrowserItem::HyperFirmware(PathBuf::from(arg.trim())) };
                     self.apply_item(&item, target);
                 }
+                // sampleon=PATH: that sample dropped on the selected track's instrument (a Turntable's record, a Grit pad).
+                "sampleon" => {
+                    let target = match self.sel_track {
+                        TrackSel::Track(t) => DropTarget::Track(t),
+                        _ => DropTarget::NewTrack,
+                    };
+                    self.apply_item(&BrowserItem::Sample(PathBuf::from(arg.trim())), target);
+                }
                 "singer" => {
                     let target = match self.sel_track {
                         TrackSel::Track(t) => DropTarget::Track(t),
@@ -4247,6 +4273,33 @@ impl App {
                     }
                     Err(e) => eprintln!("stretchload: {e}"),
                 },
+                // turntable=N: a new track with Turntable preset N.
+                "turntable" => {
+                    let names = krabton_engine::dsp::turntable::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Turntable(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                // grit=N: a new track with Grit preset N; gritpad=K chooses its pad K (1 to 16);
+                // gritchop=0|1 chops the chosen pad's sample to the pads (at its hits, on a grid).
+                "grit" => {
+                    let names = krabton_engine::dsp::grit::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Grit(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "gritpad" => self.sel_pad = nums.first().copied().unwrap_or(1).clamp(1, 16) - 1,
+                "gritchop" => {
+                    if let TrackSel::Track(t) = self.sel_track {
+                        let by = if nums.first().copied().unwrap_or(0) == 0 { krabton_engine::dsp::grit::Chop::Transients } else { krabton_engine::dsp::grit::Chop::Grid };
+                        let sel = self.sel_pad.min(15);
+                        if let Some(Instrument::Grit { pads, .. }) = self.project.tracks.get_mut(t).and_then(|tr| tr.instrument.as_mut()) {
+                            if let Some(s) = pads.get(sel).and_then(|p| p.sample.clone()) {
+                                *pads = krabton_engine::dsp::grit::chop(&s, by);
+                            }
+                        }
+                    }
+                }
                 // keytone=N: a new track with Keytone preset N.
                 "keytone" => {
                     let names = krabton_engine::dsp::keytone::preset_names();
