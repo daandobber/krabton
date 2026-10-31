@@ -442,11 +442,12 @@ impl Clip {
 
     /// Creates an audio clip, guessing the source tempo the way Live's
     /// auto-warp does for loops: snap to a power-of-two number of beats.
+    /// Anything longer than a loop (a song, a film's sound) plays as it is.
     pub fn new_audio(id: u64, sample: SampleRef, color: Rgb, project_bpm: f64) -> Self {
         let dur = sample.duration().max(0.001);
         let beats_at_project = dur * project_bpm / 60.0;
         let mut bpm = project_bpm;
-        if dur > 1.5 {
+        if dur > 1.5 && dur <= 24.0 {
             let mut best = 1.0f64;
             let mut b = 1.0f64;
             while b <= 256.0 {

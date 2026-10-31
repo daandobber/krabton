@@ -3770,6 +3770,16 @@ impl App {
                 // test clip (a GIF made here) written there and loaded; videopreset=NAME;
                 // videomode=N (0 Loop, 1 Tempo, 2 Slices); videoscreen: its screen.
                 "video" => self.video_window = true,
+                // videolink=URL: the Video fetches the film behind a link; videolinkbox opens its box.
+                "videolink" => {
+                    self.video_window = true;
+                    self.video.link = arg.trim().to_string();
+                    self.video_fetch_link();
+                }
+                "videolinkbox" => {
+                    self.video_window = true;
+                    self.video.link_open = true;
+                }
                 "videoload" => {
                     self.video_window = true;
                     self.video_add(&[PathBuf::from(arg.trim())]);

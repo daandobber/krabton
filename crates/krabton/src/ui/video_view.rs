@@ -7,7 +7,7 @@
 use super::windows::tool_window;
 use crate::app::App;
 use crate::theme::*;
-use crate::video::{ffmpeg, media};
+use crate::video::{ffmpeg, media, ytdl};
 use crate::widgets::*;
 use egui::{pos2, vec2, Align2, Color32, Context, Id, Rect, RichText, Sense, Ui, UiBuilder};
 use krabton_engine::video::{self as kv, Effect, PlayMode, Source, VideoLink};
@@ -36,6 +36,7 @@ impl App {
     pub(crate) fn ui_video(&mut self, ctx: &Context) {
         self.video_frame(ctx);
         self.poll_ffmpeg_fetch();
+        self.poll_link_grab(ctx);
         if self.video_window {
             let (keep, _) = tool_window(ctx, "video", "Video", vec2(1120.0, 700.0), |ui| self.video_body(ui));
             if !keep {
@@ -61,6 +62,45 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    /// A film from a link arrived: into the bank, its sound onto a new
+    /// audio track when asked.
+    fn poll_link_grab(&mut self, ctx: &Context) {
+        let state = self.video.grab.as_ref().and_then(|g| g.lock().ok().map(|s| s.clone()));
+        match state {
+            Some(ytdl::Grab::Ready(path)) => {
+                self.video.grab = None;
+                let title = ytdl::title_of(&path);
+                self.toast(format!("{title} is in the Video"));
+                let before = self.project.video.clips.len();
+                self.video_add(std::slice::from_ref(&path));
+                if let Some(c) = self.project.video.clips.get_mut(before) {
+                    c.name = title;
+                }
+                if self.video.link_sound {
+                    self.import_files(vec![path], crate::import::FileTarget::NewTrack { beat: None });
+                }
+            }
+            Some(ytdl::Grab::Failed(e)) => {
+                self.video.grab = None;
+                self.toast(e);
+            }
+            Some(_) => ctx.request_repaint_after(std::time::Duration::from_millis(250)),
+            None => {}
+        }
+    }
+
+    /// Fetches the film behind the link typed.
+    pub(crate) fn video_fetch_link(&mut self) {
+        let link = self.video.link.trim().to_string();
+        if !ytdl::is_link(&link) {
+            self.toast("That is not a link (it starts with https://)");
+            return;
+        }
+        self.video.grab = Some(ytdl::start(link));
+        self.video.link_open = false;
+        self.video.link.clear();
     }
 
     fn video_body(&mut self, ui: &mut Ui) {
@@ -173,6 +213,40 @@ impl App {
                 }
             }
         }
+        // The pad for a link (YouTube and the like), or how its film is coming.
+        if clips.len() + 1 < kv::MAX_CLIPS {
+            let pad = Rect::from_min_size(pos2(r.left() + (clips.len() + 1) as f32 * (pw + 8.0), r.top()), vec2(pw, ph));
+            let grab = self.video.grab.as_ref().and_then(|g| g.lock().ok().map(|s| s.clone()));
+            let resp = ui.interact(pad, Id::new("video_pad_link"), Sense::click());
+            let p = ui.painter();
+            let busy = grab.is_some();
+            let col = if resp.hovered() || busy { TEXT } else { TEXT_DIM };
+            rect_line(p, pad, 4.0, 1.0, if resp.hovered() || self.video.link_open || busy { ACCENT } else { LINE });
+            match &grab {
+                Some(g) => {
+                    let (what, f) = match g {
+                        ytdl::Grab::Tool => ("Getting yt-dlp...".to_string(), 0.0),
+                        ytdl::Grab::Film(f) if *f >= 0.999 => ("Almost there...".to_string(), 1.0),
+                        ytdl::Grab::Film(f) => (format!("Fetching {:.0} %", f * 100.0), *f),
+                        _ => (String::new(), 1.0),
+                    };
+                    p.text(pad.center() - vec2(0.0, 6.0), Align2::CENTER_CENTER, what, small(), col);
+                    let bar = Rect::from_min_size(pos2(pad.left() + 8.0, pad.center().y + 12.0), vec2((pad.width() - 16.0) * f, 3.0));
+                    p.rect_filled(bar, 1.0, ACCENT);
+                }
+                None => {
+                    p.text(pad.center() - vec2(0.0, 8.0), Align2::CENTER_CENTER, "Link", egui::FontId::proportional(16.0), col);
+                    p.text(pad.center() + vec2(0.0, 14.0), Align2::CENTER_CENTER, "YouTube and more", small(), col);
+                }
+            }
+            let tip = if busy { "A film is being fetched from a link" } else { "A film from a link (YouTube and the many sites yt-dlp knows): paste it, and it comes into the bank. yt-dlp is fetched the first time" };
+            if resp.on_hover_text(tip).clicked() && !busy {
+                self.video.link_open = !self.video.link_open;
+            }
+            if self.video.link_open && !busy {
+                self.video_link_box(ui.ctx(), pos2(pad.left(), pad.bottom() + 4.0));
+            }
+        }
         if let Some(i) = pick {
             self.video_pick(i);
         }
@@ -189,6 +263,44 @@ impl App {
             set.clips.remove(i);
             set.current = set.current.min(set.clips.len().saturating_sub(1));
             self.video.playing = set.current;
+        }
+    }
+
+    /// The box to paste a link in, under its pad.
+    fn video_link_box(&mut self, ctx: &Context, at: egui::Pos2) {
+        let mut get = false;
+        let mut close = false;
+        egui::Area::new(Id::new("video_link_box")).order(egui::Order::Foreground).fixed_pos(at).show(ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_width(420.0);
+                ui.label(RichText::new("A film from a link").strong().color(TEXT));
+                let edit = ui.add(egui::TextEdit::singleline(&mut self.video.link).hint_text("https://www.youtube.com/watch?v=...").desired_width(f32::INFINITY));
+                edit.request_focus();
+                if edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    get = true;
+                }
+                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    close = true;
+                }
+                ui.checkbox(&mut self.video.link_sound, "Its sound on a new audio track too");
+                ui.horizontal(|ui| {
+                    if ui.add_enabled(ytdl::is_link(&self.video.link), egui::Button::new("Get it")).clicked() {
+                        get = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        close = true;
+                    }
+                    if ui.button("Paste").on_hover_text("The link on the clipboard").clicked() {
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+                    }
+                });
+                ui.label(RichText::new("Fetched with yt-dlp (it comes the first time), up to 720p, into Documents/Krabton/Library/Links. Only take what you may use").small().color(TEXT_DIM));
+            });
+        });
+        if get {
+            self.video_fetch_link();
+        } else if close {
+            self.video.link_open = false;
         }
     }
 

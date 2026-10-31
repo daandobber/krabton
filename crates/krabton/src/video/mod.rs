@@ -8,6 +8,7 @@ pub mod ffmpeg;
 pub mod gif;
 pub mod media;
 pub mod stage;
+pub mod ytdl;
 
 use crate::app::App;
 use krabton_engine::engine::{LISTEN_LEN, LISTEN_TRACKS};
@@ -93,6 +94,12 @@ pub struct VideoRuntime {
     pub fullscreen: bool,
     /// ffmpeg being fetched.
     pub fetch: Option<Arc<Mutex<ffmpeg::Fetch>>>,
+    /// A film being fetched from a link, the link typed, whether the box
+    /// for it is open and whether its sound goes on a track too.
+    pub grab: Option<Arc<Mutex<ytdl::Grab>>>,
+    pub link: String,
+    pub link_open: bool,
+    pub link_sound: bool,
     last: Option<Instant>,
     /// A beat that runs on while the song is stopped (for the strobe).
     free_beat: f64,
@@ -125,6 +132,10 @@ impl Default for VideoRuntime {
             screen_open: false,
             fullscreen: false,
             fetch: None,
+            grab: None,
+            link: String::new(),
+            link_open: false,
+            link_sound: false,
             last: None,
             free_beat: 0.0,
             dice: Dice::new(0x5EED),
