@@ -138,6 +138,7 @@ impl App {
         let mut pick = None;
         let mut remove = None;
         let mut replace = None;
+        let mut slice = None;
         for (i, c) in clips.iter().enumerate() {
             let pad = Rect::from_min_size(pos2(r.left() + i as f32 * (pw + 8.0), r.top()), vec2(pw, ph));
             let resp = ui.interact(pad, Id::new(("video_pad", i)), Sense::click());
@@ -166,6 +167,12 @@ impl App {
             if let Some((s, col)) = status {
                 p.text(pos2(pad.center().x, pad.top() + 26.0), Align2::CENTER_CENTER, s, small(), col);
             }
+            // Cut by Slice to Drum Rack: how many cues, in a corner.
+            if let Some(q) = &c.cues {
+                let g = p.text(pad.min + vec2(6.0, 5.0), Align2::LEFT_TOP, format!("{} cues", q.len()), small(), TEXT);
+                p.rect_filled(g.expand(2.0), 2.0, Color32::from_black_alpha(170));
+                p.text(pad.min + vec2(6.0, 5.0), Align2::LEFT_TOP, format!("{} cues", q.len()), small(), TEXT);
+            }
             // Still being read: how far.
             if let Some(m) = &m {
                 if !m.is_done() && info.expected > 0 {
@@ -183,11 +190,17 @@ impl App {
                 (None, false) => format!("{}\n{}", c.path.display(), info.note),
                 (None, true) => c.path.display().to_string(),
             };
-            let resp = resp.on_hover_text(format!("{tip}\nClick to play it; right-click to replace or remove it"));
+            let film = kv::is_film(&c.path);
+            let more = if film { "slice it to a Drum Rack, replace or remove it" } else { "replace or remove it" };
+            let resp = resp.on_hover_text(format!("{tip}\nClick to play it; right-click to {more}"));
             if resp.clicked() {
                 pick = Some(i);
             }
             resp.context_menu(|ui| {
+                if film && ui.button("Slice to Drum Rack...").on_hover_text("Its sound cut at its hits or on the beat onto the pads of a new Drum Rack track, and its picture cut at the same places: the track's notes play both, in sync").clicked() {
+                    slice = Some(c.path.clone());
+                    ui.close();
+                }
                 if ui.button("Replace...").clicked() {
                     replace = Some(i);
                     ui.close();
@@ -249,6 +262,9 @@ impl App {
         }
         if let Some(i) = pick {
             self.video_pick(i);
+        }
+        if let Some(path) = slice {
+            self.open_film_slice_dialog(&path);
         }
         if let Some(i) = replace {
             if let Some(path) = rfd::FileDialog::new().set_title("A film, picture or GIF instead").add_filter("Films, pictures and GIFs", &media::EXTENSIONS).pick_file() {
@@ -412,6 +428,8 @@ impl App {
     /// How it plays, the presets, the links, the screen.
     fn video_controls(&mut self, ui: &mut Ui) {
         let mut set = self.project.video.clone();
+        let playing = self.video.playing.min(set.clips.len().saturating_sub(1));
+        let cued = set.play == PlayMode::Slices && set.clips.get(playing).is_some_and(|c| c.cues.is_some());
         let tracks: Vec<(u64, String)> = self.project.tracks.iter().map(|t| (t.id, t.name.clone())).collect();
         let track_name = |id: Option<u64>, none: &str| id.and_then(|id| tracks.iter().find(|t| t.0 == id)).map_or(none.to_string(), |t| t.1.clone());
         // The next track in the list (None first: the master, or all).
@@ -462,6 +480,8 @@ impl App {
                     }
                 });
             }
+            // Cues play as filmed, as their sound does.
+            PlayMode::Slices if cued => {}
             PlayMode::Loop | PlayMode::Slices => {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Speed").small().color(TEXT_DIM));
@@ -470,7 +490,29 @@ impl App {
                 });
             }
         }
-        if set.play == PlayMode::Slices {
+        if let (true, Some(cues)) = (cued, set.clips.get_mut(playing).and_then(|c| c.cues.as_mut())) {
+            // Cut where Slice to Drum Rack cut its sound.
+            let mut even = false;
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("Cues").small().color(TEXT_DIM));
+                ui.label(RichText::new(cues.len().to_string()).color(TEXT)).on_hover_text("Where the film is cut: the same places as its sound's slices on the Drum Rack's pads, C1 the first");
+                ui.label(RichText::new("played by").small().color(TEXT_DIM));
+                if choice(ui, &track_name(cues.track, "every track"), false, "Whose notes show the cues (the track it was sliced to). Click for the next track").clicked() {
+                    cues.track = next_track(cues.track);
+                }
+                let (name, tip) = if cues.gate { ("Gate", "Gate: the picture stands still where its note ends, as the pad's sound stops. Click for One-Shot") } else { ("One-Shot", "One-Shot: each piece plays on to its end, as the pad's sound does. Click for Gate") };
+                if choice(ui, name, false, tip).clicked() {
+                    cues.gate = !cues.gate;
+                }
+                if choice(ui, "Even", false, "Forget the cues: back to equal slices").clicked() {
+                    even = true;
+                }
+            });
+            ui.label(RichText::new("Set by Slice to Drum Rack: each note shows the film from its slice's start, as filmed, for as long as its sound plays").small().color(TEXT_DIM));
+            if even {
+                set.clips[playing].cues = None;
+            }
+        } else if set.play == PlayMode::Slices {
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new("Slices").small().color(TEXT_DIM));
                 if choice(ui, &set.slices.to_string(), false, "In how many slices the clip is cut (C1 plays the first). Click for more").clicked() {

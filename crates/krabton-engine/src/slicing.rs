@@ -8,11 +8,17 @@
 //! fades at both ends. A set keeps each one as its file and the part of it
 //! (see `SampleRegion`), and cuts it again when it opens; no files are
 //! written.
+//!
+//! The sound of a film can bring its picture along (Slice to Drum Rack):
+//! the film goes into the Video's bank with a cue at every cut, the same
+//! cuts as the pads', and the new track's notes play the picture with the
+//! sound (see `video::Cues`).
 
 use crate::analysis::{self, Flux};
 use crate::dsp::drums::{DrumEngine, DrumVoice, MAX_PADS, PAD_GAIN};
 use crate::project::{ArrangementClip, AudioClip, Clip, ClipContent, DrumPad, Instrument, Note, Project};
-use crate::sample::{SampleRef, SampleRegion};
+use crate::sample::{SampleData, SampleRef, SampleRegion};
+use crate::video::{self, Cues};
 
 /// The note of the first slice (C1, as in Live); the next ones go up.
 pub const FIRST_NOTE: u8 = 36;
@@ -78,11 +84,14 @@ pub struct SliceOptions {
     /// The pads play while their notes are held, and stop where the notes
     /// end; off, they are one-shots: each slice plays to its end.
     pub gate: bool,
+    /// A film's sound: its picture too, cut at the same places in the
+    /// Video, played by the new track's notes.
+    pub picture: bool,
 }
 
 impl Default for SliceOptions {
     fn default() -> Self {
-        Self { by: SliceBy::Transients, sensitivity: 0.5, max_slices: MAX_PADS, gate: false }
+        Self { by: SliceBy::Transients, sensitivity: 0.5, max_slices: MAX_PADS, gate: false, picture: false }
     }
 }
 
@@ -180,6 +189,15 @@ impl SlicePlan {
             .collect()
     }
 
+    /// The cuts as cues of the film the sample's sound came from (seconds of
+    /// the file, as its pads' regions count them), played by `track`'s notes.
+    pub fn cues(&self, sample: &SampleData, gate: bool, track: Option<u64>) -> Cues {
+        let base = sample.region.map_or(0, |r| r.start) as f64;
+        let sr = sample.sample_rate.max(1) as f64;
+        let secs = |f: usize| (base + f as f64) / sr;
+        Cues { times: self.starts.iter().map(|&f| secs(f)).collect(), end: secs(self.to), track, gate }
+    }
+
     /// The notes that play the slices where they were (beats of the clip),
     /// each as long as its slice.
     pub fn notes(&self) -> Vec<Note> {
@@ -219,6 +237,9 @@ pub struct Sliced {
     pub slices: usize,
     /// Slices left out over the most (see `SlicePlan::merged`).
     pub merged: usize,
+    /// The film's place in the Video's bank, cued at the cuts (with
+    /// `SliceOptions::picture`, when the sound is a film's and the bank had room).
+    pub picture: Option<usize>,
 }
 
 impl Project {
@@ -288,7 +309,10 @@ impl Project {
                 self.tracks[t].arrangement.push(ArrangementClip { offset, ..ArrangementClip::new(id, start, length, clip) });
             }
         }
-        Ok(Sliced { track: t, slices: plan.len(), merged: plan.merged })
+        // The picture: the film cut where its sound was, the same cuts.
+        let film = a.sample.path.as_deref().filter(|p| opts.picture && video::is_film(p));
+        let picture = film.and_then(|path| self.video.cue_film(path, plan.cues(&a.sample, opts.gate, Some(self.tracks[t].id))));
+        Ok(Sliced { track: t, slices: plan.len(), merged: plan.merged, picture })
     }
 }
 
@@ -331,7 +355,7 @@ mod tests {
     }
 
     fn opts(by: SliceBy, max: usize) -> SliceOptions {
-        SliceOptions { by, sensitivity: 0.5, max_slices: max, gate: false }
+        SliceOptions { by, max_slices: max, ..Default::default() }
     }
 
     #[test]
@@ -530,5 +554,105 @@ mod tests {
         let ac = &p.tracks[done.track].arrangement[0];
         assert_eq!((ac.start, ac.length, ac.offset, ac.clip.length), (4.0, 6.0, 2.0, 8.0));
         assert!(p.slice_to_midi_track(done.track, SliceClip::Slot(0), &opts(SliceBy::Half, 16), None).is_err(), "a MIDI track has no audio to slice");
+    }
+
+    /// The drum loop as the sound of a film (its path a film's).
+    fn film_sound(sr: u32, path: &str) -> SampleRef {
+        let (s, _) = drum_loop(sr, BEAT, true);
+        SampleRef::new(SampleData::from_buffers("Zoo", Some(path.into()), sr, s.left.clone(), s.right.clone()))
+    }
+
+    fn pads_of(p: &Project, t: usize) -> Vec<DrumPad> {
+        match &p.tracks[t].instrument {
+            Some(Instrument::Drums { pads, .. }) => pads.clone(),
+            _ => panic!("a Drum Rack"),
+        }
+    }
+
+    #[test]
+    fn a_films_sound_brings_its_picture_cut_at_the_same_places() {
+        let sr = 48_000;
+        let film = film_sound(sr, "C:/films/Zoo.mp4");
+        let mut p = project_with(film.clone(), 120.0);
+        // Without Picture too, the Video is left alone.
+        let mut q = p.clone();
+        let done = q.slice_to_midi_track(0, SliceClip::Slot(0), &opts(SliceBy::Transients, 16), None).unwrap();
+        assert_eq!(done.picture, None);
+        assert!(q.video.clips.is_empty());
+        // With it: the film in the bank, cued where the pads' slices start.
+        let o = SliceOptions { gate: true, picture: true, ..opts(SliceBy::Transients, 16) };
+        let done = p.slice_to_midi_track(0, SliceClip::Slot(0), &o, None).unwrap();
+        assert_eq!(done.picture, Some(0));
+        let v = &p.video;
+        assert_eq!((v.clips.len(), v.current, v.play), (1, 0, crate::video::PlayMode::Slices));
+        assert_eq!(v.clips[0].path, std::path::PathBuf::from("C:/films/Zoo.mp4"));
+        let cues = v.clips[0].cues.clone().expect("cues");
+        let pads = pads_of(&p, done.track);
+        assert_eq!(cues.len(), pads.len());
+        for (k, pad) in pads.iter().enumerate() {
+            let r = pad.sample.as_ref().unwrap().region.unwrap();
+            assert_eq!(cues.times[k], r.start as f64 / sr as f64, "cue {k} on its pad's slice");
+        }
+        assert_eq!(cues.end, 4.0, "two bars at 120 BPM");
+        assert_eq!((cues.track, cues.gate), (Some(p.tracks[done.track].id), true));
+        // The clip's notes come when their cues are in the film (the song at the clip's tempo).
+        let notes = p.tracks[done.track].slots[0].as_ref().unwrap().notes();
+        for (k, n) in notes.iter().enumerate() {
+            assert_eq!(cues.for_note(n.pitch), k);
+            assert!((n.start * 0.5 - cues.times[k]).abs() < 1e-9);
+        }
+        // Sliced again (on the beat): a new track, and the same film's cues follow it.
+        let again = p.slice_to_midi_track(0, SliceClip::Slot(0), &SliceOptions { picture: true, ..opts(SliceBy::Quarter, 16) }, None).unwrap();
+        assert_eq!(again.picture, Some(0));
+        assert_eq!(p.video.clips.len(), 1);
+        let cues = p.video.clips[0].cues.clone().unwrap();
+        assert_eq!(cues.times, (0..8).map(|k| k as f64 * 0.5).collect::<Vec<_>>());
+        assert_eq!((cues.track, cues.gate), (Some(p.tracks[again.track].id), false));
+        // A part of the film (a region of it) is cued at its place in the film.
+        let part = SampleRef::new(film.region("Zoo part", SampleRegion { start: sr as u64, end: 3 * sr as u64, fade_in: 0, fade_out: 0 }));
+        let mut p2 = Project::blank();
+        p2.bpm = 120.0;
+        let o = SliceOptions { picture: true, ..opts(SliceBy::Half, 16) };
+        let done = p2.slice_sample_to_midi_track(part, SlicePlace::Slot(0), &o, None).unwrap();
+        let cues = p2.video.clips[done.picture.unwrap()].cues.clone().unwrap();
+        assert_eq!((cues.times[0], cues.end), (1.0, 3.0));
+        // A sound file is no film: no picture, whatever is asked.
+        let mut p3 = project_with(film_sound(sr, "C:/loops/zoo.wav"), 120.0);
+        let done = p3.slice_to_midi_track(0, SliceClip::Slot(0), &SliceOptions { picture: true, ..opts(SliceBy::Quarter, 16) }, None).unwrap();
+        assert_eq!(done.picture, None);
+        assert!(p3.video.clips.is_empty());
+    }
+
+    #[test]
+    fn a_real_films_sound_and_picture_are_cut_alike() {
+        // A small film with ffmpeg (skipped without it): a test picture and
+        // a low thump every half second, from 0.
+        let Some(ffmpeg) = crate::ffmpeg::find() else {
+            eprintln!("no ffmpeg: skipped");
+            return;
+        };
+        let path = std::env::temp_dir().join(format!("krabton_slice_film_{}.mp4", std::process::id()));
+        let out = crate::ffmpeg::command(&ffmpeg)
+            .args(["-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=25:duration=4", "-f", "lavfi", "-i", r"aevalsrc=0.8*sin(2*PI*90*t)*exp(-25*mod(t\,0.5)):s=48000:d=4", "-shortest", "-c:v", "mpeg4", "-c:a", "aac"])
+            .arg(&path)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let sound = SampleRef::new(crate::sample::decode_with_external(&path).unwrap());
+        assert_eq!(sound.path.as_deref(), Some(path.as_path()));
+        let mut p = Project::blank();
+        p.bpm = 120.0;
+        let o = SliceOptions { picture: true, ..Default::default() };
+        let done = p.slice_sample_to_midi_track(sound.clone(), SlicePlace::Slot(0), &o, None).unwrap();
+        let cues = p.video.clips[done.picture.expect("the film in the Video")].cues.clone().unwrap();
+        // A cue on every thump (a millisecond early), the pads cut there too.
+        assert_eq!(cues.len(), 8, "{:?}", cues.times);
+        for (k, t) in cues.times.iter().enumerate() {
+            assert!((t - k as f64 * 0.5).abs() < 0.02, "cue {k} at {t}");
+        }
+        for (pad, t) in pads_of(&p, done.track).iter().zip(&cues.times) {
+            assert_eq!(pad.sample.as_ref().unwrap().region.unwrap().start as f64 / sound.sample_rate as f64, *t);
+        }
+        let _ = std::fs::remove_file(&path);
     }
 }

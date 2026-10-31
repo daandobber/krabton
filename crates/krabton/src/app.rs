@@ -3712,7 +3712,8 @@ impl App {
                 }
                 // slicedialog=TRACK,SCENE: Slice to New MIDI Track's dialog for that clip
                 // (slicearr=TRACK: the track's first arrangement clip; slicefile=PATH: a
-                // sample, as from the browser); sliceopt=BY,SENSITIVITY%,MAX,GATE sets it
+                // sample, as from the browser; slicefilm=N: Slice to Drum Rack for clip N
+                // of the Video's bank); sliceopt=BY,SENSITIVITY%,MAX,GATE[,PICTURE] sets it
                 // (BY: 0 Transients, 1 Bar ... 6 1/32); slicecreate presses Create.
                 "slicedialog" if nums.len() == 2 => self.open_slice_dialog(ClipSel::Slot { track: nums[0], scene: nums[1] }),
                 "slicearr" => {
@@ -3722,6 +3723,12 @@ impl App {
                     }
                 }
                 "slicefile" => self.open_slice_dialog_for(&PathBuf::from(arg.trim())),
+                "slicefilm" => {
+                    if let Some(c) = self.project.video.clips.get(nums.first().copied().unwrap_or(0)) {
+                        let path = c.path.clone();
+                        self.open_film_slice_dialog(&path);
+                    }
+                }
                 "sliceopt" => {
                     if let Some(d) = &mut self.slicing {
                         let mut it = nums.iter().copied();
@@ -3736,6 +3743,9 @@ impl App {
                         }
                         if let Some(g) = it.next() {
                             d.opts.gate = g != 0;
+                        }
+                        if let Some(p) = it.next() {
+                            d.opts.picture = p != 0;
                         }
                     }
                 }
@@ -3847,10 +3857,10 @@ impl App {
                 "devices" => self.detail = DetailTab::Devices,
                 "settings" => self.show_settings = true,
                 "mapwin" => self.map_window = true,
-                // video: its window; videoload=PATH: a clip into its bank; videotest=PATH: a
+                // video: its window (video=0 closes it); videoload=PATH: a clip into its bank; videotest=PATH: a
                 // test clip (a GIF made here) written there and loaded; videopreset=NAME;
                 // videomode=N (0 Loop, 1 Tempo, 2 Slices); videoscreen: its screen.
-                "video" => self.video_window = true,
+                "video" => self.video_window = arg.trim() != "0",
                 // videolink=URL: the Video fetches the film behind a link; videolinkbox opens its box.
                 "videolink" => {
                     self.video_window = true;
@@ -3884,6 +3894,21 @@ impl App {
                     self.project.video.play = modes[nums.first().copied().unwrap_or(0).min(modes.len() - 1)];
                 }
                 "videoscreen" => self.video.screen_open = true,
+                // videoat: prints where the Video's film is (and its cue), to check by script.
+                "videoat" => {
+                    let set = &self.project.video;
+                    let cue = set.clips.get(self.video.playing).and_then(|c| c.cues.as_ref()).map(|c| format!(", cue {} of {} at {:.3}", c.at(self.video.at) + 1, c.len(), c.times.get(c.at(self.video.at)).copied().unwrap_or(0.0)));
+                    // And the note its track's clip is on, to compare.
+                    let track = set.clips.get(self.video.playing).and_then(|c| c.cues.as_ref()).and_then(|c| c.track).and_then(|id| self.project.tracks.iter().position(|t| t.id == id));
+                    let on = track.and_then(|t| {
+                        let ts = self.engine.status.tracks.get(t)?;
+                        let (slot, pos) = (ts.playing_slot.load(std::sync::atomic::Ordering::Relaxed), ts.clip_pos.load());
+                        let clip = self.project.tracks[t].slots.get(usize::try_from(slot).ok()?)?.as_ref()?;
+                        let n = clip.notes().into_iter().filter(|n| n.start <= pos).max_by(|a, b| a.start.total_cmp(&b.start))?;
+                        Some(format!("; its clip at {pos:.2} beats, on the note of cue {}", n.pitch as i32 - 35))
+                    });
+                    println!("video at {:.3} s, clip {}{}{}", self.video.at, self.video.playing, cue.unwrap_or_default(), on.unwrap_or_default());
+                }
                 "bandwin" => self.band.window = true,
                 // bandon[=1]: Band on in every device that can be in it (=1: and parts).
                 "bandon" => {
