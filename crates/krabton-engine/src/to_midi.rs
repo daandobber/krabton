@@ -334,6 +334,7 @@ fn midi_of(hz: f64) -> f64 {
     69.0 + 12.0 * (hz / 440.0).log2()
 }
 
+#[cfg(test)]
 fn hz_of(midi: f64) -> f64 {
     440.0 * 2f64.powf((midi - 69.0) / 12.0)
 }
@@ -697,9 +698,9 @@ fn peaks(x: &[f32], fs: f64, a: usize, b: usize, ffts: &mut [(usize, Fft)]) -> V
     out
 }
 
-/// How much softer each harmonic of a note's template is than the one
-/// before (Mauch's NNLS Chroma takes 0.6 to 0.7).
-const TEMPLATE_DECAY: f64 = 0.7;
+/// How a note's template falls with its harmonics: the `h`th as loud as
+/// 1 / h to this power (1: a saw's, as strings and brass roughly do).
+const TEMPLATE_SLOPE: f64 = 1.0;
 
 /// The notes of a chord in `peaks` (MIDI, with how strongly each is
 /// heard), the strongest first: the semitone spectrum fitted (non-negative
@@ -729,7 +730,7 @@ fn chord_notes(peaks: &[Peak], fs: f64) -> Vec<(u8, f64)> {
             (1..=HARMONICS)
                 .filter_map(|h| {
                     let b = (low + j as f64 + 12.0 * (h as f64).log2()).round();
-                    (b <= top).then(|| ((b - low) as usize, TEMPLATE_DECAY.powi(h as i32 - 1)))
+                    (b <= top).then(|| ((b - low) as usize, (h as f64).powf(-TEMPLATE_SLOPE)))
                 })
                 .collect()
         })
@@ -756,10 +757,9 @@ fn chord_notes(peaks: &[Peak], fs: f64) -> Vec<(u8, f64)> {
         }
     }
     let strongest = h.iter().copied().fold(0.0f64, f64::max);
-    eprintln!("DBG {:?}", (0..notes).filter(|&j| h[j] > strongest * 0.05).map(|j| (LOW_NOTE as usize + j, (100.0 * h[j] / strongest).round(), (100.0 * v[j] / most).round())).collect::<Vec<_>>());
     let mut picked: Vec<(u8, f64)> = (0..notes)
         // A note sounds its own pitch, and is not a neighbour's spill.
-        .filter(|&j| h[j] >= strongest * 0.15 && v[j] >= most * 0.03)
+        .filter(|&j| h[j] >= strongest * 0.2 && v[j] >= most * 0.03)
         .filter(|&j| (j == 0 || h[j] >= h[j - 1]) && (j + 1 >= notes || h[j] >= h[j + 1]))
         .map(|j| (LOW_NOTE + j as u8, h[j]))
         .collect();
