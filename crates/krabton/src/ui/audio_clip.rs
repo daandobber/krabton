@@ -16,7 +16,7 @@ use crate::widgets::*;
 use egui::{pos2, vec2, Align2, Color32, CursorIcon, Id, Rect, RichText, Sense, Stroke, Ui};
 use krabton_engine::{AudioClip, ClipContent, WarpMode};
 
-const RULER_H: f32 = 20.0;
+const RULER_H: f32 = 28.0;
 const STRIP_H: f32 = 14.0;
 /// How near (points) a drag snaps to a transient or a warp marker.
 const SNAP_PX: f64 = 7.0;
@@ -185,9 +185,9 @@ impl App {
             p.line_segment([pos2(x, wave.top()), pos2(x, wave.bottom())], Stroke::new(1.0_f32, col));
             p.line_segment([pos2(x, ruler.bottom() - if bar { 8.0 } else { 4.0 }), pos2(x, ruler.bottom())], Stroke::new(1.0_f32, TEXT_DIM));
             if ((b / label_every).round() * label_every - b).abs() < 1e-9 {
-                p.text(pos2(x + 2.0, ruler.top() + 1.0), Align2::LEFT_TOP, bbs(b, bpb).trim_end_matches(".1.1").to_string(), small(), TEXT_DIM);
+                p.text(pos2(x + 2.0, ruler.top() + 7.0), Align2::LEFT_TOP, bbs(b, bpb).trim_end_matches(".1.1").to_string(), small(), TEXT_DIM);
             } else if !bar && ppb >= 60.0 && (b.fract()).abs() < 1e-9 {
-                p.text(pos2(x + 2.0, ruler.top() + 1.0), Align2::LEFT_TOP, bbs(b, bpb).trim_end_matches(".1").to_string(), small(), shade(TEXT_DIM, 0.8));
+                p.text(pos2(x + 2.0, ruler.top() + 7.0), Align2::LEFT_TOP, bbs(b, bpb).trim_end_matches(".1").to_string(), small(), shade(TEXT_DIM, 0.8));
             }
             b += step;
             guard += 1;
@@ -284,7 +284,7 @@ impl App {
         }
 
         // The loop brace on the ruler, and the Start and End flags under it.
-        let brace = Rect::from_min_max(pos2(x_of(a.loop_start), ruler.top() + 1.0), pos2(x_of(loop_end), ruler.top() + 7.0));
+        let brace = Rect::from_min_max(pos2(x_of(a.loop_start), ruler.top() + 1.0), pos2(x_of(loop_end), ruler.top() + 6.0));
         if a.looping {
             p.rect_filled(brace, 1.5, accent_now());
         } else {
