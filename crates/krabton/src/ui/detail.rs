@@ -3,7 +3,7 @@
 use crate::app::{App, ClipSel, DetailTab, TrackSel};
 use crate::theme::*;
 use crate::widgets::*;
-use egui::{pos2, vec2, Align2, Color32, Id, Rect, RichText, Sense, Stroke, Ui, UiBuilder};
+use egui::{pos2, vec2, Align2, Id, Rect, RichText, Sense, Stroke, Ui, UiBuilder};
 use krabton_engine::{ClipContent, Note};
 
 const SIDEBAR_W: f32 = 212.0;
@@ -86,7 +86,11 @@ impl App {
             return;
         };
         let Some(clip) = self.clip_ref(sel).cloned() else { return };
-        let side_w = crate::prefs::Layout::or(self.prefs.layout.clip_side_w, SIDEBAR_W).clamp(150.0, 480.0);
+        // A click anywhere in the clip view gives it the keys (Live's focus).
+        if crate::ui::piano_roll::pressed_in(ui, body) {
+            self.piano.focused = true;
+        }
+        let side_w =crate::prefs::Layout::or(self.prefs.layout.clip_side_w, SIDEBAR_W).clamp(150.0, 480.0);
         let sidebar = Rect::from_min_size(body.min, vec2(side_w, body.height()));
         let main = Rect::from_min_max(pos2(sidebar.right() + 1.0, body.top()), body.max);
         rect_fill(ui.painter(), sidebar, 0.0, PANEL);
@@ -445,7 +449,7 @@ impl App {
                 match picked.first().map(|&i| notes[i].clone()) {
                     Some(first) => self.note_operators(ui, sel, &picked, &first),
                     None => {
-                        ui.label(RichText::new("Double-click: add/remove note\nDrag: move, edge: resize\nCtrl+drag: copy, Alt: no snap\nCtrl+C/X/V/D: copy, cut, paste, duplicate\nArrows: move, Shift: octave / length\nSelect notes for their operators").small().color(TEXT_DIM));
+                        ui.label(RichText::new("Double-click: add/remove note\nDrag: move, edge: resize, box: select\nCtrl+ or Alt+drag: copy\nCtrl+C/X/V/D: copy, cut, paste, duplicate\nArrows: move, Shift: octave / length\nRight-click: more\nSelect notes for their operators").small().color(TEXT_DIM));
                     }
                 }
             }

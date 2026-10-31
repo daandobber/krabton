@@ -45,6 +45,7 @@ impl App {
     pub(crate) fn ui_dialogs(&mut self, ctx: &Context) {
         self.ui_rename(ctx);
         self.ui_export(ctx);
+        self.ui_slice_dialog(ctx);
         self.ui_scale_dialog(ctx);
         self.ui_history(ctx);
         self.ui_band_window(ctx);

@@ -805,7 +805,7 @@ impl InstState {
     fn note_off(&mut self, inst: &Instrument, ov: Option<&[f32]>, pitch: u8) {
         match (self, inst) {
             (InstState::Synth(s), Instrument::Synth { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
-            (InstState::Drums(s), Instrument::Drums { .. }) => s.note_off(pitch),
+            (InstState::Drums(s), Instrument::Drums { pads, .. }) => s.note_off(pads, pitch),
             (InstState::Sampler(s), Instrument::Sampler { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Sf2(s), Instrument::Sf2 { .. }) => s.note_off(pitch),
             (InstState::StreetOrgan(s), Instrument::StreetOrgan { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),

@@ -2467,7 +2467,11 @@ pub fn keys_pad(pads: &[DrumPad]) -> Option<usize> {
     pads.iter().take(MAX_PADS).position(|p| princess::is_808(p.voice) && p.sample.is_none() && p.layers.is_empty())
 }
 
-const MAX_PADS: usize = 16;
+/// The most pads a drum instrument plays.
+pub const MAX_PADS: usize = 16;
+/// What every pad is turned down by (room for the voices to add up); a
+/// pad's `trim_db` can bring a recording back to its own level.
+pub const PAD_GAIN: f32 = 0.32;
 const METAL: [f32; 6] = [205.3, 304.4, 369.6, 522.7, 540.0, 800.0];
 
 /// A Mutable Instruments drum model, made when a pad first plays it.
@@ -3090,8 +3094,15 @@ impl DrumState {
         self.voices[i].trigger(pad, vel, sr, key, legato);
     }
 
-    pub fn note_off(&mut self, note: u8) {
-        self.held &= !(1u128 << (note & 127));
+    /// A key let go: the pads on it that play only while held (`gate`) stop.
+    pub fn note_off(&mut self, pads: &[DrumPad], note: u8) {
+        let note = note & 127;
+        self.held &= !(1u128 << note);
+        for (i, pad) in pads.iter().enumerate().take(MAX_PADS) {
+            if pad.gate && pad.note == note && self.voices[i].active {
+                self.voices[i].choking = true;
+            }
+        }
     }
 
     pub fn all_off(&mut self) {
@@ -3113,15 +3124,15 @@ impl DrumState {
             }
             // Recorded layers carry most of the dynamics themselves.
             let vel_gain = pad.vel_gain(v.vel);
-            let level = pad.level_db + if pad.layers.is_empty() { 0.0 } else { pad.trim_db };
-            let gain = db_to_gain(level) * vel_gain * 0.32;
+            let level = pad.level_db + if pad.layers.is_empty() && pad.sample.is_none() { 0.0 } else { pad.trim_db };
+            let gain = db_to_gain(level) * vel_gain * PAD_GAIN;
             let (pl, pr) = pan_gains(pad.pan);
             let tr = 2f32.powf(pad.tune / 12.0);
             if let Some((tl, trr, mut tpos, mut tg)) = v.tail {
                 if let Some(ts) = played_sample(pad, tl, trr) {
                     let trate = tr as f64 * ts.sample_rate as f64 / sr as f64;
                     let fade = decay_coef(if ts.duration() > 1.5 { 0.35 } else { 0.08 }, sr);
-                    let base = db_to_gain(level) * 0.32;
+                    let base = db_to_gain(level) * PAD_GAIN;
                     for i in 0..n {
                         if tpos >= ts.frames() as f64 || tg < 1e-4 {
                             tg = 0.0;
@@ -3463,8 +3474,8 @@ mod tests {
         let fresh = slide[..2400].iter().fold(0.0f32, |m, v| m.max(v.abs()));
         assert!(fresh < late * 1.6, "no new hit: {fresh} after {late}");
         // Let go of both, and the next key is a new hit.
-        d.note_off(33);
-        d.note_off(29);
+        d.note_off(&pads, 33);
+        d.note_off(&pads, 29);
         d.note_on(&pads, 31, 1.0, sr);
         let hit = run(&mut d, 0.05);
         let new = hit.iter().fold(0.0f32, |m, v| m.max(v.abs()));

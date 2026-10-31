@@ -4,34 +4,12 @@
 
 use crate::app::{App, ClipSel, DetailTab, TrackSel, View};
 use egui::{Key, Modifiers};
+use krabton_engine::note_edit::{self, NoteClip};
 use krabton_engine::{ArrangementClip, Clip, Note, TrackKind};
-
-/// What Ctrl+C put away.
-#[derive(Clone)]
-pub enum Clipboard {
-    Clip(Clip),
-    /// Notes with their starts relative to the first one, and the span
-    /// (length to step by when pasting repeatedly).
-    Notes { notes: Vec<Note>, span: f64 },
-}
-
-/// The distance to step by after a group of notes: a whole bar for
-/// riffs, a beat for short figures, at least the grid.
-fn note_span(first: f64, last_end: f64, grid: f64, bar: f64) -> f64 {
-    let raw = (last_end - first).max(grid);
-    let unit = if raw > bar * 0.5 {
-        bar
-    } else if raw > 0.5 {
-        1.0
-    } else {
-        grid.max(1.0 / 64.0)
-    };
-    (raw / unit - 1e-6).ceil().max(1.0) * unit
-}
 
 impl App {
     /// The MIDI clip open in the clip view, if any.
-    fn open_midi_clip(&self) -> Option<ClipSel> {
+    pub(crate) fn open_midi_clip(&self) -> Option<ClipSel> {
         if self.detail != DetailTab::Clip {
             return None;
         }
@@ -39,33 +17,120 @@ impl App {
         self.clip_ref(sel).filter(|c| c.is_midi()).map(|_| sel)
     }
 
-    /// True when keys should act on the selected notes.
+    /// True when the note editor has the keys: a MIDI clip open in the clip
+    /// view, and the clip view clicked last (Live's focus: a click in the
+    /// session or the arrangement gives the keys back to the clips there).
     pub(crate) fn notes_focus(&self) -> bool {
-        self.open_midi_clip().is_some() && !self.piano.selected.is_empty()
+        self.piano.focused && self.open_midi_clip().is_some()
+    }
+
+    /// True when keys should act on the selected notes.
+    pub(crate) fn notes_picked(&self) -> bool {
+        self.notes_focus() && !self.piano.selected.is_empty()
+    }
+
+    /// The selected notes' indices, sorted.
+    fn note_selection(&self) -> Vec<usize> {
+        let mut idx: Vec<usize> = self.piano.selected.iter().copied().collect();
+        idx.sort_unstable();
+        idx
     }
 
     fn selected_notes(&self, sel: ClipSel) -> Vec<Note> {
         let notes = self.clip_ref(sel).map(|c| c.notes().to_vec()).unwrap_or_default();
-        let mut idx: Vec<usize> = self.piano.selected.iter().copied().filter(|&i| i < notes.len()).collect();
-        idx.sort_unstable();
-        idx.into_iter().map(|i| notes[i].clone()).collect()
+        self.note_selection().into_iter().filter_map(|i| notes.get(i).cloned()).collect()
+    }
+
+    /// The time the selected notes take, Live's time selection: the one a
+    /// box drew around them, else from the grid line before the first to
+    /// the one after the last.
+    pub(crate) fn notes_range(&self, sel: ClipSel) -> Option<(f64, f64)> {
+        let notes = self.clip_ref(sel)?.notes();
+        let idx = self.note_selection();
+        let fit = note_edit::time_range(notes, &idx, self.piano.grid)?;
+        let first = idx.iter().filter_map(|&i| notes.get(i)).map(|n| n.start).fold(f64::MAX, f64::min);
+        let last = idx.iter().filter_map(|&i| notes.get(i)).map(|n| n.start).fold(0.0, f64::max);
+        match self.piano.time_sel {
+            Some((a, b)) if a <= first + 1e-9 && b > last + 1e-9 => Some((a, b)),
+            _ => Some(fit),
+        }
+    }
+
+    /// Ctrl+C in the note editor. The time selection stays, so a paste
+    /// right after goes just after it (as in Live).
+    pub(crate) fn notes_copy(&mut self) -> bool {
+        let Some(sel) = self.open_midi_clip() else { return false };
+        let Some(range) = self.notes_range(sel) else { return false };
+        let notes = self.clip_ref(sel).map(|c| c.notes().to_vec()).unwrap_or_default();
+        let Some(clip) = note_edit::copy(&notes, &self.note_selection(), range) else { return false };
+        let count = clip.notes.len();
+        self.os_clipboard = Some(clip.to_text());
+        self.note_clipboard = Some(clip);
+        self.notes_copied_last = true;
+        self.piano.time_sel = Some(range);
+        self.toast(format!("{count} note(s) copied"));
+        true
+    }
+
+    /// Ctrl+X: copies and takes them out; a paste puts them back.
+    pub(crate) fn notes_cut(&mut self) {
+        if self.notes_copy() {
+            self.piano_delete_selected();
+        }
+    }
+
+    /// Ctrl+V into the open clip: after the selected notes' time, at the
+    /// insert marker or at the start. The pasted notes are selected, so the
+    /// next paste goes after them. The loop stays as it is (as in Live):
+    /// notes past its end wait there in the dark.
+    pub(crate) fn notes_paste(&mut self, clip: NoteClip) {
+        let Some(sel) = self.open_midi_clip() else {
+            self.toast("Open a MIDI clip to paste notes");
+            return;
+        };
+        let selection = if self.piano.selected.is_empty() { None } else { self.notes_range(sel) };
+        let at = note_edit::paste_position(selection, self.piano.paste_at);
+        let Some(notes) = self.clip_mut(sel).and_then(|c| c.notes_mut()) else { return };
+        let pasted = note_edit::paste(notes, &clip, at);
+        let count = pasted.len();
+        self.piano.selected = pasted.into_iter().collect();
+        self.piano.time_sel = Some((at, at + clip.span));
+        self.piano.paste_at = Some(at + clip.span);
+        self.piano.focused = true;
+        self.toast(format!("{count} note(s) pasted"));
+    }
+
+    /// Ctrl+D: the selected notes again right after their time, selected,
+    /// so pressing it again goes on.
+    pub(crate) fn notes_duplicate(&mut self) {
+        let Some(sel) = self.open_midi_clip() else { return };
+        let Some((from, to)) = self.notes_range(sel) else { return };
+        let idx = self.note_selection();
+        let Some(notes) = self.clip_mut(sel).and_then(|c| c.notes_mut()) else { return };
+        let copies = note_edit::duplicate(notes, &idx, (from, to));
+        self.piano.selected = copies.into_iter().collect();
+        self.piano.time_sel = Some((to, to + (to - from)));
+        self.piano.paste_at = Some(to + (to - from));
+    }
+
+    /// The selected notes win over the ones they lie on (after a move), and
+    /// the selection follows the notes that stay.
+    pub(crate) fn notes_make_room(&mut self, sel: ClipSel) {
+        let idx = self.note_selection();
+        let Some(notes) = self.clip_mut(sel).and_then(|c| c.notes_mut()) else { return };
+        let map = note_edit::make_room(notes, &idx);
+        self.piano.selected = idx.iter().filter_map(|&i| map.get(i).copied().flatten()).collect();
     }
 
     pub(crate) fn edit_copy(&mut self) {
         if self.notes_focus() {
-            let Some(sel) = self.open_midi_clip() else { return };
-            let notes = self.selected_notes(sel);
-            let first = notes.iter().map(|n| n.start).fold(f64::MAX, f64::min);
-            let last_end = notes.iter().map(|n| n.end()).fold(0.0, f64::max);
-            let span = note_span(first, last_end, self.piano.grid, self.project.beats_per_bar_f());
-            let rel: Vec<Note> = notes.iter().map(|n| Note { start: n.start - first, ..n.clone() }).collect();
-            let count = rel.len();
-            self.clipboard = Some(Clipboard::Notes { notes: rel, span });
-            self.piano.paste_at = Some(first + span);
-            self.toast(format!("{count} note(s) copied"));
+            // Nothing selected: nothing to copy (as in Live).
+            self.notes_copy();
         } else if let Some(sel) = self.sel_clip {
             if let Some(c) = self.clip_ref(sel).cloned() {
-                self.clipboard = Some(Clipboard::Clip(c));
+                self.os_clipboard = Some(format!("Krabton clip: {}", c.name));
+                self.clipboard = Some(c);
+                self.notes_copied_last = false;
                 self.toast("Clip copied");
             }
         }
@@ -73,11 +138,7 @@ impl App {
 
     pub(crate) fn edit_cut(&mut self) {
         if self.notes_focus() {
-            // Pasting right away puts the notes back where they were.
-            let first = self.open_midi_clip().map(|s| self.selected_notes(s)).and_then(|v| v.iter().map(|n| n.start).reduce(f64::min));
-            self.edit_copy();
-            self.piano.paste_at = first;
-            self.piano_delete_selected();
+            self.notes_cut();
         } else {
             self.edit_copy();
             if let Some(sel) = self.sel_clip {
@@ -86,82 +147,32 @@ impl App {
         }
     }
 
-    pub(crate) fn edit_paste(&mut self) {
-        match self.clipboard.clone() {
-            Some(Clipboard::Notes { notes, span }) => {
-                let Some(sel) = self.open_midi_clip() else {
-                    self.toast("Open a MIDI clip to paste notes");
-                    return;
-                };
-                let at = self.piano.paste_at.unwrap_or(0.0).max(0.0);
-                self.paste_notes(sel, &notes, at);
-                self.piano.paste_at = Some(at + span);
+    /// Ctrl+V. `text` is what the system clipboard held (notes from another
+    /// Krabton window come that way). In the note editor it pastes notes; in
+    /// the main view what was copied last: notes into the open clip, or the
+    /// clip.
+    pub(crate) fn edit_paste(&mut self, text: &str) {
+        let outside = NoteClip::from_text(text);
+        let notes_last = outside.is_some() || self.notes_copied_last;
+        let notes = outside.or_else(|| self.note_clipboard.clone());
+        let into_notes = self.notes_focus() || self.clipboard.is_none() || (notes_last && self.open_midi_clip().is_some());
+        if into_notes {
+            match notes {
+                Some(clip) => self.notes_paste(clip),
+                None if self.notes_focus() => self.toast("No notes copied yet"),
+                None => {}
             }
-            Some(Clipboard::Clip(clip)) => self.paste_clip(clip),
-            None => {}
+        } else if let Some(clip) = self.clipboard.clone() {
+            self.paste_clip(clip);
         }
     }
 
     /// Ctrl+D: notes right after themselves, or the clip.
     pub(crate) fn edit_duplicate(&mut self) {
         if self.notes_focus() {
-            let Some(sel) = self.open_midi_clip() else { return };
-            let notes = self.selected_notes(sel);
-            let first = notes.iter().map(|n| n.start).fold(f64::MAX, f64::min);
-            let last_end = notes.iter().map(|n| n.end()).fold(0.0, f64::max);
-            let span = note_span(first, last_end, self.piano.grid, self.project.beats_per_bar_f());
-            let rel: Vec<Note> = notes.iter().map(|n| Note { start: n.start - first, ..n.clone() }).collect();
-            self.paste_notes(sel, &rel, first + span);
-            self.piano.paste_at = Some(first + 2.0 * span);
+            self.notes_duplicate();
         } else if let Some(sel) = self.sel_clip {
             self.duplicate_clip(sel);
-        }
-    }
-
-    /// Adds notes (relative starts) at `at`, selects them and grows the
-    /// clip when they reach past its end.
-    fn paste_notes(&mut self, sel: ClipSel, notes: &[Note], at: f64) {
-        let bar = self.project.beats_per_bar_f();
-        let Some(clip) = self.clip_mut(sel) else { return };
-        let old_len = clip.length;
-        let Some(v) = clip.notes_mut() else { return };
-        let base = v.len();
-        let mut end: f64 = 0.0;
-        let mut last_start: f64 = 0.0;
-        for n in notes {
-            let n = Note { start: n.start + at, ..n.clone() };
-            end = end.max(n.end());
-            last_start = last_start.max(n.start);
-            v.push(n);
-        }
-        self.piano.selected = (base..base + notes.len()).collect();
-        // Grow the clip when notes start past its end (a note that only
-        // rings past the end is fine, like a tail).
-        if last_start >= old_len - 1e-9 {
-            let new_len = (end / bar - 1e-9).ceil() * bar;
-            self.extend_clip(sel, new_len);
-            self.toast(format!("Clip extended to {} bars", (new_len / bar).round()));
-        }
-    }
-
-    /// Makes a clip (and its arrangement region, when it showed the whole
-    /// clip) at least `len` beats long.
-    fn extend_clip(&mut self, sel: ClipSel, len: f64) {
-        match sel {
-            ClipSel::Slot { .. } => {
-                if let Some(c) = self.clip_mut(sel) {
-                    c.length = c.length.max(len);
-                }
-            }
-            ClipSel::Arr { track, id } => {
-                if let Some(ac) = self.project.tracks.get_mut(track).and_then(|t| t.arrangement.iter_mut().find(|a| a.id == id)) {
-                    let whole = (ac.length - ac.clip.length).abs() < 1e-6 && ac.offset == 0.0;
-                    ac.clip.length = ac.clip.length.max(len);
-                    if whole {
-                        ac.length = ac.clip.length;
-                    }
-                }
-            }
         }
     }
 
@@ -217,8 +228,17 @@ impl App {
             Key::ArrowDown => (0, -1),
             _ => return false,
         };
-        if self.notes_focus() {
+        if self.notes_picked() {
             self.arrow_notes(dx, dy, m);
+            return true;
+        }
+        if self.notes_focus() {
+            // No notes selected: Left and Right move the insert marker.
+            if dx != 0 {
+                let g = self.piano.grid;
+                let at = note_edit::grid_floor(self.piano.paste_at.unwrap_or(0.0), g) + dx as f64 * g;
+                self.piano.paste_at = Some(at.max(0.0));
+            }
             return true;
         }
         if let (View::Arrangement, Some(ClipSel::Arr { track, id })) = (self.view, self.sel_clip) {
@@ -256,56 +276,47 @@ impl App {
         true
     }
 
+    /// The arrow keys on the selected notes, as in Live: Up and Down a
+    /// semitone (a scale step with the rows folded, a pad in a drum kit),
+    /// Shift an octave, Alt the velocity; Left and Right by the grid (Alt a
+    /// quarter of it), Shift+Left/Right shorter or longer. A chord at the
+    /// edge of the keyboard stays whole. The loop doesn't grow: notes moved
+    /// past its end wait there in the dark.
     fn arrow_notes(&mut self, dx: i32, dy: i32, m: Modifiers) {
         let Some(sel) = self.open_midi_clip() else { return };
         let grid = self.piano.grid;
-        let selected = self.piano.selected.clone();
-        let folded = self.project.scale_mode && self.piano.fold;
+        let idx = self.note_selection();
+        let (rows, _, drums) = self.piano_rows(sel.track());
+        let folded = self.project.scale_mode && self.piano.fold && !drums;
         let scale = self.project.scale;
-        let mut grow_to = 0.0f64;
         let Some(notes) = self.clip_mut(sel).and_then(|c| c.notes_mut()) else { return };
-        if dx != 0 {
-            if m.shift {
-                // Shift+Left/Right: shorter or longer.
-                for (i, n) in notes.iter_mut().enumerate() {
-                    if selected.contains(&i) {
-                        n.length = (n.length + dx as f64 * grid).max(grid.min(1.0 / 16.0));
-                    }
-                }
-            } else {
-                // Move by the grid (Alt: a quarter of it); never before the clip start.
-                let step = if m.alt { grid * 0.25 } else { grid };
-                let first = notes.iter().enumerate().filter(|(i, _)| selected.contains(i)).map(|(_, n)| n.start).fold(f64::MAX, f64::min);
-                let delta = (dx as f64 * step).max(-first);
-                for (i, n) in notes.iter_mut().enumerate() {
-                    if selected.contains(&i) {
-                        n.start = (n.start + delta).max(0.0);
-                        // Only a start past the end grows the clip.
-                        grow_to = grow_to.max(n.start + grid.min(n.length));
-                    }
-                }
-            }
+        let mut moved = false;
+        if dx != 0 && m.shift {
+            note_edit::stretch(notes, &idx, dx as f64 * grid, grid.min(1.0 / 16.0));
+            moved = true;
+        } else if dx != 0 {
+            let step = if m.alt { grid * 0.25 } else { grid };
+            let d = note_edit::nudge(notes, &idx, dx as f64 * step);
+            self.piano.time_sel = self.piano.time_sel.map(|(a, b)| (a + d, b + d));
+            moved = d != 0.0;
+        } else if dy != 0 && m.alt {
+            note_edit::change_velocity(notes, &idx, dy as f32 * 10.0 / 127.0);
         } else if dy != 0 {
-            for (i, n) in notes.iter_mut().enumerate() {
-                if !selected.contains(&i) {
-                    continue;
-                }
-                n.pitch = if m.shift {
-                    (n.pitch as i32 + 12 * dy).clamp(0, 127) as u8
-                } else if folded {
-                    scale.step(n.pitch, dy)
-                } else {
-                    (n.pitch as i32 + dy).clamp(0, 127) as u8
-                };
-            }
+            moved = if m.shift {
+                note_edit::transpose(notes, &idx, 12 * dy)
+            } else if drums {
+                note_edit::step_rows(notes, &idx, &rows, dy)
+            } else if folded {
+                note_edit::move_pitch(notes, &idx, |p| Some(scale.step(p, dy)).filter(|&q| q != p))
+            } else {
+                note_edit::transpose(notes, &idx, dy)
+            };
         }
-        let len = self.clip_ref(sel).map(|c| c.length).unwrap_or(0.0);
-        if grow_to > len + grid * 0.5 {
-            let bar = self.project.beats_per_bar_f();
-            self.extend_clip(sel, (grow_to / bar - 1e-9).ceil() * bar);
+        if moved {
+            self.notes_make_room(sel);
         }
         // Let the moved notes be heard (with Preview on).
-        if dy != 0 && self.prefs.note_preview {
+        if dy != 0 && moved && self.prefs.note_preview {
             let track = sel.track();
             if let Some(top) = self.selected_notes(sel).iter().map(|n| n.pitch).max() {
                 let ids = self.preview_note_on(track, top, 0.7);
@@ -396,15 +407,3 @@ impl App {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::note_span;
-
-    #[test]
-    fn spans_round_to_musical_units() {
-        assert_eq!(note_span(0.0, 3.75, 0.25, 4.0), 4.0);
-        assert_eq!(note_span(4.5, 5.25, 0.25, 4.0), 1.0);
-        assert_eq!(note_span(0.0, 0.25, 0.25, 4.0), 0.25);
-        assert_eq!(note_span(0.0, 6.0, 0.25, 4.0), 8.0);
-    }
-}

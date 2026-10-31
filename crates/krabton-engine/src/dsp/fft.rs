@@ -58,6 +58,15 @@ impl Fft {
     /// `n` samples of `x`, Hann windowed, scaled so a full-scale sine reads
     /// 0 dB at its frequency.
     pub fn spectrum_db(&mut self, x: &[f32], out: &mut Vec<f32>) {
+        self.magnitudes(x, out);
+        for m in out.iter_mut() {
+            *m = 20.0 * m.max(1e-10).log10();
+        }
+    }
+
+    /// The same as [`Fft::spectrum_db`], as plain levels (a full-scale sine
+    /// reads 1 at its frequency).
+    pub fn magnitudes(&mut self, x: &[f32], out: &mut Vec<f32>) {
         let n = self.n;
         let x = &x[x.len().saturating_sub(n)..];
         for i in 0..n {
@@ -68,10 +77,7 @@ impl Fft {
         self.transform();
         let scale = 4.0 / n as f32;
         out.clear();
-        out.extend((0..n / 2).map(|k| {
-            let m = (self.re[k] * self.re[k] + self.im[k] * self.im[k]).sqrt() * scale;
-            20.0 * m.max(1e-10).log10()
-        }));
+        out.extend((0..n / 2).map(|k| (self.re[k] * self.re[k] + self.im[k] * self.im[k]).sqrt() * scale));
     }
 }
 

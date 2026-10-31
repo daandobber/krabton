@@ -532,15 +532,28 @@ pub struct App {
 
     pub renaming: Option<(RenameTarget, String)>,
     pub export: ExportDialog,
+    /// Slice to New MIDI Track, while its dialog is open.
+    pub slicing: Option<crate::ui::slice_dialog::SliceDialog>,
     pub export_job: Option<ExportJob>,
     pub show_about: bool,
-    pub clipboard: Option<crate::editing::Clipboard>,
+    /// The clip Ctrl+C put away.
+    pub clipboard: Option<krabton_engine::Clip>,
+    /// The notes Ctrl+C put away in the note editor (any clip, any track).
+    pub note_clipboard: Option<krabton_engine::note_edit::NoteClip>,
+    /// Notes were copied after the clip (Ctrl+V in the main view pastes them).
+    pub notes_copied_last: bool,
+    /// Text for the system clipboard, given to it at the end of the frame.
+    pub os_clipboard: Option<String>,
+    /// Ctrl+V came as a paste (the system clipboard held text) since V was last let go.
+    paste_seen: bool,
     title: String,
     /// Debug actions from `KRABTON_SCRIPT`, as (frame, action).
     script: Vec<(u64, String)>,
     /// Pointer events from script actions, one batch per frame. They are fed
     /// to this window only (never to the desktop).
     script_input: std::collections::VecDeque<Vec<egui::Event>>,
+    /// Modifier keys held for the script's clicks and drags (`hold=alt`).
+    script_mods: Modifiers,
     pub(crate) frame: u64,
     /// Close the window at the end of this frame (script action `quit`).
     pub(crate) quit_requested: bool,
@@ -722,12 +735,18 @@ impl App {
             imports: Default::default(),
             renaming: None,
             export: ExportDialog { open: false, source: ExportSource::Scene, scene: 0, bars: 8, sample_rate: 44100 },
+            slicing: None,
             export_job: None,
             show_about: false,
             clipboard: None,
+            note_clipboard: None,
+            notes_copied_last: false,
+            os_clipboard: None,
+            paste_seen: false,
             title: String::new(),
             script: parse_script(std::env::var("KRABTON_SCRIPT").unwrap_or_default().as_str()),
             script_input: std::collections::VecDeque::new(),
+            script_mods: Modifiers::NONE,
             frame: 0,
             quit_requested: false,
             big: crate::big::BigPicture::new(crate::big::start_in_big_picture(start_big)),
@@ -786,6 +805,14 @@ impl App {
 
     /// Sends the project snapshot (if it changed) followed by queued commands.
     fn sync(&mut self, ctx: &Context) {
+        // What was copied goes on the system clipboard too: then Ctrl+V comes
+        // as a paste, and another Krabton window can paste the notes. Test
+        // windows leave the desktop's clipboard alone.
+        if let Some(text) = self.os_clipboard.take() {
+            if std::env::var_os("KRABTON_TEST_WINDOW").is_none() {
+                ctx.copy_text(text);
+            }
+        }
         self.band_frame();
         self.follow_clip_sounds();
         if *self.last_sent != self.project {
@@ -3150,15 +3177,34 @@ impl App {
         for ev in &events {
             match ev {
                 egui::Event::Copy if !typing => self.edit_copy(),
-                egui::Event::Paste(_) if !typing => self.edit_paste(),
+                egui::Event::Paste(text) if !typing => {
+                    self.paste_seen = true;
+                    self.edit_paste(text);
+                }
                 egui::Event::Cut if !typing => self.edit_cut(),
                 egui::Event::Key { key, pressed, repeat, modifiers, .. } => {
-                    if *pressed && *repeat && !typing && matches!(key, Key::ArrowUp | Key::ArrowDown) && modifiers.is_none() {
-                        // Holding an arrow walks through the browser.
-                        self.browser_key(*key);
+                    let arrow = matches!(key, Key::ArrowUp | Key::ArrowDown | Key::ArrowLeft | Key::ArrowRight);
+                    if *pressed && *repeat && !typing && arrow {
+                        if self.browser.focused && self.browser.visible {
+                            // Holding an arrow walks through the browser.
+                            if modifiers.is_none() && matches!(key, Key::ArrowUp | Key::ArrowDown) {
+                                self.browser_key(*key);
+                            }
+                        } else if self.notes_picked() {
+                            // And keeps moving the selected notes.
+                            self.edit_arrow(*key, *modifiers);
+                        }
                     } else if *pressed && !*repeat && !typing {
                         self.key_down(*key, *modifiers);
                     } else if !*pressed {
+                        // With no text on the system clipboard the window sends
+                        // no paste for Ctrl+V (only V let go): paste on that.
+                        if *key == Key::V {
+                            if (modifiers.ctrl || modifiers.command) && !self.paste_seen && !typing {
+                                self.edit_paste("");
+                            }
+                            self.paste_seen = false;
+                        }
                         if let Some((pitch, ids)) = self.held_keys.remove(key) {
                             self.note_off(pitch, &ids);
                         }
@@ -3200,7 +3246,8 @@ impl App {
                 Key::S => self.save(m.shift),
                 Key::O => self.open(),
                 Key::N => self.new_project(),
-                Key::D if self.view == View::Arrangement && !self.arr.picked.is_empty() => self.arr_duplicate_selection(),
+                // The note editor clicked last: Ctrl+D is for its notes.
+                Key::D if self.view == View::Arrangement && !self.arr.picked.is_empty() && !self.notes_focus() => self.arr_duplicate_selection(),
                 Key::D => self.edit_duplicate(),
                 Key::E if self.view == View::Arrangement => self.arr_split_at_playhead(),
                 Key::T if m.shift => {
@@ -3241,6 +3288,8 @@ impl App {
                 self.detail = if self.detail == DetailTab::Clip { DetailTab::Devices } else { DetailTab::Clip };
             }
             Key::Tab => self.view = if self.view == View::Session { View::Arrangement } else { View::Session },
+            // The note editor clicked last: Delete takes its selected notes (only).
+            Key::Delete | Key::Backspace if self.notes_focus() => self.piano_delete_selected(),
             Key::Delete | Key::Backspace if self.view == View::Arrangement && !self.arr.picked.is_empty() => self.arr_delete_selection(),
             Key::Delete | Key::Backspace if self.view == View::Arrangement && self.sel_clip.is_none() && self.arr.sel_section.is_some() => {
                 if let Some(id) = self.arr.sel_section.take() {
@@ -3257,9 +3306,7 @@ impl App {
                 self.cmd(Command::SetPosition(end));
             }
             Key::Delete | Key::Backspace => {
-                if self.detail == DetailTab::Clip && !self.piano.selected.is_empty() {
-                    self.piano_delete_selected();
-                } else if let Some(sel) = self.sel_clip {
+                if let Some(sel) = self.sel_clip {
                     self.delete_clip(sel);
                 }
             }
@@ -3668,6 +3715,40 @@ impl App {
                         self.detail = DetailTab::Clip;
                     }
                 }
+                // slicedialog=TRACK,SCENE: Slice to New MIDI Track's dialog for that clip
+                // (slicearr=TRACK: the track's first arrangement clip; slicefile=PATH: a
+                // sample, as from the browser); sliceopt=BY,SENSITIVITY%,MAX,GATE sets it
+                // (BY: 0 Transients, 1 Bar ... 6 1/32); slicecreate presses Create.
+                "slicedialog" if nums.len() == 2 => self.open_slice_dialog(ClipSel::Slot { track: nums[0], scene: nums[1] }),
+                "slicearr" => {
+                    let t = nums.first().copied().unwrap_or(0);
+                    if let Some(id) = self.project.tracks.get(t).and_then(|tr| tr.arrangement.first()).map(|a| a.id) {
+                        self.open_slice_dialog(ClipSel::Arr { track: t, id });
+                    }
+                }
+                "slicefile" => self.open_slice_dialog_for(&PathBuf::from(arg.trim())),
+                "sliceopt" => {
+                    if let Some(d) = &mut self.slicing {
+                        let mut it = nums.iter().copied();
+                        if let Some(by) = it.next().and_then(|b| krabton_engine::slicing::SliceBy::ALL.get(b)) {
+                            d.opts.by = *by;
+                        }
+                        if let Some(s) = it.next() {
+                            d.opts.sensitivity = s.min(100) as f32 / 100.0;
+                        }
+                        if let Some(m) = it.next() {
+                            d.opts.max_slices = m.clamp(1, krabton_engine::dsp::drums::MAX_PADS);
+                        }
+                        if let Some(g) = it.next() {
+                            d.opts.gate = g != 0;
+                        }
+                    }
+                }
+                "slicecreate" => {
+                    if let Some(d) = self.slicing.take() {
+                        self.slice_create(d);
+                    }
+                }
                 "lyrics" => {
                     if let Some(sel) = self.sel_clip {
                         self.put_lyrics(sel, arg);
@@ -3874,7 +3955,9 @@ impl App {
                     let events = match (mods.ctrl, lower.as_str()) {
                         (true, "c") => vec![vec![egui::Event::Copy]],
                         (true, "x") => vec![vec![egui::Event::Cut]],
-                        (true, "v") => vec![vec![egui::Event::Paste(String::new())]],
+                        // As the window sends Ctrl+V when the system clipboard
+                        // holds no text: no paste, only V let go.
+                        (true, "v") => vec![vec![egui::Event::Key { key: Key::V, physical_key: None, pressed: false, repeat: false, modifiers: mods }]],
                         _ => match named {
                             Some(key) => vec![
                                 vec![egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: mods }],
@@ -4191,6 +4274,23 @@ impl App {
                     }
                 }
                 "rotate" => self.set_grid_rotation(nums.first().copied().unwrap_or(0) as u32),
+                // hold=alt (shift, ctrl, alt+shift...): those keys held for the
+                // clicks and drags that follow; hold= lets go.
+                "hold" => {
+                    let mut mods = Modifiers::NONE;
+                    for part in arg.split('+') {
+                        match part.trim().to_lowercase().as_str() {
+                            "ctrl" | "cmd" => {
+                                mods.ctrl = true;
+                                mods.command = true;
+                            }
+                            "shift" => mods.shift = true,
+                            "alt" => mods.alt = true,
+                            _ => {}
+                        }
+                    }
+                    self.script_mods = mods;
+                }
                 // Text typed into the focused field of this window.
                 "type" => self.script_input.push_back(vec![egui::Event::Text(arg.to_string())]),
                 "rclick" | "dclick" => {
@@ -4542,6 +4642,9 @@ impl eframe::App for App {
         if let Some(events) = self.script_input.pop_front() {
             raw_input.events.extend(events);
         }
+        if self.script_mods != Modifiers::NONE {
+            raw_input.modifiers = self.script_mods;
+        }
     }
 
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
@@ -4725,12 +4828,18 @@ impl eframe::App for App {
         if self.view != View::Touch && (self.touch_view_holds()) {
             self.touch_release_all();
         }
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::BG)).show(ctx, |ui| match self.view {
-            View::Session => self.ui_session(ui),
-            View::Arrangement => self.ui_arrangement(ui),
-            View::Studio => self.ui_device_rack(ui),
-            View::Touch => self.ui_touch(ui),
-            View::Tape => self.ui_tape(ui),
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::BG)).show(ctx, |ui| {
+            // A click in the main view takes the keys from the note editor (Live's focus).
+            if crate::ui::piano_roll::pressed_in(ui, ui.max_rect()) {
+                self.piano.focused = false;
+            }
+            match self.view {
+                View::Session => self.ui_session(ui),
+                View::Arrangement => self.ui_arrangement(ui),
+                View::Studio => self.ui_device_rack(ui),
+                View::Touch => self.ui_touch(ui),
+                View::Tape => self.ui_tape(ui),
+            }
         });
         self.move_hud(ctx);
         self.ui_dialogs(ctx);

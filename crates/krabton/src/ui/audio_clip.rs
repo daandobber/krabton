@@ -411,6 +411,10 @@ impl App {
                 self.crop_audio_clip(sel);
                 ui.close();
             }
+            if ui.button("Slice to New MIDI Track...").on_hover_text("Cut the clip at its hits or on the beat: a Drum Rack of the slices and a clip that plays them, on a new track").clicked() {
+                self.open_slice_dialog(sel);
+                ui.close();
+            }
         });
         if wresp.hovered() {
             let (scroll, ctrl) = ui.input(|i| (i.smooth_scroll_delta, i.modifiers.ctrl || i.modifiers.command));
