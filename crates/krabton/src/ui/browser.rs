@@ -378,7 +378,7 @@ pub(crate) fn device_names() -> Vec<&'static str> {
     devices().iter().map(|d| d.name).collect()
 }
 
-fn devices() -> [Dev; 49] {
+fn devices() -> [Dev; 50] {
     [
         Dev {
             name: "Analog",

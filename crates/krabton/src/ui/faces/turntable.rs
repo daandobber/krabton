@@ -18,7 +18,7 @@ use krabton_engine::sample::SampleRef;
 use std::f32::consts::TAU;
 
 pub(crate) fn face() -> Face {
-    Face::new(69.5, 12.0)
+    Face::new(71.5, 12.0)
         .section(0.0, 0.0, 13.0, 12.0, "Turntable")
         .preset(0.3, 0.3, 12.4, 1.3)
         .screen(0.3, 1.8, 12.4, 9.4, "platter")
@@ -34,19 +34,19 @@ pub(crate) fn face() -> Face {
         .section(40.6, 0.0, 7.0, 12.0, "Motor")
         .row(40.7, 0.3, 2.25, 5.3, &["Start", "Stop", "Brake"], Ctl::Knob)
         .row(40.7, 5.9, 2.25, 5.3, &["Backspin", "Slipmat"], Ctl::Knob)
-        .section(47.8, 0.0, 7.6, 12.0, "Time")
-        .ctl(48.0, 0.3, 2.4, 5.3, "Song", Ctl::Switch)
-        .ctl(50.4, 0.3, 2.4, 5.3, "Quantize", Ctl::Switch)
-        .ctl(52.8, 0.3, 2.4, 5.3, "Loop", Ctl::Selector)
-        .named(48.0, 5.9, 3.6, 5.3, "Move Rate", Ctl::Switch, "Scratch")
-        .named(51.6, 5.9, 3.6, 5.3, "Move Size", Ctl::Knob, "Size")
-        .section(55.6, 0.0, 7.9, 12.0, "Mixer")
-        .ctl(55.8, 0.3, 2.3, 10.9, "Fader", Ctl::Fader)
-        .col(58.1, 0.3, 2.6, 5.45, &["Filter", "Resonance"], Ctl::Knob)
-        .col(60.7, 0.3, 2.6, 5.45, &["Curve", "Volume"], Ctl::Knob)
-        .section(63.7, 0.0, 5.8, 12.0, "Vinyl")
-        .col(63.9, 0.3, 2.7, 5.45, &["Crackle", "Noise"], Ctl::Knob)
-        .ctl(66.6, 0.3, 2.7, 5.45, "Wow", Ctl::Knob)
+        .section(47.8, 0.0, 9.6, 12.0, "Time")
+        .ctl(48.0, 0.3, 3.0, 5.3, "Song", Ctl::Switch)
+        .ctl(51.0, 0.3, 3.0, 5.3, "Quantize", Ctl::Switch)
+        .ctl(54.0, 0.3, 3.2, 5.3, "Loop", Ctl::Selector)
+        .named(48.0, 5.9, 4.6, 5.3, "Move Rate", Ctl::Switch, "Scratch")
+        .named(52.6, 5.9, 4.6, 5.3, "Move Size", Ctl::Knob, "Size")
+        .section(57.6, 0.0, 7.9, 12.0, "Mixer")
+        .ctl(57.8, 0.3, 2.3, 10.9, "Fader", Ctl::Fader)
+        .col(60.1, 0.3, 2.6, 5.45, &["Filter", "Resonance"], Ctl::Knob)
+        .col(62.7, 0.3, 2.6, 5.45, &["Curve", "Volume"], Ctl::Knob)
+        .section(65.7, 0.0, 5.8, 12.0, "Vinyl")
+        .col(65.9, 0.3, 2.7, 5.45, &["Crackle", "Noise"], Ctl::Knob)
+        .ctl(68.6, 0.3, 2.7, 5.45, "Wow", Ctl::Knob)
 }
 
 /// What the face does to the deck this frame.
@@ -159,11 +159,22 @@ pub(crate) fn panel(ui: &mut Ui, id: Id, preset: &mut String, params: &mut Vec<f
         .response
     };
     deck.acts = acts;
-    // A sample from the browser goes on the deck.
+    // A sample from the browser goes on the deck, or a file from outside
+    // dropped on it (or anywhere, when the system does not say where).
     if let Some(item) = drop_payload::<crate::app::BrowserItem>(&resp) {
         if let crate::app::BrowserItem::Sample(path) = &*item {
             load(path, sample, record);
         }
+    }
+    let here = crate::import::file_drop_pos(ui.ctx()).is_none_or(|p| resp.rect.contains(p));
+    let files_over = ui.ctx().input(|i| !i.raw.hovered_files.is_empty());
+    if resp.dnd_hover_payload::<crate::app::BrowserItem>().is_some() || (files_over && here) {
+        rect_line(ui.painter(), resp.rect, 6.0, 2.0, accent_now());
+    }
+    let dropped: Vec<std::path::PathBuf> = ui.ctx().input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect());
+    if let Some(path) = dropped.iter().find(|p| krabton_engine::sample::is_audio_file(p)).filter(|_| here) {
+        load(path, sample, record);
+        crate::import::take_file_drop(ui.ctx());
     }
     if now.motor || now.speed.abs() > 1e-4 || now.hand || now.moving >= 0 || now.waiting {
         ui.ctx().request_repaint();
@@ -225,7 +236,8 @@ fn platter(ui: &mut Ui, id: Id, r: Rect, now: &Now, turn: f32, sample: Option<&S
     if side.width() > 18.0 {
         let ink = crate::skin::well().1;
         let f = FontId::monospace((side.width() * 0.22).clamp(8.0, 12.0));
-        let pct = (now.speed - 1.0) * 100.0;
+        // The pitch the motor is set to (a deck's readout), the record's own speed while the hand has it.
+        let pct = if now.hand || now.moving >= 0 { (now.speed - 1.0) * 100.0 } else { (now.target - 1.0) * 100.0 };
         tabular_text(&p, pos2(side.center().x, side.top()), Align2::CENTER_TOP, &format!("{pct:+.1}%"), f.clone(), ink);
         let light = if now.motor { accent_now() } else { Color32::from_rgb(0x40, 0x40, 0x44) };
         p.circle_filled(pos2(side.center().x, side.top() + 26.0), 4.0, light);

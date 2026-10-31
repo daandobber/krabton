@@ -3680,6 +3680,14 @@ impl App {
                     let item = if name == "hyper" { BrowserItem::Hyper } else { BrowserItem::HyperFirmware(PathBuf::from(arg.trim())) };
                     self.apply_item(&item, target);
                 }
+                // sampleon=PATH: that sample dropped on the selected track's instrument (a Turntable's record, a Grit pad).
+                "sampleon" => {
+                    let target = match self.sel_track {
+                        TrackSel::Track(t) => DropTarget::Track(t),
+                        _ => DropTarget::NewTrack,
+                    };
+                    self.apply_item(&BrowserItem::Sample(PathBuf::from(arg.trim())), target);
+                }
                 "singer" => {
                     let target = match self.sel_track {
                         TrackSel::Track(t) => DropTarget::Track(t),
