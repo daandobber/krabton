@@ -15,7 +15,9 @@
 //! - *Crush*: fewer bits and a lower sample rate.
 //!
 //! The time effects (tape, stutter, roll, reverse) read the song as it came
-//! in, from a history of four seconds; a later one wins over an earlier one.
+//! in, from a history of four seconds; stutter, roll and reverse keep their
+//! slice apart from it, so they go on as long as they are held. A later one
+//! wins over an earlier one.
 
 use super::{FilterMode, OnePole, Svf};
 
@@ -44,10 +46,9 @@ pub const HINTS: [&str; COUNT] = [
 /// How long the history is (seconds).
 const HISTORY: f32 = 4.0;
 
-/// A time effect's state: where it started and how long it has been on.
+/// A time effect's state: how long it has been on.
 #[derive(Clone, Copy, Default)]
 struct Hold {
-    start: usize,
     t: u64,
     mix: f32,
 }
@@ -58,6 +59,10 @@ pub struct Perform {
     hist: Vec<[f32; 2]>,
     w: usize,
     holds: [Hold; 4],
+    /// The slices of stutter, roll and reverse (by `k - STUTTER`), kept.
+    slices: [Vec<[f32; 2]>; 3],
+    /// The samples per beat last block (for the reverse's slice at a press).
+    spb: f64,
     /// The tape's read place and how far it lags.
     tape_read: f64,
     /// The sweeps (0: open, 1: all the way).
@@ -86,6 +91,8 @@ impl Perform {
             hist: vec![[0.0; 2]; n],
             w: 0,
             holds: [Hold::default(); 4],
+            slices: [vec![[0.0; 2]; n / 2], vec![[0.0; 2]; n / 2], vec![[0.0; 2]; n / 2]],
+            spb: sr as f64 / 2.0,
             tape_read: 0.0,
             filter: 0.0,
             thin: 0.0,
@@ -113,10 +120,18 @@ impl Perform {
         for k in 0..4 {
             if pressed & (1 << k) != 0 {
                 let h = &mut self.holds[k];
-                h.start = self.w;
                 h.t = 0;
                 if k == TAPE {
                     self.tape_read = self.w as f64;
+                }
+                if k == REVERSE {
+                    // The beat before the press, backwards.
+                    let n = self.hist.len();
+                    let slice = &mut self.slices[REVERSE - STUTTER];
+                    let len = (self.spb as usize).clamp(16, slice.len());
+                    for (j, s) in slice[..len].iter_mut().enumerate() {
+                        *s = self.hist[(self.w + n - 1 - j) % n];
+                    }
                 }
             }
         }
@@ -149,6 +164,7 @@ impl Perform {
     /// The master's block, `spb` samples to a beat.
     pub fn process(&mut self, l: &mut [f32], r: &mut [f32], spb: f64) {
         let n = self.hist.len();
+        self.spb = spb.clamp(1.0, (n / 4) as f64);
         if !self.busy() {
             // Only remember what came by, for a press to come.
             for (a, b) in l.iter().zip(r.iter()) {
@@ -161,7 +177,8 @@ impl Perform {
         let sr = self.sr;
         let smooth = 1.0 - (-1.0 / (0.004 * sr)).exp();
         let spb = spb.clamp(1.0, (n / 4) as f64);
-        let max_len = (n / 2) as u64;
+        self.spb = spb;
+        let max_len = self.slices[0].len() as u64;
         let fade = (0.002 * sr).max(1.0);
         let bar = (4.0 * spb) as f32;
         let back = 1.0 / (0.25 * sr);
@@ -189,7 +206,12 @@ impl Perform {
                 };
                 let len = (len as u64).clamp(16, max_len);
                 let ph = h.t % len;
-                let s = self.hist[(h.start + ph as usize) % n];
+                // The first time round it is kept as it comes in.
+                let slice = &mut self.slices[k - STUTTER];
+                if h.t < len {
+                    slice[ph as usize] = x;
+                }
+                let s = slice[ph as usize];
                 let mut g = ((len - ph) as f32 / fade).min(1.0);
                 if h.t >= len {
                     g = g.min((ph as f32 + 1.0) / fade);
@@ -209,7 +231,7 @@ impl Perform {
                 if mix > 1e-4 {
                     let len = (spb as u64).clamp(16, max_len);
                     let ph = h.t % len;
-                    let s = self.hist[(h.start + n - 1 - ph as usize) % n];
+                    let s = self.slices[REVERSE - STUTTER][ph as usize];
                     let mut g = ((len - ph) as f32 / fade).min(1.0);
                     if h.t >= len {
                         g = g.min((ph as f32 + 1.0) / fade);
@@ -353,6 +375,25 @@ mod tests {
         let b = &out[14_000..22_000];
         let diff = a.iter().zip(b).map(|(x, y)| (x - y).abs()).fold(0.0f32, f32::max);
         assert!(diff < 0.02, "repeats: {diff}");
+    }
+
+    #[test]
+    fn held_long_they_go_on() {
+        // Longer than the history: the stutter and the reverse still repeat their slice.
+        for k in [STUTTER, REVERSE] {
+            let mut p = Perform::new(SR);
+            run(&mut p, 0, 48_128);
+            p.set_held(1 << k);
+            let out = run(&mut p, 48_128, 480_000);
+            let len = if k == STUTTER { 12_000 } else { 24_000 };
+            let a = &out[400_000..400_000 + 4_000];
+            let b = &out[400_000 + len..400_000 + len + 4_000];
+            let diff = a.iter().zip(b).map(|(x, y)| (x - y).abs()).fold(0.0f32, f32::max);
+            assert!(diff < 0.02, "{}: {diff}", NAMES[k]);
+            let live: Vec<f32> = (48_128 + 400_000..48_128 + 404_000).map(tone).collect();
+            let off = a.iter().zip(&live).map(|(x, y)| (x - y).abs()).fold(0.0f32, f32::max);
+            assert!(off > 0.1, "{} is not the song as it plays", NAMES[k]);
+        }
     }
 
     #[test]
