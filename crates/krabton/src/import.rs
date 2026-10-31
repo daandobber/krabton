@@ -329,7 +329,10 @@ impl App {
             for (path, have) in jobs {
                 let r = match have {
                     Some(s) => Ok(s),
-                    None => SampleRef::load(&path),
+                    // Its transients and tempo are found here too, off the UI thread.
+                    None => SampleRef::load(&path).inspect(|s| {
+                        s.analysis();
+                    }),
                 };
                 if tx.send((path, r)).is_err() {
                     break;

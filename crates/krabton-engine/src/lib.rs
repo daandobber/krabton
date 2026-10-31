@@ -36,9 +36,11 @@ pub mod slicing;
 pub mod hyper;
 pub mod tape;
 pub mod video;
+pub mod warp;
 
 pub use engine::{Command, Engine, EngineHandle, EngineStatus, MidiOut, MidiRec, RecChunk};
 pub use project::*;
 pub use routing::{AudioInput, AudioOutput, MidiInput, Monitor, Tap};
 pub use sample::{SampleData, SampleRef};
 pub use scale::{Scale, ScaleKind};
+pub use warp::{Preserve, TransientLoop, WarpMode};

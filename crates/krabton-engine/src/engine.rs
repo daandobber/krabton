@@ -127,6 +127,8 @@ pub struct TrackStatus {
     pub queued_slot: AtomicI32,
     /// Position inside the playing clip in beats, or -1.
     pub clip_pos: AtomicF64,
+    /// The clip beat a playing audio clip is on (its waveform's playhead), or NaN.
+    pub audio_pos: AtomicF64,
     /// Id of the arrangement clip under the playhead (0 = none).
     pub arr_clip: AtomicU64,
     /// True when session clips override the arrangement on this track.
@@ -157,6 +159,7 @@ impl TrackStatus {
             playing_slot: AtomicI32::new(-1),
             queued_slot: AtomicI32::new(QUEUE_NONE),
             clip_pos: AtomicF64::new(-1.0),
+            audio_pos: AtomicF64::new(f64::NAN),
             arr_clip: AtomicU64::new(0),
             overridden: AtomicBool::new(false),
             peak_l: AtomicF32::new(0.0),
@@ -1068,6 +1071,8 @@ struct TrackRt {
     lead_until: f64,
     /// Where its own clock is (a track with a tempo of its own), in its beats.
     own_pos: f64,
+    /// Where its audio clips' grains read, for the stretching warp modes.
+    stretch: crate::warp::Stretch,
     /// How far the Key drawer moved each pitch (its note-off goes there too).
     shifted: [i8; 128],
     /// Notes and level for the modulators.
@@ -1127,6 +1132,7 @@ impl TrackRt {
             sounding: [0; 128],
             lead_until: f64::NAN,
             own_pos: 0.0,
+            stretch: Default::default(),
             shifted: [0; 128],
             bend: 0.0,
             signal: TrackSignal::default(),
@@ -2216,7 +2222,7 @@ impl Engine {
             let own_sound = rt.sound_from.is_none();
             // A Singer hears its clip notes early, so its consonants can start before the beat.
             let lead = if matches!(snd.instrument, Some(Instrument::Singer { .. })) { crate::singer::LEAD_SECS * sr as f64 / tspb } else { 0.0 };
-            let TrackRt { instrument, devices, placer, placer_idle, playing: pc, overridden, offs, events, fx_buf, live, midi_fx, fx_sig, sounding, shifted, signal, bend, l, r, gain_l, gain_r, sends, pre_l, pre_r, post_l, post_r, out_l, out_r, to_master, midi_out, lead_until, .. } = &mut **rt;
+            let TrackRt { instrument, devices, placer, placer_idle, playing: pc, overridden, stretch, offs, events, fx_buf, live, midi_fx, fx_sig, sounding, shifted, signal, bend, l, r, gain_l, gain_r, sends, pre_l, pre_r, post_l, post_r, out_l, out_r, to_master, midi_out, lead_until, .. } = &mut **rt;
             if !playing {
                 *lead_until = f64::NAN;
             }
@@ -2233,7 +2239,17 @@ impl Engine {
                             collect_notes(notes, clip.length, start, start, f64::INFINITY, t0, t1, tspb, seg, Clock::Session, events, offs, (lead, catch_up));
                             *lead_until = t1 + lead;
                         }
-                        ClipContent::Audio(a) => render_audio(clip.length, a, start, start, f64::INFINITY, (0.0, 0.0), t0, tspb, seg, l, r),
+                        ClipContent::Audio(a) => {
+                            // A clip that does not loop plays once, from its Start to its End marker.
+                            let end = if a.looping { f64::INFINITY } else { start + a.once_beats(tspb / sr as f64) };
+                            let slot = pc.map_or(0, |p| p.slot) as u64;
+                            let fades = (a.fade_in, if a.looping { 0.0 } else { a.fade_out });
+                            let at = crate::warp::Place { origin: start, region: (start, end), fades, key: crate::warp::key_of(slot, start.to_bits()) };
+                            crate::warp::render(a, clip.length, at, t0, tspb, sr, seg, l, r, stretch);
+                            if t1 >= end {
+                                *pc = None;
+                            }
+                        }
                     }
                 } else if !*overridden {
                     let catch_up = (*lead_until - (a0 + lead)).abs() > 1e-6;
@@ -2259,7 +2275,10 @@ impl Engine {
                                 offs,
                                 (lead, catch_up),
                             ),
-                            ClipContent::Audio(a) => render_audio(ac.clip.length, a, origin, ac.start, ac.end(), (ac.fade_in, ac.fade_out), a0, spb, seg, l, r),
+                            ClipContent::Audio(a) => {
+                                let at = crate::warp::Place { origin, region: (ac.start, ac.end()), fades: (ac.fade_in, ac.fade_out), key: crate::warp::key_of(ac.id, 0) };
+                                crate::warp::render(a, ac.clip.length, at, a0, spb, sr, seg, l, r, stretch);
+                            }
                         }
                     }
                 }
@@ -2758,19 +2777,28 @@ impl Engine {
             );
             ts.overridden.store(rt.overridden, RELAXED);
             let mut pos = -1.0;
+            let mut audio = f64::NAN;
             let mut arr_id = 0;
+            let secs_per_beat = 60.0 / track.tempo.unwrap_or(self.project.bpm).max(1.0);
+            let content = |clip: &Clip, u: f64| match &clip.content {
+                ClipContent::Audio(a) => a.content_beat(u, clip.length, secs_per_beat).unwrap_or(f64::NAN),
+                _ => f64::NAN,
+            };
             if let Some(pc) = rt.playing {
                 if let Some(Some(clip)) = track.slots.get(pc.slot) {
                     let now = if track.tempo.is_some() { rt.own_pos } else { self.session_pos };
-                    pos = (now - pc.start).max(0.0).rem_euclid(clip.length.max(1e-6));
+                    pos = (now - pc.start).max(0.0).rem_euclid(clip.play_length());
+                    audio = content(clip, (now - pc.start).max(0.0));
                 }
             } else if self.playing && !rt.overridden {
                 if let Some(ac) = track.arrangement.iter().find(|a| !a.muted && a.start <= self.song_pos && self.song_pos < a.end()) {
                     pos = (self.song_pos - ac.start + ac.offset).rem_euclid(ac.clip.length.max(1e-6));
+                    audio = content(&ac.clip, self.song_pos - ac.start + ac.offset);
                     arr_id = ac.id;
                 }
             }
             ts.clip_pos.store(pos);
+            ts.audio_pos.store(audio);
             ts.arr_clip.store(arr_id, RELAXED);
         }
         for ts in st.tracks.iter().skip(self.tracks.len()) {
@@ -2954,60 +2982,6 @@ fn collect_notes(
                 offs.push(PendingOff { at: end - lead, pitch: n.pitch, clock });
             }
         }
-    }
-}
-
-/// Mixes a looping, beat-locked audio clip into `l`/`r`.
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
-fn render_audio(
-    len: f64,
-    a: &AudioClip,
-    origin: f64,
-    region_start: f64,
-    region_end: f64,
-    fades: (f64, f64),
-    w0: f64,
-    spb: f64,
-    seg: usize,
-    l: &mut [f32],
-    r: &mut [f32],
-) {
-    let s = &a.sample;
-    let src_fpb = s.sample_rate as f64 * 60.0 / a.bpm.max(1.0);
-    let gain = crate::dsp::db_to_gain(a.gain_db);
-    let len = len.max(1.0 / 64.0);
-    let frames = s.frames() as f64;
-    let loop_frames = (len * src_fpb).min(frames);
-    const FADE: f64 = 48.0;
-    for i in 0..seg {
-        let g = w0 + i as f64 / spb;
-        if g < region_start || g >= region_end {
-            continue;
-        }
-        let local = (g - origin).rem_euclid(len);
-        let pos = local * src_fpb;
-        if pos >= frames {
-            continue;
-        }
-        let edge = pos.min(loop_frames - pos).min(frames - pos);
-        // No click where a cut clip starts or ends either; and its fades.
-        let region = ((g - region_start) * spb).min((region_end - g) * spb);
-        let mut e = (edge.min(region) / FADE).clamp(0.0, 1.0) as f32;
-        let (fade_in, fade_out) = fades;
-        if fade_in > 1e-9 || fade_out > 1e-9 {
-            let mut x = 1.0f64;
-            if fade_in > 1e-9 {
-                x = x.min((g - region_start) / fade_in);
-            }
-            if fade_out > 1e-9 {
-                x = x.min((region_end - g) / fade_out);
-            }
-            e *= (x.clamp(0.0, 1.0) * std::f64::consts::FRAC_PI_2).sin() as f32;
-        }
-        let (x, y) = s.read(pos);
-        l[i] += x * gain * e;
-        r[i] += y * gain * e;
     }
 }
 

@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 /// Frames per entry in the waveform overview.
 pub const PEAK_BLOCK: usize = 256;
@@ -21,6 +21,10 @@ pub struct SampleData {
     /// Only a part of the file at `path` (a slice of a loop): what a set
     /// keeps, so the part is cut again when it opens.
     pub region: Option<SampleRegion>,
+    /// Its transients and tempo, found once (see [`SampleData::analysis`]).
+    analysis: OnceLock<crate::analysis::Analysis>,
+    /// The sample backwards, made once when a clip plays it reversed.
+    reversed: OnceLock<Arc<SampleData>>,
 }
 
 /// A part of a sound file played as a sample of its own: frames
@@ -39,7 +43,40 @@ pub struct SampleRegion {
 impl SampleData {
     pub fn from_buffers(name: impl Into<String>, path: Option<PathBuf>, sample_rate: u32, left: Vec<f32>, right: Vec<f32>) -> Self {
         let peaks = compute_peaks(&left, &right);
-        Self { name: name.into(), path, sample_rate: sample_rate.max(1), left, right, peaks, region: None }
+        Self { name: name.into(), path, sample_rate: sample_rate.max(1), left, right, peaks, region: None, analysis: OnceLock::new(), reversed: OnceLock::new() }
+    }
+
+    /// Its transients and tempo: found on the first call (which takes a
+    /// moment for a whole song, so never on the audio thread), kept after.
+    pub fn analysis(&self) -> &crate::analysis::Analysis {
+        self.analysis.get_or_init(|| crate::analysis::analyze(self))
+    }
+
+    /// The analysis if it was made already: what the audio thread reads.
+    pub fn analysis_ready(&self) -> Option<&crate::analysis::Analysis> {
+        self.analysis.get()
+    }
+
+    /// The sample backwards (made on the first call, with its analysis).
+    pub fn reversed(&self) -> &SampleData {
+        self.reversed.get_or_init(|| {
+            let (mut l, mut r) = (self.left.clone(), self.right.clone());
+            l.reverse();
+            r.reverse();
+            let rev = SampleData::from_buffers(self.name.clone(), self.path.clone(), self.sample_rate, l, r);
+            rev.analysis();
+            Arc::new(rev)
+        })
+    }
+
+    /// The reversed sample if it was made already.
+    pub fn reversed_ready(&self) -> Option<&SampleData> {
+        self.reversed.get().map(|a| &**a)
+    }
+
+    /// The loudest sample, either side.
+    pub fn peak(&self) -> f32 {
+        self.left.iter().chain(&self.right).fold(0.0f32, |m, x| m.max(x.abs()))
     }
 
     pub fn silent(name: impl Into<String>, path: Option<PathBuf>) -> Self {

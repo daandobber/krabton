@@ -86,17 +86,41 @@ impl Default for SliceOptions {
     }
 }
 
-/// The part of a clip's sample that is sliced: what one round of the clip
-/// plays (frames).
+/// The part of a clip's sample that is sliced (frames): its loop when it
+/// loops (`loop_len` beats from the loop's start), else from its Start to
+/// its End marker, through its warp markers. A reversed clip's part is the
+/// same stretch of the sample, which the slices play forwards.
 pub fn clip_region(a: &AudioClip, loop_len: f64) -> (usize, usize) {
     let frames = a.sample.frames();
-    let fpb = frames_per_beat(a);
-    (0, ((loop_len.max(0.0) * fpb).round() as usize).min(frames))
+    let (b0, b1) = clip_beats(a, loop_len);
+    let sr = a.sample.sample_rate as f64;
+    let at = |b: f64| ((a.secs_at(b) * sr).round().max(0.0) as usize).min(frames);
+    let (f0, f1) = (at(b0), at(b1).max(at(b0)));
+    if a.reverse {
+        (frames - f1, frames - f0)
+    } else {
+        (f0, f1)
+    }
 }
 
-/// Frames of a clip's sample per beat of the clip.
-fn frames_per_beat(a: &AudioClip) -> f64 {
-    a.sample.sample_rate as f64 * 60.0 / a.bpm.max(1.0)
+/// The clip beats that are sliced (see [`clip_region`]).
+fn clip_beats(a: &AudioClip, loop_len: f64) -> (f64, f64) {
+    if a.looping {
+        (a.loop_start, a.loop_start + loop_len.max(0.0))
+    } else {
+        (a.start, a.end_beat().max(a.start))
+    }
+}
+
+/// Frames of a clip's sample per beat of the clip, over the part sliced
+/// (between warp markers the tempo may change; this is its average).
+fn frames_per_beat(a: &AudioClip, loop_len: f64) -> f64 {
+    let (b0, b1) = clip_beats(a, loop_len);
+    if b1 - b0 > 1e-6 {
+        (a.secs_at(b1) - a.secs_at(b0)) * a.sample.sample_rate as f64 / (b1 - b0)
+    } else {
+        a.sample.sample_rate as f64 * 60.0 / a.bpm.max(1.0)
+    }
 }
 
 /// Where the slices of a clip are.
@@ -119,7 +143,7 @@ impl SlicePlan {
     /// `beats_per_bar`; `flux` is the sample's (see `analysis`).
     pub fn new(a: &AudioClip, loop_len: f64, opts: &SliceOptions, beats_per_bar: f64, flux: &Flux) -> Self {
         let (from, to) = clip_region(a, loop_len);
-        let fpb = frames_per_beat(a);
+        let fpb = frames_per_beat(a, loop_len);
         let sr = a.sample.sample_rate as f64;
         let edge = (EDGE * sr) as usize;
         let pre = (FADE_IN * sr) as usize;
@@ -375,10 +399,26 @@ mod tests {
     }
 
     #[test]
+    fn the_region_follows_the_clips_markers() {
+        let s = SampleRef::new(SampleData::from_buffers("x", None, 1000, vec![0.0; 8000], vec![0.0; 8000]));
+        let mut a = AudioClip::new(s, 120.0);
+        // Looping: the loop, two beats from beat 3 (a beat is 500 frames).
+        a.loop_start = 3.0;
+        assert_eq!(clip_region(&a, 2.0), (1500, 2500));
+        // Once from the Start to the End marker, through a warp marker.
+        a.looping = false;
+        a.start = 1.0;
+        a.end = Some(5.0);
+        a.markers = vec![(1.0, 0.5), (5.0, 4.5)];
+        assert_eq!(clip_region(&a, 2.0), (500, 4500));
+        assert!((frames_per_beat(&a, 2.0) - 1000.0).abs() < 1e-9);
+    }
+
+    #[test]
     fn a_grid_slices_on_the_beat_and_merges_beyond_the_pads() {
         let sr = 48_000;
         let (s, _) = drum_loop(sr, BEAT, false);
-        let a = AudioClip { sample: SampleRef::new(s), bpm: 120.0, gain_db: 0.0 };
+        let a = AudioClip::new(SampleRef::new(s), 120.0);
         let flux = analysis::spectral_flux(&a.sample);
         let quarter = SlicePlan::new(&a, 8.0, &opts(SliceBy::Quarter, 16), 4.0, &flux);
         assert_eq!(quarter.starts, (0..8).map(|k| k * sr as usize / 2).collect::<Vec<_>>());
@@ -419,7 +459,7 @@ mod tests {
             }
         }
         let s = SampleRef::new(SampleData::from_buffers("100", None, sr, x.clone(), x));
-        let a = AudioClip { sample: s, bpm: 100.0, gain_db: 0.0 };
+        let a = AudioClip::new(s, 100.0);
         let plan = SlicePlan::new(&a, 4.0, &opts(SliceBy::Transients, 16), 4.0, &analysis::spectral_flux(&a.sample));
         let notes = plan.notes();
         assert_eq!(notes.len(), 4);

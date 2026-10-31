@@ -2,6 +2,7 @@
 
 pub mod ambient_view;
 pub mod arrangement;
+pub mod audio_clip;
 pub mod automation;
 pub mod band_view;
 pub mod beads_view;
