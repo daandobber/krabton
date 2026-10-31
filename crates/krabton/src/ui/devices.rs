@@ -2920,6 +2920,9 @@ impl App {
                                         })
                                         .response
                                         .on_hover_text("Pads in the same choke group cut each other off, like a closed hat stops an open one");
+                                        if pad.sample.is_some() || pad.gate {
+                                            ui.checkbox(&mut pad.gate, RichText::new("Gate").small().color(crate::skin::ink_dim())).on_hover_text("Plays only while its note is held (a slice stops where its note ends); off: to its end");
+                                        }
                                     });
                                     // Level, Tune, Decay, Tone, Pan and the voice's own knobs.
                                     let mut specs = PAD_SPECS.to_vec();

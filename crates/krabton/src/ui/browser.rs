@@ -210,6 +210,8 @@ enum UiAct {
     AddPlace(PathBuf),
     RemovePlace(PathBuf),
     Show(Section),
+    /// A sample: Slice to New MIDI Track.
+    Slice(PathBuf),
 }
 
 pub struct BrowserState {
@@ -1371,6 +1373,12 @@ impl App {
                         acts.push(UiAct::Load(it.clone()));
                         ui.close();
                     }
+                    if let BrowserItem::Sample(path) = it {
+                        if ui.button("Slice to New MIDI Track...").on_hover_text("Cut it at its hits or on the beat: a Drum Rack of the slices and a clip that plays them, on a new track").clicked() {
+                            acts.push(UiAct::Slice(path.clone()));
+                            ui.close();
+                        }
+                    }
                 }
                 if let Some(tag) = &row.tag {
                     ui.separator();
@@ -1486,6 +1494,7 @@ impl App {
                 self.browser.section = section;
                 self.browser.scroll_top = true;
             }
+            UiAct::Slice(path) => self.open_slice_dialog_for(&path),
         }
     }
 

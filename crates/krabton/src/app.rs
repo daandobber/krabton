@@ -530,6 +530,8 @@ pub struct App {
 
     pub renaming: Option<(RenameTarget, String)>,
     pub export: ExportDialog,
+    /// Slice to New MIDI Track, while its dialog is open.
+    pub slicing: Option<crate::ui::slice_dialog::SliceDialog>,
     pub export_job: Option<ExportJob>,
     pub show_about: bool,
     pub clipboard: Option<crate::editing::Clipboard>,
@@ -719,6 +721,7 @@ impl App {
             imports: Default::default(),
             renaming: None,
             export: ExportDialog { open: false, source: ExportSource::Scene, scene: 0, bars: 8, sample_rate: 44100 },
+            slicing: None,
             export_job: None,
             show_about: false,
             clipboard: None,
@@ -3661,6 +3664,40 @@ impl App {
                         self.sel_clip = Some(ClipSel::Slot { track, scene });
                         self.sel_track = TrackSel::Track(track);
                         self.detail = DetailTab::Clip;
+                    }
+                }
+                // slicedialog=TRACK,SCENE: Slice to New MIDI Track's dialog for that clip
+                // (slicearr=TRACK: the track's first arrangement clip; slicefile=PATH: a
+                // sample, as from the browser); sliceopt=BY,SENSITIVITY%,MAX,GATE sets it
+                // (BY: 0 Transients, 1 Bar ... 6 1/32); slicecreate presses Create.
+                "slicedialog" if nums.len() == 2 => self.open_slice_dialog(ClipSel::Slot { track: nums[0], scene: nums[1] }),
+                "slicearr" => {
+                    let t = nums.first().copied().unwrap_or(0);
+                    if let Some(id) = self.project.tracks.get(t).and_then(|tr| tr.arrangement.first()).map(|a| a.id) {
+                        self.open_slice_dialog(ClipSel::Arr { track: t, id });
+                    }
+                }
+                "slicefile" => self.open_slice_dialog_for(&PathBuf::from(arg.trim())),
+                "sliceopt" => {
+                    if let Some(d) = &mut self.slicing {
+                        let mut it = nums.iter().copied();
+                        if let Some(by) = it.next().and_then(|b| krabton_engine::slicing::SliceBy::ALL.get(b)) {
+                            d.opts.by = *by;
+                        }
+                        if let Some(s) = it.next() {
+                            d.opts.sensitivity = s.min(100) as f32 / 100.0;
+                        }
+                        if let Some(m) = it.next() {
+                            d.opts.max_slices = m.clamp(1, krabton_engine::dsp::drums::MAX_PADS);
+                        }
+                        if let Some(g) = it.next() {
+                            d.opts.gate = g != 0;
+                        }
+                    }
+                }
+                "slicecreate" => {
+                    if let Some(d) = self.slicing.take() {
+                        self.slice_create(d);
                     }
                 }
                 "lyrics" => {

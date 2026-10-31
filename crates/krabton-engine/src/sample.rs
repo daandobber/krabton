@@ -18,16 +18,48 @@ pub struct SampleData {
     pub right: Vec<f32>,
     /// (min, max) per `PEAK_BLOCK` frames, mono-summed, for drawing.
     pub peaks: Vec<(f32, f32)>,
+    /// Only a part of the file at `path` (a slice of a loop): what a set
+    /// keeps, so the part is cut again when it opens.
+    pub region: Option<SampleRegion>,
+}
+
+/// A part of a sound file played as a sample of its own: frames
+/// `start..end` of the file (as it decodes), faded in and out over so many
+/// frames so it starts and stops without a click.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SampleRegion {
+    pub start: u64,
+    pub end: u64,
+    #[serde(default)]
+    pub fade_in: u32,
+    #[serde(default)]
+    pub fade_out: u32,
 }
 
 impl SampleData {
     pub fn from_buffers(name: impl Into<String>, path: Option<PathBuf>, sample_rate: u32, left: Vec<f32>, right: Vec<f32>) -> Self {
         let peaks = compute_peaks(&left, &right);
-        Self { name: name.into(), path, sample_rate: sample_rate.max(1), left, right, peaks }
+        Self { name: name.into(), path, sample_rate: sample_rate.max(1), left, right, peaks, region: None }
     }
 
     pub fn silent(name: impl Into<String>, path: Option<PathBuf>) -> Self {
         Self::from_buffers(name, path, 44100, vec![0.0; 64], vec![0.0; 64])
+    }
+
+    /// Frames `region.start..region.end` of this sample as a sample of its
+    /// own, with its fades (half a cosine each) worked in. It keeps where it
+    /// came from: the same file, and the region counted from the start of
+    /// the file (a part of a part is a part of the file).
+    pub fn region(&self, name: impl Into<String>, region: SampleRegion) -> Self {
+        let n = self.frames() as u64;
+        let a = region.start.min(n);
+        let (a, b) = (a as usize, region.end.min(n).max(a) as usize);
+        let (mut left, mut right) = (self.left[a..b].to_vec(), self.right[a..b].to_vec());
+        apply_fades(&mut left, &mut right, region.fade_in as usize, region.fade_out as usize);
+        let base = self.region.map_or(0, |r| r.start);
+        let mut s = Self::from_buffers(name, self.path.clone(), self.sample_rate, left, right);
+        s.region = Some(SampleRegion { start: base + a as u64, end: base + b as u64, ..region });
+        s
     }
 
     pub fn frames(&self) -> usize {
@@ -375,6 +407,23 @@ fn extended_to_f64(b: &[u8]) -> f64 {
     }
 }
 
+/// Fades the start and end of a sample in and out over so many frames
+/// (half a cosine each, never more than half the sample).
+pub fn apply_fades(left: &mut [f32], right: &mut [f32], fade_in: usize, fade_out: usize) {
+    let n = left.len().min(right.len());
+    let (fi, fo) = (fade_in.min(n / 2), fade_out.min(n / 2));
+    for i in 0..fi {
+        let g = 0.5 - 0.5 * (std::f32::consts::PI * (i as f32 + 0.5) / fi as f32).cos();
+        left[i] *= g;
+        right[i] *= g;
+    }
+    for i in 0..fo {
+        let g = 0.5 - 0.5 * (std::f32::consts::PI * (i as f32 + 0.5) / fo as f32).cos();
+        left[n - 1 - i] *= g;
+        right[n - 1 - i] *= g;
+    }
+}
+
 fn compute_peaks(left: &[f32], right: &[f32]) -> Vec<(f32, f32)> {
     left.chunks(PEAK_BLOCK)
         .zip(right.chunks(PEAK_BLOCK))
@@ -429,6 +478,8 @@ impl fmt::Debug for SampleRef {
 struct SampleRefOnDisk {
     name: String,
     path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    region: Option<SampleRegion>,
 }
 
 thread_local! {
@@ -465,7 +516,7 @@ impl Drop for LoadCacheGuard {
 
 impl Serialize for SampleRef {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        SampleRefOnDisk { name: self.0.name.clone(), path: self.0.path.clone() }.serialize(s)
+        SampleRefOnDisk { name: self.0.name.clone(), path: self.0.path.clone(), region: self.0.region }.serialize(s)
     }
 }
 
@@ -473,16 +524,33 @@ impl<'de> Deserialize<'de> for SampleRef {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let disk = SampleRefOnDisk::deserialize(d)?;
         let Some(path) = disk.path.clone() else {
-            return Ok(SampleRef::new(SampleData::silent(disk.name, None)));
+            let mut s = SampleData::silent(disk.name, None);
+            s.region = disk.region;
+            return Ok(SampleRef::new(s));
         };
+        let whole = SampleRef::load_shared(path, &disk.name);
+        let Some(region) = disk.region else { return Ok(whole) };
+        // A part of the file: cut again as it was. The region stays as it
+        // was saved, also when the file is missing (or shorter now).
+        let mut s = whole.region(disk.name, region);
+        s.region = Some(region);
+        Ok(SampleRef::new(s))
+    }
+}
+
+impl SampleRef {
+    /// The file at `path` while a project loads: read once however many
+    /// samples name it (a silent stand-in, noted as missing, when it will
+    /// not read).
+    fn load_shared(path: PathBuf, name: &str) -> SampleRef {
         if let Some(hit) = LOAD_CACHE.with(|c| c.borrow().as_ref().and_then(|m| m.get(&path).cloned())) {
-            return Ok(hit);
+            return hit;
         }
         let s = match SampleRef::load(&path) {
             Ok(s) => s,
             Err(e) => {
                 MISSING.with(|m| m.borrow_mut().push(e));
-                SampleRef::new(SampleData::silent(disk.name, Some(path.clone())))
+                SampleRef::new(SampleData::silent(name, Some(path.clone())))
             }
         };
         LOAD_CACHE.with(|c| {
@@ -490,7 +558,7 @@ impl<'de> Deserialize<'de> for SampleRef {
                 m.insert(path, s.clone());
             }
         });
-        Ok(s)
+        s
     }
 }
 
