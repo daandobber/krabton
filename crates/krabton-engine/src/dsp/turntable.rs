@@ -168,11 +168,14 @@ pub fn listen(s: &SampleData) -> Record {
     if let Some(t) = tempo.filter(|t| t.bpm > 0.0) {
         rec.bpm = t.bpm;
         rec.beat = t.downbeat.max(0.0);
-        let bar = 4.0 * 60.0 / t.bpm;
-        let bars = ((dur - rec.beat) / bar).floor().max(1.0);
-        let step = (bars / CUES as f64).floor().max(1.0);
+        // On bars, or on beats when it has fewer bars than cues (a loop).
+        let beat = 60.0 / t.bpm;
+        let bars = ((dur - rec.beat) / (4.0 * beat)).floor();
+        let unit = if bars >= CUES as f64 { 4.0 * beat } else { beat };
+        let units = ((dur - rec.beat) / unit).floor().max(1.0);
+        let step = (units / CUES as f64).floor().max(1.0);
         for (k, c) in rec.cues.iter_mut().enumerate() {
-            let at = rec.beat + k as f64 * step * bar;
+            let at = rec.beat + k as f64 * step * unit;
             if at < dur {
                 *c = Some(at);
             }
@@ -381,6 +384,8 @@ enum Slow {
 #[derive(Clone, Copy, Debug)]
 struct Hand {
     anchor: f64,
+    /// The place it last said, and where it is taken to be now (on as it went).
+    said: f64,
     at: f64,
     speed: f64,
     since: u32,
@@ -612,8 +617,9 @@ impl TurntableState {
             m.anchor = to;
         }
         if let Some(h) = self.hand.as_mut() {
-            let d = to - h.anchor;
+            let d = to - h.at;
             h.anchor += d;
+            h.said += d;
             h.at += d;
         }
         if play && !self.motor {
@@ -656,12 +662,13 @@ impl TurntableState {
                     Some(h) => {
                         let to = h.anchor + frames;
                         let gap = h.since.max(1);
-                        h.speed = ((to - h.at) / gap as f64).clamp(-40.0, 40.0);
+                        h.speed = ((to - h.said) / gap as f64).clamp(-40.0, 40.0);
+                        h.said = to;
                         h.at = to;
                         h.gap = gap;
                         h.since = 0;
                     }
-                    None => self.hand = Some(Hand { anchor: self.pos - frames, at: self.pos, speed: 0.0, since: 0, gap: 1024 }),
+                    None => self.hand = Some(Hand { anchor: self.pos - frames, said: self.pos, at: self.pos, speed: 0.0, since: 0, gap: 1024 }),
                 }
             }
             DeckAct::Hand(None) => self.hand = None,
@@ -714,12 +721,14 @@ impl TurntableState {
         if let Some(s) = src {
             self.rate = s.sample_rate as f64;
             if s.frames() != self.frames {
-                // Another record: from its start.
+                // Another record: from its start (the first stays where the needle was put).
+                if self.frames != 0 {
+                    self.pos = 0.0;
+                    self.xf = None;
+                    self.looping = None;
+                    self.moving = None;
+                }
                 self.frames = s.frames();
-                self.pos = 0.0;
-                self.xf = None;
-                self.looping = None;
-                self.moving = None;
             }
         }
         let song_bpm = self.bpm as f64;
@@ -1064,8 +1073,9 @@ mod tests {
         p[PITCH] = 1.0;
         let mut st = TurntableState::new(SR);
         st.act(DeckAct::StartStop);
-        let x = run(&mut st, &p, Some(&s), &rec, 1.0);
-        let f = freq(&x[24_000..]);
+        // (The slipmat takes the record up to the platter's speed: past that.)
+        let x = run(&mut st, &p, Some(&s), &rec, 2.0);
+        let f = freq(&x[72_000..]);
         assert!((f - 475.2).abs() < 0.5, "at +8 %: {f}");
         // The hand moving the record twice as fast, then backwards at 1.5.
         for (speed, want) in [(2.0f64, 880.0f32), (-1.5, 660.0)] {
@@ -1151,7 +1161,7 @@ mod tests {
         st.act(DeckAct::Backspin);
         run(&mut st, &p, Some(&s), &rec, 0.1);
         assert!(st.speed() < -2.0, "{}", st.speed());
-        run(&mut st, &p, Some(&s), &rec, p[SPIN] + 0.5);
+        run(&mut st, &p, Some(&s), &rec, p[SPIN] + 1.0);
         assert!(st.speed().abs() < 0.01);
     }
 

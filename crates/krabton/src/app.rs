@@ -189,6 +189,8 @@ pub enum BrowserItem {
     Keytone(&'static str),
     /// An Analog Princess preset (the machine).
     Princess(&'static str),
+    /// A Turntable preset.
+    Turntable(&'static str),
 }
 
 /// A bank of DX7 voices for FM.
@@ -269,6 +271,7 @@ impl BrowserItem {
             BrowserItem::Granulator(p) => format!("Granulator: {p}"),
             BrowserItem::Keytone(p) => format!("Keytone: {p}"),
             BrowserItem::Princess(p) => format!("Analog Princess: {p}"),
+            BrowserItem::Turntable(p) => format!("Turntable: {p}"),
         }
     }
 }
@@ -1292,7 +1295,7 @@ impl App {
                 }
                 self.toast(format!("Loading {} ...", info.name));
             }
-            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::StreetOrgan(_) | BrowserItem::Harmonica(_) | BrowserItem::Calculator(_) | BrowserItem::Console(_) | BrowserItem::Handheld(_) | BrowserItem::Micro(_) | BrowserItem::Warp(_) | BrowserItem::Hybrid(_) | BrowserItem::Quartet(_) | BrowserItem::ChipFm(_) | BrowserItem::V2(_) | BrowserItem::Oidos(_) | BrowserItem::Orchestra(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) | BrowserItem::Coast(_) | BrowserItem::Crimson(_) | BrowserItem::Silicon(_) | BrowserItem::Theremin(_) | BrowserItem::Granulator(_) | BrowserItem::Keytone(_) | BrowserItem::Princess(_) => {
+            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::StreetOrgan(_) | BrowserItem::Harmonica(_) | BrowserItem::Calculator(_) | BrowserItem::Console(_) | BrowserItem::Handheld(_) | BrowserItem::Micro(_) | BrowserItem::Warp(_) | BrowserItem::Hybrid(_) | BrowserItem::Quartet(_) | BrowserItem::ChipFm(_) | BrowserItem::V2(_) | BrowserItem::Oidos(_) | BrowserItem::Orchestra(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) | BrowserItem::Coast(_) | BrowserItem::Crimson(_) | BrowserItem::Silicon(_) | BrowserItem::Theremin(_) | BrowserItem::Granulator(_) | BrowserItem::Keytone(_) | BrowserItem::Princess(_) | BrowserItem::Turntable(_) => {
                 let inst = match item {
                     BrowserItem::Synth(p) => Instrument::synth(p),
                     BrowserItem::Macro(p) => Instrument::macro_osc(p),
@@ -1341,6 +1344,7 @@ impl App {
                     BrowserItem::Granulator(p) => Instrument::granulator(p),
                     BrowserItem::Keytone(p) => Instrument::keytone(p),
                     BrowserItem::Princess(p) => Instrument::princess(p),
+                    BrowserItem::Turntable(p) => Instrument::turntable(p),
                     BrowserItem::Drums(k) => Instrument::drums(k),
                     _ => Instrument::sampler(None),
                 };
@@ -1647,6 +1651,11 @@ impl App {
                                     zones.clear();
                                 }
                                 Some(Instrument::Granulator { sample: s, .. }) => *s = Some(sample),
+                                // A record on the deck: listened to for its tempo and cues.
+                                Some(Instrument::Turntable { sample: s, record, .. }) => {
+                                    *record = krabton_engine::dsp::turntable::listen(&sample);
+                                    *s = Some(sample);
+                                }
                                 Some(Instrument::Keytone { sample: s, params, .. }) => {
                                     *s = Some(sample);
                                     if let Some(v) = params.get_mut(krabton_engine::dsp::keytone::SOUND) {
@@ -4189,6 +4198,13 @@ impl App {
                     let names = krabton_engine::dsp::princess_machine::preset_names();
                     let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
                     self.apply_item(&BrowserItem::Princess(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                // turntable=N: a new track with Turntable preset N.
+                "turntable" => {
+                    let names = krabton_engine::dsp::turntable::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Turntable(p), DropTarget::NewTrack);
                     self.detail = DetailTab::Devices;
                 }
                 // keytone=N: a new track with Keytone preset N.

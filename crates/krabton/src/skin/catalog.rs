@@ -980,6 +980,23 @@ const PRINCESS: Skin = Skin {
     ..BASE
 };
 
+/// Turntable: a silver deck, a black plinth, its red strobe light.
+const TURNTABLE: Skin = Skin {
+    top: hex(0x3a3c40),
+    bottom: hex(0x232427),
+    surface: Surface::Grain,
+    ink: hex(0xe4e5e7),
+    dim: hex(0xa3a6ab),
+    well: hex(0x141517),
+    well_ink: hex(0xe4e5e7),
+    accent: hex(0xff3b30),
+    knob: Knob::Cap,
+    cap: hex(0xb9bcc0),
+    logo_case: Case::Upper,
+    groups: Groups::Outline,
+    ..BASE
+};
+
 const DRUM_RACK: Skin = Skin { accent: hex(0xffa733), knob: Knob::Led, cap: hex(0x45484e), logo_size: 22.0, logo_case: Case::Upper, ..BASE };
 
 // Effects.
@@ -1187,6 +1204,7 @@ pub fn for_instrument(name: &str) -> Option<Skin> {
         "Orchestra" | "Soloists" => ORCHESTRA,
         "Granulator" => GRANULATOR,
         "Keytone" => KEYTONE,
+        "Turntable" => TURNTABLE,
         // Drum machines.
         "808" => M808,
         "909" => M909,

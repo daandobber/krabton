@@ -1973,6 +1973,15 @@ impl App {
                             self.toast(msg);
                         }
                     }
+                    Instrument::Turntable { preset, params, sample, record } => {
+                        let deck = super::faces::turntable::panel(ui, Id::new(("turntable", track_id)), preset, params, sample, record, &live, h - 36.0, mv.as_mut());
+                        for act in deck.acts {
+                            self.cmd(Command::Deck { track: track_id, act });
+                        }
+                        if let Some(msg) = deck.said {
+                            self.toast(msg);
+                        }
+                    }
                     Instrument::Princess { preset, params, machine } => {
                         let key = self.project.scale;
                         super::faces::princess::panel(ui, Id::new(("princess", track_id)), preset, params, machine, &live, key, h - 36.0, mv.as_mut());
