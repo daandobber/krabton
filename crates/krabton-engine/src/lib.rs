@@ -13,6 +13,7 @@ pub mod ffmpeg;
 pub mod midi_file;
 pub mod midi_fx;
 pub mod midi_tools;
+pub mod note_edit;
 pub mod mp3_decode;
 pub mod modular;
 pub mod modulation;

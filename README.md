@@ -114,7 +114,9 @@ For sound on Linux see [Building](#building) below: Krabton talks to PulseAudio/
 - **Automation** (as in Live): switch on *Automation* in the arrangement's toolbar and every track shows a parameter's red line over its clips: pick it in the track's header (the mixer's volume, pan and sends, every knob of the instrument, the MIDI effects and the audio effects; the ones with a line are marked ~), and + puts another parameter in a lane of its own under the track. Click to put a point, drag a point to move it (Alt: off the grid), double-click it to take it away, right-click to clear the line or hide the lane; with *Draw* paint the line along the grid. The clips stay movable by their title bars. While the track follows the arrangement the lines move what they point at, and the knobs show it
 
 **Editing and recording**
-- Piano roll with draw mode, marquee selection, move/resize, Ctrl+drag duplicate, velocity lane, quantize, transpose, x2 / /2, and a *Preview* switch to hear notes while placing and moving them (off by default; the keys on the left always play)
+- Piano roll with draw mode, marquee selection, move/resize, velocity lane, quantize, transpose, x2 / /2, and a *Preview* switch to hear notes while placing and moving them (off by default; the keys on the left always play)
+- **Notes edit as in Live's MIDI Note Editor**: click a note to select it, Shift- (or Ctrl-) click to add or take one away, drag a box over empty space to select (Shift: add to it; the box is the *time selection*, lit on the ruler); a click on an empty spot sets the insert marker. Ctrl+C, Ctrl+X, Ctrl+V and Ctrl+D copy, cut, paste and duplicate the selected notes, Ctrl+A selects them all, Del takes them out, and each is one step to undo. A paste lands right after the selected notes' time (so copy and paste, paste, paste lines them up), else at the insert marker, else at the clip's start, keeping their timing and pitch; the pasted notes are selected. Ctrl+D puts them right after their time (rounded out to the grid, or the box drawn), again and again. Notes paste into any clip on any track; the clip clipboard is apart from it. Ctrl+drag or Alt+drag notes to drag a copy; notes dropped, pasted or moved onto others of their pitch win (the others go or end where they start). Right-click for Copy, Cut, Paste, Duplicate, Delete and Select All. As in Live the loop doesn't grow: notes pasted or moved past its end stay there, shown in the dark, and play once the loop is made longer (*Length*, x2)
+- The keys go to the notes when the clip view was clicked last; a click in the session or the arrangement gives them back to the clips there (Ctrl+C, Ctrl+D and Del work on clips again)
 - Drum mode: the piano roll folds to the pads of the drum rack
 - Computer MIDI keyboard (A W S E D F T G Y H U J K ..., Z/X octave, C/V velocity) and hardware MIDI input; a hardware keyboard's pitch wheel bends the synths two semitones each way, its mod wheel drives *Mod Wheel* modulators
 - Session record: arm a track, press record (F9), play; notes are overdubbed into the looping clip with optional 1/16 quantization
@@ -539,14 +541,15 @@ The [Release workflow](.github/workflows/release.yml) builds them on GitHub for 
 | B | Draw mode in the piano roll |
 | Click / right-click the key in the transport | Key & Scale dialog / in key or all notes |
 | Ctrl+U, Ctrl+A | Quantize notes, select all notes |
-| Ctrl+C / Ctrl+X / Ctrl+V / Ctrl+D | Copy, cut, paste, duplicate the selected notes (in the clip view) or clip. Clips paste where you look: into the selected slot in the session, at the insert position on the selected track in the arrangement. Notes paste at the insert marker (click an empty spot) and repeated pastes line up |
-| Del | Delete the selected notes or clip (in the arrangement: the picked clips, or the selected section) |
+| Ctrl+C / Ctrl+X / Ctrl+V / Ctrl+D | Copy, cut, paste, duplicate the selected notes (the clip view clicked last) or clip. Clips paste where you look: into the selected slot in the session, at the insert position on the selected track in the arrangement. Notes paste right after the selected notes, else at the insert marker (click an empty spot), into any MIDI clip; repeated pastes and Ctrl+D line up |
+| Ctrl+drag, Alt+drag notes | Drag a copy of the selected notes |
+| Del, Backspace | Delete the selected notes or clip (in the arrangement: the picked clips, or the selected section) |
 | Ctrl+E, 0 | Arrangement: split at the playhead, switch the picked clips off or on |
 | Home, End | Arrangement: the playhead to the song's start, its end |
-| Arrow keys | Notes: Left/Right move by the grid (Alt: finer), Up/Down transpose (Shift: octave, in a folded scale: scale steps), Shift+Left/Right length. Arrangement clip: Left/Right move, Up/Down to another track. Session: move the slot selection |
+| Arrow keys | Notes: Left/Right move by the grid (Alt: a quarter of it), Up/Down a semitone (Shift: an octave; in a folded scale a scale step, in a drum kit the next pad; a chord at the keyboard's edge stays whole), Alt+Up/Down velocity, Shift+Left/Right shorter or longer by the grid; held, they keep going. No note selected: Left/Right move the insert marker. Arrangement clip: Left/Right move, Up/Down to another track. Session: move the slot selection |
 | Drag a clip onto the Arrangement/Session button (or press Tab while dragging) | Switch views mid-drag: session clips drop on arrangement lanes, arrangement clips drop on session slots (as a copy) |
 | Ctrl+drag an arrangement clip | Leave a copy behind; drag up or down to move it to another track |
-| Ctrl+Z, Ctrl+Y | Undo, redo |
+| Ctrl+Z, Ctrl+Y (Ctrl+Shift+Z) | Undo, redo |
 | Ctrl+S, Ctrl+Shift+S, Ctrl+O, Ctrl+N | Save, save as, open, new |
 | Ctrl+T, Ctrl+Shift+T, Ctrl+I | New audio track, MIDI track, scene |
 | Ctrl+Alt+I | Show or hide the In/Out section |

@@ -5,6 +5,7 @@ use crate::theme::*;
 use crate::widgets::*;
 use egui::{pos2, vec2, Align2, Color32, CursorIcon, Id, Pos2, Rect, Sense, Stroke, Ui};
 use krabton_engine::midi_tools::{self, ArpStyle};
+use krabton_engine::note_edit;
 use krabton_engine::{note_name, Instrument, Note};
 use std::collections::HashSet;
 
@@ -39,6 +40,8 @@ struct NoteDrag {
     kind: DragKind,
     origin: Pos2,
     originals: Vec<(usize, Note)>,
+    /// Alt started a copy: it doesn't also free the notes from the grid.
+    alt_copy: bool,
 }
 
 pub struct PianoState {
@@ -66,6 +69,11 @@ pub struct PianoState {
     pub seed: u64,
     /// Where Ctrl+V puts notes (set by clicking an empty spot).
     pub paste_at: Option<f64>,
+    /// Live's time selection around the selected notes, when a box drew
+    /// it (or a paste or Ctrl+D made it): what Ctrl+D steps by.
+    pub time_sel: Option<(f64, f64)>,
+    /// The clip view was clicked last, so the keys edit notes.
+    pub focused: bool,
 }
 
 impl Default for PianoState {
@@ -90,8 +98,17 @@ impl Default for PianoState {
             arp_style: ArpStyle::Up,
             seed: 1,
             paste_at: None,
+            time_sel: None,
+            focused: false,
         }
     }
+}
+
+/// True when a button was pressed this frame in `rect`, on `ui`'s own layer
+/// (not on a menu or window above it).
+pub(crate) fn pressed_in(ui: &Ui, rect: Rect) -> bool {
+    let Some(pos) = ui.input(|i| i.pointer.any_pressed().then(|| i.pointer.press_origin()).flatten()) else { return false };
+    rect.contains(pos) && ui.ctx().layer_id_at(pos) == Some(ui.layer_id())
 }
 
 fn is_black(pitch: u8) -> bool {
@@ -99,23 +116,31 @@ fn is_black(pitch: u8) -> bool {
 }
 
 impl App {
+    /// Ctrl+A: every note, the whole loop as the time selection (when they
+    /// all start in it), and the keys to the note editor.
     pub(crate) fn piano_select_all(&mut self) {
         if let Some(sel) = self.sel_clip {
-            let n = self.clip_ref(sel).map(|c| c.notes().len()).unwrap_or(0);
-            self.piano.selected = (0..n).collect();
+            let Some(c) = self.clip_ref(sel) else { return };
+            let len = c.length;
+            let inside = c.notes().iter().all(|n| n.start < len);
+            let (count, midi) = (c.notes().len(), c.is_midi());
+            self.piano.selected = (0..count).collect();
+            self.piano.time_sel = inside.then_some((0.0, len));
+            self.piano.focused = midi;
         }
     }
 
+    /// Delete: the selected notes go; the insert marker stays where they began.
     pub(crate) fn piano_delete_selected(&mut self) {
         let Some(sel) = self.sel_clip else { return };
-        let selected = std::mem::take(&mut self.piano.selected);
+        if let Some((from, _)) = self.notes_range(sel) {
+            self.piano.paste_at = Some(from);
+        }
+        let mut selected: Vec<usize> = std::mem::take(&mut self.piano.selected).into_iter().collect();
+        selected.sort_unstable();
+        self.piano.time_sel = None;
         if let Some(notes) = self.clip_mut(sel).and_then(|c| c.notes_mut()) {
-            let mut i = 0;
-            notes.retain(|_| {
-                let keep = !selected.contains(&i);
-                i += 1;
-                keep
-            });
+            note_edit::delete(notes, &selected);
         }
     }
 
@@ -129,7 +154,9 @@ impl App {
             if let Some(notes) = c.notes_mut() {
                 for (i, n) in notes.iter_mut().enumerate() {
                     if selected.is_empty() || selected.contains(&i) {
-                        n.start = ((n.start / grid).round() * grid).rem_euclid(len.max(grid));
+                        // A note at the loop's very end goes round to its start; past the loop it stays there.
+                        let q = (n.start / grid).round() * grid;
+                        n.start = if n.start < len { q.rem_euclid(len.max(grid)) } else { q.max(0.0) };
                     }
                 }
             }
@@ -211,7 +238,7 @@ impl App {
 
     /// Rows from top to bottom: all 128 pitches, the scale notes when folded,
     /// or just the drum pads.
-    fn piano_rows(&self, track: usize) -> (Vec<u8>, Vec<String>, bool) {
+    pub(crate) fn piano_rows(&self, track: usize) -> (Vec<u8>, Vec<String>, bool) {
         if let Some(Instrument::Drums { pads, .. }) = self.project.tracks.get(track).and_then(|t| t.instrument.as_ref()) {
             let mut v: Vec<(u8, String)> = pads.iter().map(|p| (p.note, p.name.clone())).collect();
             // A kit with an 808 that takes the keys below the drums: those keys too.
@@ -330,6 +357,7 @@ impl App {
             self.piano.selected.clear();
             self.piano.drag = None;
             self.piano.paste_at = None;
+            self.piano.time_sel = None;
             self.piano.zoom = 1.0;
             self.piano.scroll_x = 0.0;
         }
@@ -359,8 +387,13 @@ impl App {
         }
         let content_h = rows.len() as f32 * row_h;
         self.piano.scroll_y = self.piano.scroll_y.clamp(0.0, (content_h - grid_rect.height()).max(0.0));
-        let ppb = grid_rect.width() / len as f32 * self.piano.zoom;
-        let content_w = len as f32 * ppb;
+        let bpb = self.project.beats_per_bar_f();
+        // Notes past the loop's end stay (as in Live): the view reaches to
+        // the bar they end in, the part past the loop dark.
+        let past = notes.iter().map(|n| n.end()).fold(len, f64::max);
+        let view_len = if past > len + 1e-9 { (past / bpb - 1e-9).ceil() * bpb } else { len };
+        let ppb = grid_rect.width() / view_len as f32 * self.piano.zoom;
+        let content_w = view_len as f32 * ppb;
         self.piano.scroll_x = self.piano.scroll_x.clamp(0.0, (content_w - grid_rect.width()).max(0.0));
         let (sx, sy) = (self.piano.scroll_x, self.piano.scroll_y);
         self.piano.last_view = Some((grid_rect, ppb, sx));
@@ -373,7 +406,6 @@ impl App {
             (r >= 0.0 && (r as usize) < rows.len()).then_some(r as usize)
         };
         let grid = self.piano.grid;
-        let bpb = self.project.beats_per_bar_f();
 
         let p = ui.painter().with_clip_rect(area);
         let gp = ui.painter().with_clip_rect(grid_rect);
@@ -419,7 +451,7 @@ impl App {
         }
         // Vertical grid lines.
         let mut b = 0.0;
-        while b <= len + 1e-9 {
+        while b <= view_len + 1e-9 {
             let x = bx(b);
             let is_bar = (b / bpb).fract().abs() < 1e-9;
             let is_beat = b.fract().abs() < 1e-9;
@@ -501,9 +533,14 @@ impl App {
             gp.rect_filled(m, 0.0, Color32::from_rgba_unmultiplied(160, 216, 255, 30));
             gp.rect_stroke(m, 0.0, Stroke::new(1.0_f32, SELECT), egui::StrokeKind::Inside);
         }
-        // Playhead.
-        // Insert marker: where Ctrl+V puts notes.
-        if let Some(at) = self.piano.paste_at {
+        // The time selection over the ruler (Ctrl+V and Ctrl+D go right after
+        // it), or with nothing selected the insert marker: where Ctrl+V puts notes.
+        let time_sel = if self.piano.selected.is_empty() { None } else { self.notes_range(sel) };
+        if let Some((a, b)) = time_sel {
+            let r = Rect::from_min_max(pos2(bx(a), ruler.top()), pos2(bx(b), ruler.bottom()));
+            p.with_clip_rect(ruler).rect_filled(r, 0.0, accent_now().gamma_multiply(0.35));
+            gp.rect_filled(Rect::from_min_max(pos2(r.left(), grid_rect.top()), pos2(r.right(), grid_rect.bottom())), 0.0, Color32::from_white_alpha(8));
+        } else if let Some(at) = self.piano.paste_at {
             let x = bx(at);
             gp.line_segment([pos2(x, grid_rect.top()), pos2(x, grid_rect.bottom())], Stroke::new(1.0_f32, accent_now()));
             p.with_clip_rect(ruler).add(egui::Shape::convex_polygon(
@@ -615,11 +652,14 @@ impl App {
                             self.piano.selected.clear();
                         }
                         self.piano.selected.insert(idx);
+                        self.piano.time_sel = None;
                     }
                     let mut sel_idx: Vec<usize> = self.piano.selected.iter().copied().filter(|&i| i < notes.len()).collect();
                     sel_idx.sort_unstable();
-                    if ctrl && !resize {
-                        // Ctrl+drag duplicates the selection and drags the copies.
+                    // Ctrl+drag (Live 11) or Alt+drag (Live 12) drags a copy of
+                    // the selection and leaves the notes where they were.
+                    let copy = (ctrl || free) && !resize;
+                    if copy {
                         if let Some(v) = self.clip_mut(sel).and_then(|c| c.notes_mut()) {
                             let start = v.len();
                             for &i in &sel_idx {
@@ -634,7 +674,8 @@ impl App {
                         let all = self.clip_ref(sel).map(|c| c.notes().to_vec()).unwrap_or_default();
                         sel_idx.iter().filter_map(|&i| all.get(i).cloned().map(|n| (i, n))).collect()
                     };
-                    self.piano.drag = Some(NoteDrag { kind: if resize { DragKind::Resize } else { DragKind::Move }, origin, originals });
+                    let kind = if resize { DragKind::Resize } else { DragKind::Move };
+                    self.piano.drag = Some(NoteDrag { kind, origin, originals, alt_copy: copy && free });
                 }
                 None if self.piano.draw_mode => {
                     if let Some(row) = row_at(origin.y) {
@@ -644,7 +685,8 @@ impl App {
                             v.push(n.clone());
                             let idx = v.len() - 1;
                             self.piano.selected = [idx].into_iter().collect();
-                            self.piano.drag = Some(NoteDrag { kind: DragKind::Resize, origin, originals: vec![(idx, n)] });
+                            self.piano.time_sel = None;
+                            self.piano.drag = Some(NoteDrag { kind: DragKind::Resize, origin, originals: vec![(idx, n)], alt_copy: false });
                         }
                     }
                 }
@@ -652,7 +694,7 @@ impl App {
                     if !shift {
                         self.piano.selected.clear();
                     }
-                    self.piano.drag = Some(NoteDrag { kind: DragKind::Marquee, origin, originals: Vec::new() });
+                    self.piano.drag = Some(NoteDrag { kind: DragKind::Marquee, origin, originals: Vec::new(), alt_copy: false });
                 }
             }
         }
@@ -663,13 +705,14 @@ impl App {
                 let kind = drag.kind;
                 let originals = drag.originals.clone();
                 let origin = drag.origin;
+                let loose = free && !drag.alt_copy;
                 match kind {
                     DragKind::Move => {
-                        let d = if free { dx } else { (dx / grid).round() * grid };
+                        let d = if loose { dx } else { (dx / grid).round() * grid };
                         if let Some(v) = self.clip_mut(sel).and_then(|c| c.notes_mut()) {
                             for (i, o) in &originals {
                                 if let Some(n) = v.get_mut(*i) {
-                                    n.start = (o.start + d).clamp(0.0, len - 1e-6);
+                                    n.start = (o.start + d).clamp(0.0, view_len - 1e-6);
                                     let row = rows.iter().position(|&r| r == o.pitch).unwrap_or(0) as i32;
                                     let nr = (row + dy).clamp(0, rows.len() as i32 - 1) as usize;
                                     n.pitch = rows[nr];
@@ -697,18 +740,30 @@ impl App {
                             }
                         }
                         self.piano.selected = s;
+                        // The box is the time selection (from grid line to grid line), as in Live.
+                        let (a, b) = (xb(m.left()).max(0.0), xb(m.right()).max(0.0));
+                        let (a, b) = (note_edit::grid_floor(a, grid), note_edit::grid_ceil(b, grid).max(a + grid));
+                        self.piano.time_sel = if shift { None } else { Some((a, b)) };
+                        if self.piano.selected.is_empty() {
+                            self.piano.paste_at = Some(a);
+                        }
                     }
                 }
             }
         }
         if resp.drag_stopped() || (!ui.input(|i| i.pointer.any_down()) && self.piano.drag.is_some()) {
-            self.piano.drag = None;
+            // Dropped notes win over the ones they land on (as in Live).
+            if self.piano.drag.take().is_some_and(|d| d.kind == DragKind::Move) {
+                self.notes_make_room(sel);
+                self.piano.time_sel = None;
+            }
             self.piano.marquee = None;
         }
         if resp.clicked() {
             if let Some(pos) = resp.interact_pointer_pos() {
                 match hit(pos) {
                     Some((idx, _)) => {
+                        self.piano.time_sel = None;
                         if resp.double_clicked() || self.piano.draw_mode {
                             self.piano.selected.clear();
                             if let Some(v) = self.clip_mut(sel).and_then(|c| c.notes_mut()) {
@@ -716,7 +771,7 @@ impl App {
                                     v.remove(idx);
                                 }
                             }
-                        } else if shift {
+                        } else if shift || ctrl {
                             if !self.piano.selected.remove(&idx) {
                                 self.piano.selected.insert(idx);
                             }
@@ -735,6 +790,7 @@ impl App {
                                         v.push(n);
                                         let idx = v.len() - 1;
                                         self.piano.selected = [idx].into_iter().collect();
+                                        self.piano.time_sel = None;
                                     }
                                     if self.prefs.note_preview {
                                         let ids = self.preview_note_on(track, pitch, 0.8);
@@ -744,10 +800,56 @@ impl App {
                             }
                         } else if !shift {
                             self.piano.selected.clear();
+                            self.piano.time_sel = None;
                             self.piano.paste_at = Some(snap_floor(xb(pos.x)).max(0.0));
                         }
                     }
                 }
+            }
+        }
+
+        // Right-click: Live's menu. A note not in the selection becomes it;
+        // on an empty spot (nothing selected) the insert marker goes there.
+        if resp.secondary_clicked() {
+            if let Some(pos) = resp.interact_pointer_pos() {
+                match hit(pos) {
+                    Some((idx, _)) if !self.piano.selected.contains(&idx) => {
+                        self.piano.selected = [idx].into_iter().collect();
+                        self.piano.time_sel = None;
+                    }
+                    None if self.piano.selected.is_empty() => self.piano.paste_at = Some(snap_floor(xb(pos.x)).max(0.0)),
+                    _ => {}
+                }
+            }
+            self.piano.focused = true;
+        }
+        let any = !self.piano.selected.is_empty();
+        let can_paste = self.note_clipboard.is_some();
+        let mut action = None;
+        resp.context_menu(|ui| {
+            let items = [("Copy", "Ctrl+C", any), ("Cut", "Ctrl+X", any), ("Paste", "Ctrl+V", can_paste), ("Duplicate", "Ctrl+D", any), ("Delete", "Del", any), ("Select All", "Ctrl+A", !notes.is_empty())];
+            for (label, keys, enabled) in items {
+                if ui.add_enabled(enabled, egui::Button::new(label).shortcut_text(keys)).clicked() {
+                    action = Some(label);
+                    ui.close();
+                }
+            }
+        });
+        if let Some(what) = action {
+            self.piano.focused = true;
+            match what {
+                "Copy" => {
+                    self.notes_copy();
+                }
+                "Cut" => self.notes_cut(),
+                "Paste" => {
+                    if let Some(clip) = self.note_clipboard.clone() {
+                        self.notes_paste(clip);
+                    }
+                }
+                "Duplicate" => self.notes_duplicate(),
+                "Delete" => self.piano_delete_selected(),
+                _ => self.piano_select_all(),
             }
         }
 
