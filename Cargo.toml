@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/krabton-engine", "crates/krabton-clap", "crates/krabton-monome", "crates/krabton-braids", "crates/krabton-elements", "crates/krabton-airwindows", "crates/krabton-clouds", "crates/krabton-beads", "crates/krabton-stk", "crates/krabton-rings", "crates/krabton-warps", "crates/krabton-sf2", "crates/krabton-virus", "crates/krabton"]
 
 [workspace.package]
-version = "0.82.0"
+version = "0.83.0"
 edition = "2021"
 license = "MIT"
 authors = ["Krabton contributors"]
