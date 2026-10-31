@@ -324,15 +324,18 @@ impl App {
             }
         }
 
-        let mut length_bars = clip.length / bpb;
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Loop length").small().color(TEXT_DIM));
-            if ui.add(egui::DragValue::new(&mut length_bars).range(0.0625..=256.0).speed(0.02).fixed_decimals(2).suffix(" bars")).changed() {
-                if let Some(c) = self.clip_mut(sel) {
-                    c.length = (length_bars * bpb).max(0.0625);
+        // Audio clips have their loop with their markers, below.
+        if clip.is_midi() {
+            let mut length_bars = clip.length / bpb;
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Loop length").small().color(TEXT_DIM));
+                if ui.add(egui::DragValue::new(&mut length_bars).range(0.0625..=256.0).speed(0.02).fixed_decimals(2).suffix(" bars")).changed() {
+                    if let Some(c) = self.clip_mut(sel) {
+                        c.length = (length_bars * bpb).max(0.0625);
+                    }
                 }
-            }
-        });
+            });
+        }
 
         // The track's sound, kept in the clip.
         let tip = "The clip remembers the track's instrument, MIDI effects and audio effects with all their settings: when it starts, the track plays with that sound (on the very beat), and while it plays what you change is kept in it";
@@ -447,122 +450,12 @@ impl App {
                 }
             }
             ClipContent::Audio(a) => {
-                let mut bpm = a.bpm;
-                let mut gain = a.gain_db;
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Gain").small().color(TEXT_DIM));
-                    if ui.add(egui::DragValue::new(&mut gain).range(-48.0..=24.0).speed(0.1).fixed_decimals(1).suffix(" dB")).changed() {
-                        self.set_audio(sel, |a| a.gain_db = gain);
-                    }
+                // Its markers, warping and sound, in a column that scrolls.
+                let len = clip.length;
+                egui::ScrollArea::vertical().id_salt("audio_side").auto_shrink([false, false]).show(ui, |ui| {
+                    ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+                    self.audio_sidebar(ui, sel, a, len);
                 });
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Original BPM").small().color(TEXT_DIM));
-                    if ui.add(egui::DragValue::new(&mut bpm).range(20.0..=999.0).speed(0.1).fixed_decimals(2)).changed() {
-                        self.set_audio(sel, |a| a.bpm = bpm);
-                    }
-                });
-                ui.horizontal(|ui| {
-                    if ui.button("x2").on_hover_text("Double the original tempo").clicked() {
-                        self.set_audio(sel, |a| a.bpm = (a.bpm * 2.0).min(999.0));
-                    }
-                    if ui.button("/2").on_hover_text("Halve the original tempo").clicked() {
-                        self.set_audio(sel, |a| a.bpm = (a.bpm / 2.0).max(20.0));
-                    }
-                    if ui.button("Fit length").on_hover_text("Set the loop to the whole sample").clicked() {
-                        if let Some(c) = self.clip_mut(sel) {
-                            if let ClipContent::Audio(a) = &c.content {
-                                c.length = a.sample_beats().max(0.0625);
-                            }
-                        }
-                    }
-                });
-                ui.label(
-                    RichText::new(format!(
-                        "{}\n{} Hz, {:.2} s\nWarp: Re-Pitch (follows tempo)",
-                        a.sample.name,
-                        a.sample.sample_rate,
-                        a.sample.duration()
-                    ))
-                    .small()
-                    .color(TEXT_DIM),
-                );
-            }
-        }
-    }
-
-    fn set_audio(&mut self, sel: ClipSel, f: impl FnOnce(&mut krabton_engine::AudioClip)) {
-        if let Some(c) = self.clip_mut(sel) {
-            if let ClipContent::Audio(a) = &mut c.content {
-                f(a);
-            }
-        }
-    }
-
-    fn ui_audio_clip(&mut self, ui: &mut Ui, area: Rect, sel: ClipSel) {
-        let Some(clip) = self.clip_ref(sel) else { return };
-        let ClipContent::Audio(a) = &clip.content else { return };
-        let p = ui.painter().with_clip_rect(area);
-        rect_fill(&p, area, 0.0, BG);
-        let r = area.shrink2(vec2(8.0, 10.0));
-        let total_beats = a.sample_beats().max(clip.length).max(0.25);
-        let ppb = r.width() as f64 / total_beats;
-        let base = rgb(clip.color);
-        let s = &a.sample;
-        let src_fpb = s.sample_rate as f64 * 60.0 / a.bpm.max(1.0);
-        let bpb = self.project.beats_per_bar_f();
-        // Loop region.
-        let loop_r = Rect::from_min_max(r.min, pos2(r.left() + (clip.length * ppb) as f32, r.bottom()));
-        p.rect_filled(loop_r, 0.0, shade(PANEL2, 1.1));
-        // Beat grid.
-        let mut b = 0.0;
-        while b <= total_beats {
-            let x = r.left() + (b * ppb) as f32;
-            let bar = (b / bpb).fract().abs() < 1e-9;
-            p.line_segment([pos2(x, r.top()), pos2(x, r.bottom())], Stroke::new(1.0_f32, if bar { LINE } else { LINE_SOFT }));
-            if bar {
-                p.text(pos2(x + 2.0, r.top() + 2.0), Align2::LEFT_TOP, format!("{}", (b / bpb) as i64 + 1), small(), TEXT_DIM);
-            }
-            b += 1.0;
-        }
-        // Waveform.
-        let mid = r.center().y;
-        let half = r.height() * 0.45;
-        let frames_per_px = src_fpb / ppb;
-        let step = ((frames_per_px as usize) / krabton_engine::sample::PEAK_BLOCK).max(1);
-        for x in 0..r.width() as i32 {
-            let frame = (x as f64 * frames_per_px) as usize;
-            let idx = frame / krabton_engine::sample::PEAK_BLOCK;
-            if idx >= s.peaks.len() {
-                break;
-            }
-            let mut mn = 0.0f32;
-            let mut mx = 0.0f32;
-            for j in idx..(idx + step).min(s.peaks.len()) {
-                mn = mn.min(s.peaks[j].0);
-                mx = mx.max(s.peaks[j].1);
-            }
-            let xx = r.left() + x as f32;
-            let c = if (x as f64) < clip.length * ppb { base } else { shade(base, 0.4) };
-            p.line_segment([pos2(xx, mid - mx * half), pos2(xx, mid - mn * half + 0.5)], Stroke::new(1.0_f32, c));
-        }
-        p.line_segment([pos2(loop_r.right(), r.top()), pos2(loop_r.right(), r.bottom())], Stroke::new(2.0_f32, accent_now()));
-        if let Some(pos) = self.clip_play_pos(sel) {
-            let x = r.left() + (pos * ppb) as f32;
-            p.line_segment([pos2(x, r.top()), pos2(x, r.bottom())], Stroke::new(1.5_f32, Color32::WHITE));
-        }
-        // Drag the loop end marker.
-        let handle = Rect::from_center_size(pos2(loop_r.right(), r.center().y), vec2(10.0, r.height()));
-        let resp = ui.interact(handle, Id::new("audio_loop_end"), Sense::drag());
-        if resp.hovered() || resp.dragged() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-        }
-        if resp.dragged() {
-            if let Some(pos) = resp.interact_pointer_pos() {
-                let beats = ((pos.x - r.left()) as f64 / ppb).max(0.25);
-                let beats = if ui.input(|i| i.modifiers.alt) { beats } else { (beats * 4.0).round() / 4.0 };
-                if let Some(c) = self.clip_mut(sel) {
-                    c.length = beats.max(0.25);
-                }
             }
         }
     }

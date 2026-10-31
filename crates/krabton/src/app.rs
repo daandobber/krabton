@@ -516,6 +516,8 @@ pub struct App {
     pub session: SessionState,
     pub arr: ArrState,
     pub piano: PianoState,
+    /// The audio clip view's zoom, scroll and drag.
+    pub wave: crate::ui::audio_clip::WaveState,
     pub browser: BrowserState,
     /// Settings kept between sessions.
     pub prefs: crate::prefs::Prefs,
@@ -710,6 +712,7 @@ impl App {
             session: SessionState::default(),
             arr: ArrState::default(),
             piano: PianoState::default(),
+            wave: Default::default(),
             browser: BrowserState::new(),
             prefs,
             sel_pad: 0,
@@ -790,6 +793,8 @@ impl App {
             self.project.fix_clip_sound_ids();
             // Connections to deleted tracks, devices or modulators go away.
             self.project.prune_mod_routes();
+            // What the warp modes need (transients, reversed audio), found once.
+            self.project.prepare_audio();
             let snap = Arc::new(self.project.clone());
             self.engine.send(Command::SetProject(snap.clone()));
             self.last_sent = snap;
@@ -3423,7 +3428,7 @@ impl App {
         let ClipContent::Audio(a) = &clip.content else { return };
         let ext = if mp3 { "mp3" } else { "wav" };
         let name = format!("{}.{ext}", clip.name);
-        let (sr, audio) = render::clip_audio(a, loop_len, offset, length);
+        let (sr, audio) = render::clip_audio(a, loop_len, offset, length, self.project.bpm);
         let filter = if mp3 { "MP3 audio" } else { "WAV audio" };
         let Some(path) = rfd::FileDialog::new().add_filter(filter, &[ext]).set_file_name(name).save_file() else { return };
         let result = if mp3 { crate::mp3::encode(&path, sr, &audio) } else { render::write_wav(&path, sr, &audio) };

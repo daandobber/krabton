@@ -423,7 +423,7 @@ impl App {
         let in_tri = resp.interact_pointer_pos().or(resp.hover_pos()).map(|p| p.x < r.left() + TRI_W).unwrap_or(false);
         let p = ui.painter().clone();
         let tri_center = pos2(r.left() + TRI_W * 0.5, r.center().y);
-        let clip_info = track.slots[s].as_ref().map(|c| (c.name.clone(), c.color, c.length, c.sound.is_some()));
+        let clip_info = track.slots[s].as_ref().map(|c| (c.name.clone(), c.color, c.play_length(), c.sound.is_some()));
         let armed = track.arm;
         let kind = track.kind;
         let spb = status.sample_rate.load() as f64 * 60.0 / self.project.bpm.max(1.0);

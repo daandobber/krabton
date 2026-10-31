@@ -272,20 +272,141 @@ pub fn note_random(k: i64, idx: usize, n: &Note, salt: u64) -> f32 {
     (x >> 40) as f32 / (1u64 << 24) as f32
 }
 
-/// An audio clip is always "warped" in Re-Pitch mode: it is locked to the
-/// beat grid and speeds up / slows down with the project tempo.
+/// An audio clip, as in Live: a sample with a Start and End marker, a loop,
+/// and warping that keeps it on the beat at any tempo.
+///
+/// Its own time runs in beats ("clip beats"): the warp markers say which
+/// second of the sample falls on which beat (straight lines between them,
+/// and the tempo `bpm` before the first and after the last; no markers is
+/// one straight line from the sample's start). Warped, a clip beat lasts a
+/// beat of the song; the warp mode says how the audio is stretched to fit.
+/// Unwarped, the sample plays at its own speed from the Start marker.
+///
+/// The loop runs `Clip::length` beats from `loop_start`. Older sets know
+/// only `bpm` and the gain: warped, Re-Pitch, from the start, looping.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AudioClip {
     pub sample: SampleRef,
-    /// Original tempo of the material.
+    /// The tempo of the material (Live's Seg. BPM): where there are no
+    /// warp markers, or before the first and after the last.
     pub bpm: f64,
     pub gain_db: f32,
+    /// Locked to the beat grid (Live's Warp switch).
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub warp: bool,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub mode: crate::warp::WarpMode,
+    /// (clip beat, second in the sample), in order of both.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub markers: Vec<(f64, f64)>,
+    /// The Start marker, in clip beats: where playing begins.
+    #[serde(default, skip_serializing_if = "is_zero64")]
+    pub start: f64,
+    /// The End marker, in clip beats, where it stops when it does not loop
+    /// (None: the sample's end).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end: Option<f64>,
+    /// It loops (from `loop_start`, `Clip::length` beats); otherwise it
+    /// plays once from the Start to the End marker.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub looping: bool,
+    #[serde(default, skip_serializing_if = "is_zero64")]
+    pub loop_start: f64,
+    /// Beats: where it is cut, at the transients or on a grid.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub preserve: crate::warp::Preserve,
+    /// Beats: what a piece does when it ends before the next begins.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub transient_loop: crate::warp::TransientLoop,
+    /// Beats: 1 lets each piece ring, lower fades it out sooner.
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub transient_env: f32,
+    /// Tones and Texture: the size of the grains (0..1, 5 to 80 ms).
+    #[serde(default = "default_grain", skip_serializing_if = "is_default_grain")]
+    pub grain: f32,
+    /// Texture: how far the grains wander (0..1).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub flux: f32,
+    /// Pitch, in semitones and cents: warped it keeps the tempo; Re-Pitch
+    /// and unwarped it plays faster or slower, as a record would.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub transpose: f32,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub detune: f32,
+    /// Plays the sample backwards (its markers mirrored).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reverse: bool,
+    /// A session clip's fade in from where it starts and fade out before its
+    /// End marker, in beats (arrangement clips have their own).
+    #[serde(default, skip_serializing_if = "is_zero64")]
+    pub fade_in: f64,
+    #[serde(default, skip_serializing_if = "is_zero64")]
+    pub fade_out: f64,
+    /// The shape of the fades: 0 equal power, up to 1 quicker, down to -1
+    /// slower.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub fade_curve: f32,
+    /// A millisecond fade wherever the audio is cut (Live's Clip Fade).
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub declick: bool,
+    /// -1 left .. 1 right.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub pan: f32,
+    /// Where the loop goes round: a crossfade this long, in milliseconds.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub loop_xfade: f32,
+}
+
+fn is_true(v: &bool) -> bool {
+    *v
+}
+
+fn is_default<T: Default + PartialEq>(v: &T) -> bool {
+    *v == T::default()
+}
+
+fn default_grain() -> f32 {
+    0.4
+}
+
+fn is_default_grain(v: &f32) -> bool {
+    *v == default_grain()
 }
 
 impl AudioClip {
+    /// A clip of `sample` at `bpm`, warped in Re-Pitch from its start.
+    pub fn new(sample: SampleRef, bpm: f64) -> Self {
+        Self {
+            sample,
+            bpm,
+            gain_db: 0.0,
+            warp: true,
+            mode: Default::default(),
+            markers: Vec::new(),
+            start: 0.0,
+            end: None,
+            looping: true,
+            loop_start: 0.0,
+            preserve: Default::default(),
+            transient_loop: Default::default(),
+            transient_env: 1.0,
+            grain: default_grain(),
+            flux: 0.0,
+            transpose: 0.0,
+            detune: 0.0,
+            reverse: false,
+            fade_in: 0.0,
+            fade_out: 0.0,
+            fade_curve: 0.0,
+            declick: true,
+            pan: 0.0,
+            loop_xfade: 0.0,
+        }
+    }
+
     /// Length of the whole sample in beats.
     pub fn sample_beats(&self) -> f64 {
-        self.sample.duration() * self.bpm / 60.0
+        self.sample_end_beat() - self.sample_start_beat()
     }
 }
 
@@ -440,30 +561,91 @@ impl Clip {
         Self { id, name: name.into(), color, length, content: ClipContent::Midi { notes: Vec::new() }, envelopes: Vec::new(), sound: None }
     }
 
-    /// Creates an audio clip, guessing the source tempo the way Live's
-    /// auto-warp does for loops: snap to a power-of-two number of beats.
-    /// Anything longer than a loop (a song, a film's sound) plays as it is.
+    /// Creates an audio clip warped the way Live's auto-warp does it. A loop
+    /// (a power-of-two number of beats at about the tempo heard in it, or
+    /// else the project's) gets exactly that tempo and plays in Beats mode.
+    /// A longer recording with a steady beat (a song) gets the tempo found in
+    /// it, a warp marker on its first downbeat and Complex mode, and plays
+    /// once. A short one-shot follows the tempo in Re-Pitch, as before; a
+    /// long one without a beat plays unwarped.
     pub fn new_audio(id: u64, sample: SampleRef, color: Rgb, project_bpm: f64) -> Self {
+        use crate::warp::WarpMode;
         let dur = sample.duration().max(0.001);
-        let beats_at_project = dur * project_bpm / 60.0;
-        let mut bpm = project_bpm;
-        if dur > 1.5 && dur <= 24.0 {
-            let mut best = 1.0f64;
-            let mut b = 1.0f64;
-            while b <= 256.0 {
-                if (b - beats_at_project).abs() < (best - beats_at_project).abs() {
-                    best = b;
+        let mut audio = AudioClip::new(sample.clone(), project_bpm);
+        let tempo = if dur > 1.5 { sample.analysis().tempo.filter(|t| t.confidence > 0.2) } else { None };
+        let mut as_loop = None;
+        if dur > 1.5 && dur <= 32.0 {
+            let mut best: Option<(f64, f64)> = None;
+            let mut beats = 1.0f64;
+            while beats <= 256.0 {
+                let bpm = beats * 60.0 / dur;
+                // How far from the tempo heard (an octave off costs a little), or the project's.
+                let err = match tempo {
+                    Some(t) => [(1.0, 0.0), (2.0, 0.01), (0.5, 0.01)].iter().map(|&(o, pen)| (bpm / (t.bpm * o)).ln().abs() + pen).fold(f64::MAX, f64::min),
+                    None => (bpm / project_bpm - 1.0).abs(),
+                };
+                if (40.0..=250.0).contains(&bpm) && best.is_none_or(|b| err < b.1) {
+                    best = Some((bpm, err));
                 }
-                b *= 2.0;
+                beats *= 2.0;
             }
-            let candidate = best * 60.0 / dur;
-            if (candidate / project_bpm - 1.0).abs() < 0.2 {
-                bpm = candidate;
-            }
+            let tol = if tempo.is_some() { 0.03 } else { 0.2 };
+            as_loop = best.filter(|b| b.1 < tol).map(|b| b.0);
         }
-        let audio = AudioClip { sample: sample.clone(), bpm, gain_db: 0.0 };
-        let length = audio.sample_beats().max(0.25);
-        Self { id, name: sample.name.clone(), color, length, content: ClipContent::Audio(audio), envelopes: Vec::new(), sound: None }
+        let length = match (as_loop, tempo) {
+            (Some(bpm), _) => {
+                audio.bpm = bpm;
+                audio.mode = WarpMode::Beats;
+                audio.sample_beats()
+            }
+            (None, Some(t)) if dur > 8.0 => {
+                audio.bpm = t.bpm;
+                audio.mode = WarpMode::Complex;
+                audio.markers = vec![(0.0, t.downbeat)];
+                // From the bar before the sound starts, so the downbeat stays on the grid.
+                audio.start = (audio.sample_start_beat() / 4.0).floor() * 4.0;
+                audio.loop_start = audio.start;
+                audio.looping = false;
+                audio.sample_end_beat() - audio.start
+            }
+            _ if dur > 8.0 => {
+                audio.warp = false;
+                audio.looping = false;
+                audio.sample_beats()
+            }
+            _ => audio.sample_beats(),
+        };
+        Self { id, name: sample.name.clone(), color, length: length.max(0.25), content: ClipContent::Audio(audio), envelopes: Vec::new(), sound: None }
+    }
+
+    /// How long it plays before it repeats or ends, in beats: the loop, or
+    /// (an audio clip that does not loop) from its Start to its End marker.
+    pub fn play_length(&self) -> f64 {
+        match &self.content {
+            ClipContent::Audio(a) if !a.looping => (a.end_beat() - a.start).max(1.0 / 64.0),
+            _ => self.length.max(1.0 / 64.0),
+        }
+    }
+
+    /// An arrangement clip's `offset` (how far into its playing it begins)
+    /// brought back into its first time round, for a clip that loops.
+    pub fn fold_offset(&self, offset: f64) -> f64 {
+        let len = self.length.max(1e-6);
+        match &self.content {
+            ClipContent::Audio(a) if !a.looping => offset,
+            // Up to the loop's end first, then round and round.
+            ClipContent::Audio(a) => {
+                let first = a.loop_start + len - a.start;
+                if (a.start - a.loop_start).abs() < 1e-9 || first <= 0.0 {
+                    offset.rem_euclid(len)
+                } else if offset < first {
+                    offset
+                } else {
+                    first + (offset - first).rem_euclid(len)
+                }
+            }
+            ClipContent::Midi { .. } => offset.rem_euclid(len),
+        }
     }
 
     pub fn is_midi(&self) -> bool {
@@ -1681,10 +1863,9 @@ impl Project {
             return None;
         }
         let mut right = ac.clone();
-        let len = right.clip.length.max(1e-6);
         right.start = at;
         right.length = ac.end() - at;
-        right.offset = (ac.offset + (at - ac.start)).rem_euclid(len);
+        right.offset = right.clip.fold_offset(ac.offset + (at - ac.start));
         right.fade_in = 0.0;
         right.fade_out = right.fade_out.min(right.length);
         right.id = self.alloc_id();
@@ -2407,7 +2588,26 @@ impl Project {
         let mut p: Project = serde_json::from_str(&json).map_err(|e| format!("{}: {e}", path.display()))?;
         let missing = guard.missing();
         p.sanitize();
+        p.prepare_audio();
         Ok((p, missing))
+    }
+
+    /// Finds what the audio clips' warping needs before the audio thread
+    /// plays them: their samples' transients, and the reversed audio of
+    /// clips that play backwards. Done once per sample; cheap after.
+    pub fn prepare_audio(&self) {
+        for t in &self.tracks {
+            for c in t.slots.iter().flatten().chain(t.arrangement.iter().map(|a| &a.clip)) {
+                if let ClipContent::Audio(a) = &c.content {
+                    if a.warp && a.mode != crate::warp::WarpMode::RePitch {
+                        a.sample.analysis();
+                    }
+                    if a.reverse {
+                        a.sample.reversed();
+                    }
+                }
+            }
+        }
     }
 }
 

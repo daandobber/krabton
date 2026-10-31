@@ -35,6 +35,8 @@ struct ArrDrag {
     orig_start: f64,
     orig_len: f64,
     orig_offset: f64,
+    /// An audio clip's Start and End markers when the drag began.
+    orig_marks: (f64, Option<f64>),
     press_x: f32,
 }
 
@@ -140,6 +142,9 @@ impl App {
         ac.start = d.orig_start;
         ac.length = d.orig_len;
         ac.offset = d.orig_offset;
+        if let ClipContent::Audio(a) = &mut ac.clip.content {
+            (a.start, a.end) = d.orig_marks;
+        }
         let back = d.orig_track.min(self.project.tracks.len() - 1);
         self.project.tracks[back].arrangement.push(ac);
     }
@@ -1001,7 +1006,11 @@ impl App {
                 self.arr.picked.clear();
             }
             if let Some(ac) = self.project.tracks[i].arrangement.iter().find(|a| a.id == cid).cloned() {
-                self.arr.drag = Some(ArrDrag { track: i, orig_track: i, id: cid, kind, orig_start: ac.start, orig_len: ac.length, orig_offset: ac.offset, press_x: px });
+                let orig_marks = match &ac.clip.content {
+                    ClipContent::Audio(a) => (a.start, a.end),
+                    _ => (0.0, None),
+                };
+                self.arr.drag = Some(ArrDrag { track: i, orig_track: i, id: cid, kind, orig_start: ac.start, orig_len: ac.length, orig_offset: ac.offset, orig_marks, press_x: px });
                 // Ctrl+drag leaves a copy behind (of each picked one).
                 if matches!(kind, DragKind::Move) && ui.input(|i| i.modifiers.ctrl || i.modifiers.command) {
                     let mut copies: Vec<(usize, krabton_engine::ArrangementClip)> = vec![(i, ac.clone())];
@@ -1069,16 +1078,44 @@ impl App {
                     } else if let Some(ac) = self.project.tracks[i].arrangement.iter_mut().find(|a| a.id == cid) {
                         match d.kind {
                             DragKind::Move => ac.start = snap(d.orig_start + delta, g, free).max(0.0),
+                            // An audio clip that does not loop is trimmed as in Live: its
+                            // edges are its Start and End markers, showing the audio beyond
+                            // them up to the sample's ends.
                             DragKind::ResizeEnd => {
                                 let end = snap(d.orig_start + d.orig_len + delta, g, free);
                                 ac.length = (end - ac.start).max(min_len);
+                                if let ClipContent::Audio(a) = &mut ac.clip.content {
+                                    if !a.looping {
+                                        let room = (a.sample_end_beat() - a.start - ac.offset).max(min_len);
+                                        ac.length = ac.length.min(room);
+                                        let right = a.start + ac.offset + ac.length;
+                                        a.end = Some(right);
+                                        ac.clip.length = a.end_beat() - a.start;
+                                    }
+                                }
                             }
                             DragKind::ResizeStart => {
                                 let end = d.orig_start + d.orig_len;
-                                let ns = snap(d.orig_start + delta, g, free).clamp(0.0, end - min_len);
+                                let mut lo = 0.0f64;
+                                if let ClipContent::Audio(a) = &ac.clip.content {
+                                    if !a.looping {
+                                        lo = lo.max(d.orig_start - (d.orig_offset + d.orig_marks.0 - a.sample_start_beat()).max(0.0));
+                                    }
+                                }
+                                let ns = snap(d.orig_start + delta, g, free).clamp(lo.min(end - min_len), end - min_len);
                                 ac.start = ns;
                                 ac.length = end - ns;
-                                ac.offset = (d.orig_offset + (ns - d.orig_start)).rem_euclid(clip_len.max(1e-6));
+                                let off = d.orig_offset + (ns - d.orig_start);
+                                match &mut ac.clip.content {
+                                    ClipContent::Audio(a) if !a.looping => {
+                                        // Into what was hidden before the Start marker: the marker moves.
+                                        a.start = d.orig_marks.0 + off.min(0.0);
+                                        ac.offset = off.max(0.0);
+                                        ac.clip.length = a.end_beat() - a.start;
+                                    }
+                                    _ => ac.offset = ac.clip.fold_offset(off),
+                                }
+                                let _ = clip_len;
                             }
                         }
                     }
@@ -1200,32 +1237,40 @@ impl App {
                 }
             }
             ClipContent::Audio(a) => {
-                let s = &a.sample;
-                let src_fpb = s.sample_rate as f64 * 60.0 / a.bpm.max(1.0);
+                // Each column shows the stretch of sample that plays there, warped.
+                let s = a.source();
+                let ssr = s.sample_rate as f64;
+                let spb = 60.0 / self.project.bpm.max(1.0);
+                let secs = |beat: f64| a.content_beat(beat - origin, len, spb).map(|c| a.secs_at(c));
                 let mid = body.center().y;
                 let half = body.height() * 0.5;
                 let x_start = body.left().max(lane.left()) as i32;
                 let x_end = body.right().min(lane.right()) as i32;
                 for x in x_start..x_end {
                     let beat = ac.start + (x as f32 - r.left()) as f64 / ppb;
-                    let local = (beat - origin).rem_euclid(len);
-                    let frame = (local * src_fpb) as usize;
-                    let idx = frame / krabton_engine::sample::PEAK_BLOCK;
-                    let step = ((src_fpb / ppb) as usize / krabton_engine::sample::PEAK_BLOCK).max(1);
+                    let (Some(t0), Some(t1)) = (secs(beat), secs(beat + 1.0 / ppb).or(secs(beat))) else { continue };
+                    let (f0, f1) = ((t0 * ssr).max(0.0) as usize, (t1 * ssr).max(0.0) as usize);
+                    let i0 = f0.min(f1) / krabton_engine::sample::PEAK_BLOCK;
+                    let i1 = (f0.max(f1) / krabton_engine::sample::PEAK_BLOCK).max(i0 + 1).min(s.peaks.len());
                     let mut mn = 0.0f32;
                     let mut mx = 0.0f32;
-                    for j in idx..(idx + step).min(s.peaks.len()) {
-                        mn = mn.min(s.peaks[j].0);
-                        mx = mx.max(s.peaks[j].1);
+                    for pk in s.peaks.get(i0..i1).unwrap_or(&[]) {
+                        mn = mn.min(pk.0);
+                        mx = mx.max(pk.1);
                     }
                     pc.line_segment([pos2(x as f32, mid - mx * half), pos2(x as f32, mid - mn * half + 0.5)], Stroke::new(1.0_f32, base));
                 }
             }
         }
-        // Loop boundaries inside the clip.
-        let mut k = ((ac.start - origin) / len).floor() + 1.0;
-        while origin + k * len < ac.end() && k < 512.0 {
-            let x = x_of(origin + k * len);
+        // Loop boundaries inside the clip (an audio clip goes round after its way in).
+        let (first_round, looping) = match &ac.clip.content {
+            ClipContent::Audio(a) => ((a.loop_start + len - a.start).max(0.0), a.looping),
+            _ => (len, true),
+        };
+        let first_round = if first_round > 1e-9 { first_round } else { len };
+        let mut k = ((ac.start - origin - first_round) / len).floor().max(0.0);
+        while looping && origin + first_round + k * len < ac.end() && k < 512.0 {
+            let x = x_of(origin + first_round + k * len);
             pc.line_segment([pos2(x, body.top()), pos2(x, body.bottom())], Stroke::new(1.0_f32, shade(base, 0.6)));
             k += 1.0;
         }

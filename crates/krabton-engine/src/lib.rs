@@ -3,6 +3,7 @@
 //! This crate has no GUI or audio-device dependencies, so it can be tested
 //! and used headless (e.g. for offline rendering).
 
+pub mod analysis;
 pub mod audio_in;
 pub mod band;
 pub mod classic_seq;
@@ -33,9 +34,11 @@ pub mod singer;
 pub mod hyper;
 pub mod tape;
 pub mod video;
+pub mod warp;
 
 pub use engine::{Command, Engine, EngineHandle, EngineStatus, MidiOut, MidiRec, RecChunk};
 pub use project::*;
 pub use routing::{AudioInput, AudioOutput, MidiInput, Monitor, Tap};
 pub use sample::{SampleData, SampleRef};
 pub use scale::{Scale, ScaleKind};
+pub use warp::{Preserve, TransientLoop, WarpMode};
