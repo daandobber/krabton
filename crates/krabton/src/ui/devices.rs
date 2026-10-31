@@ -1982,6 +1982,18 @@ impl App {
                             self.toast(msg);
                         }
                     }
+                    Instrument::Grit { preset, params, pads } => {
+                        let played = super::faces::grit::panel(ui, Id::new(("grit", track_id)), preset, params, pads, &mut self.sel_pad, &live, h - 36.0, mv.as_mut());
+                        for (pitch, on) in played.notes {
+                            match on {
+                                Some(velocity) => self.cmd(Command::NoteOn { track: track_id, pitch, velocity }),
+                                None => self.cmd(Command::NoteOff { track: track_id, pitch }),
+                            }
+                        }
+                        if let Some(msg) = played.said {
+                            self.toast(msg);
+                        }
+                    }
                     Instrument::Princess { preset, params, machine } => {
                         let key = self.project.scale;
                         super::faces::princess::panel(ui, Id::new(("princess", track_id)), preset, params, machine, &live, key, h - 36.0, mv.as_mut());

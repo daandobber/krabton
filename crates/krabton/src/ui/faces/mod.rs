@@ -26,6 +26,7 @@ pub mod street_organ;
 pub mod synth;
 pub mod theremin;
 pub mod turntable;
+pub mod grit;
 
 use super::modulation::{knob_overlay, slider_overlay, ModView};
 use crate::theme::*;

@@ -75,6 +75,7 @@ pub mod princess;
 pub mod keytone;
 pub mod princess_machine;
 pub mod turntable;
+pub mod grit;
 
 use std::f32::consts::PI;
 

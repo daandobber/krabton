@@ -997,6 +997,24 @@ const TURNTABLE: Skin = Skin {
     ..BASE
 };
 
+/// Grit: the warm grey of a pad sampler, dark rubber pads, a green display.
+const GRIT: Skin = Skin {
+    top: hex(0xb4b0a6),
+    bottom: hex(0x99958b),
+    surface: Surface::Grain,
+    ink: hex(0x1d1d1f),
+    dim: hex(0x4a4a4e),
+    well: hex(0x2e2f32),
+    well_ink: hex(0xe8e6df),
+    accent: hex(0xff5a36),
+    knob: Knob::Cap,
+    cap: hex(0x2b2c2f),
+    logo_case: Case::Upper,
+    groups: Groups::Outline,
+    caps: true,
+    ..BASE
+};
+
 const DRUM_RACK: Skin = Skin { accent: hex(0xffa733), knob: Knob::Led, cap: hex(0x45484e), logo_size: 22.0, logo_case: Case::Upper, ..BASE };
 
 // Effects.
@@ -1205,6 +1223,7 @@ pub fn for_instrument(name: &str) -> Option<Skin> {
         "Granulator" => GRANULATOR,
         "Keytone" => KEYTONE,
         "Turntable" => TURNTABLE,
+        "Grit" => GRIT,
         // Drum machines.
         "808" => M808,
         "909" => M909,

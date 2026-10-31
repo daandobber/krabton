@@ -296,6 +296,7 @@ pub fn instrument_specs(i: &Instrument) -> Option<&'static [ParamSpec]> {
         Instrument::Keytone { .. } => Some(crate::dsp::keytone::SPECS),
         Instrument::Princess { .. } => Some(crate::dsp::princess_machine::SPECS),
         Instrument::Turntable { .. } => Some(crate::dsp::turntable::SPECS),
+        Instrument::Grit { .. } => Some(crate::dsp::grit::SPECS),
         _ => None,
     }
 }
@@ -308,6 +309,7 @@ pub fn instrument_params(i: &Instrument) -> Option<&[f32]> {
         Instrument::Keytone { params, .. } => Some(params),
         Instrument::Princess { params, .. } => Some(params),
         Instrument::Turntable { params, .. } => Some(params),
+        Instrument::Grit { params, .. } => Some(params),
         _ => None,
     }
 }
@@ -321,6 +323,7 @@ pub fn instrument_params_mut(i: &mut Instrument) -> Option<&mut Vec<f32>> {
         Instrument::Keytone { params, .. } => Some(params),
         Instrument::Princess { params, .. } => Some(params),
         Instrument::Turntable { params, .. } => Some(params),
+        Instrument::Grit { params, .. } => Some(params),
         _ => None,
     }
 }
