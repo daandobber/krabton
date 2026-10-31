@@ -564,6 +564,9 @@ pub struct App {
     pub(crate) glitch_window: Option<u64>,
     /// The Map, in a window, and the track chosen on it.
     pub(crate) map_window: bool,
+    /// The Video's window, and the Video as it runs (its clips, its ears, its screen).
+    pub(crate) video_window: bool,
+    pub(crate) video: crate::video::VideoRuntime,
     pub(crate) map_selected: Option<u64>,
     /// Size of everything asked for by a script (see `run_script`).
     script_zoom: Option<f32>,
@@ -735,6 +738,8 @@ impl App {
             auto_arm: false,
             glitch_window: None,
             map_window: false,
+            video_window: false,
+            video: Default::default(),
             map_selected: None,
             script_zoom: None,
             script_menu: None,
@@ -3326,6 +3331,8 @@ impl App {
         self.sel_more.clear();
         self.band = Default::default();
         self.tape_load();
+        // The Video starts on the set's clip.
+        self.video.playing = self.project.video.current;
     }
 
     pub fn new_project(&mut self) {
@@ -3759,6 +3766,33 @@ impl App {
                 "devices" => self.detail = DetailTab::Devices,
                 "settings" => self.show_settings = true,
                 "mapwin" => self.map_window = true,
+                // video: its window; videoload=PATH: a clip into its bank; videotest=PATH: a
+                // test clip (a GIF made here) written there and loaded; videopreset=NAME;
+                // videomode=N (0 Loop, 1 Tempo, 2 Slices); videoscreen: its screen.
+                "video" => self.video_window = true,
+                "videoload" => {
+                    self.video_window = true;
+                    self.video_add(&[PathBuf::from(arg.trim())]);
+                }
+                "videotest" => {
+                    let path = PathBuf::from(arg.trim());
+                    match std::fs::write(&path, crate::video::gif::test_pattern()) {
+                        Ok(()) => {
+                            self.video_window = true;
+                            self.video_add(&[path]);
+                        }
+                        Err(e) => eprintln!("videotest: {e}"),
+                    }
+                }
+                "videopreset" => match krabton_engine::video::preset(arg.trim()) {
+                    Some(p) => self.video_preset(&p),
+                    None => eprintln!("no video preset {arg}"),
+                },
+                "videomode" => {
+                    let modes = krabton_engine::video::PlayMode::ALL;
+                    self.project.video.play = modes[nums.first().copied().unwrap_or(0).min(modes.len() - 1)];
+                }
+                "videoscreen" => self.video.screen_open = true,
                 "bandwin" => self.band.window = true,
                 // bandon[=1]: Band on in every device that can be in it (=1: and parts).
                 "bandon" => {

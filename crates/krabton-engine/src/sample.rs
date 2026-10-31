@@ -270,14 +270,40 @@ impl AudioFormat {
     }
 }
 
+/// The rate ffmpeg hands decoded sound over at.
+const EXTERNAL_RATE: u32 = 48_000;
+
 /// The one way in for sound files Krabton does not decode itself (Ogg
-/// Vorbis, Opus, AAC/M4A, WMA, ...): ffmpeg is to decode them here, to
-/// interleaved 32-bit float at the file's own rate, and the result goes
-/// through [`SampleData::from_decoded`]. Until ffmpeg can be found, it says
-/// what is missing.
+/// Vorbis, Opus, AAC/M4A, WMA, ...): ffmpeg decodes them, to interleaved
+/// 32-bit float stereo at 48 kHz, and the result goes through
+/// [`SampleData::from_decoded`]. Without ffmpeg, it says what is missing.
 pub fn decode_with_external(path: &Path) -> Result<SampleData, String> {
     let ext = path.extension().map(|e| e.to_string_lossy().to_uppercase()).unwrap_or_else(|| "this".into());
-    Err(format!("{}: {ext} files need ffmpeg, which Krabton could not find (WAV, FLAC, MP3 and AIFF load without it)", path.display()))
+    let Some(exe) = crate::ffmpeg::find() else {
+        return Err(format!("{}: {ext} files need ffmpeg, which Krabton could not find (WAV, FLAC, MP3 and AIFF load without it; the Video's Get ffmpeg fetches it)", path.display()));
+    };
+    let out = crate::ffmpeg::command(&exe)
+        .args(external_args(path))
+        .output()
+        .map_err(|e| format!("{}: ffmpeg did not start: {e}", path.display()))?;
+    if !out.status.success() || out.stdout.len() < 8 {
+        let why = String::from_utf8_lossy(&out.stderr);
+        let why = why.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("no sound in it").trim().to_string();
+        return Err(format!("{}: ffmpeg could not read it ({why})", path.display()));
+    }
+    let samples: Vec<f32> = out.stdout.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
+    SampleData::from_decoded(path, EXTERNAL_RATE, 2, samples)
+}
+
+/// ffmpeg's arguments for a sound file: its first sound only, as raw
+/// little-endian float stereo at 48 kHz on stdout.
+fn external_args(path: &Path) -> Vec<std::ffi::OsString> {
+    let mut a: Vec<std::ffi::OsString> = ["-nostdin", "-v", "error", "-i"].iter().map(Into::into).collect();
+    a.push(path.as_os_str().to_owned());
+    for s in ["-map", "0:a:0", "-vn", "-f", "f32le", "-acodec", "pcm_f32le", "-ac", "2", "-ar", "48000", "-"] {
+        a.push(s.into());
+    }
+    a
 }
 
 impl SampleData {
@@ -577,6 +603,14 @@ mod tests {
         // Formats for ffmpeg say so.
         let Err(e) = load_bytes("song.ogg", b"OggS\0\x02\0\0\0\0\0\0\0\0\0\0\0\0") else { panic!("an Ogg file loaded") };
         assert!(e.contains("ffmpeg"), "{e}");
+    }
+
+    #[test]
+    fn ffmpeg_is_asked_for_float_stereo() {
+        let a: Vec<String> = external_args(Path::new("a b.ogg")).iter().map(|s| s.to_string_lossy().into_owned()).collect();
+        assert_eq!(a[4], "a b.ogg");
+        assert!(a.windows(2).any(|w| w == ["-f", "f32le"]) && a.windows(2).any(|w| w == ["-ac", "2"]) && a.windows(2).any(|w| w == ["-ar", "48000"]));
+        assert_eq!(a.last().map(String::as_str), Some("-"));
     }
 
     #[test]

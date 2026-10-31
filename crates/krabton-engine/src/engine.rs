@@ -74,6 +74,10 @@ pub const INST_VALS: usize = 64;
 
 /// Samples of the shown instrument's sound kept for its display.
 pub const INST_SCOPE_LEN: usize = 8192;
+/// Tracks whose sound the Video can listen to at the same time (besides the master).
+pub const LISTEN_TRACKS: usize = 4;
+/// Samples kept of each sound the Video listens to: about 170 ms at 48 kHz.
+pub const LISTEN_LEN: usize = 8192;
 
 const RELAXED: Ordering = Ordering::Relaxed;
 
@@ -141,6 +145,10 @@ pub struct TrackStatus {
     pub inst_vals: Vec<AtomicF32>,
     /// Where it stands on the Map now (modulated): across, depth, width, facing, beam.
     pub map_live: [AtomicF32; 5],
+    /// The notes that started since the UI last took them (a 128-bit mask),
+    /// and the hardest of them (0..1), for the Video.
+    pub struck: [AtomicU64; 2],
+    pub struck_vel: AtomicF32,
 }
 
 impl TrackStatus {
@@ -159,7 +167,16 @@ impl TrackStatus {
             inst_held: [AtomicU64::new(0), AtomicU64::new(0)],
             inst_vals: (0..INST_VALS).map(|_| AtomicF32::new(0.0)).collect(),
             map_live: std::array::from_fn(|_| AtomicF32::new(0.0)),
+            struck: [AtomicU64::new(0), AtomicU64::new(0)],
+            struck_vel: AtomicF32::new(0.0),
         }
+    }
+
+    /// UI: the notes that started since the last call (a 128-bit mask),
+    /// and the hardest of them.
+    pub fn take_struck(&self) -> (u128, f32) {
+        let mask = self.struck[0].swap(0, RELAXED) as u128 | (self.struck[1].swap(0, RELAXED) as u128) << 64;
+        (mask, self.struck_vel.swap(0.0))
     }
 
     /// UI: the notes the instrument holds, as a 128-bit mask.
@@ -210,6 +227,12 @@ pub struct EngineStatus {
     pub key_waiting: AtomicBool,
     /// Where the band is (see `band::BandNow::pack`).
     pub band: AtomicU64,
+    /// The Video listens: the master's sound and that of the tracks in
+    /// `listen_ids` (0: none) are written while `listening` is on.
+    pub listening: AtomicBool,
+    pub listen_master: crate::scope::ScopeBuffer,
+    pub listen_ids: [AtomicU64; LISTEN_TRACKS],
+    pub listen: Vec<crate::scope::ScopeBuffer>,
 }
 
 /// The visual state of every sequencer (see `MidiFxState::visual`), by
@@ -283,6 +306,10 @@ impl EngineStatus {
             reel: crate::tape::Reel::new(),
             key_waiting: AtomicBool::new(false),
             band: AtomicU64::new(0),
+            listening: AtomicBool::new(false),
+            listen_master: crate::scope::ScopeBuffer::new(LISTEN_LEN, false),
+            listen_ids: std::array::from_fn(|_| AtomicU64::new(0)),
+            listen: (0..LISTEN_TRACKS).map(|_| crate::scope::ScopeBuffer::new(LISTEN_LEN, false)).collect(),
         }
     }
 }
@@ -2053,6 +2080,8 @@ impl Engine {
         let a1 = self.song_pos + adv;
         let any_solo = project.tracks.iter().any(|t| t.mixer.solo);
         let status = &self.status;
+        // The Video listening (to the master and a few tracks).
+        let listening = status.listening.load(RELAXED);
         let clock = self.clock;
         // Start and Stop go out once, with this segment's clocks.
         let (out_start, out_stop) = (std::mem::take(&mut self.out_start), std::mem::take(&mut self.out_stop));
@@ -2360,6 +2389,12 @@ impl Engine {
                     signal.pitch = ev.pitch;
                     signal.velocity = ev.vel;
                     signal.held = signal.held.saturating_add(1);
+                    // For the Video: which notes started, and how hard.
+                    if let Some(ts) = status.tracks.get(ti) {
+                        let p = (ev.pitch & 127) as usize;
+                        ts.struck[p / 64].fetch_or(1 << (p % 64), RELAXED);
+                        ts.struck_vel.store_max(ev.vel);
+                    }
                 } else {
                     signal.held = signal.held.saturating_sub(1);
                 }
@@ -2568,6 +2603,14 @@ impl Engine {
             }
             out_l[..seg].copy_from_slice(&l[..seg]);
             out_r[..seg].copy_from_slice(&r[..seg]);
+            // The Video listening to this track.
+            if listening {
+                for (id, buf) in status.listen_ids.iter().zip(&status.listen) {
+                    if id.load(RELAXED) == track.id {
+                        buf.write(&l[..seg], &r[..seg]);
+                    }
+                }
+            }
             // A track sent to another track reaches the master through it.
             if *to_master {
                 for i in 0..seg {
@@ -2645,6 +2688,9 @@ impl Engine {
             status.master.peak_l.store_max(pk_l);
             status.master.peak_r.store_max(pk_r);
             self.resample.write(&m.l[..seg], &m.r[..seg]);
+            if listening {
+                status.listen_master.write(&m.l[..seg], &m.r[..seg]);
+            }
         }
 
         // Metronome and preview go straight to the output, after the master.
@@ -3600,6 +3646,71 @@ mod tests {
         run(&mut e, 2.0);
         let tail = run(&mut e, 0.2);
         assert!(peak(&tail) < 1e-3, "the note was let go: {}", peak(&tail));
+    }
+
+    #[test]
+    fn the_video_hears_the_notes_that_start_and_the_sound_it_asks_for() {
+        let mut p = Project::new_default();
+        let ti = p.tracks.iter().position(|t| matches!(t.instrument, Some(Instrument::Synth { .. }))).expect("a synth track");
+        let id = p.tracks[ti].id;
+        for t in p.tracks.iter_mut() {
+            t.arrangement.clear();
+        }
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        // Not listening: nothing is written.
+        h.send(Command::NoteOn { track: id, pitch: 60, velocity: 0.7 });
+        run(&mut e, 0.05);
+        assert_eq!(h.status.listen_master.written(), 0);
+        let (mask, vel) = h.status.tracks[ti].take_struck();
+        assert_eq!(mask, 1u128 << 60);
+        assert!((vel - 0.7).abs() < 1e-6);
+        // Taken: gone, until another note starts.
+        assert_eq!(h.status.tracks[ti].take_struck().0, 0);
+        h.status.listening.store(true, Ordering::Relaxed);
+        h.status.listen_ids[1].store(id, Ordering::Relaxed);
+        h.send(Command::NoteOn { track: id, pitch: 72, velocity: 0.4 });
+        run(&mut e, 0.1);
+        assert_eq!(h.status.tracks[ti].take_struck().0, 1u128 << 72);
+        assert!(h.status.listen_master.written() > 4000);
+        assert_eq!(h.status.listen[1].written(), h.status.listen_master.written());
+        assert_eq!(h.status.listen[0].written(), 0);
+        let (mut l, mut r) = (Vec::new(), Vec::new());
+        h.status.listen[1].read(2048, &mut l, &mut r);
+        assert!(l.iter().any(|x| x.abs() > 0.01), "the synth is heard");
+    }
+
+    #[test]
+    fn the_video_hears_the_kicks_of_the_demo() {
+        // The demo's Groove (an offbeat bassline) and Drop (a rolling one): a
+        // 909 at 124 BPM. On the master every kick is heard (and a bass note
+        // after a rest is a hit in the low end too); on the drum track alone
+        // just the kicks.
+        let p = crate::demo::demo_project();
+        let drums = p.tracks.iter().find(|t| t.instrument.as_ref().is_some_and(|i| i.is_drums())).map(|t| t.id).expect("a drum track");
+        for (scene, track, most) in [(1, None, 40), (1, Some(drums), 20), (3, Some(drums), 20)] {
+            let (mut e, h) = Engine::new(48000.0, Arc::new(p.clone()));
+            h.status.listening.store(true, Ordering::Relaxed);
+            h.status.listen_ids[0].store(track.unwrap_or(0), Ordering::Relaxed);
+            h.send(Command::LaunchScene(scene));
+            h.send(Command::Play);
+            let mut ears = crate::video::Listener::new(48000.0);
+            let (mut read, mut kicks, mut hits) = (0u64, 0, 0);
+            let (mut l, mut r) = (Vec::new(), Vec::new());
+            // Eight seconds, read as the UI does: a frame at a time.
+            for _ in 0..480 {
+                run(&mut e, 1.0 / 60.0);
+                let buf = if track.is_some() { &h.status.listen[0] } else { &h.status.listen_master };
+                let n = (buf.written() - read).min(LISTEN_LEN as u64) as usize;
+                read = buf.read(n, &mut l, &mut r);
+                ears.feed(&l);
+                let (k, x) = ears.take_hits();
+                kicks += k as usize;
+                hits += x as usize;
+            }
+            // About 16 beats in eight seconds (the first bar may wait for the launch).
+            assert!((12..=most).contains(&kicks), "scene {scene}, {track:?}: {kicks} kicks, {hits} hits");
+            assert!(hits >= 12, "scene {scene}, {track:?}: {kicks} kicks, {hits} hits");
+        }
     }
 
     #[test]

@@ -63,6 +63,7 @@ pub mod settings;
 pub mod map_view;
 pub mod windows;
 pub mod transport;
+pub mod video_view;
 pub mod granulator_view;
 pub mod home_view;
 

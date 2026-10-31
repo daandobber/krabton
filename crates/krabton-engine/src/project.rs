@@ -1530,6 +1530,10 @@ pub struct Project {
     /// players' one progression).
     #[serde(default, skip_serializing_if = "crate::band::BandSong::is_empty")]
     pub band: crate::band::BandSong,
+    /// The Video: the films and pictures that play along, and what in the
+    /// music moves them. The engine ignores it.
+    #[serde(default, skip_serializing_if = "crate::video::VideoSet::is_empty")]
+    pub video: crate::video::VideoSet,
 }
 
 /// A part of the song on the arranger track (Intro, Verse, Chorus...), as in
@@ -1587,6 +1591,7 @@ impl Project {
             rack_heights: Default::default(),
             folded: Default::default(),
             band: Default::default(),
+            video: Default::default(),
         };
         let mut reverb = p.make_device(EffectKind::Reverb);
         reverb.params[5] = 1.0;
@@ -2385,6 +2390,7 @@ impl Project {
         if self.loop_end <= self.loop_start {
             self.loop_end = self.loop_start + 16.0;
         }
+        self.video.sanitize();
     }
 
     pub fn save(&self, path: &Path) -> Result<(), String> {
@@ -2617,6 +2623,30 @@ mod tests {
         let (q, missing) = Project::load(&path).unwrap();
         assert!(missing.is_empty());
         assert_eq!(p, q);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_video_is_saved_with_the_set_and_older_sets_load_without_it() {
+        let mut p = crate::demo::demo_project();
+        // Nothing loaded: nothing written.
+        assert!(!serde_json::to_string(&p).unwrap().contains("\"video\""));
+        let dir = std::env::temp_dir().join(format!("krabton-test-video-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("video.krab");
+        p.video.clips.push(crate::video::VideoClip::new(dir.join("sea.mp4")));
+        p.video.play = crate::video::PlayMode::Slices;
+        p.video.slice_track = Some(p.tracks[0].id);
+        p.video.links[1].from = Some(p.tracks[1].id);
+        p.save(&path).unwrap();
+        let (q, _) = Project::load(&path).unwrap();
+        assert_eq!(q.video, p.video);
+        // A set from before the Video: the JSON without it.
+        let mut old: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        old.as_object_mut().unwrap().remove("video");
+        std::fs::write(&path, old.to_string()).unwrap();
+        let (q, _) = Project::load(&path).unwrap();
+        assert!(q.video.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

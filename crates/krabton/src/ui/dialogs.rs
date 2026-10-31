@@ -52,6 +52,7 @@ impl App {
         self.ui_rack(ctx);
         self.ui_glitch_window(ctx);
         self.ui_map_window(ctx);
+        self.ui_video(ctx);
         if self.show_about {
             let mut open = true;
             egui::Window::new("About Krabton").collapsible(false).resizable(false).open(&mut open).show(ctx, |ui| {
