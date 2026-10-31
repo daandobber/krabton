@@ -92,9 +92,35 @@ impl VideoSet {
         self.amount = ok(self.amount, 0.0, 1.0, 1.0);
         self.bars = self.bars.clamp(1, 64);
         self.slices = self.slices.clamp(2, 64);
+        for c in &mut self.clips {
+            if let Some(cues) = &mut c.cues {
+                cues.sanitize();
+            }
+            if c.cues.as_ref().is_some_and(|q| q.times.is_empty()) {
+                c.cues = None;
+            }
+        }
         for l in &mut self.links {
             l.amount = ok(l.amount, 0.0, 1.0, 0.5);
         }
+    }
+
+    /// Slice to Drum Rack: the film at `path` (into the bank when it is not
+    /// there yet) cut where its sound was, `cues` saying where and whose
+    /// notes play them; it plays now, in Slices. None when the bank is full.
+    pub fn cue_film(&mut self, path: &std::path::Path, cues: Cues) -> Option<usize> {
+        let i = match self.clips.iter().position(|c| c.path == path) {
+            Some(i) => i,
+            None if self.clips.len() < MAX_CLIPS => {
+                self.clips.push(VideoClip::new(path.to_path_buf()));
+                self.clips.len() - 1
+            }
+            None => return None,
+        };
+        self.clips[i].cues = Some(cues);
+        self.current = i;
+        self.play = PlayMode::Slices;
+        Some(i)
     }
 }
 
@@ -103,12 +129,93 @@ impl VideoSet {
 pub struct VideoClip {
     pub path: std::path::PathBuf,
     pub name: String,
+    /// Where Slice to Drum Rack cut it (None: in equal slices).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cues: Option<Cues>,
 }
 
 impl VideoClip {
     pub fn new(path: std::path::PathBuf) -> Self {
         let name = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-        Self { path, name }
+        Self { path, name, cues: None }
+    }
+}
+
+/// The films the Video reads (with ffmpeg), by extension (lower case).
+pub const FILM_EXTENSIONS: [&str; 12] = ["mp4", "mov", "m4v", "webm", "mkv", "avi", "wmv", "mpg", "mpeg", "ogv", "flv", "3gp"];
+
+/// Whether a file is a film (by its name): its sound can be sliced with
+/// its picture.
+pub fn is_film(path: &std::path::Path) -> bool {
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| FILM_EXTENSIONS.iter().any(|x| e.eq_ignore_ascii_case(x)))
+}
+
+/// Cues are kept to this many (a Drum Rack has 16 pads; room to spare).
+pub const MAX_CUES: usize = 128;
+
+/// Where Slice to Drum Rack cut a film: the same cuts as its sound's
+/// slices, so a note shows the picture from where its pad's sound starts,
+/// C1 the first cue, C#1 the second...
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Cues {
+    /// Where each piece starts (seconds of the film), in order.
+    pub times: Vec<f64>,
+    /// Where the last one ends.
+    pub end: f64,
+    /// The track whose notes play them (by id; None: every track).
+    pub track: Option<u64>,
+    /// As the pads: Gate holds the picture where the note ends; One-Shot
+    /// plays the piece on to its end.
+    pub gate: bool,
+}
+
+impl Default for Cues {
+    fn default() -> Self {
+        Self { times: Vec::new(), end: 0.0, track: None, gate: false }
+    }
+}
+
+impl Cues {
+    pub fn len(&self) -> usize {
+        self.times.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.times.is_empty()
+    }
+
+    /// The cue a note plays: C1 (36) the first, round again after the last.
+    pub fn for_note(&self, pitch: u8) -> usize {
+        slice_for_note(pitch, self.len() as u32)
+    }
+
+    /// Where piece `k` starts and ends (seconds), the last no further than
+    /// `duration` (the film's length, when known).
+    pub fn piece(&self, k: usize, duration: f64) -> (f64, f64) {
+        let a = self.times.get(k).copied().unwrap_or(0.0);
+        let mut b = self.times.get(k + 1).copied().unwrap_or(self.end);
+        if duration > 0.0 {
+            b = b.min(duration);
+        }
+        (a, b.max(a))
+    }
+
+    /// The piece that `t` seconds is in.
+    pub fn at(&self, t: f64) -> usize {
+        self.times.partition_point(|&c| c <= t).saturating_sub(1)
+    }
+
+    /// Fixes what a hand-edited file might hold: in order, none below 0.
+    pub fn sanitize(&mut self) {
+        self.times.retain(|t| t.is_finite());
+        for t in &mut self.times {
+            *t = t.max(0.0);
+        }
+        self.times.sort_by(f64::total_cmp);
+        self.times.truncate(MAX_CUES);
+        let last = self.times.last().copied().unwrap_or(0.0);
+        self.end = if self.end.is_finite() { self.end.max(last) } else { last };
     }
 }
 
@@ -120,7 +227,8 @@ pub enum PlayMode {
     /// In time with the song: the whole clip in so many bars.
     Tempo,
     /// Cut in slices that notes play, as pads of a drum rack: C1 the
-    /// first slice, C#1 the second...
+    /// first slice, C#1 the second... A clip with cues (see `Cues`) is cut
+    /// at them instead.
     Slices,
 }
 
@@ -139,7 +247,7 @@ impl PlayMode {
         match self {
             PlayMode::Loop => "Plays round and round on its own, at its speed",
             PlayMode::Tempo => "In time with the song: the whole clip lasts so many bars, and follows the song's position",
-            PlayMode::Slices => "Cut in equal slices that notes play, like pads: C1 the first slice, C#1 the second, and on",
+            PlayMode::Slices => "Cut in slices that notes play, like pads: C1 the first slice, C#1 the second, and on. Equal slices, or a film's cues where Slice to Drum Rack cut its sound",
         }
     }
 
@@ -904,6 +1012,11 @@ pub struct PlayInput {
     pub stutter: bool,
     /// Slices: the note that just picked one.
     pub note: Option<u8>,
+    /// Which clip of the bank plays (its cues, when it has them).
+    pub clip: usize,
+    /// Cues: the notes held now on the track that plays them (a 128-bit
+    /// mask), so Gate holds the picture where its note ends.
+    pub held: u128,
 }
 
 /// A stutter going on: the film from `anchor` repeated, `left` seconds more.
@@ -924,6 +1037,8 @@ pub struct Playhead {
     offset: f64,
     /// Slices: the slice the last note picked.
     slice: Option<usize>,
+    /// Cues: the note that picked it (None: a jump).
+    pitch: Option<u8>,
     stutter: Option<Stutter>,
     pub dice: Dice,
 }
@@ -934,6 +1049,7 @@ impl Playhead {
         self.pos = 0.0;
         self.offset = 0.0;
         self.slice = None;
+        self.pitch = None;
         self.stutter = None;
     }
 
@@ -960,9 +1076,10 @@ impl Playhead {
         let slice_len = dur / slices as f64;
         // How much faster the links make it, and how much it stands still.
         let push = (1.0 + 3.0 * inp.speed.clamp(0.0, 1.0) as f64) * (1.0 - inp.freeze.clamp(0.0, 1.0) as f64);
-        match set.play {
-            PlayMode::Loop => self.pos += dt * set.speed as f64 * push * dir,
-            PlayMode::Tempo => {
+        let cues = set.clips.get(inp.clip).and_then(|c| c.cues.as_ref()).filter(|c| !c.is_empty() && set.play == PlayMode::Slices);
+        match (set.play, cues) {
+            (PlayMode::Loop, _) => self.pos += dt * set.speed as f64 * push * dir,
+            (PlayMode::Tempo, _) => {
                 // The whole clip in `bars` bars.
                 let lap = (set.bars.max(1) * inp.beats_per_bar.max(1)) as f64;
                 let rate = dur / (lap * beat_secs);
@@ -975,7 +1092,31 @@ impl Playhead {
                     self.pos += dt * rate * push * dir;
                 }
             }
-            PlayMode::Slices => {
+            (PlayMode::Slices, Some(c)) => {
+                if let Some(n) = inp.note {
+                    // The piece of film under the pad's slice of sound, from its start.
+                    let k = c.for_note(n);
+                    self.slice = Some(k);
+                    self.pitch = Some(n);
+                    self.pos = c.piece(k, dur).0;
+                    self.stutter = None;
+                } else if self.slice.is_some() {
+                    // As filmed, as the sound plays; Gate stands still once its note ends.
+                    let held = self.pitch.is_none_or(|p| inp.held >> (p & 127) & 1 == 1);
+                    if !c.gate || held {
+                        self.pos += dt * push;
+                    }
+                } else {
+                    // Waiting for a note: on the first cue.
+                    self.pos = c.piece(0, dur).0;
+                }
+                // No further than its piece: the sound has stopped there too.
+                if let Some(k) = self.slice {
+                    let (a, b) = c.piece(k, dur);
+                    self.pos = self.pos.clamp(a, (b - 1e-3).max(a));
+                }
+            }
+            (PlayMode::Slices, None) => {
                 if let Some(n) = inp.note {
                     let k = slice_for_note(n, slices);
                     self.slice = Some(k);
@@ -991,7 +1132,15 @@ impl Playhead {
                 }
             }
         }
-        if inp.jump {
+        if let (true, Some(c)) = (inp.jump, cues) {
+            // To the start of another cue.
+            let now = self.slice.unwrap_or_else(|| c.at(self.pos));
+            let k = other_slice(&mut self.dice, now, c.len() as u32);
+            self.slice = Some(k);
+            self.pitch = None;
+            self.pos = c.piece(k, dur).0;
+            self.stutter = None;
+        } else if inp.jump {
             let now = self.slice.unwrap_or_else(|| self.slice_now(dur, slices));
             let k = other_slice(&mut self.dice, now, slices);
             let to = k as f64 * slice_len;
@@ -1273,6 +1422,120 @@ mod tests {
         assert!((ph.pos - 2.5).abs() < 1e-6);
     }
 
+    /// A film of 8 s cut at uneven places (as its sound's hits fell),
+    /// played by track 7, in Slices.
+    fn cued(gate: bool) -> VideoSet {
+        let mut set = VideoSet::default();
+        let cues = Cues { times: vec![0.0, 0.7, 1.9, 4.25], end: 6.0, track: Some(7), gate };
+        assert_eq!(set.cue_film(std::path::Path::new("zoo.mp4"), cues), Some(0));
+        set
+    }
+
+    #[test]
+    fn a_note_shows_its_cue_and_one_shot_plays_the_piece_to_its_end() {
+        let set = cued(false);
+        assert_eq!(set.play, PlayMode::Slices);
+        let mut ph = Playhead::default();
+        // Before any note: on the first cue, standing.
+        assert_eq!(ph.advance(&set, &input(0.1, 0.0)), 0.0);
+        assert_eq!(ph.advance(&set, &input(0.1, 0.0)), 0.0);
+        // D1, the third pad: the third cue, exactly (not a third of the film).
+        let mut i = input(0.016, 0.0);
+        i.note = Some(38);
+        assert_eq!(ph.advance(&set, &i), 1.9);
+        // On as filmed, whatever the Speed: the sound plays as recorded.
+        let mut fast = set.clone();
+        fast.speed = 3.0;
+        let at = ph.advance(&fast, &input(0.25, 0.0));
+        assert!((at - 2.15).abs() < 1e-9, "{at}");
+        // The note ended long ago (One-Shot does not care): to the piece's end, and it stays there.
+        for _ in 0..20 {
+            ph.advance(&set, &input(0.25, 0.0));
+        }
+        assert!((ph.pos - (4.25 - 1e-3)).abs() < 1e-9, "{}", ph.pos);
+        // The last piece ends where the cut sound ends; past the pads it goes round (E1 is the first again).
+        i.note = Some(39);
+        assert_eq!(ph.advance(&set, &i), 4.25);
+        for _ in 0..20 {
+            ph.advance(&set, &input(0.25, 0.0));
+        }
+        assert!((ph.pos - (6.0 - 1e-3)).abs() < 1e-9);
+        i.note = Some(40);
+        assert_eq!(ph.advance(&set, &i), 0.0);
+        // A jump goes to the start of another cue.
+        let mut j = input(0.016, 0.0);
+        j.jump = true;
+        let at = ph.advance(&set, &j);
+        assert!(set.clips[0].cues.as_ref().unwrap().times[1..].contains(&at), "{at}");
+    }
+
+    #[test]
+    fn gate_holds_the_picture_where_its_note_ends() {
+        let set = cued(true);
+        let mut ph = Playhead::default();
+        let mut i = input(0.016, 0.0);
+        i.note = Some(37);
+        i.held = 1 << 37;
+        assert_eq!(ph.advance(&set, &i), 0.7);
+        // Held: on it runs.
+        let mut held = input(0.1, 0.0);
+        held.held = 1 << 37;
+        ph.advance(&set, &held);
+        ph.advance(&set, &held);
+        assert!((ph.pos - 0.9).abs() < 1e-6);
+        // Let go (another note held does not count): it stands where it was.
+        let mut gone = input(0.1, 0.0);
+        gone.held = 1 << 40;
+        ph.advance(&set, &gone);
+        ph.advance(&set, &gone);
+        assert!((ph.pos - 0.9).abs() < 1e-6);
+        // Held past its piece, it stops at the end like the slice.
+        ph.advance(&set, &i);
+        for _ in 0..30 {
+            ph.advance(&set, &held);
+        }
+        assert!((ph.pos - (1.9 - 1e-3)).abs() < 1e-9);
+        // A clip without cues still cuts in equal slices.
+        let mut even = set.clone();
+        even.clips[0].cues = None;
+        even.slices = 8;
+        let mut ph = Playhead::default();
+        i.note = Some(38);
+        assert!((ph.advance(&even, &i) - 2.0).abs() < 1e-9);
+        // And another clip of the bank playing does not use the cues.
+        let mut other = set.clone();
+        other.clips.push(VideoClip::new("sea.mp4".into()));
+        other.slices = 8;
+        let mut ph = Playhead::default();
+        let mut i2 = i;
+        i2.clip = 1;
+        assert!((ph.advance(&other, &i2) - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn cues_find_their_pieces_and_a_film_is_cued_once_in_the_bank() {
+        let c = Cues { times: vec![0.0, 0.5, 2.0], end: 3.0, track: None, gate: false };
+        assert_eq!((c.at(0.0), c.at(0.49), c.at(0.5), c.at(9.0)), (0, 0, 1, 2));
+        assert_eq!(c.piece(2, 0.0), (2.0, 3.0));
+        assert_eq!(c.piece(2, 2.5), (2.0, 2.5), "no further than the film");
+        assert_eq!((c.for_note(36), c.for_note(38), c.for_note(39)), (0, 2, 0));
+        let mut set = cued(false);
+        set.play = PlayMode::Loop;
+        set.clips.insert(0, VideoClip::new("sea.mp4".into()));
+        // Cued again (sliced again): the same clip, new cues, playing in Slices.
+        assert_eq!(set.cue_film(std::path::Path::new("zoo.mp4"), c.clone()), Some(1));
+        assert_eq!((set.clips.len(), set.current, set.play), (2, 1, PlayMode::Slices));
+        assert_eq!(set.clips[1].cues.as_ref(), Some(&c));
+        // A full bank has no room for another.
+        while set.clips.len() < MAX_CLIPS {
+            let n = set.clips.len();
+            set.clips.push(VideoClip::new(format!("{n}.gif").into()));
+        }
+        assert_eq!(set.cue_film(std::path::Path::new("new.mp4"), c), None);
+        assert!(is_film(std::path::Path::new("a/b.MP4")) && is_film(std::path::Path::new("x.webm")));
+        assert!(!is_film(std::path::Path::new("a.wav")) && !is_film(std::path::Path::new("a.gif")));
+    }
+
     #[test]
     fn a_jump_cuts_to_the_start_of_another_slice_and_tempo_keeps_it() {
         let set = VideoSet { play: PlayMode::Tempo, bars: 2, slices: 8, ..Default::default() };
@@ -1348,6 +1611,17 @@ mod tests {
         // Fields it does not know yet come out as they start.
         let bare: VideoSet = serde_json::from_str(r#"{"clips":[{"path":"a.png","name":"a"}]}"#).unwrap();
         assert_eq!(bare.speed, 1.0);
+        assert_eq!(bare.clips[0].cues, None);
+        assert!(!json.contains("cues"), "no cues, nothing written");
+        // Cues go along, and odd ones are put right.
+        let cued = cued(true);
+        let back: VideoSet = serde_json::from_str(&serde_json::to_string(&cued).unwrap()).unwrap();
+        assert_eq!(back, cued);
+        let mut odd_cues: VideoSet = serde_json::from_str(r#"{"clips":[{"path":"a.mp4","name":"a","cues":{"times":[2.0,-1.0,1.0]}},{"path":"b.mp4","name":"b","cues":{}}]}"#).unwrap();
+        odd_cues.sanitize();
+        let c = odd_cues.clips[0].cues.as_ref().unwrap();
+        assert_eq!((c.times.as_slice(), c.end, c.track, c.gate), (&[0.0, 1.0, 2.0][..], 2.0, None, false));
+        assert_eq!(odd_cues.clips[1].cues, None, "no cues at all is no cues");
         assert_eq!(bare.links, VideoSet::default().links);
         // Out of range is put right.
         let mut odd: VideoSet = serde_json::from_str(r#"{"current":9,"speed":99.0,"amount":-1.0,"slices":0}"#).unwrap();

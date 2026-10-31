@@ -167,7 +167,12 @@ impl Media {
 
     /// A small picture of it (its first frame), `width` wide.
     pub fn thumbnail(&self, width: usize) -> Option<egui::ColorImage> {
-        let full = self.image(0)?;
+        self.thumbnail_of(0, width)
+    }
+
+    /// A small picture of frame `index`, `width` wide.
+    pub fn thumbnail_of(&self, index: usize, width: usize) -> Option<egui::ColorImage> {
+        let full = self.image(index)?;
         let [w, h] = full.size;
         let tw = width.min(w).max(1);
         let th = (h * tw / w.max(1)).max(1);

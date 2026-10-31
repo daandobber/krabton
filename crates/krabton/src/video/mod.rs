@@ -300,6 +300,7 @@ impl App {
             }
         }
         let mut followed: Vec<Option<u64>> = vec![None, set.slice_track];
+        followed.extend(set.clips.iter().filter_map(|c| c.cues.as_ref()).map(|c| c.track));
         followed.extend(set.links.iter().filter(|l| l.source.follows_notes()).map(|l| l.from));
         followed.sort();
         followed.dedup();
@@ -372,9 +373,17 @@ impl App {
             v.playhead.reset();
         }
 
-        // Where the film is.
+        // Where the film is. A film cut by Slice to Drum Rack follows the
+        // notes of the track it was sliced to, and Gate the notes it holds.
         let info = media.as_ref().map(|m| m.info()).unwrap_or_default();
-        let slice_note = v.notes.get(&set.slice_track).filter(|n| n.hit).map(|n| n.pitch);
+        let cues = clip.and_then(|c| c.cues.as_ref()).filter(|c| !c.is_empty());
+        let by = cues.map_or(set.slice_track, |c| c.track);
+        let slice_note = v.notes.get(&by).filter(|n| n.hit).map(|n| n.pitch);
+        let held = match (cues, by) {
+            (None, _) => 0,
+            (Some(_), Some(id)) => self.project.tracks.iter().position(|t| t.id == id).and_then(|i| status.tracks.get(i)).map_or(0, |ts| ts.inst_notes()),
+            (Some(_), None) => status.tracks.iter().take(self.project.tracks.len()).fold(0, |m, ts| m | ts.inst_notes()),
+        };
         let input = kv::PlayInput {
             dt,
             duration: info.duration,
@@ -388,6 +397,8 @@ impl App {
             jump: v.look.jump,
             stutter: v.look.stutter,
             note: if set.play == kv::PlayMode::Slices { slice_note } else { None },
+            clip: v.playing,
+            held,
         };
         v.at = v.playhead.advance(&set, &input);
 
