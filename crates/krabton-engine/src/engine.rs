@@ -426,6 +426,7 @@ enum GarbageInner {
     Processor(Box<dyn AudioProcessor>),
     Input(Arc<InputRing>),
     PianoLibrary(Arc<PianoLibrary>),
+    Loop(Arc<crate::dsp::fx::looper::LoopMemory>),
 }
 
 /// A MIDI message for a track's MIDI To port, and when to send it: `at`
@@ -551,6 +552,7 @@ enum InstState {
     Granulator(Box<crate::dsp::granulator::GranulatorState>),
     Keytone(Box<crate::dsp::keytone::KeytoneState>),
     Princess(Box<crate::dsp::princess_machine::PrincessState>),
+    Stretch(Box<crate::dsp::stretch::StretchState>),
     Plugin { instance: u64, proc: Option<Box<dyn AudioProcessor>>, pending: Vec<PluginEvent> },
     Theremin(Box<ThereminState>),
 }
@@ -600,6 +602,7 @@ impl InstState {
             InstState::Theremin(s) => s.pitch_bend = semis,
             InstState::Granulator(s) => s.pitch_bend = semis,
             InstState::Keytone(s) => s.pitch_bend = semis,
+            InstState::Stretch(s) => s.pitch_bend = semis,
             _ => {}
         }
     }
@@ -661,6 +664,7 @@ impl InstState {
             Some(Instrument::Granulator { .. }) => InstState::Granulator(Box::new(crate::dsp::granulator::GranulatorState::new(sr))),
             Some(Instrument::Keytone { .. }) => InstState::Keytone(Box::new(crate::dsp::keytone::KeytoneState::new(sr))),
             Some(Instrument::Princess { .. }) => InstState::Princess(Box::new(crate::dsp::princess_machine::PrincessState::new(sr))),
+            Some(Instrument::Stretch { .. }) => InstState::Stretch(Box::new(crate::dsp::stretch::StretchState::new(sr))),
         }
     }
 
@@ -734,6 +738,7 @@ impl InstState {
                 | (InstState::Granulator(_), Some(Instrument::Granulator { .. }))
                 | (InstState::Keytone(_), Some(Instrument::Keytone { .. }))
                 | (InstState::Princess(_), Some(Instrument::Princess { .. }))
+                | (InstState::Stretch(_), Some(Instrument::Stretch { .. }))
         ) || matches!((self, i), (InstState::Plugin { instance, .. }, Some(Instrument::Plugin(p))) if *instance == p.instance)
             // Another bank needs a player of its own.
             || matches!((self, i), (InstState::Sf2(s), Some(Instrument::Sf2 { font, .. })) if s.is_for(font.as_ref()))
@@ -798,6 +803,7 @@ impl InstState {
             (InstState::Granulator(s), Instrument::Granulator { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Keytone(s), Instrument::Keytone { params, sample, .. }) => s.note_on(ov.unwrap_or(params), sample.as_ref(), pitch, vel),
             (InstState::Princess(s), Instrument::Princess { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Stretch(s), Instrument::Stretch { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             _ => {}
         }
     }
@@ -858,6 +864,7 @@ impl InstState {
             (InstState::Granulator(s), Instrument::Granulator { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Keytone(s), Instrument::Keytone { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Princess(s), Instrument::Princess { .. }) => s.note_off(pitch),
+            (InstState::Stretch(s), Instrument::Stretch { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             _ => {}
         }
     }
@@ -918,6 +925,7 @@ impl InstState {
             InstState::Granulator(s) => s.all_off(),
             InstState::Keytone(s) => s.all_off(),
             InstState::Princess(s) => s.all_off(),
+            InstState::Stretch(s) => s.all_off(),
             InstState::None => {}
         }
     }
@@ -967,6 +975,7 @@ impl InstState {
             InstState::Granulator(s) => s.visual(out),
             InstState::Keytone(s) => s.visual(out),
             InstState::Princess(s) => s.visual(out),
+            InstState::Stretch(s) => s.visual(out),
             _ => return false,
         }
         true
@@ -1027,6 +1036,7 @@ impl InstState {
             (InstState::Granulator(s), Instrument::Granulator { params, sample, .. }) => s.render(ov.unwrap_or(params), sample.as_ref(), l, r),
             (InstState::Keytone(s), Instrument::Keytone { params, sample, .. }) => s.render(ov.unwrap_or(params), sample.as_ref(), l, r),
             (InstState::Princess(s), Instrument::Princess { params, machine, .. }) => s.render(ov.unwrap_or(params), machine, l, r),
+            (InstState::Stretch(s), Instrument::Stretch { params, sample, .. }) => s.render(ov.unwrap_or(params), sample.as_ref(), l, r),
             (InstState::Plugin { proc, pending, .. }, Instrument::Plugin(_)) => {
                 if let Some(p) = proc {
                     p.process(pending, l, r);
@@ -1742,6 +1752,8 @@ impl Engine {
             Command::Sustain { track, down } => match self.project.track_index(track).and_then(|ti| self.tracks.get_mut(ti)).map(|rt| &mut rt.instrument) {
                 Some(InstState::Piano(s)) => s.sustain(down),
                 Some(InstState::Sf2(s)) => s.set_sustain(down),
+                // The Stretch holds where it is while the pedal is down.
+                Some(InstState::Stretch(s)) => s.sustain(down),
                 _ => {}
             },
             Command::SetPianoLibrary(lib) => {
@@ -2847,6 +2859,13 @@ fn sync_devices(devs: &[Device], rts: &mut Vec<(u64, EffectState)>, sr: f32, tra
     for (d, (_, st)) in devs.iter().zip(rts.iter_mut()) {
         if let EffectState::Convolution(c) = st {
             c.set_file(d.sample.as_ref());
+        }
+        // A Looper's memory too (one let go of is dropped elsewhere).
+        if let EffectState::Looper(lp) = st {
+            lp.attach(d.looper.0.as_ref());
+            if let Some(old) = lp.take_retired() {
+                trash.push(GarbageInner::Loop(old));
+            }
         }
     }
     // Effects inside effects (the Glitch Sequencer's slots).

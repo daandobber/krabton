@@ -597,6 +597,7 @@ impl App {
                         self.open_slice_dialog(sel);
                         ui.close();
                     }
+                    self.clip_tools_menu(ui, sel);
                 }
                 if ui.button("Delete         Del").clicked() {
                     self.delete_clip(sel);

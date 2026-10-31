@@ -3,6 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod clip_tools;
 mod audio;
 mod band;
 mod big;
@@ -10,6 +11,7 @@ mod editing;
 mod grid;
 mod history;
 mod import;
+mod looper;
 mod midi;
 mod midi_out;
 mod move_ctl;

@@ -899,6 +899,8 @@ impl App {
         let mut children = dev.children.clone();
         let preset_name = dev.preset.clone();
         let conv_file = dev.sample.clone();
+        let loop_mem = dev.looper.0.clone();
+        let mut looper_act = None;
         let _skin = crate::skin::Scope::new(crate::skin::for_effect(kind));
         let mut conv_act = None;
         let mut picked = None;
@@ -915,6 +917,7 @@ impl App {
             EffectKind::OpenAir => 380.0,
             EffectKind::Beads => 400.0,
             EffectKind::Convolution => 340.0,
+            EffectKind::Looper => 700.0,
             _ => 400.0,
         };
         let mut width = self.prefs.layout.display(kind.name(), default_w);
@@ -992,6 +995,10 @@ impl App {
                 crate::ui::lens::limiter_panel(ui, id, dev_id, &mut params, accent, h, mv.as_mut(), &status, &mut width)
             } else if kind == EffectKind::VaFilter {
                 crate::ui::filter_view::va_filter_panel(ui, id, &mut params, accent, h, mv.as_mut(), &mut width)
+            } else if kind == EffectKind::Looper {
+                let (c, act) = crate::ui::looper_view::looper_panel(ui, id, &mut params, loop_mem.as_ref(), h, mv.as_mut());
+                looper_act = act;
+                c
             } else if kind == EffectKind::Convolution {
                 let (c, act) = convolution_face(ui, id, &mut params, conv_file.as_ref(), accent, h, mv.as_mut(), &mut width);
                 conv_act = act;
@@ -1036,6 +1043,11 @@ impl App {
                 Err(e) => self.toast(e),
             },
             Some(ConvAct::Clear) => self.chain_mut(sel)?.get_mut(d)?.sample = None,
+            None => {}
+        }
+        match looper_act {
+            Some(crate::ui::looper_view::LooperAct::ToClip) => self.looper_to_clip(dev_id),
+            Some(crate::ui::looper_view::LooperAct::Drag) => self.looper_drag(ui.ctx(), dev_id),
             None => {}
         }
         if matches!(action, Some(ChainActionKind::Fold)) {
@@ -1970,6 +1982,11 @@ impl App {
                     }
                     Instrument::Keytone { preset, params, sample } => {
                         if let Some(msg) = super::faces::keytone::panel(ui, Id::new(("keytone", track_id)), preset, params, sample, &live, h - 36.0, mv.as_mut()) {
+                            self.toast(msg);
+                        }
+                    }
+                    Instrument::Stretch { preset, params, sample } => {
+                        if let Some(msg) = super::stretch_view::stretch_panel(ui, Id::new(("stretch", track_id)), preset, params, sample, &live, h - 36.0, mv.as_mut()) {
                             self.toast(msg);
                         }
                     }

@@ -1,4 +1,5 @@
-//! A small radix-2 FFT for spectrum analyzers.
+//! A small radix-2 FFT for spectrum analyzers, and a plan of one that can
+//! be done a step at a time (for the Stretch's big windows).
 
 use std::f32::consts::PI;
 
@@ -81,9 +82,110 @@ impl Fft {
     }
 }
 
+/// A complex FFT of one size that can be done a step at a time (the bit
+/// reversal, then one pass per doubling), so a big transform can be spread
+/// over several audio blocks. Forward only; for the inverse transform
+/// conjugate before and after (and divide by the size).
+pub struct Plan {
+    n: usize,
+    cos: Vec<f32>,
+    sin: Vec<f32>,
+    rev: Vec<u32>,
+}
+
+impl Plan {
+    /// `n` must be a power of two.
+    pub fn new(n: usize) -> Self {
+        assert!(n.is_power_of_two() && n >= 4);
+        let bits = n.trailing_zeros();
+        let rev = (0..n).map(|i| (i.reverse_bits() >> (usize::BITS - bits)) as u32).collect();
+        let cos = (0..n / 2).map(|k| (2.0 * std::f64::consts::PI * k as f64 / n as f64).cos() as f32).collect();
+        let sin = (0..n / 2).map(|k| -(2.0 * std::f64::consts::PI * k as f64 / n as f64).sin() as f32).collect();
+        Self { n, cos, sin, rev }
+    }
+
+    pub fn len(&self) -> usize {
+        self.n
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.n == 0
+    }
+
+    /// The passes after the bit reversal.
+    pub fn passes(&self) -> usize {
+        self.n.trailing_zeros() as usize
+    }
+
+    /// Puts the values in bit-reversed order (the first step).
+    pub fn reorder(&self, re: &mut [f32], im: &mut [f32]) {
+        for i in 0..self.n {
+            let j = self.rev[i] as usize;
+            if j > i {
+                re.swap(i, j);
+                im.swap(i, j);
+            }
+        }
+    }
+
+    /// Pass `k` (0..passes): the butterflies of size 2^(k+1).
+    pub fn pass(&self, k: usize, re: &mut [f32], im: &mut [f32]) {
+        let n = self.n;
+        let size = 2 << k;
+        let half = size / 2;
+        let step = n / size;
+        for start in (0..n).step_by(size) {
+            for j in 0..half {
+                let (wr, wi) = (self.cos[j * step], self.sin[j * step]);
+                let (a, b) = (start + j, start + j + half);
+                let tr = re[b] * wr - im[b] * wi;
+                let ti = re[b] * wi + im[b] * wr;
+                re[b] = re[a] - tr;
+                im[b] = im[a] - ti;
+                re[a] += tr;
+                im[a] += ti;
+            }
+        }
+    }
+
+    /// The whole transform at once.
+    pub fn forward(&self, re: &mut [f32], im: &mut [f32]) {
+        self.reorder(re, im);
+        for k in 0..self.passes() {
+            self.pass(k, re, im);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_plan_matches_the_analyzer_and_goes_back() {
+        let n = 1024;
+        let x: Vec<f32> = (0..n).map(|i| ((i * 7 % 13) as f32 - 6.0) / 6.0).collect();
+        let plan = Plan::new(n);
+        let mut re = x.clone();
+        let mut im = vec![0.0; n];
+        plan.forward(&mut re, &mut im);
+        // A plain DFT of bin 5.
+        let (mut sr, mut si) = (0.0f64, 0.0f64);
+        for (i, v) in x.iter().enumerate() {
+            let a = -2.0 * std::f64::consts::PI * 5.0 * i as f64 / n as f64;
+            sr += *v as f64 * a.cos();
+            si += *v as f64 * a.sin();
+        }
+        assert!((re[5] as f64 - sr).abs() < 1e-2 && (im[5] as f64 - si).abs() < 1e-2);
+        // Inverse: conjugate, forward, conjugate, divide.
+        for v in im.iter_mut() {
+            *v = -*v;
+        }
+        plan.forward(&mut re, &mut im);
+        for (a, b) in re.iter().zip(&x) {
+            assert!((a / n as f32 - b).abs() < 1e-4);
+        }
+    }
 
     #[test]
     fn a_sine_shows_up_in_its_bin_at_its_level() {

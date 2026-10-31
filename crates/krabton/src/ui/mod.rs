@@ -67,6 +67,8 @@ pub mod windows;
 pub mod transport;
 pub mod video_view;
 pub mod granulator_view;
+pub mod looper_view;
+pub mod stretch_view;
 pub mod home_view;
 
 use crate::app::{App, ArrClipDrag, BrowserItem, ClipSel, SlotDrag, View};

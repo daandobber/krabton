@@ -201,7 +201,7 @@ impl App {
 
     /// Where recordings are written: next to the saved set, or in the
     /// user's Documents folder.
-    fn recordings_dir(&self) -> PathBuf {
+    pub(crate) fn recordings_dir(&self) -> PathBuf {
         let base = match &self.file_path {
             Some(p) => p.parent().map(|d| d.to_path_buf()).unwrap_or_default(),
             None => {

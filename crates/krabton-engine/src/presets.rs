@@ -136,6 +136,7 @@ pub fn effect(kind: EffectKind) -> &'static [Preset] {
         E::Smear => SMEAR,
         E::Convolution => CONVOLUTION,
         E::Snowglobe => SNOWGLOBE,
+        E::Looper => LOOPER,
         E::AwTapeDelay2 => AW_TAPE_DELAY,
         E::AwPear2 => AW_PEAR2_PRESETS,
         E::AwIsolator3 => AW_ISOLATOR3_PRESETS,
@@ -746,6 +747,20 @@ static SNOWGLOBE: &[Preset] = &[
     p("Dotted Echoes", &[("Mode", C("Rhythm")), ("Variation", C("B")), ("Repeats", N(0.45)), ("Space", N(0.25))]),
     p("Bending Echoes", &[("Mode", C("Bend")), ("Variation", C("C")), ("Repeats", N(0.5)), ("Space", N(0.3))]),
     p("Frozen Glitter", &[("Mode", C("Mist")), ("Variation", C("C")), ("Activity", N(0.9)), ("Space", N(0.8)), ("Filter", N(0.2)), ("Mix", N(0.7))]),
+];
+
+static LOOPER: &[Preset] = &[
+    p("Live Looping", &[]),
+    p("Rec Then Play", &[("After Rec", C("Play"))]),
+    p("Four Bars", &[("Length", C("4 Bars")), ("After Rec", C("Play"))]),
+    p("One Bar Overdubs", &[("Length", C("1 Bar"))]),
+    p("Set the Tempo", &[("Tempo", C("Set & Follow"))]),
+    p("Free Loop", &[("Tempo", C("Free")), ("Quantize", C("None"))]),
+    p("Fading Layers", &[("Feedback", N(0.7))]),
+    p("Sound on Sound", &[("Feedback", N(0.9)), ("Monitor", C("Always"))]),
+    p("Loop Only", &[("Monitor", C("Rec/OD Only"))]),
+    p("Half Speed Tape", &[("Speed", N(-12.0))]),
+    p("Backwards", &[("Reverse", N(1.0)), ("After Rec", C("Play"))]),
 ];
 
 static CONVOLUTION: &[Preset] = &[

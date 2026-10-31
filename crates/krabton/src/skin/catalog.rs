@@ -1124,6 +1124,44 @@ const KEYTONE: Skin = Skin {
     ..BASE
 };
 
+/// Stretch: frosted glass at night, ice-blue print, a warm light where it reads.
+const STRETCH: Skin = Skin {
+    top: hex(0x1d2a36),
+    bottom: hex(0x0c1219),
+    surface: Surface::Velvet,
+    ink: hex(0xe4f2fb),
+    dim: hex(0x92a8b8),
+    well: hex(0x070b10),
+    well_ink: hex(0xe4f2fb),
+    accent: hex(0x8fd6ff),
+    knob: Knob::Led,
+    cap: hex(0x24323f),
+    logo: Font::Future,
+    logo_ink: hex(0x8fd6ff),
+    logo_case: Case::Lower,
+    heroes: &["Stretch", "Position"],
+    ..BASE
+};
+
+/// Looper: a loop pedal in dark hammertone, screwed shut, a green light.
+const LOOPER: Skin = Skin {
+    top: hex(0x2b3238),
+    bottom: hex(0x171b1f),
+    surface: Surface::Grain,
+    screws: true,
+    ink: hex(0xe6ebef),
+    dim: hex(0x9aa4ad),
+    well: hex(0x0d1013),
+    well_ink: hex(0xe6ebef),
+    accent: hex(0x5fe08a),
+    knob: Knob::Chrome,
+    logo: Font::Sport,
+    logo_size: 18.0,
+    logo_ink: hex(0x5fe08a),
+    logo_case: Case::Upper,
+    ..BASE
+};
+
 const UTILITY: Skin = Skin { accent: hex(0x9fd8ff), knob: Knob::Ring, logo_case: Case::Upper, ..BASE };
 
 const VA_FILTER: Skin = Skin { heroes: &["Cutoff", "Resonance"], ..ANALOG };
@@ -1201,6 +1239,7 @@ pub fn for_instrument(name: &str) -> Option<Skin> {
         "Macro Drums" => Skin { top: hex(0x1f3a2e), bottom: hex(0x12241c), accent: hex(0x5fe3a1), knob: Knob::Led, cap: hex(0x2c4a3c), logo: Font::Sport, ..BASE },
         "Chip Drums" => CHIP_DRUMS,
         "Analog Princess" | "Analog Princess Kits" => PRINCESS,
+        "Stretch" => STRETCH,
         "Sampled Machines" => SAMPLER,
         "Drum Rack" => DRUM_RACK,
         "Keytone Drums" => KEYTONE,
@@ -1218,6 +1257,7 @@ pub fn for_effect(kind: EffectKind) -> Option<Skin> {
         Clouds => Skin { accent: hex(0x3d8be0), heroes: &["Position", "Size"], ..MODULE },
         Beads => Skin { accent: hex(0xc83cd0), ..MODULE },
         Rings => Skin { accent: hex(0xd49a1e), heroes: &["Structure"], ..MODULE },
+        Looper => LOOPER,
         _ => match kind.category() {
             "Reverb & Resonance" => REVERB,
             "Delay & Loop" => DELAY,

@@ -1037,6 +1037,15 @@ pub enum Instrument {
         #[serde(default)]
         machine: crate::dsp::princess_machine::Machine,
     },
+    /// Stretch: a sample stretched 2 to 1000 times, every key a voice of
+    /// it at the key's pitch (see `dsp::stretch`); without a sample, a sound
+    /// of its own.
+    Stretch {
+        preset: String,
+        params: Vec<f32>,
+        #[serde(default)]
+        sample: Option<SampleRef>,
+    },
 }
 
 impl Instrument {
@@ -1273,6 +1282,12 @@ impl Instrument {
         Instrument::Princess { preset: preset.to_string(), params: pm::preset(preset), machine: pm::preset_machine(preset) }
     }
 
+    pub fn stretch(preset: &str) -> Self {
+        // Its transforms and own sound made now, not on the audio thread.
+        crate::dsp::stretch::warm();
+        Instrument::Stretch { preset: preset.to_string(), params: crate::dsp::stretch::preset(preset), sample: None }
+    }
+
     pub fn kind_name(&self) -> &'static str {
         match self {
             Instrument::Synth { .. } => "Synth",
@@ -1329,6 +1344,7 @@ impl Instrument {
             Instrument::Granulator { .. } => "Granulator",
             Instrument::Keytone { .. } => "Keytone",
             Instrument::Princess { .. } => "Analog Princess",
+            Instrument::Stretch { .. } => "Stretch",
         }
     }
 
@@ -1353,6 +1369,7 @@ impl Instrument {
             Instrument::Granulator { preset, .. } => preset.clone(),
             Instrument::Keytone { preset, .. } => preset.clone(),
             Instrument::Princess { preset, .. } => preset.clone(),
+            Instrument::Stretch { preset, .. } => preset.clone(),
             Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Modular { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } | Instrument::Monk { preset, .. } | Instrument::Piano { preset, .. } | Instrument::Bassline { preset, .. } | Instrument::Mono101 { preset, .. } | Instrument::Drone { preset, .. } | Instrument::Waves { preset, .. } | Instrument::Guitar { preset, .. } | Instrument::WindChimes { preset, .. } | Instrument::Birds { preset, .. } | Instrument::Nature { preset, .. } | Instrument::PanFlute { preset, .. } | Instrument::Melodica { preset, .. } | Instrument::Harmonica { preset, .. } | Instrument::Calculator { preset, .. } | Instrument::Console { preset, .. } | Instrument::Handheld { preset, .. } | Instrument::Micro { preset, .. } | Instrument::Warp { preset, .. } | Instrument::Hybrid { preset, .. } | Instrument::Quartet { preset, .. } | Instrument::ChipFm { preset, .. } | Instrument::V2 { preset, .. } | Instrument::Oidos { preset, .. } | Instrument::Orchestra { preset, .. } | Instrument::Facet { preset, .. } | Instrument::BeadsSynth { preset, .. } | Instrument::StreetOrgan { preset, .. } => preset.clone(),
         }
     }
@@ -1421,6 +1438,10 @@ pub struct Device {
     /// A sound file it plays with (Convolution's own answer).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sample: Option<SampleRef>,
+    /// A Looper's memory, shared with the engine (made by the UI, not saved:
+    /// the loop is saved as `sample`).
+    #[serde(skip)]
+    pub looper: crate::dsp::fx::looper::LoopHandle,
 }
 
 impl Device {
@@ -2066,13 +2087,13 @@ impl Project {
 
     pub fn make_device(&mut self, kind: EffectKind) -> Device {
         let data = if kind == EffectKind::Glitch { crate::dsp::fx::glitch::default_data() } else { Vec::new() };
-        Device { id: self.alloc_id(), kind, enabled: true, params: params::defaults(kind.specs()), plugin: None, data, children: Vec::new(), preset: String::new(), sample: None }
+        Device { id: self.alloc_id(), kind, enabled: true, params: params::defaults(kind.specs()), plugin: None, data, children: Vec::new(), preset: String::new(), sample: None, looper: Default::default() }
     }
 
     /// A device for an effect plug-in; `plugin.instance` is set here.
     pub fn make_plugin_device(&mut self, mut plugin: PluginInstrument) -> Device {
         plugin.instance = self.alloc_id();
-        Device { id: self.alloc_id(), kind: EffectKind::Plugin, enabled: true, params: Vec::new(), plugin: Some(plugin), data: Vec::new(), children: Vec::new(), preset: String::new(), sample: None }
+        Device { id: self.alloc_id(), kind: EffectKind::Plugin, enabled: true, params: Vec::new(), plugin: Some(plugin), data: Vec::new(), children: Vec::new(), preset: String::new(), sample: None, looper: Default::default() }
     }
 
     /// Every hosted plug-in (instruments and effects) by instance.
@@ -2504,6 +2525,10 @@ impl Project {
                         params::fix_len(params, crate::dsp::keytone::SPECS);
                         crate::dsp::keytone::warm();
                     }
+                    Some(Instrument::Stretch { params, .. }) => {
+                        params::fix_len(params, crate::dsp::stretch::SPECS);
+                        crate::dsp::stretch::warm();
+                    }
                     Some(Instrument::Princess { params, machine, .. }) => {
                         params::fix_len(params, crate::dsp::princess_machine::SPECS);
                         machine.fix();
@@ -2610,6 +2635,25 @@ impl Project {
     /// Finds what the audio clips' warping needs before the audio thread
     /// plays them: their samples' transients, and the reversed audio of
     /// clips that play backwards. Done once per sample; cheap after.
+    /// Every Looper in the set: on the tracks, the returns and the master,
+    /// and in the sounds clips keep.
+    pub fn loopers_mut(&mut self) -> Vec<&mut Device> {
+        let mut out = Vec::new();
+        for t in &mut self.tracks {
+            out.extend(t.devices.iter_mut().filter(|d| d.kind == EffectKind::Looper));
+            for c in t.slots.iter_mut().flatten().chain(t.arrangement.iter_mut().map(|a| &mut a.clip)) {
+                if let Some(s) = &mut c.sound {
+                    out.extend(s.devices.iter_mut().filter(|d| d.kind == EffectKind::Looper));
+                }
+            }
+        }
+        for r in &mut self.returns {
+            out.extend(r.devices.iter_mut().filter(|d| d.kind == EffectKind::Looper));
+        }
+        out.extend(self.master.devices.iter_mut().filter(|d| d.kind == EffectKind::Looper));
+        out
+    }
+
     pub fn prepare_audio(&self) {
         for t in &self.tracks {
             for c in t.slots.iter().flatten().chain(t.arrangement.iter().map(|a| &a.clip)) {
@@ -2973,7 +3017,7 @@ mod tests {
         let dev = p.make_plugin_device(fx);
         assert_eq!(dev.name(), "Verb");
         p.tracks[t].devices.push(dev);
-        p.master.devices.push(Device { id: 999, kind: EffectKind::Plugin, enabled: true, params: Vec::new(), plugin: None, data: Vec::new(), children: Vec::new() , preset: String::new(), sample: None });
+        p.master.devices.push(Device { id: 999, kind: EffectKind::Plugin, enabled: true, params: Vec::new(), plugin: None, data: Vec::new(), children: Vec::new() , preset: String::new(), sample: None, looper: Default::default() });
         let json = serde_json::to_string(&p).unwrap();
         let mut back: Project = serde_json::from_str(&json).unwrap();
         back.sanitize();

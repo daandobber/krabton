@@ -33,6 +33,7 @@ pub mod shifter;
 pub mod sky;
 pub mod smear;
 pub mod snowglobe;
+pub mod looper;
 pub mod slam;
 pub mod spring;
 pub mod stage;

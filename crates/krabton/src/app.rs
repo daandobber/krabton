@@ -189,6 +189,8 @@ pub enum BrowserItem {
     Keytone(&'static str),
     /// An Analog Princess preset (the machine).
     Princess(&'static str),
+    /// A Stretch preset.
+    Stretch(&'static str),
 }
 
 /// A bank of DX7 voices for FM.
@@ -269,6 +271,7 @@ impl BrowserItem {
             BrowserItem::Granulator(p) => format!("Granulator: {p}"),
             BrowserItem::Keytone(p) => format!("Keytone: {p}"),
             BrowserItem::Princess(p) => format!("Analog Princess: {p}"),
+            BrowserItem::Stretch(p) => format!("Stretch: {p}"),
         }
     }
 }
@@ -565,6 +568,11 @@ pub struct App {
     pub(crate) band: crate::band::Band,
     /// The played track the engine was last told of (for the tape).
     pub(crate) tape_follow_sent: Option<Option<u64>>,
+    /// Each Looper's loop as last written to a file (its version, the file).
+    pub(crate) looper_files: std::collections::HashMap<u64, (u32, std::path::PathBuf)>,
+    /// Clips being stretched, reversed, frozen or resampled, and the box for a stretch of any size.
+    pub(crate) clip_jobs: Vec<crate::clip_tools::ClipJob>,
+    pub(crate) stretch_custom: Option<(ClipSel, f64)>,
     /// `shot=path`: where the next picture of the window goes, and whether
     /// it was asked for yet.
     shot: Option<(String, bool)>,
@@ -753,6 +761,9 @@ impl App {
             tape_clip: None,
             band: Default::default(),
             tape_follow_sent: None,
+            looper_files: Default::default(),
+            clip_jobs: Vec::new(),
+            stretch_custom: None,
             shot: None,
             env_view: false,
             env_target: None,
@@ -815,7 +826,9 @@ impl App {
         }
         self.band_frame();
         self.follow_clip_sounds();
-        if *self.last_sent != self.project {
+        // Loopers get their memory before the engine hears of them.
+        let loopers = self.looper_frame();
+        if loopers || *self.last_sent != self.project {
             // A clip moved to another track brings its sound with that track's ids.
             self.project.fix_clip_sound_ids();
             // Connections to deleted tracks, devices or modulators go away.
@@ -1292,7 +1305,7 @@ impl App {
                 }
                 self.toast(format!("Loading {} ...", info.name));
             }
-            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::StreetOrgan(_) | BrowserItem::Harmonica(_) | BrowserItem::Calculator(_) | BrowserItem::Console(_) | BrowserItem::Handheld(_) | BrowserItem::Micro(_) | BrowserItem::Warp(_) | BrowserItem::Hybrid(_) | BrowserItem::Quartet(_) | BrowserItem::ChipFm(_) | BrowserItem::V2(_) | BrowserItem::Oidos(_) | BrowserItem::Orchestra(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) | BrowserItem::Coast(_) | BrowserItem::Crimson(_) | BrowserItem::Silicon(_) | BrowserItem::Theremin(_) | BrowserItem::Granulator(_) | BrowserItem::Keytone(_) | BrowserItem::Princess(_) => {
+            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::StreetOrgan(_) | BrowserItem::Harmonica(_) | BrowserItem::Calculator(_) | BrowserItem::Console(_) | BrowserItem::Handheld(_) | BrowserItem::Micro(_) | BrowserItem::Warp(_) | BrowserItem::Hybrid(_) | BrowserItem::Quartet(_) | BrowserItem::ChipFm(_) | BrowserItem::V2(_) | BrowserItem::Oidos(_) | BrowserItem::Orchestra(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) | BrowserItem::Coast(_) | BrowserItem::Crimson(_) | BrowserItem::Silicon(_) | BrowserItem::Theremin(_) | BrowserItem::Granulator(_) | BrowserItem::Keytone(_) | BrowserItem::Princess(_) | BrowserItem::Stretch(_) => {
                 let inst = match item {
                     BrowserItem::Synth(p) => Instrument::synth(p),
                     BrowserItem::Macro(p) => Instrument::macro_osc(p),
@@ -1341,6 +1354,7 @@ impl App {
                     BrowserItem::Granulator(p) => Instrument::granulator(p),
                     BrowserItem::Keytone(p) => Instrument::keytone(p),
                     BrowserItem::Princess(p) => Instrument::princess(p),
+                    BrowserItem::Stretch(p) => Instrument::stretch(p),
                     BrowserItem::Drums(k) => Instrument::drums(k),
                     _ => Instrument::sampler(None),
                 };
@@ -1647,6 +1661,7 @@ impl App {
                                     zones.clear();
                                 }
                                 Some(Instrument::Granulator { sample: s, .. }) => *s = Some(sample),
+                                Some(Instrument::Stretch { sample: s, .. }) => *s = Some(sample),
                                 Some(Instrument::Keytone { sample: s, params, .. }) => {
                                     *s = Some(sample);
                                     if let Some(v) = params.get_mut(krabton_engine::dsp::keytone::SOUND) {
@@ -3311,6 +3326,9 @@ impl App {
                 }
             }
             Key::F9 => self.toggle_record(),
+            // The Looper's pedal (Shift: stop).
+            Key::F8 if m.shift => self.looper_key(krabton_engine::dsp::fx::looper::LoopAction::Stop),
+            Key::F8 => self.looper_key(krabton_engine::dsp::fx::looper::LoopAction::Pedal),
             Key::ArrowUp | Key::ArrowDown | Key::ArrowLeft | Key::ArrowRight => {
                 self.edit_arrow(key, m);
             }
@@ -3446,6 +3464,7 @@ impl App {
         if let Some(dir) = path.parent() {
             let name = self.project.name.clone();
             self.tape_save(dir, &name);
+            self.looper_save(dir, &name);
         }
         match self.project.save(&path) {
             Ok(()) => {
@@ -4191,6 +4210,38 @@ impl App {
                     self.apply_item(&BrowserItem::Princess(p), DropTarget::NewTrack);
                     self.detail = DetailTab::Devices;
                 }
+                // stretch=N: a new track with Stretch preset N.
+                "stretch" => {
+                    let names = krabton_engine::dsp::stretch::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Stretch(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                // stretchclip=TRACK,SCENE,FACTOR, reverseclip=, droneclip=, resampleclip=TRACK,SCENE:
+                // the clip tools on a session clip.
+                "stretchclip" | "reverseclip" | "droneclip" | "resampleclip" if nums.len() >= 2 => {
+                    use crate::clip_tools::ClipTool;
+                    let sel = ClipSel::Slot { track: nums[0], scene: nums[1] };
+                    let tool = match name {
+                        "stretchclip" => ClipTool::Stretch(arg.split(',').nth(2).and_then(|v| v.trim().parse().ok()).unwrap_or(4.0)),
+                        "reverseclip" => ClipTool::Reverse,
+                        "droneclip" => ClipTool::Drone(self.clip_ref(sel).map(|c| c.length * 0.5).unwrap_or(0.0)),
+                        _ => ClipTool::Resample,
+                    };
+                    self.start_clip_job(sel, tool);
+                }
+                "stretchdialog" if nums.len() == 2 => self.stretch_custom = Some((ClipSel::Slot { track: nums[0], scene: nums[1] }, 20.0)),
+                // stretchload=PATH: the selected track's Stretch stretches that sample.
+                "stretchload" => match krabton_engine::SampleRef::load(std::path::Path::new(arg.trim())) {
+                    Ok(smp) => {
+                        if let TrackSel::Track(t) = self.sel_track {
+                            if let Some(Instrument::Stretch { sample, .. }) = self.project.tracks.get_mut(t).and_then(|t| t.instrument.as_mut()) {
+                                *sample = Some(smp);
+                            }
+                        }
+                    }
+                    Err(e) => eprintln!("stretchload: {e}"),
+                },
                 // keytone=N: a new track with Keytone preset N.
                 "keytone" => {
                     let names = krabton_engine::dsp::keytone::preset_names();
@@ -4491,6 +4542,33 @@ impl App {
                     }
                     self.detail = DetailTab::Devices;
                 }
+                // looper=pedal|record|overdub|play|stop|clear|undo|redo|multiply|toclip|state:
+                // the first Looper on the selected track (or in the set).
+                "looper" => {
+                    use krabton_engine::dsp::fx::looper::LoopAction as A;
+                    let action = match arg.trim() {
+                        "record" => Some(A::Record),
+                        "overdub" => Some(A::Overdub),
+                        "play" => Some(A::Play),
+                        "stop" => Some(A::Stop),
+                        "clear" => Some(A::Clear),
+                        "undo" => Some(A::Undo),
+                        "redo" => Some(A::Redo),
+                        "multiply" => Some(A::Multiply),
+                        "toclip" | "state" => None,
+                        _ => Some(A::Pedal),
+                    };
+                    let dev = self.project.all_devices().find(|d| d.kind == krabton_engine::dsp::effects::EffectKind::Looper).map(|d| d.id);
+                    match (action, dev) {
+                        (Some(a), Some(_)) => self.looper_key(a),
+                        (None, Some(d)) if arg.trim() == "toclip" => self.looper_to_clip(d),
+                        (None, Some(d)) => {
+                            let m = self.looper_memory(d);
+                            println!("looper: {:?} len {} layers {}", self.looper_state(d), m.as_ref().map_or(0, |m| m.len.load(Ordering::Relaxed)), m.as_ref().map_or(0, |m| m.layers.load(Ordering::Relaxed)));
+                        }
+                        _ => eprintln!("no Looper in the set"),
+                    }
+                }
                 "clip" if nums.len() == 2 => self.select_clip(ClipSel::Slot { track: nums[0], scene: nums[1] }),
                 "s2a" => {
                     self.project.scenes_to_arrangement();
@@ -4586,6 +4664,7 @@ impl App {
                     let path = std::path::Path::new(arg);
                     if let (Some(dir), Some(stem)) = (path.parent(), path.file_stem()) {
                         self.tape_save(dir, &stem.to_string_lossy());
+                        self.looper_save(dir, &stem.to_string_lossy());
                     }
                     self.project.save(path)
                 } {
@@ -4712,6 +4791,7 @@ impl eframe::App for App {
         self.poll_recording();
         self.tape_frame();
         self.poll_export();
+        self.poll_clip_jobs();
         self.poll_imports();
         // Controllers (and in Big Picture the keyboard) speak through the same actions.
         // While a ring plays the left stick, it does not move the cursor.
