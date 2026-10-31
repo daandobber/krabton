@@ -28,6 +28,7 @@ pub mod move_panel;
 pub mod modulation;
 pub mod mono101_view;
 pub mod composers_view;
+pub mod convert;
 pub mod masters_view;
 pub mod mechanical_view;
 pub mod minimal_view;

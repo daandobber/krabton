@@ -1400,6 +1400,8 @@ impl Engine {
         let (rec_tx, rec_rx) = bounded(4096);
         let (midi_rec_tx, midi_rec_rx) = bounded(4096);
         let (midi_out_tx, midi_out_rx) = bounded(16384);
+        // The grooves made in code, made here, not on the audio thread.
+        crate::groove::built_in();
         let epoch = Instant::now();
         let status = Arc::new(EngineStatus::new());
         status.sample_rate.store(sample_rate);
@@ -2236,7 +2238,7 @@ impl Engine {
                     match &clip.content {
                         ClipContent::Midi { notes } => {
                             let catch_up = (*lead_until - (t0 + lead)).abs() > 1e-6;
-                            collect_notes(notes, clip.length, start, start, f64::INFINITY, t0, t1, tspb, seg, Clock::Session, events, offs, (lead, catch_up));
+                            collect_notes(notes, project.feel(clip).as_ref(), clip.length, start, start, f64::INFINITY, t0, t1, tspb, seg, Clock::Session, events, offs, (lead, catch_up));
                             *lead_until = t1 + lead;
                         }
                         ClipContent::Audio(a) => {
@@ -2262,6 +2264,7 @@ impl Engine {
                         match &ac.clip.content {
                             ClipContent::Midi { notes } => collect_notes(
                                 notes,
+                                project.feel(&ac.clip).as_ref(),
                                 ac.clip.length,
                                 origin,
                                 ac.start,
@@ -2927,10 +2930,12 @@ fn apply_gain_ramp(l: &mut [f32], r: &mut [f32], gl: &mut f32, gr: &mut f32, tl:
 /// Schedules note-ons (and their note-offs) of a looping MIDI clip that fall
 /// inside the window `[w0, w1)` on the given clock. `lead` (beats) sends them
 /// that much early, the window moved ahead (from `w0` itself when it has to
-/// catch up, after a start or a jump); their lyrics go with them.
+/// catch up, after a start or a jump); their lyrics go with them. With a
+/// groove (`feel`) each note plays where and as loud as it puts it.
 #[allow(clippy::too_many_arguments)]
 fn collect_notes(
     notes: &[Note],
+    feel: Option<&crate::groove::Feel>,
     len: f64,
     origin: f64,
     region_start: f64,
@@ -2962,16 +2967,20 @@ fn collect_notes(
             if !n.plays_on_loop(k) || (n.chance < 1.0 && crate::project::note_random(k, idx, n, 1) >= n.chance) {
                 continue;
             }
-            let vel = if n.vel_spread > 0.0 {
-                (n.velocity + n.vel_spread * (crate::project::note_random(k, idx, n, 2) * 2.0 - 1.0)).clamp(0.02, 1.0)
-            } else {
-                n.velocity
+            let (start, velocity) = match feel {
+                Some(f) => f.place(n, idx, k, len),
+                None => (n.start, n.velocity),
             };
-            let full = n.length.min(len - n.start).max(0.001);
+            let vel = if n.vel_spread > 0.0 {
+                (velocity + n.vel_spread * (crate::project::note_random(k, idx, n, 2) * 2.0 - 1.0)).clamp(0.02, 1.0)
+            } else {
+                velocity
+            };
+            let full = n.length.min(len - start).max(0.001);
             let reps = n.repeats.max(1) as usize;
             let step = full / reps as f64;
             for r in 0..reps {
-                let t = base + n.start + r as f64 * step;
+                let t = base + start + r as f64 * step;
                 if t < lo || t >= hi {
                     continue;
                 }
@@ -3074,7 +3083,7 @@ mod tests {
         n.lyric = "ka".into();
         let (mut events, mut offs) = (Vec::new(), Vec::new());
         // Half a beat ahead: the window [0.5, 0.75) reaches the note at 1.
-        collect_notes(std::slice::from_ref(&n), 4.0, 0.0, 0.0, 1e9, 0.5, 0.75, 4800.0, 1200, Clock::Session, &mut events, &mut offs, (0.5, false));
+        collect_notes(std::slice::from_ref(&n), None, 4.0, 0.0, 0.0, 1e9, 0.5, 0.75, 4800.0, 1200, Clock::Session, &mut events, &mut offs, (0.5, false));
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].lyric.as_str(), "ka");
         assert!(events[0].lyric.early && events[0].offset == 0);
@@ -3082,11 +3091,11 @@ mod tests {
         // After a jump it catches up from where the window starts.
         events.clear();
         offs.clear();
-        collect_notes(std::slice::from_ref(&n), 4.0, 0.0, 0.0, 1e9, 0.9, 1.0, 4800.0, 480, Clock::Session, &mut events, &mut offs, (0.5, true));
+        collect_notes(std::slice::from_ref(&n), None, 4.0, 0.0, 0.0, 1e9, 0.9, 1.0, 4800.0, 480, Clock::Session, &mut events, &mut offs, (0.5, true));
         assert_eq!(events.len(), 1, "the note at 1 is not lost");
         // Without a lead nothing changes.
         events.clear();
-        collect_notes(std::slice::from_ref(&n), 4.0, 0.0, 0.0, 1e9, 0.5, 0.75, 4800.0, 1200, Clock::Session, &mut events, &mut offs, (0.0, false));
+        collect_notes(std::slice::from_ref(&n), None, 4.0, 0.0, 0.0, 1e9, 0.5, 0.75, 4800.0, 1200, Clock::Session, &mut events, &mut offs, (0.0, false));
         assert!(events.is_empty());
     }
 
@@ -3100,13 +3109,74 @@ mod tests {
         let mut t = 0.0;
         while t < loops as f64 * len {
             events.clear();
-            collect_notes(std::slice::from_ref(&n), len, 0.0, 0.0, 1e9, t, t + w, 4800.0, 300, Clock::Session, &mut events, &mut offs, (0.0, false));
+            collect_notes(std::slice::from_ref(&n), None, len, 0.0, 0.0, 1e9, t, t + w, 4800.0, 300, Clock::Session, &mut events, &mut offs, (0.0, false));
             for e in &events {
                 out.push((t + e.offset as f64 / 4800.0, e.vel));
             }
             t += w;
         }
         out
+    }
+
+    /// The note-ons of a clip of `notes`, `len` beats long, over `loops`
+    /// rounds (beat and velocity), with a groove's feel or without.
+    fn clip_ons(notes: &[Note], feel: Option<&crate::groove::Feel>, len: f64, loops: i64) -> Vec<(f64, f32)> {
+        let (mut events, mut offs) = (Vec::new(), Vec::new());
+        let mut out = Vec::new();
+        let w = 1.0 / 32.0;
+        let mut t = 0.0;
+        while t < loops as f64 * len {
+            events.clear();
+            collect_notes(notes, feel, len, 0.0, 0.0, 1e9, t, t + w, 4800.0, 150, Clock::Session, &mut events, &mut offs, (0.0, false));
+            out.extend(events.iter().map(|e| (t + e.offset as f64 / 4800.0, e.vel)));
+            t += w;
+        }
+        out.sort_by(|a, b| a.0.total_cmp(&b.0));
+        out
+    }
+
+    #[test]
+    fn a_groove_moves_what_plays_and_commit_writes_it_in() {
+        use crate::groove::{commit, ClipGroove};
+        let mut p = Project::blank();
+        let notes: Vec<Note> = (0..16).map(|k| Note::new(42, k as f64 * 0.25, 0.1, 0.8)).collect();
+        let mut clip = Clip::new_midi(1, "Hats", [0, 0, 0], 4.0);
+        clip.content = ClipContent::Midi { notes: notes.clone() };
+        let close = |a: f64, b: f64| (a - b).abs() < 1.5 / 4800.0;
+        // No groove: on the grid.
+        let ons = clip_ons(&notes, p.feel(&clip).as_ref(), 4.0, 2);
+        assert_eq!(ons.len(), 32);
+        assert!(ons.iter().enumerate().all(|(k, o)| close(o.0, k as f64 * 0.25)), "{ons:?}");
+        // A swing at none, half and all of it: the second sixteenths later by as much.
+        for amount in [0.0, 0.5, 1.0] {
+            clip.groove = Some(ClipGroove { timing: amount, ..ClipGroove::new("Swing 16ths 66%") });
+            let ons = clip_ons(&notes, p.feel(&clip).as_ref(), 4.0, 2);
+            assert_eq!(ons.len(), 32);
+            for (k, o) in ons.iter().enumerate() {
+                let want = k as f64 * 0.25 + if k % 2 == 1 { 0.08 * amount } else { 0.0 };
+                assert!(close(o.0, want), "{amount}: note {k} at {} not {want}", o.0);
+            }
+        }
+        // Commit: the notes written where they played, played without it, play the same.
+        clip.groove = Some(ClipGroove { timing: 0.7, velocity: 1.0, random: 0.0, ..ClipGroove::new("Laid Back") });
+        let grooved = clip_ons(&notes, p.feel(&clip).as_ref(), 4.0, 1);
+        let mut written = notes.clone();
+        commit(&mut written, &p.feel(&clip).unwrap(), 4.0);
+        let after = clip_ons(&written, None, 4.0, 1);
+        assert_eq!(grooved.len(), after.len());
+        for (a, b) in grooved.iter().zip(&after) {
+            assert!(close(a.0, b.0) && (a.1 - b.1).abs() < 1e-6, "{a:?} {b:?}");
+        }
+        assert!(grooved.iter().any(|o| o.1 < 0.7), "the soft sixteenths: {grooved:?}");
+        // A groove of the pool, by name; gone from it, the notes play straight.
+        let mut own = crate::groove::Groove::swing("Mine", 0.25, 75.0);
+        own.steps[2].shift = 0.03;
+        p.grooves.push(own);
+        clip.groove = Some(ClipGroove::new("Mine"));
+        let ons = clip_ons(&notes, p.feel(&clip).as_ref(), 4.0, 1);
+        assert!(close(ons[1].0, 0.375) && close(ons[2].0, 0.53), "{ons:?}");
+        p.grooves.clear();
+        assert!(p.feel(&clip).is_none());
     }
 
     #[test]
