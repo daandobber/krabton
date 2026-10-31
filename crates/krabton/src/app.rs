@@ -524,6 +524,9 @@ pub struct App {
     pub sel_zone: usize,
     pub pending_pad_hit: Option<u8>,
     sample_cache: HashMap<PathBuf, SampleRef>,
+    /// Files dragged in from outside, and audio files being read in the
+    /// background (see `import`).
+    pub(crate) imports: crate::import::Imports,
 
     pub renaming: Option<(RenameTarget, String)>,
     pub export: ExportDialog,
@@ -710,6 +713,7 @@ impl App {
             sel_zone: 0,
             pending_pad_hit: None,
             sample_cache: HashMap::new(),
+            imports: Default::default(),
             renaming: None,
             export: ExportDialog { open: false, source: ExportSource::Scene, scene: 0, bars: 8, sample_rate: 44100 },
             export_job: None,
@@ -1090,6 +1094,20 @@ impl App {
             self.sel_clip = None;
             self.validate_selection();
         }
+    }
+
+    /// A sample read before, if it was.
+    pub(crate) fn cached_sample(&self, path: &Path) -> Option<SampleRef> {
+        self.sample_cache.get(path).cloned()
+    }
+
+    pub(crate) fn sample_cached(&self, path: &Path) -> bool {
+        self.sample_cache.contains_key(path)
+    }
+
+    /// A sample read elsewhere (in the background), kept for next time.
+    pub(crate) fn remember_sample(&mut self, path: &Path, s: &SampleRef) {
+        self.sample_cache.insert(path.to_path_buf(), s.clone());
     }
 
     pub fn load_sample(&mut self, path: &Path) -> Option<SampleRef> {
@@ -1560,6 +1578,11 @@ impl App {
                 }
             }
             BrowserItem::Sample(path) => {
+                // A long file (a whole song) is read in the background first.
+                if self.slow_to_load(path) {
+                    self.load_then_apply(item, target);
+                    return;
+                }
                 let Some(sample) = self.load_sample(path) else { return };
                 let bpm = self.project.bpm;
                 match target {
@@ -3643,6 +3666,16 @@ impl App {
                 }
                 // midifile=PATH: a MIDI file as if double-clicked in the browser.
                 "midifile" => self.apply_item(&BrowserItem::MidiFile(PathBuf::from(arg.trim())), DropTarget::NewTrack),
+                // dropfile=PATH|PATH@X,Y: files dropped from the desktop at that point
+                // (in UI points), as if from Explorer; hoverfile=PATH@X,Y holds them
+                // there (until a drop, or hoverfile with nothing).
+                "dropfile" | "hoverfile" => {
+                    let (paths, at) = arg.rsplit_once('@').unwrap_or((arg, "0,0"));
+                    let xy: Vec<f32> = at.split(',').filter_map(|v| v.trim().parse().ok()).collect();
+                    let files: Vec<PathBuf> = paths.split('|').map(|p| PathBuf::from(p.trim())).filter(|p| !p.as_os_str().is_empty()).collect();
+                    let pos = egui::pos2(xy.first().copied().unwrap_or(0.0), xy.get(1).copied().unwrap_or(0.0));
+                    self.imports.script = (!files.is_empty()).then_some((files, pos, name == "dropfile"));
+                }
                 // toclip=DEVICE,BARS: the selected track's MIDI device's To Clip.
                 "toclip" if nums.len() == 2 => {
                     if let TrackSel::Track(t) = self.sel_track {
@@ -4473,6 +4506,7 @@ impl eframe::App for App {
             println!("ppp {} screen {:?}", ctx.pixels_per_point(), ctx.screen_rect());
         }
         self.run_script();
+        self.file_drag_frame(ctx);
         if let Some(z) = self.script_zoom.take() {
             ctx.set_zoom_factor(z);
         }
@@ -4501,6 +4535,7 @@ impl eframe::App for App {
         self.poll_recording();
         self.tape_frame();
         self.poll_export();
+        self.poll_imports();
         // Controllers (and in Big Picture the keyboard) speak through the same actions.
         // While a ring plays the left stick, it does not move the cursor.
         let page = self.big.page;
@@ -4541,6 +4576,7 @@ impl eframe::App for App {
         if self.big.on {
             self.ui_big(ctx, pad_input);
             self.ui_dialogs(ctx);
+            self.file_drop_frame(ctx);
             self.apply_deferred();
             self.sync(ctx);
             self.update_title(ctx);
@@ -4650,6 +4686,7 @@ impl eframe::App for App {
         self.move_hud(ctx);
         self.ui_dialogs(ctx);
         self.draw_drag_ghost(ctx);
+        self.file_drop_frame(ctx);
         self.apply_deferred();
 
         self.sync(ctx);

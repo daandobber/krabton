@@ -72,8 +72,8 @@ pub(crate) fn panel(ui: &mut Ui, id: Id, preset: &mut String, params: &mut Vec<f
                 }
             });
         }
-        if ui.button("Load sample...").on_hover_text("A short WAV or FLAC for the user slot (Sound: Sample), crushed to 8 bits at the toy's rate as it plays (or drop one on the keyboard)").clicked() {
-            if let Some(path) = rfd::FileDialog::new().add_filter("Samples", &["wav", "flac", "WAV", "FLAC"]).pick_file() {
+        if ui.button("Load sample...").on_hover_text("A short WAV, FLAC, MP3 or AIFF for the user slot (Sound: Sample), crushed to 8 bits at the toy's rate as it plays (or drop one on the keyboard)").clicked() {
+            if let Some(path) = crate::import::audio_file_dialog().pick_file() {
                 load(&path, sample, params);
             }
         }

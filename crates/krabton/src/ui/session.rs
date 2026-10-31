@@ -1,6 +1,7 @@
 //! Session view: the clip launcher grid, scene launchers and the mixer.
 
 use crate::app::{App, ArrClipDrag, BrowserItem, ClipSel, Deferred, DropTarget, RenameTarget, SlotDrag, TrackSel};
+use crate::import::FileTarget;
 use crate::theme::*;
 use crate::widgets::*;
 use egui::{pos2, vec2, Align2, Id, Rect, Sense, Stroke, Ui, UiBuilder};
@@ -329,6 +330,7 @@ impl App {
         if let Some(item) = drop_payload::<BrowserItem>(&resp) {
             self.apply_item(&item, DropTarget::Track(i));
         }
+        self.file_over(p, r, FileTarget::Track(i));
         if resp.clicked() {
             let ctrl = ui.input(|k| k.modifiers.ctrl || k.modifiers.command);
             self.click_track(i, ctrl);
@@ -511,6 +513,8 @@ impl App {
             self.apply_item(&item, DropTarget::Slot { track: i, scene: s });
             return;
         }
+        // Files from the desktop: this slot and the ones below it.
+        self.file_over(&p, r, FileTarget::Slot { track: i, scene: s });
 
         let track_id = self.project.tracks[i].id;
         if resp.clicked() {
@@ -549,6 +553,10 @@ impl App {
         }
         if resp.double_clicked() && clip_info.is_none() && kind == TrackKind::Midi {
             self.create_midi_clip(i, s);
+        }
+        // An empty audio slot asks for a file.
+        if resp.double_clicked() && clip_info.is_none() && kind == TrackKind::Audio && !in_tri && take.is_none() {
+            self.load_audio_dialog(FileTarget::Slot { track: i, scene: s });
         }
         let sel = ClipSel::Slot { track: i, scene: s };
         resp.context_menu(|ui| {
@@ -599,6 +607,10 @@ impl App {
                 if kind == TrackKind::Midi && ui.button("Insert MIDI Clip").clicked() {
                     self.create_midi_clip(i, s);
                     ui.close();
+                }
+                if kind == TrackKind::Audio && ui.button("Load Audio File...").on_hover_text("WAV, FLAC, MP3 or AIFF (several go into the slots below); or drop files here from the desktop").clicked() {
+                    ui.close();
+                    self.load_audio_dialog(FileTarget::Slot { track: i, scene: s });
                 }
                 if kind == TrackKind::Midi && ui.button("Import MIDI File...").clicked() {
                     ui.close();
@@ -659,6 +671,7 @@ impl App {
         if let Some(item) = drop_payload::<BrowserItem>(&resp) {
             self.apply_item(&item, DropTarget::NewTrack);
         }
+        self.file_over(p, r, FileTarget::NewTrack { beat: None });
         if resp.double_clicked() {
             self.add_midi_track(Some(krabton_engine::Instrument::synth("Init")));
         }
@@ -670,6 +683,10 @@ impl App {
             if ui.button("Add Audio Track").clicked() {
                 self.add_audio_track();
                 ui.close();
+            }
+            if ui.button("Import Audio...").on_hover_text("WAV, FLAC, MP3 or AIFF files as clips on a new audio track").clicked() {
+                ui.close();
+                self.load_audio_dialog(FileTarget::NewTrack { beat: None });
             }
         });
     }
@@ -741,6 +758,7 @@ impl App {
         if let Some(item) = drop_payload::<BrowserItem>(&bg) {
             self.apply_item(&item, DropTarget::Track(i));
         }
+        self.file_over(&p, r, FileTarget::Track(i));
 
         // Sends (left out when the mixer is short).
         let compact = r.height() < COMPACT_BELOW;

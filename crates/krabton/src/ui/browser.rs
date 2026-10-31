@@ -15,6 +15,7 @@ use krabton_engine::dsp::dx7::{self, Dx7Voice};
 use krabton_engine::dsp::effects::EffectKind;
 use krabton_engine::dsp::{analog, braids_synth, drums, elements_synth, macro_osc, shaker_synth, synth, stk_voice, stk_mallets, stk_strings, stk_winds, organ, rings_synth};
 use krabton_engine::midi_fx::MidiFxKind;
+use krabton_engine::sample::is_audio_file;
 use krabton_engine::{Command, SampleRef};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -235,6 +236,8 @@ pub struct BrowserState {
     /// Play samples when they are selected.
     pub preview: bool,
     preview_sample: Option<SampleRef>,
+    /// A long sample being read for the preview.
+    preview_wait: Option<PathBuf>,
     music: Option<PathBuf>,
 }
 
@@ -260,6 +263,7 @@ impl BrowserState {
             scroll_top: false,
             preview: true,
             preview_sample: None,
+            preview_wait: None,
             music,
         }
     }
@@ -281,7 +285,8 @@ fn file_tag(p: &Path) -> String {
     format!("file/{}", p.display())
 }
 
-/// Subfolders, WAVs and DX7 banks in `dir`: folders first, then by name.
+/// Subfolders, audio files (WAV, FLAC, MP3, AIFF), instruments, MIDI files
+/// and banks in `dir`: folders first, then by name.
 fn list_dir(dir: &Path) -> Vec<(PathBuf, bool)> {
     let mut v = Vec::new();
     if let Ok(rd) = std::fs::read_dir(dir) {
@@ -292,7 +297,7 @@ fn list_dir(dir: &Path) -> Vec<(PathBuf, bool)> {
                 continue;
             }
             let is_dir = path.is_dir();
-            if is_dir || ["wav", "flac", "syx", "sfz", "mid", "midi", "sf2"].iter().any(|x| has_ext(&path, x)) {
+            if is_dir || is_audio_file(&path) || ["syx", "sfz", "mid", "midi", "sf2"].iter().any(|x| has_ext(&path, x)) {
                 v.push((path, is_dir));
             }
         }
@@ -455,7 +460,7 @@ fn devices() -> [Dev; 49] {
         Dev { name: "Soloists", hint: "Real instruments, recorded solo, from free libraries: a solo cello (sustained, staccato, pizzicato), an upright bass (pizzicato, arco), soprano, alto, tenor and baritone saxophones, an electric guitar, a banjo, a medieval lyre (finger, nail, muted, sul tasto), an erhu, steel drums, bagpipes, an electric bass, and three electric pianos (an electric grand, a reed piano and a pluck piano). Dynamics swells held notes through their recorded layers; Legato joins them. Each instrument downloads once, the first time", presets: krabton_engine::orchestra::SOLOIST_NAMES, make: BrowserItem::Orchestra, kind: None },
         Dev { name: "Beads", hint: "The wavetable synth of Mutable Instruments Beads, played with keys: twelve banks of waves (sines, drawbars, voices, metal, FM and more), and grains of them seeded while you hold a key (or always, or with the song's clock), each randomized in wave, size, shape and pitch, with Beads' reverb and its tape and lo-fi qualities", presets: krabton_engine::dsp::beads_synth::preset_names(), make: BrowserItem::BeadsSynth, kind: None },
         Dev { name: "Theremin", hint: "Played without touching it: two radio oscillators beating, from nearly a sine to the reedy, nasal voice of the kit theremins (Waveform), through a tone filter and a formant. One voice, always gliding, swelling in and out (Attack, Release), with the player's vibrato after a delay and a hand that is never quite still. Play it in its field with the mouse or a finger: right is higher, up is louder; Snap pulls the hand onto the song's key", presets: krabton_engine::dsp::theremin::preset_names(), make: BrowserItem::Theremin, kind: None },
-        Dev { name: "Granulator", hint: "Plays a sample as clouds of grains, a cloud for every key held: where the grains come from (Position, drag it on the sample), how far they spray about it, how long they are (1 ms to 2 s), how many come a second or on the beat, their pitch from the keys with a spray and octave jumps, some backwards, under five windows, spread over the stereo field. The place can scan forward, backward, to and fro or along while a key is held (a time stretch), or freeze. An envelope per key, a tone tilt, a smear and a reverb. Drop a WAV or FLAC on it, or play its own pad, choir, bells or breath", presets: krabton_engine::dsp::granulator::preset_names(), make: BrowserItem::Granulator, kind: None },
+        Dev { name: "Granulator", hint: "Plays a sample as clouds of grains, a cloud for every key held: where the grains come from (Position, drag it on the sample), how far they spray about it, how long they are (1 ms to 2 s), how many come a second or on the beat, their pitch from the keys with a spray and octave jumps, some backwards, under five windows, spread over the stereo field. The place can scan forward, backward, to and fro or along while a key is held (a time stretch), or freeze. An envelope per key, a tone tilt, a smear and a reverb. Drop a WAV, FLAC, MP3 or AIFF on it, or play its own pad, choir, bells or breath", presets: krabton_engine::dsp::granulator::preset_names(), make: BrowserItem::Granulator, kind: None },
         Dev { name: "Keytone", hint: "A toy sampling keyboard of the mid-eighties: sixteen sounds as short 8-bit samples at 9.4 kHz (piano, trumpet, pipe organ, a voice singing ah, flute, brass ensemble, synth drum, jazz organ, strings, vibes, glockenspiel, synth bass, marimba, harpsichord, accordion, clarinet), stepped through with no filter, eight voices into an 8-bit converter: the aliasing and the grain are the sound. Its envelopes, sustain, vibrato and portamento; Rate and Bits from crushed to clean. Load a short WAV into the user slot and it is crushed the same way. Its drums are the Keytone Drums, its rhythms Home Rhythms", presets: krabton_engine::dsp::keytone::preset_names(), make: BrowserItem::Keytone, kind: None },
         Dev { name: "Analog Princess", hint: "A drum machine for deep-fried pluggnb: twelve tracks (an 808 put into another 808 that rings it or pushes its pitch around, a clipped kick, a plugg snare, a ring clap, crispy hats, rim, perc, the plugg bell, laser, channel surfing static and a subliminal shadow), each with its own tune, decay, drop in pitch, drive, clip, ring, crusher, filter, room, pan and choke. A step sequencer of its own on the song's transport: patterns A to H of 16, 32 or 64 steps, per step velocity, accent, hat rolls and ramps, flams, chance, the 808's notes (in the song's key) and slides; swing, chains, a length per track. Then the FRY section: drive, clip into the ceiling, bits, downsample, ring, pump under the kick, stutter, tape stop and channel surfing, all at once with Deep Fry. It also plays from notes (the 808 on the keys below the drums)", presets: krabton_engine::dsp::princess_machine::preset_names(), make: BrowserItem::Princess, kind: None },
     ]
@@ -1041,7 +1046,7 @@ impl App {
                 let voicebank = !samples_only && path.join("oto.ini").is_file();
                 let (icon, hint, load) = if voicebank { (Icon::Device, "UTAU voicebank: double-click or drag onto a track to sing with it".to_string(), Some(BrowserItem::Voicebank(path.clone()))) } else { (Icon::Folder, String::new(), None) };
                 out.push(Node::Folder { tag: Some(dir_tag(&path)), label: name, icon, hint, load, kids: Kids::Dir { path, samples_only } });
-            } else if has_ext(&path, "wav") || has_ext(&path, "flac") {
+            } else if is_audio_file(&path) {
                 out.push(Node::item(file_tag(&path), name, Icon::Sample, SAMPLE_HINT, BrowserItem::Sample(path)));
             } else if has_ext(&path, "sfz") {
                 out.push(Node::item(file_tag(&path), name, Icon::Device, "SFZ instrument: double-click or drag onto a track to play it with the Sampler", BrowserItem::SamplerPatch(path)));
@@ -1429,7 +1434,11 @@ impl App {
                     }
                 }
                 None => {
-                    p.text(r.center(), Align2::CENTER_CENTER, "Select a sample to hear it", small(), TEXT_DIM);
+                    let note = match &self.browser.preview_wait {
+                        Some(path) => format!("Loading {}...", file_name(path)),
+                        None => "Select a sample to hear it".into(),
+                    };
+                    p.text(r.center(), Align2::CENTER_CENTER, note, small(), TEXT_DIM);
                 }
             }
         });
@@ -1444,6 +1453,7 @@ impl App {
             UiAct::Select(id) => {
                 self.browser.selected = Some(id);
                 self.browser.preview_sample = None;
+                self.browser.preview_wait = None;
                 self.browser.focused = true;
             }
             UiAct::Toggle(row) => self.browser_toggle(&row),
@@ -1498,13 +1508,27 @@ impl App {
         }
     }
 
-    /// A sample was selected: show it, and play it when previewing.
+    /// A sample was selected: show it, and play it when previewing. A long
+    /// one (a song) is read in the background first.
     fn browser_sample(&mut self, path: &Path) {
+        if self.slow_to_load(path) {
+            self.browser.preview_wait = Some(path.to_path_buf());
+            self.load_for_preview(path);
+            return;
+        }
+        self.browser.preview_wait = None;
         if let Some(s) = self.load_sample(path) {
             if self.browser.preview {
                 self.cmd(Command::Preview(Some(s.clone())));
             }
             self.browser.preview_sample = Some(s);
+        }
+    }
+
+    /// A sample read for the preview is here: shown, if it is still the one selected.
+    pub(crate) fn browser_sample_ready(&mut self, path: &Path) {
+        if self.browser.preview_wait.as_deref() == Some(path) {
+            self.browser_sample(path);
         }
     }
 
@@ -1583,6 +1607,7 @@ impl App {
             app.browser.selected = Some(rows[i].id.clone());
             app.browser.scroll_to_selected = true;
             app.browser.preview_sample = None;
+            app.browser.preview_wait = None;
             if let RowKind::Item(BrowserItem::Sample(p)) = &rows[i].kind {
                 app.browser_sample(p);
             }

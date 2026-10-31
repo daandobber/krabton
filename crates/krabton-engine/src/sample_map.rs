@@ -476,7 +476,7 @@ pub struct LoadedZones {
 }
 
 pub fn is_audio(p: &Path) -> bool {
-    p.extension().is_some_and(|e| e.eq_ignore_ascii_case("wav") || e.eq_ignore_ascii_case("flac"))
+    crate::sample::is_audio_file(p)
 }
 
 pub fn is_sfz(p: &Path) -> bool {
