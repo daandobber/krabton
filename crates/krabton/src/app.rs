@@ -537,6 +537,8 @@ pub struct App {
     pub export: ExportDialog,
     /// Slice to New MIDI Track, while its dialog is open.
     pub slicing: Option<crate::ui::slice_dialog::SliceDialog>,
+    /// Convert to MIDI under way, and how it is asked (see `ui::convert`).
+    pub convert: crate::ui::convert::ConvertState,
     pub export_job: Option<ExportJob>,
     pub show_about: bool,
     /// The clip Ctrl+C put away.
@@ -744,6 +746,7 @@ impl App {
             renaming: None,
             export: ExportDialog { open: false, source: ExportSource::Scene, scene: 0, bars: 8, sample_rate: 44100 },
             slicing: None,
+            convert: Default::default(),
             export_job: None,
             show_about: false,
             clipboard: None,
@@ -3637,6 +3640,8 @@ impl App {
             let (name, arg) = action.split_once('=').unwrap_or((action.as_str(), ""));
             let nums: Vec<usize> = arg.split(',').filter_map(|v| v.trim().parse().ok()).collect();
             match name {
+                // Convert to MIDI and grooves (see `ui::convert`).
+                _ if self.convert_script(name, arg) => {}
                 "scene" => self.cmd(Command::LaunchScene(nums.first().copied().unwrap_or(0))),
                 // chain=TRACK: prints its instrument and effects (to check by script).
                 "chain" => {

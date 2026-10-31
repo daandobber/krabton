@@ -392,6 +392,7 @@ impl App {
                         self.piano_quantize();
                     }
                 });
+                self.groove_controls(ui, sel, clip);
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Grid").small().color(TEXT_DIM));
                     let grids = [(1.0, "1/4"), (0.5, "1/8"), (0.25, "1/16"), (0.125, "1/32"), (1.0 / 3.0, "1/8T"), (1.0 / 6.0, "1/16T")];

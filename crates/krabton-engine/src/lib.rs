@@ -11,6 +11,7 @@ pub mod demo;
 pub mod dsp;
 pub mod engine;
 pub mod ffmpeg;
+pub mod groove;
 pub mod midi_file;
 pub mod midi_fx;
 pub mod midi_tools;
@@ -35,6 +36,7 @@ pub mod singer;
 pub mod slicing;
 pub mod hyper;
 pub mod tape;
+pub mod to_midi;
 pub mod video;
 pub mod warp;
 

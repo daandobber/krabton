@@ -1368,6 +1368,7 @@ impl App {
                 }
                 self.clip_tools_menu(ui, sel);
             }
+            self.convert_menu(ui, sel);
             if ui.button("Delete         Del").clicked() {
                 self.delete_clip(sel);
                 ui.close();

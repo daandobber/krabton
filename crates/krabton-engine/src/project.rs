@@ -433,6 +433,10 @@ pub struct Clip {
     /// into it). None: the track sounds as it does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sound: Option<Box<Sound>>,
+    /// A MIDI clip's groove (from the Groove Pool): its notes play with that
+    /// feel, where they are written (see `groove`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub groove: Option<crate::groove::ClipGroove>,
 }
 
 /// A track's sound: its MIDI effects, its instrument and its audio effects,
@@ -558,7 +562,7 @@ pub fn db_to_fader_pos(db: f32) -> f32 {
 
 impl Clip {
     pub fn new_midi(id: u64, name: impl Into<String>, color: Rgb, length: f64) -> Self {
-        Self { id, name: name.into(), color, length, content: ClipContent::Midi { notes: Vec::new() }, envelopes: Vec::new(), sound: None }
+        Self { id, name: name.into(), color, length, content: ClipContent::Midi { notes: Vec::new() }, envelopes: Vec::new(), sound: None, groove: None }
     }
 
     /// Creates an audio clip warped the way Live's auto-warp does it. A loop
@@ -615,7 +619,7 @@ impl Clip {
             }
             _ => audio.sample_beats(),
         };
-        Self { id, name: sample.name.clone(), color, length: length.max(0.25), content: ClipContent::Audio(audio), envelopes: Vec::new(), sound: None }
+        Self { id, name: sample.name.clone(), color, length: length.max(0.25), content: ClipContent::Audio(audio), envelopes: Vec::new(), sound: None, groove: None }
     }
 
     /// How long it plays before it repeats or ends, in beats: the loop, or
@@ -1744,6 +1748,10 @@ pub struct Project {
     /// music moves them. The engine ignores it.
     #[serde(default, skip_serializing_if = "crate::video::VideoSet::is_empty")]
     pub video: crate::video::VideoSet,
+    /// The Groove Pool: grooves taken from clips (Extract Groove), beside the
+    /// ones Krabton comes with, for MIDI clips to play with.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub grooves: Vec<crate::groove::Groove>,
 }
 
 /// A part of the song on the arranger track (Intro, Verse, Chorus...), as in
@@ -1802,6 +1810,7 @@ impl Project {
             folded: Default::default(),
             band: Default::default(),
             video: Default::default(),
+            grooves: Vec::new(),
         };
         let mut reverb = p.make_device(EffectKind::Reverb);
         reverb.params[5] = 1.0;
