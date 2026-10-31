@@ -415,6 +415,7 @@ impl App {
                 self.open_slice_dialog(sel);
                 ui.close();
             }
+            self.clip_tools_menu(ui, sel);
         });
         if wresp.hovered() {
             let (scroll, ctrl) = ui.input(|i| (i.smooth_scroll_delta, i.modifiers.ctrl || i.modifiers.command));

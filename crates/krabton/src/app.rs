@@ -570,6 +570,9 @@ pub struct App {
     pub(crate) tape_follow_sent: Option<Option<u64>>,
     /// Each Looper's loop as last written to a file (its version, the file).
     pub(crate) looper_files: std::collections::HashMap<u64, (u32, std::path::PathBuf)>,
+    /// Clips being stretched, reversed, frozen or resampled, and the box for a stretch of any size.
+    pub(crate) clip_jobs: Vec<crate::clip_tools::ClipJob>,
+    pub(crate) stretch_custom: Option<(ClipSel, f64)>,
     /// `shot=path`: where the next picture of the window goes, and whether
     /// it was asked for yet.
     shot: Option<(String, bool)>,
@@ -759,6 +762,8 @@ impl App {
             band: Default::default(),
             tape_follow_sent: None,
             looper_files: Default::default(),
+            clip_jobs: Vec::new(),
+            stretch_custom: None,
             shot: None,
             env_view: false,
             env_target: None,
@@ -4212,6 +4217,31 @@ impl App {
                     self.apply_item(&BrowserItem::Stretch(p), DropTarget::NewTrack);
                     self.detail = DetailTab::Devices;
                 }
+                // stretchclip=TRACK,SCENE,FACTOR, reverseclip=, droneclip=, resampleclip=TRACK,SCENE:
+                // the clip tools on a session clip.
+                "stretchclip" | "reverseclip" | "droneclip" | "resampleclip" if nums.len() >= 2 => {
+                    use crate::clip_tools::ClipTool;
+                    let sel = ClipSel::Slot { track: nums[0], scene: nums[1] };
+                    let tool = match name {
+                        "stretchclip" => ClipTool::Stretch(arg.split(',').nth(2).and_then(|v| v.trim().parse().ok()).unwrap_or(4.0)),
+                        "reverseclip" => ClipTool::Reverse,
+                        "droneclip" => ClipTool::Drone(self.clip_ref(sel).map(|c| c.length * 0.5).unwrap_or(0.0)),
+                        _ => ClipTool::Resample,
+                    };
+                    self.start_clip_job(sel, tool);
+                }
+                "stretchdialog" if nums.len() == 2 => self.stretch_custom = Some((ClipSel::Slot { track: nums[0], scene: nums[1] }, 20.0)),
+                // stretchload=PATH: the selected track's Stretch stretches that sample.
+                "stretchload" => match krabton_engine::SampleRef::load(std::path::Path::new(arg.trim())) {
+                    Ok(smp) => {
+                        if let TrackSel::Track(t) = self.sel_track {
+                            if let Some(Instrument::Stretch { sample, .. }) = self.project.tracks.get_mut(t).and_then(|t| t.instrument.as_mut()) {
+                                *sample = Some(smp);
+                            }
+                        }
+                    }
+                    Err(e) => eprintln!("stretchload: {e}"),
+                },
                 // keytone=N: a new track with Keytone preset N.
                 "keytone" => {
                     let names = krabton_engine::dsp::keytone::preset_names();
@@ -4761,6 +4791,7 @@ impl eframe::App for App {
         self.poll_recording();
         self.tape_frame();
         self.poll_export();
+        self.poll_clip_jobs();
         self.poll_imports();
         // Controllers (and in Big Picture the keyboard) speak through the same actions.
         // While a ring plays the left stick, it does not move the cursor.
