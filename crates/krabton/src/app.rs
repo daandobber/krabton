@@ -189,6 +189,8 @@ pub enum BrowserItem {
     Keytone(&'static str),
     /// An Analog Princess preset (the machine).
     Princess(&'static str),
+    /// A Stretch preset.
+    Stretch(&'static str),
 }
 
 /// A bank of DX7 voices for FM.
@@ -269,6 +271,7 @@ impl BrowserItem {
             BrowserItem::Granulator(p) => format!("Granulator: {p}"),
             BrowserItem::Keytone(p) => format!("Keytone: {p}"),
             BrowserItem::Princess(p) => format!("Analog Princess: {p}"),
+            BrowserItem::Stretch(p) => format!("Stretch: {p}"),
         }
     }
 }
@@ -1297,7 +1300,7 @@ impl App {
                 }
                 self.toast(format!("Loading {} ...", info.name));
             }
-            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::StreetOrgan(_) | BrowserItem::Harmonica(_) | BrowserItem::Calculator(_) | BrowserItem::Console(_) | BrowserItem::Handheld(_) | BrowserItem::Micro(_) | BrowserItem::Warp(_) | BrowserItem::Hybrid(_) | BrowserItem::Quartet(_) | BrowserItem::ChipFm(_) | BrowserItem::V2(_) | BrowserItem::Oidos(_) | BrowserItem::Orchestra(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) | BrowserItem::Coast(_) | BrowserItem::Crimson(_) | BrowserItem::Silicon(_) | BrowserItem::Theremin(_) | BrowserItem::Granulator(_) | BrowserItem::Keytone(_) | BrowserItem::Princess(_) => {
+            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::StreetOrgan(_) | BrowserItem::Harmonica(_) | BrowserItem::Calculator(_) | BrowserItem::Console(_) | BrowserItem::Handheld(_) | BrowserItem::Micro(_) | BrowserItem::Warp(_) | BrowserItem::Hybrid(_) | BrowserItem::Quartet(_) | BrowserItem::ChipFm(_) | BrowserItem::V2(_) | BrowserItem::Oidos(_) | BrowserItem::Orchestra(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) | BrowserItem::Coast(_) | BrowserItem::Crimson(_) | BrowserItem::Silicon(_) | BrowserItem::Theremin(_) | BrowserItem::Granulator(_) | BrowserItem::Keytone(_) | BrowserItem::Princess(_) | BrowserItem::Stretch(_) => {
                 let inst = match item {
                     BrowserItem::Synth(p) => Instrument::synth(p),
                     BrowserItem::Macro(p) => Instrument::macro_osc(p),
@@ -1346,6 +1349,7 @@ impl App {
                     BrowserItem::Granulator(p) => Instrument::granulator(p),
                     BrowserItem::Keytone(p) => Instrument::keytone(p),
                     BrowserItem::Princess(p) => Instrument::princess(p),
+                    BrowserItem::Stretch(p) => Instrument::stretch(p),
                     BrowserItem::Drums(k) => Instrument::drums(k),
                     _ => Instrument::sampler(None),
                 };
@@ -1652,6 +1656,7 @@ impl App {
                                     zones.clear();
                                 }
                                 Some(Instrument::Granulator { sample: s, .. }) => *s = Some(sample),
+                                Some(Instrument::Stretch { sample: s, .. }) => *s = Some(sample),
                                 Some(Instrument::Keytone { sample: s, params, .. }) => {
                                     *s = Some(sample);
                                     if let Some(v) = params.get_mut(krabton_engine::dsp::keytone::SOUND) {
@@ -4200,6 +4205,13 @@ impl App {
                     self.apply_item(&BrowserItem::Princess(p), DropTarget::NewTrack);
                     self.detail = DetailTab::Devices;
                 }
+                // stretch=N: a new track with Stretch preset N.
+                "stretch" => {
+                    let names = krabton_engine::dsp::stretch::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Stretch(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
                 // keytone=N: a new track with Keytone preset N.
                 "keytone" => {
                     let names = krabton_engine::dsp::keytone::preset_names();
@@ -4499,6 +4511,33 @@ impl App {
                         chain.push(dev);
                     }
                     self.detail = DetailTab::Devices;
+                }
+                // looper=pedal|record|overdub|play|stop|clear|undo|redo|multiply|toclip|state:
+                // the first Looper on the selected track (or in the set).
+                "looper" => {
+                    use krabton_engine::dsp::fx::looper::LoopAction as A;
+                    let action = match arg.trim() {
+                        "record" => Some(A::Record),
+                        "overdub" => Some(A::Overdub),
+                        "play" => Some(A::Play),
+                        "stop" => Some(A::Stop),
+                        "clear" => Some(A::Clear),
+                        "undo" => Some(A::Undo),
+                        "redo" => Some(A::Redo),
+                        "multiply" => Some(A::Multiply),
+                        "toclip" | "state" => None,
+                        _ => Some(A::Pedal),
+                    };
+                    let dev = self.project.all_devices().find(|d| d.kind == krabton_engine::dsp::effects::EffectKind::Looper).map(|d| d.id);
+                    match (action, dev) {
+                        (Some(a), Some(_)) => self.looper_key(a),
+                        (None, Some(d)) if arg.trim() == "toclip" => self.looper_to_clip(d),
+                        (None, Some(d)) => {
+                            let m = self.looper_memory(d);
+                            println!("looper: {:?} len {} layers {}", self.looper_state(d), m.as_ref().map_or(0, |m| m.len.load(Ordering::Relaxed)), m.as_ref().map_or(0, |m| m.layers.load(Ordering::Relaxed)));
+                        }
+                        _ => eprintln!("no Looper in the set"),
+                    }
                 }
                 "clip" if nums.len() == 2 => self.select_clip(ClipSel::Slot { track: nums[0], scene: nums[1] }),
                 "s2a" => {

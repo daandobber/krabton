@@ -74,6 +74,7 @@ pub mod granulator;
 pub mod princess;
 pub mod keytone;
 pub mod princess_machine;
+pub mod stretch;
 
 use std::f32::consts::PI;
 
