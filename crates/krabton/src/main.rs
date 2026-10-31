@@ -28,6 +28,7 @@ mod skin;
 mod tape;
 mod theme;
 mod ui;
+mod video;
 mod widgets;
 
 /// Writes every panic down (Krabton has no console on Windows): when, in

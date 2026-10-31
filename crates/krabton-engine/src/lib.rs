@@ -9,6 +9,7 @@ pub mod classic_seq;
 pub mod demo;
 pub mod dsp;
 pub mod engine;
+pub mod ffmpeg;
 pub mod midi_file;
 pub mod midi_fx;
 pub mod midi_tools;
@@ -30,6 +31,7 @@ pub mod scope;
 pub mod singer;
 pub mod hyper;
 pub mod tape;
+pub mod video;
 
 pub use engine::{Command, Engine, EngineHandle, EngineStatus, MidiOut, MidiRec, RecChunk};
 pub use project::*;

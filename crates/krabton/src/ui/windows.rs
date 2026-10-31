@@ -1,4 +1,4 @@
-//! Tool windows (the Map, the Settings, the History, the Glitch Sequencer):
+//! Tool windows (the Map, the Video, the Settings, the History, the Glitch Sequencer):
 //! a title bar of their own with minimize, maximize and close (a double
 //! click on it maximizes too). A minimized one waits in the dock, in the
 //! status bar, until clicked.

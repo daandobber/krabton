@@ -174,6 +174,11 @@ impl App {
                     self.enter_big_picture();
                 }
                 ui.separator();
+                // The Video, in its window.
+                let video_on = self.video_window;
+                if ui.add(egui::Button::new(RichText::new("Video").color(if video_on { TEXT_DARK } else { TEXT })).fill(if video_on { ACCENT } else { PANEL3 })).on_hover_text("The Video: films, pictures and GIFs that play along with the music, for a second screen or a projector").clicked() {
+                    self.video_window = !video_on;
+                }
                 // The Map, in its window.
                 let map_on = self.map_window;
                 if ui.add(egui::Button::new(RichText::new("Map").color(if map_on { TEXT_DARK } else { TEXT })).fill(if map_on { ACCENT } else { PANEL3 })).on_hover_text("The Map: put the tracks where they stand in a room, with a mixer").clicked() {
@@ -360,6 +365,10 @@ impl App {
             ui.label(RichText::new(&self.audio_desc).small());
             if ui.button("Map...").on_hover_text("Put the tracks where they stand in a room, with a mixer").clicked() {
                 self.map_window = true;
+                ui.close();
+            }
+            if ui.button("Video...").on_hover_text("Films, pictures and GIFs that play along with the music").clicked() {
+                self.video_window = true;
                 ui.close();
             }
             if ui.button("Audio & MIDI Settings...   Ctrl+,").on_hover_text("Which device Krabton plays to and records from, and the MIDI inputs").clicked() {

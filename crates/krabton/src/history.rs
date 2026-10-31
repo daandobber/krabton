@@ -47,6 +47,9 @@ pub fn describe(a: &Project, b: &Project) -> String {
     if a.launch_quantize != b.launch_quantize || a.metronome != b.metronome || a.beats_per_bar != b.beats_per_bar {
         return "Transport settings".into();
     }
+    if a.video != b.video {
+        return "Video".into();
+    }
     "Edit".into()
 }
 

@@ -159,6 +159,11 @@ fn fetch(offer: &Offer, state: &Install) -> Result<VoicebankRef, String> {
 /// GitHub archive's): stored and deflated files, names in UTF-8 or Shift-JIS,
 /// nothing outside `to`.
 pub fn unzip(zip: &Path, to: &Path) -> Result<usize, String> {
+    unzip_some(zip, to, |_| true)
+}
+
+/// [`unzip`], only the files whose name (as in the zip) `keep` wants.
+pub fn unzip_some(zip: &Path, to: &Path, keep: impl Fn(&str) -> bool) -> Result<usize, String> {
     let mut f = std::fs::File::open(zip).map_err(|e| e.to_string())?;
     let len = f.metadata().map_err(|e| e.to_string())?.len();
     // The end of the central directory, in the last 64 KiB.
@@ -242,6 +247,9 @@ pub fn unzip(zip: &Path, to: &Path) -> Result<usize, String> {
             return Err(format!("a file outside the folder: {name}"));
         }
         let out = to.join(rel);
+        if !keep(&en.name) {
+            continue;
+        }
         if name.ends_with('/') {
             std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
             continue;
@@ -335,6 +343,19 @@ mod tests {
         assert_eq!(n, 2);
         assert!(d.join("bank/oto.ini").is_file(), "without the folder around it");
         assert_eq!(std::fs::read(d.join("bank/A3/_あい.wav")).unwrap(), wav);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn only_the_files_asked_for_come_out() {
+        // As an ffmpeg build comes: one folder, the programs in bin/, documents beside.
+        let d = scratch("some");
+        let zip = zip_of(&[("ffmpeg-8.0/", b"", false), ("ffmpeg-8.0/bin/ffmpeg.exe", b"MZ program", true), ("ffmpeg-8.0/bin/ffprobe.exe", b"MZ other", true), ("ffmpeg-8.0/doc/", b"", false), ("ffmpeg-8.0/doc/ffmpeg.html", b"<html>", false)]);
+        std::fs::write(d.join("f.zip"), zip).unwrap();
+        let n = unzip_some(&d.join("f.zip"), &d.join("ff"), |name| name.ends_with("/ffmpeg.exe")).unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(std::fs::read(d.join("ff/bin/ffmpeg.exe")).unwrap(), b"MZ program");
+        assert!(!d.join("ff/bin/ffprobe.exe").exists() && !d.join("ff/doc").exists());
         let _ = std::fs::remove_dir_all(&d);
     }
 
