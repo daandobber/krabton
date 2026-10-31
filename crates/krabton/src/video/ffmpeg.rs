@@ -2,9 +2,10 @@
 //! own, so it runs the `ffmpeg` program, which reads nearly every film
 //! there is (`krabton_engine::ffmpeg` finds it: next to Krabton, in
 //! Krabton's library, Documents/Krabton/Library/ffmpeg, where the Video can
-//! fetch it, and on the PATH). A film is read whole, made smaller (640
-//! pixels wide at most) and kept in memory as raw frames, so that it can
-//! jump anywhere at once.
+//! fetch it, and on the PATH). A film is read whole, made smaller (854
+//! pixels wide at most) and kept in memory, every frame a JPEG (about an
+//! eighth of the raw frame; it is unpacked as it is shown), so that it can
+//! jump anywhere at once and a song-long film keeps all its frames.
 
 use std::ffi::OsString;
 use std::io::Read;
@@ -105,9 +106,9 @@ pub struct Plan {
 }
 
 impl Plan {
-    /// Bytes of one frame (Y, then U and V at a quarter each).
+    /// About how many bytes one frame takes (see `jpeg_bytes`).
     pub fn frame_bytes(&self) -> usize {
-        yuv_bytes(self.width, self.height)
+        jpeg_bytes(self.width, self.height)
     }
 
     pub fn frames(&self) -> usize {
@@ -115,51 +116,47 @@ impl Plan {
     }
 }
 
-/// Bytes of a YUV 4:2:0 frame (both sides even).
-pub fn yuv_bytes(w: u32, h: u32) -> usize {
-    let (w, h) = (w as usize, h as usize);
-    w * h + 2 * (w / 2) * (h / 2)
+/// About how big a frame of a film is as ffmpeg's JPEG (quality 4): a
+/// sixth of a byte a pixel and its headers (a busy picture takes more, so
+/// reading stops at the budget whatever the guess).
+pub fn jpeg_bytes(w: u32, h: u32) -> usize {
+    (w as usize * h as usize) / 6 + 1_500
 }
 
-/// Sizes even (as 4:2:0 wants) and no wider than `max_w`, keeping its shape.
+/// Sizes even and no wider than `max_w`, keeping its shape.
 fn fit_width(p: &Probe, max_w: u32) -> (u32, u32) {
     let w = p.width.min(max_w).max(2);
     let h = (p.height as f64 * w as f64 / p.width.max(1) as f64).round().max(2.0) as u32;
     (w & !1, h & !1)
 }
 
-/// How to fit a film into `budget` bytes: 640 pixels wide at up to 30
-/// frames a second; a long one gets fewer frames (down to 12 a second),
-/// then fewer pixels (down to 320 wide), then fewer frames still (down to
-/// 8), and only then is it cut short.
+/// How to fit a film into `budget` bytes, smoothness first: all its frames
+/// (up to 60 a second) 854 pixels wide; a long one gets fewer pixels (down
+/// to 480 wide), then at most 30 frames a second, then fewer pixels still
+/// (down to 320), then fewer frames (down to 12 a second), and only then
+/// is it cut short.
 pub fn plan(p: &Probe, budget: usize) -> Plan {
     let length = p.duration.filter(|d| *d > 0.0).unwrap_or(60.0);
-    let fits = |w: u32, h: u32, fps: f64| (length * fps).ceil() * yuv_bytes(w, h) as f64 <= budget as f64;
+    let fits = |w: u32, h: u32, fps: f64| (length * fps).ceil() * jpeg_bytes(w, h) as f64 <= budget as f64;
+    let frames_for = |w: u32, h: u32| budget as f64 / jpeg_bytes(w, h) as f64;
     let src_fps = p.fps.clamp(1.0, 60.0);
-    let mut fps = src_fps.min(30.0);
-    let (mut w, mut h) = fit_width(p, 640);
-    let frames_for = |w: u32, h: u32| budget as f64 / yuv_bytes(w, h) as f64;
-    if !fits(w, h, fps) {
-        fps = (frames_for(w, h) / length).max(12.0f64.min(src_fps)).min(fps);
-    }
-    if !fits(w, h, fps) {
-        for max_w in [480, 400, 320] {
-            (w, h) = fit_width(p, max_w);
-            if fits(w, h, fps) {
-                break;
-            }
+    let steps: [(u32, f64); 8] = [(854, 60.0), (720, 60.0), (640, 60.0), (480, 60.0), (854, 30.0), (640, 30.0), (480, 30.0), (320, 30.0)];
+    for (max_w, max_fps) in steps {
+        let (w, h) = fit_width(p, max_w);
+        let fps = src_fps.min(max_fps);
+        if fits(w, h, fps) {
+            return Plan { width: w, height: h, fps, seconds: length, cut: false };
         }
     }
-    if !fits(w, h, fps) {
-        fps = (frames_for(w, h) / length).max(8.0f64.min(src_fps)).min(fps);
-    }
+    let (w, h) = fit_width(p, 320);
+    let fps = (frames_for(w, h) / length).max(12.0f64.min(src_fps)).min(src_fps.min(30.0));
     let seconds = if fits(w, h, fps) { length } else { (frames_for(w, h) / fps).floor().max(1.0) };
     Plan { width: w, height: h, fps, seconds, cut: seconds < length - 1e-6 }
 }
 
-/// The arguments that make ffmpeg write the film as raw frames on its
-/// output: sound left out, at the plan's rate and size, in 4:2:0 YUV with
-/// the BT.601 colours and range, as long as the plan says.
+/// The arguments that make ffmpeg write the film as JPEG frames one after
+/// another on its output: sound left out, at the plan's rate and size, as
+/// long as the plan says.
 pub fn decode_args(path: &Path, plan: &Plan) -> Vec<OsString> {
     let mut a: Vec<OsString> = ["-hide_banner", "-loglevel", "error", "-nostdin", "-i"].iter().map(OsString::from).collect();
     a.push(path.as_os_str().to_owned());
@@ -168,36 +165,94 @@ pub fn decode_args(path: &Path, plan: &Plan) -> Vec<OsString> {
     a.push("-t".into());
     a.push(format!("{:.3}", plan.seconds).into());
     a.push("-vf".into());
-    a.push(format!("fps={:.4},scale={}:{}:flags=bilinear:out_color_matrix=bt601:out_range=tv", plan.fps, plan.width, plan.height).into());
-    for s in ["-pix_fmt", "yuv420p", "-f", "rawvideo", "-"] {
+    a.push(format!("fps={:.4},scale={}:{}:flags=bilinear:out_range=pc", plan.fps, plan.width, plan.height).into());
+    for s in ["-c:v", "mjpeg", "-q:v", "4", "-pix_fmt", "yuvj420p", "-f", "image2pipe", "-"] {
         a.push(s.into());
     }
     a
 }
 
-/// Reads whole frames of `frame_bytes` from `input` and hands each to
-/// `each` (false stops). A part frame at the end is dropped. Returns how
-/// many were read.
-pub fn read_frames(mut input: impl Read, frame_bytes: usize, mut each: impl FnMut(Vec<u8>) -> bool) -> std::io::Result<usize> {
-    let mut n = 0;
-    if frame_bytes == 0 {
-        return Ok(0);
+/// Where the first whole JPEG in `d` ends, if it is all there: `d` starts
+/// at its SOI. The markers are walked by their lengths, and the picture
+/// data after SOS up to the next marker (a 0xFF there is always followed by
+/// 0 or a restart), so bytes that only look like an end are passed over.
+pub fn jpeg_end(d: &[u8]) -> Option<usize> {
+    if d.len() < 4 || d[0] != 0xFF || d[1] != 0xD8 {
+        return None;
     }
+    let mut i = 2;
     loop {
-        let mut buf = vec![0u8; frame_bytes];
-        let mut got = 0;
-        while got < frame_bytes {
-            match input.read(&mut buf[got..]) {
-                Ok(0) => return Ok(n),
-                Ok(k) => got += k,
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(e) => return Err(e),
+        // Fill bytes before a marker.
+        while i + 1 < d.len() && d[i] == 0xFF && d[i + 1] == 0xFF {
+            i += 1;
+        }
+        if i + 1 >= d.len() {
+            return None;
+        }
+        if d[i] != 0xFF {
+            // Not a marker where one must be: give up on this one at once.
+            return Some(i);
+        }
+        let m = d[i + 1];
+        match m {
+            0xD9 => return Some(i + 2),
+            0x01 | 0xD0..=0xD7 => i += 2,
+            _ => {
+                if i + 3 >= d.len() {
+                    return None;
+                }
+                let len = u16::from_be_bytes([d[i + 2], d[i + 3]]) as usize;
+                i += 2 + len;
+                if m == 0xDA {
+                    // The picture data, to the next real marker.
+                    loop {
+                        if i + 1 >= d.len() {
+                            return None;
+                        }
+                        if d[i] == 0xFF && d[i + 1] != 0 && !(0xD0..=0xD7).contains(&d[i + 1]) {
+                            break;
+                        }
+                        i += 1;
+                    }
+                }
             }
         }
-        n += 1;
-        if !each(buf) {
-            return Ok(n);
+    }
+}
+
+/// Reads JPEGs one after another from `input` (as ffmpeg writes them) and
+/// hands each to `each` (false stops). A part one at the end is dropped.
+/// Returns how many were read.
+pub fn read_jpegs(mut input: impl Read, mut each: impl FnMut(Vec<u8>) -> bool) -> std::io::Result<usize> {
+    let mut n = 0;
+    let mut pending: Vec<u8> = Vec::with_capacity(1 << 20);
+    let mut chunk = vec![0u8; 256 << 10];
+    loop {
+        let got = match input.read(&mut chunk) {
+            Ok(0) => return Ok(n),
+            Ok(k) => k,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        };
+        pending.extend_from_slice(&chunk[..got]);
+        let mut start = 0;
+        loop {
+            // To the next start of a picture.
+            match pending[start..].windows(2).position(|w| w == [0xFF, 0xD8]) {
+                Some(k) => start += k,
+                None => {
+                    start = pending.len().saturating_sub(1);
+                    break;
+                }
+            }
+            let Some(end) = jpeg_end(&pending[start..]) else { break };
+            n += 1;
+            if !each(pending[start..start + end].to_vec()) {
+                return Ok(n);
+            }
+            start += end;
         }
+        pending.drain(..start);
     }
 }
 
@@ -346,41 +401,47 @@ At least one output file must be specified";
     }
 
     #[test]
-    fn a_short_film_keeps_its_frames_and_a_long_one_is_fitted_into_memory() {
+    fn a_film_keeps_its_frames_and_a_long_one_is_fitted_into_memory() {
+        let budget = 640 << 20;
         let short = Probe { width: 1920, height: 1080, fps: 29.97, duration: Some(10.0) };
-        let p = plan(&short, 384 << 20);
-        assert_eq!((p.width, p.height), (640, 360));
+        let p = plan(&short, budget);
+        assert_eq!((p.width, p.height), (854, 480));
         assert!((p.fps - 29.97).abs() < 1e-9);
         assert_eq!((p.seconds, p.cut), (10.0, false));
-        assert_eq!(p.frame_bytes(), 640 * 360 * 3 / 2);
-        // Four minutes: fewer frames, then fewer pixels, all of it kept.
-        let long = Probe { duration: Some(240.0), ..short };
-        let p = plan(&long, 384 << 20);
-        assert!(!p.cut);
-        assert!(p.fps >= 8.0 && p.width <= 640 && p.width >= 320, "{p:?}");
-        assert!(p.frames() * p.frame_bytes() <= 384 << 20);
-        // An hour: only its start.
-        let film = Probe { duration: Some(3600.0), ..short };
-        let p = plan(&film, 384 << 20);
-        assert!(p.cut && p.seconds < 3600.0 && p.seconds > 60.0, "{p:?}");
+        // A song-long film: every frame, a little smaller.
+        let song = Probe { duration: Some(240.0), ..short };
+        let p = plan(&song, budget);
+        assert!(!p.cut && (p.fps - 29.97).abs() < 1e-9 && p.width >= 480, "{p:?}");
+        assert!(p.frames() * p.frame_bytes() <= budget);
+        // Sixty frames a second stay sixty when they fit.
+        let smooth = Probe { fps: 60.0, duration: Some(30.0), ..short };
+        assert_eq!(plan(&smooth, budget).fps, 60.0);
+        // An hour: all of it, small and slower.
+        let hour = Probe { duration: Some(3600.0), ..short };
+        let p = plan(&hour, budget);
+        assert!(!p.cut && p.width == 320 && p.fps >= 12.0, "{p:?}");
+        // Four hours: only its start.
+        let film = Probe { duration: Some(14_400.0), ..short };
+        let p = plan(&film, budget);
+        assert!(p.cut && p.seconds < 14_400.0 && p.seconds > 60.0, "{p:?}");
         assert_eq!(p.width, 320);
-        assert!(p.frames() * p.frame_bytes() <= (384 << 20) + p.frame_bytes());
+        assert!(p.frames() * p.frame_bytes() <= budget + p.frame_bytes());
         // Small and slow films stay as they are; sizes are even.
         let tiny = Probe { width: 321, height: 241, fps: 10.0, duration: Some(3.0) };
-        let p = plan(&tiny, 384 << 20);
+        let p = plan(&tiny, budget);
         assert_eq!((p.width, p.height, p.fps), (320, 240, 10.0));
     }
 
     #[test]
-    fn the_decode_command_asks_for_raw_frames_of_the_plan() {
+    fn the_decode_command_asks_for_jpeg_frames_of_the_plan() {
         let plan = Plan { width: 640, height: 360, fps: 25.0, seconds: 12.5, cut: false };
         let args: Vec<String> = decode_args(Path::new("my film.mov"), &plan).into_iter().map(|a| a.to_string_lossy().into_owned()).collect();
         let at = |s: &str| args.iter().position(|a| a == s).unwrap_or_else(|| panic!("{s} in {args:?}"));
         assert_eq!(args[at("-i") + 1], "my film.mov");
         assert_eq!(args[at("-t") + 1], "12.500");
-        assert_eq!(args[at("-vf") + 1], "fps=25.0000,scale=640:360:flags=bilinear:out_color_matrix=bt601:out_range=tv");
-        assert_eq!(args[at("-pix_fmt") + 1], "yuv420p");
-        assert_eq!(args[at("-f") + 1], "rawvideo");
+        assert_eq!(args[at("-vf") + 1], "fps=25.0000,scale=640:360:flags=bilinear:out_range=pc");
+        assert_eq!(args[at("-c:v") + 1], "mjpeg");
+        assert_eq!(args[at("-f") + 1], "image2pipe");
         assert!(args.contains(&"-an".to_string()));
         assert_eq!(args.last().map(String::as_str), Some("-"));
         let probe: Vec<String> = probe_args(Path::new("x.mp4")).into_iter().map(|a| a.to_string_lossy().into_owned()).collect();
@@ -399,21 +460,40 @@ At least one output file must be specified";
         }
     }
 
+    /// A real JPEG of `w`x`h` in one colour.
+    fn jpeg(w: u32, h: u32, shade: u8) -> Vec<u8> {
+        let img = image::RgbImage::from_pixel(w, h, image::Rgb([shade, 255 - shade, 40]));
+        let mut out = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(img).write_to(&mut out, image::ImageFormat::Jpeg).unwrap();
+        out.into_inner()
+    }
+
     #[test]
-    fn frames_are_read_whole_from_a_trickling_pipe() {
-        let data: Vec<u8> = (0..50u8).collect();
-        let mut frames = Vec::new();
-        let n = read_frames(Trickle(data.clone(), 0), 12, |f| {
-            frames.push(f);
+    fn jpegs_are_read_whole_from_a_trickling_pipe() {
+        let frames: Vec<Vec<u8>> = (0..4).map(|k| jpeg(48, 32, k * 60)).collect();
+        assert!(frames.iter().all(|f| jpeg_end(f) == Some(f.len())));
+        let mut data: Vec<u8> = frames.concat();
+        // A part one at the end is dropped.
+        data.extend_from_slice(&frames[0][..frames[0].len() / 2]);
+        let mut got = Vec::new();
+        let n = read_jpegs(Trickle(data.clone(), 0), |f| {
+            got.push(f);
             true
         })
         .unwrap();
-        // Four whole frames; the last two bytes are a part frame.
         assert_eq!(n, 4);
-        assert_eq!(frames[3], data[36..48].to_vec());
+        assert_eq!(got, frames);
+        // They unpack as the pictures they were.
+        let px = image::load_from_memory_with_format(&got[3], image::ImageFormat::Jpeg).unwrap().to_rgb8();
+        assert!(px.get_pixel(10, 10)[0].abs_diff(180) < 8);
         // Stopping early.
-        let n = read_frames(Trickle(data, 0), 12, |_| false).unwrap();
-        assert_eq!(n, 1);
+        assert_eq!(read_jpegs(Trickle(data, 0), |_| false).unwrap(), 1);
+        // Bytes that look like an end inside a header are not one.
+        let mut fake = frames[1].clone();
+        let at = fake.windows(2).position(|w| w == [0xFF, 0xDB]).unwrap() + 6;
+        fake[at] = 0xFF;
+        fake[at + 1] = 0xD9;
+        assert_eq!(jpeg_end(&fake), Some(fake.len()));
     }
 
     #[test]

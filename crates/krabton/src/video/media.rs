@@ -8,8 +8,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
-/// How much memory one clip may take.
+/// How much memory one clip may take (a film's frames are JPEGs, so a
+/// whole song fits at its own frame rate).
 pub const BUDGET: usize = 384 << 20;
+pub const FILM_BUDGET: usize = 640 << 20;
 /// Pictures larger than this (either way) are made smaller.
 const MAX_PICTURE: u32 = 1920;
 /// GIF frames wider than this are made smaller.
@@ -23,10 +25,11 @@ pub enum Kind {
     Film,
 }
 
-/// The pixels of a frame: RGBA, or YUV 4:2:0 as films come (half the memory).
+/// The pixels of a frame: RGBA, or a JPEG as films come (about an eighth
+/// of that; unpacked as it is shown).
 pub enum Pixels {
     Rgba(Vec<u8>),
-    Yuv(Vec<u8>),
+    Jpeg(Vec<u8>),
 }
 
 pub struct Frame {
@@ -155,7 +158,10 @@ impl Media {
         let (w, h) = (i.width as usize, i.height as usize);
         Some(match &fr.px {
             Pixels::Rgba(px) => egui::ColorImage::from_rgba_unmultiplied([w, h], px),
-            Pixels::Yuv(px) => egui::ColorImage::new([w, h], yuv_to_colors(px, w, h)),
+            Pixels::Jpeg(data) => {
+                let rgb = image::load_from_memory_with_format(data, image::ImageFormat::Jpeg).ok()?.to_rgb8();
+                egui::ColorImage::from_rgb([rgb.width() as usize, rgb.height() as usize], rgb.as_raw())
+            }
         })
     }
 
@@ -235,24 +241,30 @@ impl Media {
         let out = ffmpeg::command(&exe).args(ffmpeg::probe_args(&self.path)).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped()).output().map_err(|e| format!("ffmpeg did not run: {e}"))?;
         let text = String::from_utf8_lossy(&out.stderr);
         let probe = ffmpeg::parse_probe(&text).ok_or_else(|| format!("{}: ffmpeg finds no film in it", file_name(&self.path)))?;
-        let plan = ffmpeg::plan(&probe, BUDGET);
+        let plan = ffmpeg::plan(&probe, FILM_BUDGET);
         let (w, h) = (plan.width, plan.height);
         let expected = plan.frames();
-        let mb = (expected * plan.frame_bytes()) >> 20;
+        let note = |mb: usize| {
+            let mut n = format!("{w}×{h}, {:.0} frames a second, {mb} MB", plan.fps);
+            if plan.cut {
+                n.push_str(&format!(" (the first {:.0} s)", plan.seconds));
+            }
+            n
+        };
         self.set_info(|i| {
             (i.width, i.height, i.expected, i.duration) = (w, h, expected, plan.seconds as f32);
-            i.note = format!("{w}×{h}, {:.0} frames a second, {mb} MB", plan.fps);
-            if plan.cut {
-                i.note.push_str(&format!(" (the first {:.0} s)", plan.seconds));
-            }
+            i.note = note((expected * plan.frame_bytes()) >> 20);
         });
         let mut child = ffmpeg::command(&exe).args(ffmpeg::decode_args(&self.path, &plan)).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).spawn().map_err(|e| format!("ffmpeg did not run: {e}"))?;
         let stdout = child.stdout.take().ok_or("ffmpeg gave no output")?;
         let mut k = 0usize;
-        let read = ffmpeg::read_frames(std::io::BufReader::with_capacity(1 << 20, stdout), plan.frame_bytes(), |px| {
-            self.push(Frame { t: (k as f64 / plan.fps) as f32, px: Pixels::Yuv(px) });
+        let mut used = 0usize;
+        let read = ffmpeg::read_jpegs(stdout, |px| {
+            used += px.len();
+            self.push(Frame { t: (k as f64 / plan.fps) as f32, px: Pixels::Jpeg(px) });
             k += 1;
-            k < expected && !self.cancel.load(Ordering::Acquire)
+            // Past the budget after all (busier pictures than guessed): the rest is left out.
+            k < expected && used < FILM_BUDGET && !self.cancel.load(Ordering::Acquire)
         });
         let _ = child.kill();
         let _ = child.wait();
@@ -265,6 +277,7 @@ impl Media {
         self.set_info(|i| {
             i.expected = n;
             i.duration = length;
+            i.note = note(used >> 20);
         });
         Ok(())
     }
@@ -272,26 +285,6 @@ impl Media {
 
 fn file_name(p: &Path) -> String {
     p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()
-}
-
-/// YUV 4:2:0 (BT.601, TV range: as ffmpeg is asked for it) to colours.
-pub fn yuv_to_colors(px: &[u8], w: usize, h: usize) -> Vec<egui::Color32> {
-    let (cw, ch) = (w / 2, h / 2);
-    let (y_plane, rest) = px.split_at((w * h).min(px.len()));
-    let (u_plane, v_plane) = rest.split_at((cw * ch).min(rest.len()));
-    let mut out = Vec::with_capacity(w * h);
-    for y in 0..h {
-        let crow = (y / 2).min(ch.saturating_sub(1)) * cw;
-        for x in 0..w {
-            let c = 298 * (*y_plane.get(y * w + x).unwrap_or(&16) as i32 - 16);
-            let ci = crow + (x / 2).min(cw.saturating_sub(1));
-            let d = *u_plane.get(ci).unwrap_or(&128) as i32 - 128;
-            let e = *v_plane.get(ci).unwrap_or(&128) as i32 - 128;
-            let clip = |v: i32| ((v + 128) >> 8).clamp(0, 255) as u8;
-            out.push(egui::Color32::from_rgb(clip(c + 409 * e), clip(c - 100 * d - 208 * e), clip(c + 516 * d)));
-        }
-    }
-    out
 }
 
 #[cfg(test)]
@@ -309,20 +302,6 @@ mod tests {
         assert!(takes(Path::new("loop.gif")));
         assert!(!takes(Path::new("song.wav")));
         assert!(!takes(Path::new("noext")));
-    }
-
-    #[test]
-    fn yuv_turns_into_the_right_colours() {
-        // 2x2: one luma each, one chroma for all four.
-        let px = |y: u8, u: u8, v: u8| vec![y, y, y, y, u, v];
-        let at = |p: Vec<u8>| yuv_to_colors(&p, 2, 2)[0];
-        assert_eq!(at(px(16, 128, 128)), egui::Color32::from_rgb(0, 0, 0));
-        assert_eq!(at(px(235, 128, 128)), egui::Color32::from_rgb(255, 255, 255));
-        // Pure red in BT.601 TV range.
-        let red = at(px(81, 90, 240));
-        assert!(red.r() > 245 && red.g() < 10 && red.b() < 10, "{red:?}");
-        // Short data does not panic.
-        assert_eq!(yuv_to_colors(&[16], 2, 2).len(), 4);
     }
 
     #[test]
