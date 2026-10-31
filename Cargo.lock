@@ -1642,7 +1642,7 @@ checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
 name = "krabton"
-version = "0.84.0"
+version = "0.85.0"
 dependencies = [
  "base64",
  "cpal",
@@ -1668,22 +1668,22 @@ dependencies = [
 
 [[package]]
 name = "krabton-airwindows"
-version = "0.84.0"
+version = "0.85.0"
 
 [[package]]
 name = "krabton-beads"
-version = "0.84.0"
+version = "0.85.0"
 dependencies = [
  "krabton-clouds",
 ]
 
 [[package]]
 name = "krabton-braids"
-version = "0.84.0"
+version = "0.85.0"
 
 [[package]]
 name = "krabton-clap"
-version = "0.84.0"
+version = "0.85.0"
 dependencies = [
  "clap-sys",
  "krabton-engine",
@@ -1693,15 +1693,15 @@ dependencies = [
 
 [[package]]
 name = "krabton-clouds"
-version = "0.84.0"
+version = "0.85.0"
 
 [[package]]
 name = "krabton-elements"
-version = "0.84.0"
+version = "0.85.0"
 
 [[package]]
 name = "krabton-engine"
-version = "0.84.0"
+version = "0.85.0"
 dependencies = [
  "claxon",
  "crossbeam-channel",
@@ -1725,33 +1725,33 @@ dependencies = [
 
 [[package]]
 name = "krabton-monome"
-version = "0.84.0"
+version = "0.85.0"
 dependencies = [
  "serialport",
 ]
 
 [[package]]
 name = "krabton-rings"
-version = "0.84.0"
+version = "0.85.0"
 
 [[package]]
 name = "krabton-sf2"
-version = "0.84.0"
+version = "0.85.0"
 
 [[package]]
 name = "krabton-stk"
-version = "0.84.0"
+version = "0.85.0"
 
 [[package]]
 name = "krabton-virus"
-version = "0.84.0"
+version = "0.85.0"
 dependencies = [
  "cc",
 ]
 
 [[package]]
 name = "krabton-warps"
-version = "0.84.0"
+version = "0.85.0"
 
 [[package]]
 name = "libc"
