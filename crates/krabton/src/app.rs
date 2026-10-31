@@ -565,6 +565,8 @@ pub struct App {
     pub(crate) band: crate::band::Band,
     /// The played track the engine was last told of (for the tape).
     pub(crate) tape_follow_sent: Option<Option<u64>>,
+    /// Each Looper's loop as last written to a file (its version, the file).
+    pub(crate) looper_files: std::collections::HashMap<u64, (u32, std::path::PathBuf)>,
     /// `shot=path`: where the next picture of the window goes, and whether
     /// it was asked for yet.
     shot: Option<(String, bool)>,
@@ -753,6 +755,7 @@ impl App {
             tape_clip: None,
             band: Default::default(),
             tape_follow_sent: None,
+            looper_files: Default::default(),
             shot: None,
             env_view: false,
             env_target: None,
@@ -815,7 +818,9 @@ impl App {
         }
         self.band_frame();
         self.follow_clip_sounds();
-        if *self.last_sent != self.project {
+        // Loopers get their memory before the engine hears of them.
+        let loopers = self.looper_frame();
+        if loopers || *self.last_sent != self.project {
             // A clip moved to another track brings its sound with that track's ids.
             self.project.fix_clip_sound_ids();
             // Connections to deleted tracks, devices or modulators go away.
@@ -3311,6 +3316,9 @@ impl App {
                 }
             }
             Key::F9 => self.toggle_record(),
+            // The Looper's pedal (Shift: stop).
+            Key::F8 if m.shift => self.looper_key(krabton_engine::dsp::fx::looper::LoopAction::Stop),
+            Key::F8 => self.looper_key(krabton_engine::dsp::fx::looper::LoopAction::Pedal),
             Key::ArrowUp | Key::ArrowDown | Key::ArrowLeft | Key::ArrowRight => {
                 self.edit_arrow(key, m);
             }
@@ -3446,6 +3454,7 @@ impl App {
         if let Some(dir) = path.parent() {
             let name = self.project.name.clone();
             self.tape_save(dir, &name);
+            self.looper_save(dir, &name);
         }
         match self.project.save(&path) {
             Ok(()) => {
@@ -4586,6 +4595,7 @@ impl App {
                     let path = std::path::Path::new(arg);
                     if let (Some(dir), Some(stem)) = (path.parent(), path.file_stem()) {
                         self.tape_save(dir, &stem.to_string_lossy());
+                        self.looper_save(dir, &stem.to_string_lossy());
                     }
                     self.project.save(path)
                 } {

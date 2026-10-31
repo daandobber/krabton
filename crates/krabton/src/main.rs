@@ -10,6 +10,7 @@ mod editing;
 mod grid;
 mod history;
 mod import;
+mod looper;
 mod midi;
 mod midi_out;
 mod move_ctl;

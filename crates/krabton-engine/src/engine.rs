@@ -426,6 +426,7 @@ enum GarbageInner {
     Processor(Box<dyn AudioProcessor>),
     Input(Arc<InputRing>),
     PianoLibrary(Arc<PianoLibrary>),
+    Loop(Arc<crate::dsp::fx::looper::LoopMemory>),
 }
 
 /// A MIDI message for a track's MIDI To port, and when to send it: `at`
@@ -2847,6 +2848,13 @@ fn sync_devices(devs: &[Device], rts: &mut Vec<(u64, EffectState)>, sr: f32, tra
     for (d, (_, st)) in devs.iter().zip(rts.iter_mut()) {
         if let EffectState::Convolution(c) = st {
             c.set_file(d.sample.as_ref());
+        }
+        // A Looper's memory too (one let go of is dropped elsewhere).
+        if let EffectState::Looper(lp) = st {
+            lp.attach(d.looper.0.as_ref());
+            if let Some(old) = lp.take_retired() {
+                trash.push(GarbageInner::Loop(old));
+            }
         }
     }
     // Effects inside effects (the Glitch Sequencer's slots).

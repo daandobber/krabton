@@ -1421,6 +1421,10 @@ pub struct Device {
     /// A sound file it plays with (Convolution's own answer).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sample: Option<SampleRef>,
+    /// A Looper's memory, shared with the engine (made by the UI, not saved:
+    /// the loop is saved as `sample`).
+    #[serde(skip)]
+    pub looper: crate::dsp::fx::looper::LoopHandle,
 }
 
 impl Device {
@@ -2066,13 +2070,13 @@ impl Project {
 
     pub fn make_device(&mut self, kind: EffectKind) -> Device {
         let data = if kind == EffectKind::Glitch { crate::dsp::fx::glitch::default_data() } else { Vec::new() };
-        Device { id: self.alloc_id(), kind, enabled: true, params: params::defaults(kind.specs()), plugin: None, data, children: Vec::new(), preset: String::new(), sample: None }
+        Device { id: self.alloc_id(), kind, enabled: true, params: params::defaults(kind.specs()), plugin: None, data, children: Vec::new(), preset: String::new(), sample: None, looper: Default::default() }
     }
 
     /// A device for an effect plug-in; `plugin.instance` is set here.
     pub fn make_plugin_device(&mut self, mut plugin: PluginInstrument) -> Device {
         plugin.instance = self.alloc_id();
-        Device { id: self.alloc_id(), kind: EffectKind::Plugin, enabled: true, params: Vec::new(), plugin: Some(plugin), data: Vec::new(), children: Vec::new(), preset: String::new(), sample: None }
+        Device { id: self.alloc_id(), kind: EffectKind::Plugin, enabled: true, params: Vec::new(), plugin: Some(plugin), data: Vec::new(), children: Vec::new(), preset: String::new(), sample: None, looper: Default::default() }
     }
 
     /// Every hosted plug-in (instruments and effects) by instance.
@@ -2610,6 +2614,25 @@ impl Project {
     /// Finds what the audio clips' warping needs before the audio thread
     /// plays them: their samples' transients, and the reversed audio of
     /// clips that play backwards. Done once per sample; cheap after.
+    /// Every Looper in the set: on the tracks, the returns and the master,
+    /// and in the sounds clips keep.
+    pub fn loopers_mut(&mut self) -> Vec<&mut Device> {
+        let mut out = Vec::new();
+        for t in &mut self.tracks {
+            out.extend(t.devices.iter_mut().filter(|d| d.kind == EffectKind::Looper));
+            for c in t.slots.iter_mut().flatten().chain(t.arrangement.iter_mut().map(|a| &mut a.clip)) {
+                if let Some(s) = &mut c.sound {
+                    out.extend(s.devices.iter_mut().filter(|d| d.kind == EffectKind::Looper));
+                }
+            }
+        }
+        for r in &mut self.returns {
+            out.extend(r.devices.iter_mut().filter(|d| d.kind == EffectKind::Looper));
+        }
+        out.extend(self.master.devices.iter_mut().filter(|d| d.kind == EffectKind::Looper));
+        out
+    }
+
     pub fn prepare_audio(&self) {
         for t in &self.tracks {
             for c in t.slots.iter().flatten().chain(t.arrangement.iter().map(|a| &a.clip)) {
@@ -2973,7 +2996,7 @@ mod tests {
         let dev = p.make_plugin_device(fx);
         assert_eq!(dev.name(), "Verb");
         p.tracks[t].devices.push(dev);
-        p.master.devices.push(Device { id: 999, kind: EffectKind::Plugin, enabled: true, params: Vec::new(), plugin: None, data: Vec::new(), children: Vec::new() , preset: String::new(), sample: None });
+        p.master.devices.push(Device { id: 999, kind: EffectKind::Plugin, enabled: true, params: Vec::new(), plugin: None, data: Vec::new(), children: Vec::new() , preset: String::new(), sample: None, looper: Default::default() });
         let json = serde_json::to_string(&p).unwrap();
         let mut back: Project = serde_json::from_str(&json).unwrap();
         back.sanitize();
