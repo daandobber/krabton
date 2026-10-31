@@ -132,7 +132,7 @@ impl App {
         self.project.tracks[ti].name = name.clone();
         let id = self.project.alloc_id();
         let color = self.project.tracks[ti].color;
-        let clip = Clip { id, name, color, length: beats.max(0.0625), content: ClipContent::Audio(AudioClip::new(sample, bpm as f64)), envelopes: Vec::new(), sound: None };
+        let clip = Clip { id, name, color, length: beats.max(0.0625), content: ClipContent::Audio(AudioClip::new(sample, bpm as f64)), envelopes: Vec::new(), sound: None, groove: None };
         if self.view == View::Arrangement {
             let bar = self.project.beats_per_bar_f();
             let at = (self.status().song_pos.load() / bar).floor() * bar;
