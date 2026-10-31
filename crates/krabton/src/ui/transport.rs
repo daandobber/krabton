@@ -265,6 +265,10 @@ impl App {
                 self.save(true);
             }
             ui.separator();
+            if ui.button("Import Audio...").on_hover_text("WAV, FLAC, MP3 or AIFF files become clips: on the selected audio track (from its selected slot, or the playhead), or on a new one").clicked() {
+                ui.close();
+                self.import_audio_dialog();
+            }
             if ui.button("Import MIDI File...").on_hover_text("Its tracks become MIDI tracks with its notes as clips").clicked() {
                 ui.close();
                 self.import_midi_dialog();

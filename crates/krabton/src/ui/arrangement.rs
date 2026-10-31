@@ -1,6 +1,7 @@
 //! Arrangement view: a timeline with one lane per track.
 
 use crate::app::{App, ArrClipDrag, BrowserItem, ClipSel, DetailTab, DropTarget, RenameTarget, SlotDrag, TrackSel};
+use crate::import::FileTarget;
 use crate::theme::*;
 use crate::ui::session::color_menu;
 use crate::widgets::*;
@@ -402,6 +403,13 @@ impl App {
                 }
             }
         }
+        // Files from the desktop below the tracks: a new audio track, from the bar they are dropped at.
+        let empty = Rect::from_min_max(pos2(lanes.left(), lane_y(nt).max(lanes.top())), lanes.max);
+        if let Some(fp) = self.imports.drag.pos.filter(|fp| empty.height() > 4.0 && empty.contains(*fp)) {
+            let bpb = self.project.beats_per_bar_f();
+            let at = (xb(fp.x).max(0.0) / bpb).floor() * bpb;
+            self.file_over(&p, empty, FileTarget::NewTrack { beat: Some(at) });
+        }
 
         // Loop region shading and playhead.
         let pc = p.with_clip_rect(lanes.union(ruler));
@@ -773,6 +781,7 @@ impl App {
         if let Some(item) = drop_payload::<BrowserItem>(&resp) {
             self.apply_item(&item, DropTarget::Track(i));
         }
+        self.file_over(&p, r, FileTarget::Track(i));
         let by = r.bottom() - 22.0;
         let b1 = Rect::from_min_size(pos2(r.left() + 10.0, by), vec2(30.0, 17.0));
         if button(ui, b1, Id::new(("arr_act", id)), &format!("{}", i + 1), !mute, ACCENT).clicked() {
@@ -895,6 +904,18 @@ impl App {
             let beat = snap(hover_beat.unwrap_or(0.0), if grid > 0.0 { grid } else { 1.0 }, free);
             let target = if matches!(&*item, BrowserItem::Sample(_) | BrowserItem::Clip { .. } | BrowserItem::MidiFile(_)) { DropTarget::ArrLane { track: i, beat } } else { DropTarget::Track(i) };
             self.apply_item(&item, target);
+        }
+        // Files from the desktop: one after another from the beat they are dropped at.
+        if let Some(fp) = self.imports.drag.pos.filter(|fp| lane.contains(*fp)) {
+            let beat = snap(xb(fp.x).max(0.0), if grid > 0.0 { grid } else { 1.0 }, free);
+            self.file_over(&p, lane, FileTarget::Lane { track: i, beat });
+        }
+        // An audio lane asks for a file, to put at the bar double-clicked.
+        if lresp.double_clicked() && kind == TrackKind::Audio {
+            if let Some(pos) = lresp.interact_pointer_pos() {
+                let start = (xb(pos.x).max(0.0) / bpb).floor() * bpb;
+                self.load_audio_dialog(FileTarget::Lane { track: i, beat: start });
+            }
         }
         if let Some(from) = drop_payload::<SlotDrag>(&lresp) {
             let beat = snap(hover_beat.unwrap_or(0.0), bpb, free);

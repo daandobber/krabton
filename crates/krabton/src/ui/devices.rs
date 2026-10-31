@@ -2594,8 +2594,8 @@ impl App {
                         let mut load: Option<Vec<std::path::PathBuf>> = None;
                         let sel = self.sel_zone.min(zones.len().saturating_sub(1));
                         ui.horizontal(|ui| {
-                            if ui.button("Load...").on_hover_text("WAV or FLAC files (several are laid out by the notes in their names), or an SFZ instrument").clicked() {
-                                if let Some(files) = rfd::FileDialog::new().add_filter("Samples and SFZ", &["wav", "flac", "sfz", "WAV", "FLAC", "SFZ"]).pick_files() {
+                            if ui.button("Load...").on_hover_text("WAV, FLAC, MP3 or AIFF files (several are laid out by the notes in their names), or an SFZ instrument").clicked() {
+                                if let Some(files) = crate::import::audio_and_sfz_dialog().pick_files() {
                                     load = Some(files);
                                 }
                             }
@@ -2764,7 +2764,7 @@ impl App {
                                     let (new_pads, failed) = krabton_engine::sample_map::drum_kit_from(&files);
                                     let n = new_pads.iter().filter(|p| p.sample.is_some()).count();
                                     if n == 0 {
-                                        self.toast("No WAV or FLAC files in that folder");
+                                        self.toast("No WAV, FLAC, MP3 or AIFF files in that folder");
                                     } else {
                                         *pads = new_pads;
                                         *kit = dir.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "Samples".into());
@@ -2898,7 +2898,7 @@ impl App {
                                             pad.note = note as u8;
                                         }
                                         if ui.small_button("Sample...").clicked() {
-                                            if let Some(path) = rfd::FileDialog::new().add_filter("WAV", &["wav"]).pick_file() {
+                                            if let Some(path) = crate::import::audio_file_dialog().pick_file() {
                                                 if let Ok(s) = SampleRef::load(&path) {
                                                     pad.name = s.name.clone();
                                                     pad.sample = Some(s);
@@ -3149,7 +3149,7 @@ enum ConvAct {
 }
 
 /// The Convolution's face: the answer it plays, falling away (or the file's
-/// sound), with the space's name; drop a WAV or FLAC on it, or Load one,
+/// sound), with the space's name; drop an audio file on it, or Load one,
 /// for Your File. Its knobs beside it.
 #[allow(clippy::too_many_arguments)]
 fn convolution_face(ui: &mut Ui, id: Id, params: &mut [f32], file: Option<&SampleRef>, accent: Color32, h: f32, mv: Option<&mut ModView>, width: &mut f32) -> (bool, Option<ConvAct>) {
@@ -3166,7 +3166,7 @@ fn convolution_face(ui: &mut Ui, id: Id, params: &mut [f32], file: Option<&Sampl
                 if space == FILE {
                     draw_waveform(ui, rect, file, -1.0);
                     if file.is_none() {
-                        text(ui.painter(), rect.center(), Align2::CENTER_CENTER, "Drop a WAV or FLAC here, or Load one", small(), TEXT_DIM);
+                        text(ui.painter(), rect.center(), Align2::CENTER_CENTER, "Drop an audio file here, or Load one", small(), TEXT_DIM);
                     }
                 } else {
                     // The answer's loudness over time (made small, kept until it changes).
@@ -3203,11 +3203,11 @@ fn convolution_face(ui: &mut Ui, id: Id, params: &mut [f32], file: Option<&Sampl
                 if resp.dnd_hover_payload::<BrowserItem>().is_some() {
                     rect_line(ui.painter(), rect, 2.0, 2.0, accent_now());
                 }
-                resp.on_hover_text("The space's answer to a click, as it falls away. Drop a WAV or FLAC from the browser on it to play your own (Your File). Drag the right edge to make it wider");
+                resp.on_hover_text("The space's answer to a click, as it falls away. Drop an audio file from the browser on it to play your own (Your File). Drag the right edge to make it wider");
                 width_grip(ui, id.with("conv_width"), rect, width, 200.0, 1200.0);
                 ui.horizontal(|ui| {
-                    if ui.small_button("Load file...").on_hover_text("An impulse response of your own (WAV or FLAC)").clicked() {
-                        if let Some(path) = rfd::FileDialog::new().add_filter("Audio", &["wav", "flac", "WAV", "FLAC"]).pick_file() {
+                    if ui.small_button("Load file...").on_hover_text("An impulse response of your own (WAV, FLAC, MP3 or AIFF)").clicked() {
+                        if let Some(path) = crate::import::audio_file_dialog().pick_file() {
                             act = Some(ConvAct::Load(path));
                         }
                     }

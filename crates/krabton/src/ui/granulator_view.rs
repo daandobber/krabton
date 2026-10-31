@@ -52,8 +52,8 @@ pub(crate) fn granulator_panel(ui: &mut Ui, id: Id, preset: &mut String, params:
                 }
             }
         });
-        if ui.button("Load sample...").on_hover_text("A WAV or FLAC file to play as grains (or drop one on the sample)").clicked() {
-            if let Some(path) = rfd::FileDialog::new().add_filter("Samples", &["wav", "flac", "WAV", "FLAC"]).pick_file() {
+        if ui.button("Load sample...").on_hover_text("A WAV, FLAC, MP3 or AIFF file to play as grains (or drop one on the sample)").clicked() {
+            if let Some(path) = crate::import::audio_file_dialog().pick_file() {
                 load(&path, sample);
             }
         }
@@ -90,12 +90,17 @@ pub(crate) fn granulator_panel(ui: &mut Ui, id: Id, preset: &mut String, params:
                 load(path, sample);
             }
         }
-        if resp.dnd_hover_payload::<crate::app::BrowserItem>().is_some() {
+        // Files from outside land here when dropped on it (or anywhere, when
+        // the system does not say where the pointer is).
+        let here = crate::import::file_drop_pos(ui.ctx()).is_none_or(|p| rect.contains(p));
+        let files_over = ui.ctx().input(|i| !i.raw.hovered_files.is_empty());
+        if resp.dnd_hover_payload::<crate::app::BrowserItem>().is_some() || (files_over && here) {
             rect_line(ui.painter(), rect, 6.0, 2.0, accent_now());
         }
         let dropped: Vec<std::path::PathBuf> = ui.ctx().input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect());
-        if let Some(path) = dropped.iter().find(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("wav") || e.eq_ignore_ascii_case("flac"))) {
+        if let Some(path) = dropped.iter().find(|p| krabton_engine::sample::is_audio_file(p)).filter(|_| here) {
             load(path, sample);
+            crate::import::take_file_drop(ui.ctx());
         }
         ui.add_space(8.0);
         switches(ui, id, params, h);
