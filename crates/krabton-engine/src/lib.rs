@@ -3,6 +3,7 @@
 //! This crate has no GUI or audio-device dependencies, so it can be tested
 //! and used headless (e.g. for offline rendering).
 
+pub mod analysis;
 pub mod audio_in;
 pub mod band;
 pub mod classic_seq;
@@ -31,6 +32,7 @@ pub mod routing;
 pub mod scale;
 pub mod scope;
 pub mod singer;
+pub mod slicing;
 pub mod hyper;
 pub mod tape;
 pub mod video;

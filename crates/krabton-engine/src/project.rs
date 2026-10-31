@@ -550,8 +550,9 @@ pub struct DrumPad {
     /// robins. Empty: `sample` or the voice plays.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub layers: Vec<Vec<SampleRef>>,
-    /// Brings the recorded layers to a common level (dB), set when a kit
-    /// is loaded; the pad's own level comes on top.
+    /// Brings the recorded layers (or the sample) to a common level (dB),
+    /// set when a kit is loaded (and on the slices of a loop, so they play
+    /// as loud as the loop); the pad's own level comes on top.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub trim_db: f32,
     /// What velocity does to the pad: how much it sets the loudness (0:
@@ -563,6 +564,10 @@ pub struct DrumPad {
     pub vel_tone: f32,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub vel_decay: f32,
+    /// Plays only while its note is held (a slice stops where its note
+    /// ends); off: every hit plays to its end, as drums do.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub gate: bool,
 }
 
 impl DrumPad {
@@ -629,6 +634,7 @@ impl DrumPad {
             vel_level: 1.0,
             vel_tone: 0.0,
             vel_decay: 0.0,
+            gate: false,
         }
     }
 }
@@ -1978,6 +1984,15 @@ impl Project {
         let t = self.new_track(TrackKind::Midi, name, instrument);
         self.tracks.push(t);
         self.tracks.len() - 1
+    }
+
+    /// A new MIDI track called `name` at `at` (the tracks from there move
+    /// one on). Returns where it is.
+    pub fn insert_midi_track(&mut self, at: usize, name: impl Into<String>, instrument: Option<Instrument>) -> usize {
+        let t = self.new_track(TrackKind::Midi, name.into(), instrument);
+        let at = at.min(self.tracks.len());
+        self.tracks.insert(at, t);
+        at
     }
 
     pub fn add_audio_track(&mut self) -> usize {

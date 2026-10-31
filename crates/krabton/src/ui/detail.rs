@@ -503,6 +503,14 @@ impl App {
     }
 
     fn ui_audio_clip(&mut self, ui: &mut Ui, area: Rect, sel: ClipSel) {
+        // Right-click the waveform for what can be done with it (under the markers).
+        let menu = ui.interact(area, Id::new("audio_clip_menu"), Sense::click());
+        menu.context_menu(|ui| {
+            if ui.button("Slice to New MIDI Track...").on_hover_text("Cut the clip at its hits or on the beat: a Drum Rack of the slices and a clip that plays them, on a new track").clicked() {
+                self.open_slice_dialog(sel);
+                ui.close();
+            }
+        });
         let Some(clip) = self.clip_ref(sel) else { return };
         let ClipContent::Audio(a) = &clip.content else { return };
         let p = ui.painter().with_clip_rect(area);
