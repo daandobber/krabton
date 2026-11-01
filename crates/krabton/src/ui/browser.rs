@@ -550,6 +550,10 @@ fn midi_nodes() -> Vec<Node> {
 
 impl App {
     pub(crate) fn ui_browser(&mut self, ui: &mut Ui) {
+        // The Princess Sounds being made: their count goes up.
+        if self.princess_sounds.is_some() {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+        }
         let rect = ui.max_rect();
         let (pressed, pos) = ui.input(|i| (i.pointer.any_pressed(), i.pointer.interact_pos()));
         if pressed && pos.is_some_and(|p| !rect.contains(p)) {

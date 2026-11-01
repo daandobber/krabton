@@ -156,6 +156,16 @@ pub fn chop(s: &SampleData, by: ChopBy, count: usize, bpm: Option<f64>, downbeat
             if v.is_empty() {
                 (0..count).map(|k| k * n / count).collect()
             } else {
+                // Few hits (a pad, a held chord): the longest chops halved
+                // till there are at least eight.
+                while v.len() < MIN_CHOPS.min(count) {
+                    let ends: Vec<usize> = v.iter().skip(1).copied().chain(std::iter::once(n)).collect();
+                    let Some((k, len)) = v.iter().zip(&ends).map(|(a, b)| b - a).enumerate().max_by_key(|(_, len)| *len) else { break };
+                    if len < (0.05 * sr) as usize {
+                        break;
+                    }
+                    v.insert(k + 1, v[k] + len / 2);
+                }
                 v
             }
         }
@@ -733,6 +743,12 @@ mod tests {
         let f = listen(&s, ChopBy::Bars, 16);
         assert_eq!(f.chops.len(), 16);
         assert_eq!(f.chops[1].start, 96_000);
+        // Few hits (two in a long held tone): halved till there are eight.
+        let mut two = sine(220.0, 4.0);
+        two[96_000..].iter_mut().for_each(|v| *v *= 2.0);
+        let c = chop(&sample("pad", two), ChopBy::Hits, 12, None, 0.0);
+        assert!(c.len() >= 8, "{} chops", c.len());
+        assert!(c.windows(2).all(|w| w[0].end == w[1].start && w[0].start < w[1].start));
         // No tempo: equal parts.
         let c = chop(&sample("x", sine(220.0, 1.0)), ChopBy::Bars, 10, None, 0.0);
         assert_eq!(c.len(), 10);
