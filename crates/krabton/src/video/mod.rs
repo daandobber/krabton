@@ -84,6 +84,8 @@ pub struct VideoRuntime {
     /// Record Video: the recording going on, and one being put together.
     pub rec: Option<record::Recorder>,
     pub rec_done: Option<std::thread::JoinHandle<Result<PathBuf, String>>>,
+    /// The side panel scrolled here once (by script, to look at it).
+    pub side_scroll: Option<f32>,
 }
 
 impl Default for VideoRuntime {
@@ -124,6 +126,7 @@ impl Default for VideoRuntime {
             export: None,
             rec: None,
             rec_done: None,
+            side_scroll: None,
         }
     }
 }

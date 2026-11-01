@@ -436,7 +436,11 @@ impl App {
         let mut left_ui = ui.new_child(UiBuilder::new().max_rect(left));
         self.video_preview(&mut left_ui);
         let mut side_ui = ui.new_child(UiBuilder::new().max_rect(side));
-        egui::ScrollArea::vertical().id_salt("video_side").auto_shrink([false, false]).show(&mut side_ui, |ui| self.video_controls(ui));
+        let mut side = egui::ScrollArea::vertical().id_salt("video_side").auto_shrink([false, false]);
+        if let Some(y) = self.video.side_scroll.take() {
+            side = side.vertical_scroll_offset(y);
+        }
+        side.show(&mut side_ui, |ui| self.video_controls(ui));
     }
 
     // ------------------------------------------------------------------
@@ -1619,7 +1623,7 @@ impl App {
             // Its parts one at a time, changing on the beat.
             if !cued {
                 let seq = &mut clip.play.seq;
-                egui::CollapsingHeader::new(RichText::new("Parts one at a time").color(TEXT)).id_salt(("video_seq", edited)).default_open(seq.on).show(ui, |ui| {
+                egui::CollapsingHeader::new(RichText::new("Parts one at a time").color(TEXT)).id_salt(("video_seq", edited, seq.on)).default_open(seq.on).show(ui, |ui| {
                     ui.horizontal(|ui| {
                         let tip = if parts_n > 1 { "Plays one part at a time, changing on the beat as the order says; Slices then cut the part that plays, Tempo fits it into its bars" } else { "Keep two parts or more on the timeline first" };
                         if ui.add_enabled(parts_n > 1, egui::Button::new(RichText::new(if seq.on { "On" } else { "Off" }).color(if seq.on { TEXT_DARK } else { TEXT })).fill(if seq.on { ACCENT } else { PANEL3 })).on_hover_text(tip).on_disabled_hover_text(tip).clicked() {
@@ -1749,7 +1753,7 @@ impl App {
         hits_switch(ui, "video_look_hits", &mut set.look_hits, &tracks, "Look");
         let n_looks = set.looks.len().max(1);
         let seq = &mut set.look_seq;
-        egui::CollapsingHeader::new(RichText::new("Look sequence").color(TEXT)).id_salt("video_look_seq").default_open(seq.on).show(ui, |ui| {
+        egui::CollapsingHeader::new(RichText::new("Look sequence").color(TEXT)).id_salt(("video_look_seq", seq.on)).default_open(seq.on).show(ui, |ui| {
             ui.horizontal(|ui| {
                 if choice(ui, if seq.on { "On" } else { "Off" }, seq.on, "Looks in turn: a step every so often, each step a Look (or the set's own)").clicked() {
                     seq.on = !seq.on;
@@ -2504,6 +2508,8 @@ impl App {
             // videorec[=PATH]: Record Video starts; videorecstop stops it.
             "videorec" => self.video_record_start((!arg.trim().is_empty()).then(|| PathBuf::from(arg.trim()))),
             "videorecstop" => self.video_record_stop(),
+            // videoscroll=Y: the side panel scrolled down Y points.
+            "videoscroll" => self.video.side_scroll = f.first().copied(),
             // videonow: prints the Look and the part that play (to check by script).
             "videonow" => {
                 let d = &self.video.dir;

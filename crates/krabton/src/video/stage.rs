@@ -96,11 +96,13 @@ impl Params {
         p
     }
 
+    #[cfg(test)]
     pub fn get(&self, e: Effect) -> f32 {
         self.fx[e.index()]
     }
 
     /// Effect `e`'s setting `k`.
+    #[cfg(test)]
     pub fn param(&self, e: Effect, k: usize) -> f32 {
         self.p[e.index()][k]
     }
