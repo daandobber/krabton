@@ -2258,10 +2258,15 @@ impl App {
                             if ui.small_button("x").on_hover_text("Take this link away").clicked() {
                                 remove_link = Some(i);
                             }
-                            ui.spacing_mut().slider_width = ui.available_width().clamp(30.0, 120.0);
+                            // Its word in front of the slider only where there is room for both.
+                            let room = ui.available_width() - 6.0;
+                            let said = room >= 110.0;
+                            ui.spacing_mut().slider_width = if said { (room - 56.0).min(120.0) } else { room.max(24.0) };
                             let tip = if l.effect.on_hits() { "How often a hit does it" } else { "How much at full" };
                             ui.add(egui::Slider::new(&mut l.amount, 0.0..=1.0).show_value(false)).on_hover_text(tip);
-                            ui.label(RichText::new(if l.effect.on_hits() { "how often" } else { "up to" }).small().color(TEXT_DIM));
+                            if said {
+                                ui.label(RichText::new(if l.effect.on_hits() { "how often" } else { "up to" }).small().color(TEXT_DIM));
+                            }
                         });
                     });
                     // The source now, as a thin line under its row.
