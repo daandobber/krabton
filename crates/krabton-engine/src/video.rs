@@ -132,12 +132,42 @@ pub struct VideoClip {
     /// Where Slice to Drum Rack cut it (None: in equal slices).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cues: Option<Cues>,
+    /// The part of the film that plays (seconds): from `start` to `end`
+    /// (None: to its end). Loop, Tempo and Slices only know that part.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub start: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end: Option<f32>,
 }
+
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
+}
+
+/// The shortest part of a film that can be kept (seconds).
+pub const MIN_PART: f32 = 0.1;
 
 impl VideoClip {
     pub fn new(path: std::path::PathBuf) -> Self {
         let name = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-        Self { path, name, cues: None }
+        Self { path, name, cues: None, start: 0.0, end: None }
+    }
+
+    /// The part that plays, in a film `duration` long: (from, to). A film
+    /// cut by Slice to Drum Rack plays whole (its cues are times in it).
+    pub fn part(&self, duration: f32) -> (f32, f32) {
+        if duration <= 0.0 || self.cues.as_ref().is_some_and(|c| !c.is_empty()) {
+            return (0.0, duration.max(0.0));
+        }
+        let min = MIN_PART.min(duration);
+        let from = if self.start.is_finite() { self.start.clamp(0.0, duration - min) } else { 0.0 };
+        let to = self.end.filter(|e| e.is_finite()).unwrap_or(duration).clamp(from + min, duration);
+        (from, to)
+    }
+
+    /// Whether only part of it plays.
+    pub fn is_cut(&self) -> bool {
+        self.start > 0.0 || self.end.is_some()
     }
 }
 
@@ -1181,6 +1211,31 @@ mod tests {
     use super::*;
 
     const SR: f32 = 48000.0;
+
+    #[test]
+    fn a_clip_plays_the_part_that_is_kept() {
+        let mut c = VideoClip::new("a.mp4".into());
+        assert_eq!(c.part(10.0), (0.0, 10.0));
+        assert!(!c.is_cut());
+        c.start = 2.0;
+        c.end = Some(6.5);
+        assert_eq!(c.part(10.0), (2.0, 6.5));
+        assert!(c.is_cut());
+        // Past the film's end, or ends the wrong way round: kept in order and inside.
+        c.start = 12.0;
+        c.end = Some(1.0);
+        let (a, b) = c.part(10.0);
+        assert!(a <= 10.0 - MIN_PART && b > a && b <= 10.0, "{a} {b}");
+        // A cut film plays whole, and old sets (no start or end) load.
+        let mut cued = VideoClip::new("b.mp4".into());
+        cued.start = 3.0;
+        cued.cues = Some(Cues { times: vec![0.0, 1.0], end: 2.0, track: None, gate: false });
+        assert_eq!(cued.part(10.0), (0.0, 10.0));
+        let old: VideoClip = serde_json::from_str(r#"{"path":"c.mp4","name":"c"}"#).unwrap();
+        assert_eq!((old.start, old.end), (0.0, None));
+        let back: VideoClip = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
+        assert_eq!((back.start, back.end), (c.start, c.end));
+    }
 
     /// Four bars of a four-on-the-floor kick (a falling 55 Hz thump) with a
     /// short burst of hiss (a hat) between the kicks, at 120 BPM.

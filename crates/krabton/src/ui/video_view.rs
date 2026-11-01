@@ -324,7 +324,8 @@ impl App {
     fn video_preview(&mut self, ui: &mut Ui) {
         let r = ui.max_rect();
         let ears_h = 54.0;
-        let pic_area = Rect::from_min_max(r.min, pos2(r.right(), r.bottom() - ears_h - 8.0));
+        let trim_h = 22.0;
+        let pic_area = Rect::from_min_max(r.min, pos2(r.right(), r.bottom() - ears_h - trim_h - 8.0));
         // At the top of its place, in the middle across.
         let fitted = sixteen_nine(pic_area);
         let pic = Rect::from_min_size(pos2(fitted.left(), pic_area.top()), fitted.size());
@@ -354,10 +355,83 @@ impl App {
             p.text(pos2(pic.left(), line_y), Align2::LEFT_TOP, left, mono(), TEXT_DIM);
             p.text(pos2(pic.right(), line_y), Align2::RIGHT_TOP, &info.note, small(), TEXT_DIM);
         }
+        // The part that plays, under that.
+        let strip = Rect::from_min_size(pos2(pic.left(), pic.bottom() + 22.0), vec2(pic.width(), 14.0));
+        if info.duration > 0.0 && strip.bottom() < r.bottom() - ears_h {
+            self.video_trim(ui, strip, info.duration);
+        }
         // The meters right under it (at the bottom when the picture fills the height).
-        let ears_top = (pic.bottom() + 24.0).min(r.bottom() - ears_h);
+        let ears_top = (pic.bottom() + 24.0 + trim_h).min(r.bottom() - ears_h);
         let ears = Rect::from_min_size(pos2(pic.left(), ears_top), vec2(pic.width(), ears_h));
         self.video_ears(ui, ears);
+    }
+
+    /// The part of the playing clip that plays, on a strip as long as the
+    /// film: drag its ends (or right-click for the playhead's place);
+    /// double-click for the whole film again.
+    fn video_trim(&mut self, ui: &mut Ui, strip: Rect, duration: f32) {
+        let i = self.video.playing;
+        let Some(clip) = self.project.video.clips.get(i) else { return };
+        let cued = clip.cues.as_ref().is_some_and(|c| !c.is_empty());
+        let (from, to) = clip.part(duration);
+        let x_of = |t: f32| strip.left() + strip.width() * (t / duration).clamp(0.0, 1.0);
+        let t_of = |x: f32| ((x - strip.left()) / strip.width()).clamp(0.0, 1.0) * duration;
+        let p = ui.painter();
+        p.rect_filled(strip, 3.0, PANEL3);
+        let kept = Rect::from_min_max(pos2(x_of(from), strip.top()), pos2(x_of(to), strip.bottom()));
+        p.rect_filled(kept, 3.0, if cued { LINE } else { ACCENT.gamma_multiply(0.45) });
+        let at = x_of(self.video.at as f32);
+        p.line_segment([pos2(at, strip.top() - 2.0), pos2(at, strip.bottom() + 2.0)], egui::Stroke::new(1.5_f32, TEXT));
+        if cued {
+            ui.interact(strip, Id::new("video_trim"), Sense::hover()).on_hover_text("Cut by Slice to Drum Rack: the whole film plays, by its cues");
+            return;
+        }
+        for x in [kept.left(), kept.right()] {
+            p.rect_filled(Rect::from_center_size(pos2(x, strip.center().y), vec2(5.0, strip.height() + 6.0)), 2.0, ACCENT);
+        }
+        let resp = ui.interact(strip.expand2(vec2(4.0, 4.0)), Id::new("video_trim"), Sense::click_and_drag());
+        let which = Id::new("video_trim_end");
+        if resp.drag_started() {
+            if let Some(pt) = resp.interact_pointer_pos() {
+                // The nearer end.
+                let end = (pt.x - kept.right()).abs() < (pt.x - kept.left()).abs();
+                ui.ctx().data_mut(|d| d.insert_temp(which, end));
+            }
+        }
+        let mut new = None;
+        if resp.dragged() {
+            if let Some(pt) = resp.interact_pointer_pos() {
+                let end = ui.ctx().data(|d| d.get_temp::<bool>(which)).unwrap_or(false);
+                let t = t_of(pt.x);
+                new = Some(if end { (from, t.max(from + kv::MIN_PART)) } else { (t.min(to - kv::MIN_PART), to) });
+            }
+        }
+        if resp.double_clicked() {
+            new = Some((0.0, duration));
+        }
+        let here = self.video.at as f32;
+        resp.context_menu(|ui| {
+            if ui.button("Start here").clicked() {
+                new = Some((here.min(to - kv::MIN_PART), to));
+                ui.close();
+            }
+            if ui.button("End here").clicked() {
+                new = Some((from, here.max(from + kv::MIN_PART)));
+                ui.close();
+            }
+            if ui.button("Whole film").clicked() {
+                new = Some((0.0, duration));
+                ui.close();
+            }
+        });
+        let resp = resp.on_hover_text(format!("Plays {} to {} ({:.1} s): drag the ends; right-click for the playhead's place; double-click for the whole film", clock(from as f64), clock(to as f64), to - from));
+        let _ = resp;
+        if let Some((a, b)) = new {
+            if let Some(c) = self.project.video.clips.get_mut(i) {
+                c.start = a.max(0.0);
+                c.end = (b < duration - 1e-3).then_some(b);
+            }
+        }
     }
 
     /// The stage in `rect` (or, without shaders, the plain picture).

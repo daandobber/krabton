@@ -384,9 +384,11 @@ impl App {
             (Some(_), Some(id)) => self.project.tracks.iter().position(|t| t.id == id).and_then(|i| status.tracks.get(i)).map_or(0, |ts| ts.inst_notes()),
             (Some(_), None) => status.tracks.iter().take(self.project.tracks.len()).fold(0, |m, ts| m | ts.inst_notes()),
         };
+        // Only the part of the film that is kept plays (its playhead counts from its start).
+        let (from, to) = clip.map_or((0.0, info.duration), |c| c.part(info.duration));
         let input = kv::PlayInput {
             dt,
-            duration: info.duration,
+            duration: to - from,
             beat,
             playing,
             bpm,
@@ -400,7 +402,7 @@ impl App {
             clip: v.playing,
             held,
         };
-        v.at = v.playhead.advance(&set, &input);
+        v.at = from as f64 + v.playhead.advance(&set, &input);
 
         // The picture: a new frame goes up when it changes.
         let frame = media.as_ref().and_then(|m| m.frame_at(v.at).map(|i| (m.clone(), i)));

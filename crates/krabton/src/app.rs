@@ -3944,6 +3944,15 @@ impl App {
                     self.video_window = true;
                     self.video.link_open = true;
                 }
+                // videotrim=FROM,TO: the playing Video clip plays from FROM to TO (seconds).
+                "videotrim" => {
+                    let t: Vec<f32> = arg.split(',').filter_map(|v| v.trim().parse().ok()).collect();
+                    let i = self.video.playing;
+                    if let (Some(c), [a, b, ..]) = (self.project.video.clips.get_mut(i), t.as_slice()) {
+                        c.start = *a;
+                        c.end = Some(*b);
+                    }
+                }
                 "videoload" => {
                     self.video_window = true;
                     self.video_add(&[PathBuf::from(arg.trim())]);
