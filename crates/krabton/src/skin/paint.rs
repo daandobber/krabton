@@ -213,9 +213,6 @@ pub fn panel(rect: Rect, s: &Skin, track: Option<Color32>, ppp: f32) -> Shape {
             out.push(Shape::mesh(gradient(band, 3.0, Color32::from_white_alpha(26), Color32::from_white_alpha(0))));
         }
         Surface::Night => {
-            // A glow along the bottom, as of a city far off.
-            let low = Rect::from_min_max(pos2(inner.left(), inner.top() + inner.height() * 0.55), inner.max);
-            out.push(Shape::mesh(gradient(low, 3.0, Color32::from_rgba_unmultiplied(0xff, 0x9e, 0xd6, 0), Color32::from_rgba_unmultiplied(0xff, 0x9e, 0xd6, 22))));
             // Stars: specks, some pink, some blue, now and then a sparkle.
             let n = ((inner.width() * inner.height()) / 700.0) as u32;
             let mut m = Mesh::default();
