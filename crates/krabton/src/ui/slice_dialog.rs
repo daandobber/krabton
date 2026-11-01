@@ -349,9 +349,7 @@ impl App {
         }
         // The first clip in the bank: the links listen to the drums for the kicks (as `video_add`).
         if self.project.video.clips.len() == 1 {
-            let mut links = std::mem::take(&mut self.project.video.links);
-            self.video_fit_links(&mut links);
-            self.project.video.links = links;
+            self.video_fit_looks();
         }
         self.video_pick(i);
         self.video.dir.playhead.reset();

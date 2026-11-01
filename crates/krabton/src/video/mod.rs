@@ -10,6 +10,7 @@ pub mod export;
 pub mod ffmpeg;
 pub mod gif;
 pub mod media;
+pub mod record;
 pub mod stage;
 pub mod strip;
 pub mod ytdl;
@@ -17,7 +18,7 @@ pub mod ytdl;
 use crate::app::App;
 use director::{Asks, Director, Shot};
 use krabton_engine::project::Project;
-use krabton_engine::video::{self as kv, Dice, Effect, Look, Transition, VideoClip, VideoSet};
+use krabton_engine::video::{self as kv, Effect, Look, Transition, VideoClip, VideoLook, VideoSet};
 use media::Media;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -80,6 +81,9 @@ pub struct VideoRuntime {
     pub export_open: bool,
     pub export_opts: export::Opts,
     pub export: Option<export::Job>,
+    /// Record Video: the recording going on, and one being put together.
+    pub rec: Option<record::Recorder>,
+    pub rec_done: Option<std::thread::JoinHandle<Result<PathBuf, String>>>,
 }
 
 impl Default for VideoRuntime {
@@ -118,6 +122,8 @@ impl Default for VideoRuntime {
             export_open: false,
             export_opts: export::Opts::default(),
             export: None,
+            rec: None,
+            rec_done: None,
         }
     }
 }
@@ -162,51 +168,88 @@ impl VideoRuntime {
     }
 }
 
-/// What the effects make of a frame, for the stage (and an export):
-/// `sizes` are the pictures' (the clip that plays, the one it is changing
-/// from; None: no picture yet).
-pub fn stage_params(set: &VideoSet, project: &Project, look: &Look, shot: &Shot, sizes: (Option<[f32; 2]>, Option<[f32; 2]>), dice: &mut Dice) -> stage::Params {
+/// A smooth wobble between -1 and 1, a new place every unit of `t`.
+fn wobble(t: f64, seed: f32) -> f32 {
+    let h = |n: f64| ((n.sin() * 43758.5453).fract() * 2.0 - 1.0) as f32;
+    let i = t.floor();
+    let f = (t - i) as f32;
+    let u = f * f * (3.0 - 2.0 * f);
+    let (a, b) = (h(i * 12.9898 + seed as f64), h((i + 1.0) * 12.9898 + seed as f64));
+    a + (b - a) * u
+}
+
+/// How a clip sits on the stage, as its frame says.
+fn framing(set: &VideoSet, clip: Option<&VideoClip>) -> stage::Framing {
+    let f = clip.map(|c| c.frame).unwrap_or_default();
+    stage::Framing { fill: f.fit.unwrap_or(set.fit) == kv::Fit::Fill, opacity: f.opacity, zoom: f.zoom, pos: [f.x, f.y], turn: f.turn, crop: f.crop }
+}
+
+fn rgb(c: [u8; 3]) -> [f32; 3] {
+    c.map(|v| v as f32 / 255.0)
+}
+
+/// What the effects of Look `def` make of a frame (`look` what its links
+/// made of it now), for the stage (and an export): `sizes` are the
+/// pictures' (the clip that plays, the one it is changing from; None: no
+/// picture yet), `noise` three numbers by chance for this frame.
+#[allow(clippy::too_many_arguments)]
+pub fn stage_params(set: &VideoSet, project: &Project, def: &VideoLook, look: &Look, shot: &Shot, sizes: (Option<[f32; 2]>, Option<[f32; 2]>), noise: [f32; 3]) -> stage::Params {
+    let mut p = stage::Params { fx: look.fx, ..Default::default() };
+    for e in Effect::ALL {
+        p.p[e.index()] = def.setting(e).params4(e);
+    }
     let fx = |e: Effect| look.get(e);
-    let shake = fx(Effect::Shake) * 0.05;
-    let tint = match look.tint_link.and_then(|i| set.links.get(i)) {
-        Some(l) => {
-            let c = l.from.and_then(|id| project.tracks.iter().find(|t| t.id == id)).map(|t| t.color).unwrap_or([0xff, 0x40, 0xa0]);
-            [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, fx(Effect::Tint)]
-        }
-        None => [0.0; 4],
+    let set_of = |e: Effect| def.setting(e);
+    let secs = shot.beat * 60.0 / project.bpm.max(1.0);
+    // Spin: as far round as it is up, its angle always, and how far its Speed turned it.
+    let sp = p.p[Effect::Spin.index()];
+    p.spin = fx(Effect::Spin) * sp[0] + sp[1] + look.turned;
+    // Shake: every frame somewhere else, or wobbling at its rate.
+    let sh = p.p[Effect::Shake.index()];
+    let size = fx(Effect::Shake) * sh[0];
+    let (x, y) = if sh[1] >= 59.5 { ((noise[0] - 0.5) * 2.0, (noise[1] - 0.5) * 2.0) } else { (wobble(secs * sh[1] as f64, 1.7), wobble(secs * sh[1] as f64, 9.3)) };
+    p.shake = [x * size * sh[2], y * size * sh[3]];
+    // The glitch's strips move every frame, or at its rate; the grain every frame.
+    let rate = p.p[Effect::Glitch.index()][2];
+    p.seed = if rate >= 59.5 { noise[2] * 100.0 } else { ((secs * rate as f64).floor() * 7.31).rem_euclid(100.0) as f32 };
+    p.grain = (noise[2] * 977.0).fract() * 100.0;
+    // Tint: its own colour, or the track's of the strongest Tint link.
+    p.tint = match (set_of(Effect::Tint).color, look.tint_link.and_then(|i| def.links.get(i))) {
+        (Some(c), _) => rgb(c),
+        (None, Some(l)) => rgb(l.from.and_then(|id| project.tracks.iter().find(|t| t.id == id)).map(|t| t.color).unwrap_or([0xff, 0x40, 0xa0])),
+        (None, None) => rgb([0xff, 0x40, 0xa0]),
     };
-    let transition = match (shot.from, set.transition) {
+    for (e, slot) in [(Effect::Flash, &mut p.flash), (Effect::Strobe, &mut p.strobe), (Effect::Edges, &mut p.edges)] {
+        *slot = rgb(set_of(e).color.or(e.color()).unwrap_or([0xff; 3]));
+    }
+    let st = p.p[Effect::Strobe.index()];
+    p.fx[Effect::Strobe.index()] = kv::strobe_light(fx(Effect::Strobe), shot.beat, 1.0 / director::length_beats(st[0]), st[1]);
+    p.transition = match (shot.from, set.transition) {
         (None, _) | (_, Transition::Cut) => 0.0,
         (_, Transition::Fade) => 1.0,
         (_, Transition::Flash) => 2.0,
         (_, Transition::Glitch) => 3.0,
     };
-    stage::Params {
-        video_size: sizes.0.unwrap_or([0.0, 0.0]),
-        fill: set.fit == kv::Fit::Fill,
-        zoom: fx(Effect::Zoom),
-        spin: fx(Effect::Spin),
-        shake: [(dice.unit() - 0.5) * 2.0 * shake, (dice.unit() - 0.5) * 2.0 * shake],
-        mirror: fx(Effect::Mirror),
-        kaleido: fx(Effect::Kaleido),
-        pixels: fx(Effect::Pixels),
-        split: fx(Effect::Split),
-        glitch: fx(Effect::Glitch),
-        seed: dice.unit() * 100.0,
-        hue: fx(Effect::Hue),
-        poster: fx(Effect::Poster),
-        flash: fx(Effect::Flash),
-        invert: fx(Effect::Invert),
-        strobe: kv::strobe_light(fx(Effect::Strobe), shot.beat),
-        gate: fx(Effect::Gate),
-        trails: fx(Effect::Trails),
-        tint,
-        transition,
-        mix: shot.from.map_or(1.0, |f| f.2),
-        old_size: sizes.1.unwrap_or([0.0, 0.0]),
-    }
+    p.mix = shot.from.map_or(1.0, |f| f.2);
+    p.video_size = sizes.0.unwrap_or([0.0, 0.0]);
+    p.old_size = sizes.1.unwrap_or([0.0, 0.0]);
+    p.frame = framing(set, set.clips.get(shot.clip));
+    p.old_frame = framing(set, shot.from.and_then(|f| set.clips.get(f.0)));
+    p
 }
 
+/// What a frame shows, as the director left it: the Look that plays, or
+/// while it morphs, the last one turning into it.
+pub fn frame_params(set: &VideoSet, project: &Project, dir: &mut Director, shot: &Shot, sizes: (Option<[f32; 2]>, Option<[f32; 2]>)) -> stage::Params {
+    let noise = [dir.dice.unit(), dir.dice.unit(), dir.dice.unit()];
+    let none = VideoLook::default();
+    let def = |i: usize| set.looks.get(i).unwrap_or(&none);
+    let b = stage_params(set, project, def(shot.look), &dir.look, shot, sizes, noise);
+    match &dir.look_from {
+        Some((from, a, m)) => stage::Params::morph(&stage_params(set, project, def(*from), a, shot, sizes, noise), &b, *m),
+        None => b,
+    }
+}
 /// Each clip's film length (seconds; 0 for a picture or one not read yet).
 pub fn durations(set: &VideoSet, media: &HashMap<PathBuf, Arc<Media>>) -> Vec<f32> {
     set.clips.iter().map(|c| media.get(&c.path).map_or(0.0, |m| m.info().duration)).collect()
@@ -230,16 +273,63 @@ fn show_frame(ctx: &egui::Context, tex: &mut Option<egui::TextureHandle>, shown:
 impl App {
     /// Whether the Video shows anywhere (it only listens and reads then).
     pub(crate) fn video_on(&self) -> bool {
-        self.video_window || self.video.screen_open
+        self.video_window || self.video.screen_open || self.video.rec.is_some()
+    }
+
+    /// Record Video starts, into `path` (or a new film in Documents/Krabton/Recorded).
+    pub(crate) fn video_record_start(&mut self, path: Option<PathBuf>) {
+        if self.video.rec.is_some() {
+            return;
+        }
+        let Some(exe) = ffmpeg::find() else {
+            self.toast("Record Video needs ffmpeg: the Video's Get ffmpeg fetches it");
+            return;
+        };
+        let out = path.unwrap_or_else(|| record::free_name(&record::recorded_dir(), &self.project.name));
+        let o = self.video.export_opts;
+        let status = self.status();
+        match record::Recorder::start(&status, &exe, out, o.width, o.height, o.fps) {
+            Ok(r) => {
+                self.video.stage.want_pixels(true);
+                println!("video record: started {}", r.out.display());
+                self.video.rec = Some(r);
+            }
+            Err(e) => self.toast(e),
+        }
+    }
+
+    /// Record Video stops: the film is put together in the background (a toast says where).
+    pub(crate) fn video_record_stop(&mut self) {
+        if let Some(r) = self.video.rec.take() {
+            self.video.stage.want_pixels(false);
+            let status = self.status();
+            self.video.rec_done = Some(r.stop(&status));
+        }
+    }
+
+    /// A recording put together: says where (or why not).
+    fn poll_video_record(&mut self) {
+        if !self.video.rec_done.as_ref().is_some_and(|h| h.is_finished()) {
+            return;
+        }
+        match self.video.rec_done.take().map(|h| h.join()) {
+            Some(Ok(Ok(p))) => {
+                println!("video record: done {}", p.display());
+                self.toast(format!("Recorded {}", p.display()));
+            }
+            Some(Ok(Err(e))) => {
+                println!("video record: {e}");
+                self.toast(e);
+            }
+            _ => self.toast("The recording was lost"),
+        }
     }
 
     /// Adds clips to the bank (as many as fit), the first of them playing.
     pub(crate) fn video_add(&mut self, paths: &[PathBuf]) {
         // The first clip: the links listen to the drums for the kicks.
         if self.project.video.clips.is_empty() {
-            let mut links = std::mem::take(&mut self.project.video.links);
-            self.video_fit_links(&mut links);
-            self.project.video.links = links;
+            self.video_fit_looks();
         }
         let set = &mut self.project.video;
         let mut first = None;
@@ -267,12 +357,36 @@ impl App {
         }
     }
 
-    /// Puts a preset in place (its kicks from the drums, see `video_fit_links`).
+    /// Every Look's kicks from the drums (see `video_fit_links`).
+    pub(crate) fn video_fit_looks(&mut self) {
+        let mut looks = std::mem::take(&mut self.project.video.looks);
+        for l in &mut looks {
+            self.video_fit_links(&mut l.links);
+        }
+        self.project.video.looks = looks;
+    }
+
+    /// Puts a preset in the Look edited (its kicks from the drums, see `video_fit_links`).
     pub(crate) fn video_preset(&mut self, p: &kv::Preset) {
         let mut set = self.project.video.clone();
         set.apply_preset(p);
-        self.video_fit_links(&mut set.links);
+        let mut links = std::mem::take(&mut set.edited_look_mut().links);
+        self.video_fit_links(&mut links);
+        set.edited_look_mut().links = links;
         self.project.video = set;
+    }
+
+    /// Look pad `i` clicked: it is the one edited, and the set's own now or
+    /// on the beat its *Launch* waits for.
+    pub(crate) fn video_launch_look(&mut self, i: usize) {
+        if i >= self.project.video.looks.len() {
+            return;
+        }
+        self.project.video.look = i;
+        let st = self.status();
+        let (beat, playing) = (st.song_pos.load(), st.playing.load(Ordering::Relaxed));
+        let set = self.project.video.clone();
+        self.video.dir.launch_look(&set, i, beat, playing, self.project.beats_per_bar);
     }
 
     /// Clip `i` of the bank: it is the one edited, and it plays at once.
@@ -301,6 +415,7 @@ impl App {
     /// shows nowhere.
     pub(crate) fn video_frame(&mut self, ctx: &egui::Context) {
         let status = self.status();
+        self.poll_video_record();
         if !self.video_on() {
             status.listening.store(false, Ordering::Relaxed);
             self.video.last = None;
@@ -392,7 +507,12 @@ impl App {
         // The effects for the stage.
         let size = |i: usize| media_of(i).map(|m| m.info()).map(|i| [i.width as f32, i.height as f32]);
         let sizes = (v.shown.as_ref().and(size(shot.clip)), shot.from.and_then(|f| v.old_shown.as_ref().and(size(f.0))));
-        let look = v.dir.look;
-        v.params = stage_params(&set, &self.project, &look, &shot, sizes, &mut v.dir.dice);
+        v.params = frame_params(&set, &self.project, &mut v.dir, &shot, sizes);
+        // Recording: the sound that came and the stage drawn last frame.
+        if let Some(r) = &mut v.rec {
+            let px = v.stage.take_pixels().map(|p| p.1);
+            r.frame(&status, px);
+            ctx.request_repaint();
+        }
     }
 }

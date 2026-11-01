@@ -148,35 +148,64 @@ fn mix3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
     [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
 }
 
-/// One frame drawn as the stage's shader draws it (see `stage::EFFECTS`):
-/// `new` the clip that plays, `old` the one it is changing from, `prev`
-/// the frame drawn before (for Trails), into `out` (RGB, `w` by `h`).
+fn luma(c: [f32; 3]) -> f32 {
+    0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
+}
+
+fn turn2(p: [f32; 2], a: f32) -> [f32; 2] {
+    let (s, c) = a.sin_cos();
+    [c * p[0] - s * p[1], s * p[0] + c * p[1]]
+}
+
+fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
+    let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+fn inside(uv: [f32; 2], crop: [f32; 4]) -> bool {
+    uv[0] >= crop[0] && uv[0] <= 1.0 - crop[2] && uv[1] >= crop[1] && uv[1] <= 1.0 - crop[3]
+}
+
+/// One frame drawn as the stage's shader draws it (see `stage::EFFECTS`,
+/// effect for effect in the same order): `new` the clip that plays, `old`
+/// the one it is changing from, `prev` the frame drawn before (for Trails
+/// and Echo), into `out` (RGB, `w` by `h`).
 pub fn draw(out: &mut [u8], prev: &[u8], w: usize, h: usize, new: Option<&Pic>, old: Option<&Pic>, p: &Params) {
+    use krabton_engine::video::Effect as E;
     let stage = [w as f32, h as f32];
     let aspect = stage[0] / stage[1];
-    // The shader's pixels are the stage's 1280 wide.
-    let scale = w as f32 / super::stage::STAGE_W as f32;
-    let place = |st: [f32; 2], size: [f32; 2]| {
+    // The shader's pixels are the stage's 1280 by 720.
+    let unit = [super::stage::STAGE_W as f32, super::stage::STAGE_H as f32];
+    let scale = w as f32 / unit[0];
+    let a = |e: E| p.fx[e.index()];
+    let q = |e: E| p.p[e.index()];
+    let place = |st: [f32; 2], size: [f32; 2], fill: bool| {
         let va = size[0] / size[1].max(1.0);
         let mut k = [1.0, 1.0];
-        if p.fill == (va > aspect) {
+        if fill == (va > aspect) {
             k[0] = aspect / va;
         } else {
             k[1] = va / aspect;
         }
         [(st[0] - 0.5) * k[0] + 0.5, (st[1] - 0.5) * k[1] + 0.5]
     };
-    let one = |pic: Option<&Pic>, size: [f32; 2], st: [f32; 2]| -> [f32; 3] {
+    let framed = |st: [f32; 2], f: &super::stage::Framing| {
+        let mut v = [(st[0] - 0.5 - f.pos[0]) * aspect, st[1] - 0.5 - f.pos[1]];
+        v = turn2(v, -f.turn * std::f32::consts::TAU);
+        let z = f.zoom.max(0.01);
+        [v[0] / z / aspect + 0.5, v[1] / z + 0.5]
+    };
+    let one = |pic: Option<&Pic>, size: [f32; 2], f: &super::stage::Framing, st: [f32; 2]| -> [f32; 3] {
         let Some(pic) = pic.filter(|_| size[0] > 0.0) else { return [0.0; 3] };
-        let uv = place(st, size);
-        if !(0.0..=1.0).contains(&uv[0]) || !(0.0..=1.0).contains(&uv[1]) {
+        let uv = place(framed(st, f), size, f.fill);
+        if !inside(uv, f.crop) {
             return [0.0; 3];
         }
-        pic.sample(uv[0], uv[1])
+        pic.sample(uv[0], uv[1]).map(|v| v * f.opacity)
     };
     let pick = |st: [f32; 2]| -> [f32; 3] {
-        let fresh = |st| one(new, p.video_size, st);
-        let stale = |st| one(old, p.old_size, st);
+        let fresh = |st| one(new, p.video_size, &p.frame, st);
+        let stale = |st| one(old, p.old_size, &p.old_frame, st);
         let m = p.mix.clamp(0.0, 1.0);
         if p.transition < 0.5 {
             return fresh(st);
@@ -197,70 +226,177 @@ pub fn draw(out: &mut [u8], prev: &[u8], w: usize, h: usize, new: Option<&Pic>, 
             stale(q)
         }
     };
-    let at = |q: [f32; 2]| -> [f32; 3] {
-        let st = [q[0] / aspect + 0.5, q[1] + 0.5];
-        let off = p.split * 0.03;
+    let at = |v: [f32; 2]| -> [f32; 3] {
+        let st = [v[0] / aspect + 0.5, v[1] + 0.5];
+        let off = a(E::Split) * q(E::Split)[0];
         if off < 0.0005 {
             return pick(st);
         }
-        [pick([st[0] + off, st[1]])[0], pick(st)[1], pick([st[0] - off, st[1]])[2]]
+        let ang = q(E::Split)[1] * std::f32::consts::TAU;
+        let d = [ang.cos() * off, ang.sin() * off];
+        [pick([st[0] + d[0], st[1] + d[1]])[0], pick(st)[1], pick([st[0] - d[0], st[1] - d[1]])[2]]
+    };
+    let prev_at = |uv: [f32; 2]| -> Option<[f32; 3]> {
+        if prev.len() != w * h * 3 {
+            return None;
+        }
+        let (px, py) = (((uv[0].clamp(0.0, 1.0) * w as f32) as usize).min(w - 1), ((uv[1].clamp(0.0, 1.0) * h as f32) as usize).min(h - 1));
+        let o = (py * w + px) * 3;
+        Some([prev[o] as f32 / 255.0, prev[o + 1] as f32 / 255.0, prev[o + 2] as f32 / 255.0])
     };
     let row = |y: usize, line: &mut [u8]| {
         for x in 0..w {
             let uv = [(x as f32 + 0.5) / stage[0], (y as f32 + 0.5) / stage[1]];
             let mut st = uv;
-            if p.glitch > 0.001 {
-                let band = (st[1] * 18.0 + hash(p.seed) * 5.0).floor();
-                if hash(band * 3.17 + p.seed * 11.0) < p.glitch * 0.7 {
-                    st[0] += (hash(band * 1.71 + p.seed) - 0.5) * 0.4 * p.glitch;
+            // Scanlines: the glass bulges.
+            let mut off_glass = 1.0;
+            if a(E::Scanlines) > 0.001 && q(E::Scanlines)[1] > 0.001 {
+                let c = [st[0] - 0.5, st[1] - 0.5];
+                let k = 1.0 + (c[0] * c[0] + c[1] * c[1]) * q(E::Scanlines)[1] * a(E::Scanlines);
+                st = [c[0] * k + 0.5, c[1] * k + 0.5];
+                off_glass = 1.0 + (if inside(st, [0.0; 4]) { 1.0 } else { 0.0 } - 1.0) * a(E::Scanlines);
+            }
+            if a(E::Glitch) > 0.001 {
+                let band = (st[1] * q(E::Glitch)[0] + hash(p.seed) * 5.0).floor();
+                if hash(band * 3.17 + p.seed * 11.0) < a(E::Glitch) * 0.7 {
+                    st[0] += (hash(band * 1.71 + p.seed) - 0.5) * q(E::Glitch)[1] * a(E::Glitch);
                 }
             }
-            if p.pixels > 0.001 {
-                let px = (1.0 + 39.0 * p.pixels * p.pixels) * scale;
+            if a(E::Pixels) > 0.001 {
+                let px = (1.0 + (q(E::Pixels)[0] - 1.0) * a(E::Pixels) * a(E::Pixels)) * scale;
                 st = [((st[0] * stage[0] / px).floor() + 0.5) * px / stage[0], ((st[1] * stage[1] / px).floor() + 0.5) * px / stage[1]];
             }
-            let mut q = [(st[0] - 0.5) * aspect, st[1] - 0.5];
-            let z = 1.0 + p.zoom * 1.5;
-            q = [q[0] / z, q[1] / z];
-            let a = p.spin * std::f32::consts::TAU;
-            q = [a.cos() * q[0] - a.sin() * q[1], a.sin() * q[0] + a.cos() * q[1]];
-            q = [q[0] - p.shake[0] * aspect, q[1] - p.shake[1]];
-            let mut c = at(q);
-            if p.mirror > 0.001 {
-                c = mix3(c, at([-q[0].abs(), q[1]]), p.mirror);
+            let mut v = [(st[0] - 0.5) * aspect, st[1] - 0.5];
+            let zq = q(E::Zoom);
+            let centre = [zq[1] * aspect, zq[2]];
+            let z = 1.0 + a(E::Zoom).powf(zq[3]) * zq[0];
+            v = [(v[0] - centre[0]) / z + centre[0], (v[1] - centre[1]) / z + centre[1]];
+            v = turn2(v, p.spin * std::f32::consts::TAU);
+            v = [v[0] - p.shake[0] * aspect, v[1] - p.shake[1]];
+            let mut c = at(v);
+            if a(E::ZoomBlur) > 0.001 {
+                let zb = q(E::ZoomBlur);
+                let zc = [zb[1] * aspect, zb[2]];
+                let mut sum = c;
+                for k in 1..8 {
+                    let t = k as f32 / 8.0 * zb[0] * a(E::ZoomBlur) * 0.5;
+                    let s = at([v[0] + (zc[0] - v[0]) * t, v[1] + (zc[1] - v[1]) * t]);
+                    sum = [sum[0] + s[0], sum[1] + s[1], sum[2] + s[2]];
+                }
+                c = sum.map(|s| s / 8.0);
             }
-            if p.kaleido > 0.001 {
-                let seg = std::f32::consts::TAU / 6.0;
-                let ang = (q[1].atan2(q[0])).rem_euclid(seg);
+            if a(E::Blur) > 0.001 {
+                let r = a(E::Blur) * q(E::Blur)[0] * 0.02;
+                let mut sum = c;
+                for k in 0..8 {
+                    let an = k as f32 * std::f32::consts::FRAC_PI_4;
+                    let s = at([v[0] + an.cos() * r, v[1] + an.sin() * r]);
+                    sum = [sum[0] + s[0], sum[1] + s[1], sum[2] + s[2]];
+                }
+                c = sum.map(|s| s / 9.0);
+            }
+            if a(E::Mirror) > 0.001 {
+                let axis = q(E::Mirror)[0];
+                let m = if axis < 0.5 {
+                    [-v[0].abs(), v[1]]
+                } else if axis < 1.5 {
+                    [v[0].abs(), v[1]]
+                } else if axis < 2.5 {
+                    [v[0], -v[1].abs()]
+                } else if axis < 3.5 {
+                    [v[0], v[1].abs()]
+                } else {
+                    [-v[0].abs(), -v[1].abs()]
+                };
+                c = mix3(c, at(m), a(E::Mirror));
+            }
+            if a(E::Kaleido) > 0.001 {
+                let seg = std::f32::consts::TAU / q(E::Kaleido)[0].max(1.0);
+                let ang = (v[1].atan2(v[0]) + q(E::Kaleido)[1] * std::f32::consts::TAU).rem_euclid(seg);
                 let ang = (ang - seg * 0.5).abs();
-                let r = (q[0] * q[0] + q[1] * q[1]).sqrt();
-                c = mix3(c, at([ang.cos() * r, ang.sin() * r]), p.kaleido);
+                let r = (v[0] * v[0] + v[1] * v[1]).sqrt();
+                c = mix3(c, at([ang.cos() * r, ang.sin() * r]), a(E::Kaleido));
             }
-            if p.hue > 0.001 {
-                let (s, co) = (p.hue * std::f32::consts::TAU).sin_cos();
+            if a(E::Edges) > 0.001 {
+                let d = q(E::Edges)[0] / unit[1];
+                let gx = luma(at([v[0] + d, v[1]])) - luma(at([v[0] - d, v[1]]));
+                let gy = luma(at([v[0], v[1] + d])) - luma(at([v[0], v[1] - d]));
+                let e = ((gx * gx + gy * gy).sqrt() * 4.0).clamp(0.0, 1.0);
+                let lines = p.edges.map(|k| k * e);
+                let over = if q(E::Edges)[1] < 0.5 { lines } else { [0, 1, 2].map(|i| c[i].max(lines[i])) };
+                c = mix3(c, over, a(E::Edges));
+            }
+            if a(E::Hue) > 0.001 {
+                let (s, co) = (a(E::Hue) * q(E::Hue)[0] * std::f32::consts::TAU).sin_cos();
                 let k = 0.57735f32;
                 let dot = k * (c[0] + c[1] + c[2]);
                 let cross = [k * (c[2] - c[1]), k * (c[0] - c[2]), k * (c[1] - c[0])];
                 c = [0, 1, 2].map(|i| (c[i] * co + cross[i] * s + k * dot * (1.0 - co)).clamp(0.0, 1.0));
+                let l = luma(c);
+                let sat = 1.0 + (q(E::Hue)[1] - 1.0) * a(E::Hue);
+                c = c.map(|v| (l + (v - l) * sat).clamp(0.0, 1.0));
             }
-            if p.poster > 0.001 {
-                let levels = 24.0 + (2.0 - 24.0) * p.poster;
+            if a(E::Grade) > 0.001 {
+                let g = q(E::Grade);
+                let con = 1.0 + (g[1] - 1.0) * a(E::Grade);
+                c = c.map(|v| (v - 0.5) * con + 0.5 + g[0] * a(E::Grade));
+                let l = luma(c);
+                let sat = 1.0 + (g[2] - 1.0) * a(E::Grade);
+                c = c.map(|v| (l + (v - l) * sat).clamp(0.0, 1.0));
+            }
+            if a(E::Poster) > 0.001 {
+                let levels = 24.0 + (q(E::Poster)[0] - 24.0) * a(E::Poster);
                 c = c.map(|v| (v * levels + 0.5).floor() / levels);
             }
-            let luma = 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2];
-            c = mix3(c, [0, 1, 2].map(|i| p.tint[i] * (0.2 + luma * 1.3)), p.tint[3]);
-            c = mix3(c, c.map(|v| 1.0 - v), p.invert);
-            c = mix3(c, [1.0; 3], p.flash * 0.85);
-            c = c.map(|v| v * (1.0 - p.gate));
-            c = mix3(c, [1.0; 3], p.strobe);
-            if p.trails > 0.001 && prev.len() == w * h * 3 {
-                let qx = ((uv[0] - 0.5) * 0.985 + 0.5).clamp(0.0, 1.0);
-                let qy = ((uv[1] - 0.5) * 0.985 + 0.5).clamp(0.0, 1.0);
-                let (px, py) = (((qx * w as f32) as usize).min(w - 1), ((qy * h as f32) as usize).min(h - 1));
-                let o = (py * w + px) * 3;
-                let was = [prev[o] as f32 / 255.0, prev[o + 1] as f32 / 255.0, prev[o + 2] as f32 / 255.0];
-                let blend = mix3(c, was, p.trails * 0.9);
-                c = [0, 1, 2].map(|i| c[i].max(blend[i]));
+            let blend = q(E::Tint)[0];
+            let l = luma(c);
+            let tinted = if blend < 0.5 {
+                p.tint.map(|t| t * (0.2 + l * 1.3))
+            } else if blend < 1.5 {
+                [0, 1, 2].map(|i| c[i] * p.tint[i])
+            } else if blend < 2.5 {
+                [0, 1, 2].map(|i| 1.0 - (1.0 - c[i]) * (1.0 - p.tint[i]))
+            } else {
+                [0, 1, 2].map(|i| c[i] + p.tint[i])
+            };
+            c = mix3(c, tinted, a(E::Tint));
+            c = mix3(c, c.map(|v| 1.0 - v), a(E::Invert));
+            c = mix3(c, p.flash, a(E::Flash) * q(E::Flash)[0]);
+            if a(E::Vignette) > 0.001 {
+                let d = [(uv[0] - 0.5) * 2.0, (uv[1] - 0.5) * 2.0];
+                let r = (d[0] * d[0] + d[1] * d[1]).sqrt() * std::f32::consts::FRAC_1_SQRT_2;
+                let inner = 1.0 - q(E::Vignette)[0];
+                let soft = q(E::Vignette)[1] * 0.5;
+                let k = 1.0 - smoothstep(inner - soft, inner + soft, r) * a(E::Vignette);
+                c = c.map(|v| v * k);
+            }
+            if a(E::Scanlines) > 0.001 {
+                let s = 0.5 + 0.5 * (st[1] * q(E::Scanlines)[0] * std::f32::consts::TAU).cos();
+                let k = (1.0 - a(E::Scanlines) * 0.6 * (1.0 - s)) * off_glass;
+                c = c.map(|v| v * k);
+            }
+            if a(E::Grain) > 0.001 {
+                let size = q(E::Grain)[0].max(1.0);
+                let g = [(uv[0] * unit[0] / size).floor(), (uv[1] * unit[1] / size).floor()];
+                let n = (hash(g[0] * 12.9898 + g[1] * 78.233 + p.grain) - 0.5) * a(E::Grain) * 0.5;
+                c = c.map(|v| v + n);
+            }
+            c = c.map(|v| v * (1.0 - a(E::Gate)));
+            c = mix3(c, p.strobe, a(E::Strobe));
+            if a(E::Trails) > 0.001 {
+                let t = q(E::Trails);
+                if let Some(was) = prev_at([(uv[0] - 0.5) * t[0] + 0.5, (uv[1] - 0.5) * t[0] + 0.5]) {
+                    let blend = mix3(c, was, a(E::Trails) * t[1]);
+                    c = [0, 1, 2].map(|i| c[i].max(blend[i]));
+                }
+            }
+            if a(E::Echo) > 0.001 {
+                let t = q(E::Echo);
+                let at_q = [uv[0] - t[0], uv[1] - t[1]];
+                if let Some(was) = prev_at(at_q) {
+                    let was = if inside(at_q, [0.0; 4]) { was } else { [0.0; 3] };
+                    c = mix3(c, was, a(E::Echo) * t[2] * 0.85);
+                }
             }
             for (i, v) in c.iter().enumerate() {
                 line[x * 3 + i] = (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
@@ -360,9 +496,8 @@ pub fn plan(work_project: &Project, source: RenderSource, sample_rate: u32, fps:
     let (audio, left) = render::render_watched(work_project, source, sample_rate, work_project.beats_per_bar_f(), Some(progress), processors, sample_rate as f64 / fps.max(1) as f64, |status, _| {
         let asks = Asks { dt, durations: &durations, ..Default::default() };
         let shot = dir.frame(&set, work_project, status, &asks);
-        let look = dir.look;
         let size = |i: usize| sizes.get(i).copied().flatten();
-        let params = super::stage_params(&set, work_project, &look, &shot, (size(shot.clip), shot.from.and_then(|f| size(f.0))), &mut dir.dice);
+        let params = super::frame_params(&set, work_project, &mut dir, &shot, (size(shot.clip), shot.from.and_then(|f| size(f.0))));
         frames.push(Planned { shot, params });
     });
     // A frame for every whole frame's share of the sound.
@@ -502,7 +637,9 @@ fn encode(frames: &[Planned], audio: &[f32], sample_rate: u32, opts: Opts, out: 
 
 #[cfg(test)]
 mod tests {
+    use super::super::stage::Framing;
     use super::*;
+    use krabton_engine::video::Effect;
 
     #[test]
     fn every_frame_has_its_share_of_the_sound_without_drifting() {
@@ -552,18 +689,18 @@ mod tests {
         let (w, h) = (64, 36);
         let mut out = vec![0u8; w * h * 3];
         let red = pic(16, 9, [255, 0, 0]);
-        let p = Params { video_size: [16.0, 9.0], fill: true, ..Default::default() };
+        let p = Params { video_size: [16.0, 9.0], ..Default::default() };
         draw(&mut out, &[], w, h, Some(&red), None, &p);
         assert!(out.chunks(3).all(|c| c == [255, 0, 0]), "a 16:9 picture fills a 16:9 film");
         // Fit, a square picture: black bars at the sides.
         let sq = pic(8, 8, [0, 255, 0]);
-        draw(&mut out, &[], w, h, Some(&sq), None, &Params { video_size: [8.0, 8.0], fill: false, ..Default::default() });
+        draw(&mut out, &[], w, h, Some(&sq), None, &Params { video_size: [8.0, 8.0], frame: Framing { fill: false, ..Default::default() }, ..Default::default() });
         assert_eq!(&out[(18 * w) * 3..(18 * w) * 3 + 3], &[0, 0, 0], "the left edge is a bar");
         assert_eq!(&out[(18 * w + 32) * 3..(18 * w + 32) * 3 + 3], &[0, 255, 0]);
         // Invert, and a full flash to (nearly) white.
-        draw(&mut out, &[], w, h, Some(&red), None, &Params { invert: 1.0, ..p });
+        draw(&mut out, &[], w, h, Some(&red), None, &with(p, &[(Effect::Invert, 1.0)]));
         assert_eq!(&out[..3], &[0, 255, 255]);
-        draw(&mut out, &[], w, h, Some(&red), None, &Params { gate: 1.0, ..p });
+        draw(&mut out, &[], w, h, Some(&red), None, &with(p, &[(Effect::Gate, 1.0)]));
         assert!(out.iter().all(|v| *v == 0), "gated shut: dark");
         // A fade halfway between the clip it leaves and the next.
         let blue = pic(16, 9, [0, 0, 255]);
@@ -577,6 +714,307 @@ mod tests {
         draw(&mut out, &[], w, h, None, None, &p);
         assert!(out.iter().all(|v| *v == 0));
     }
+
+    /// `p` with these effects this much.
+    fn with(p: Params, fx: &[(Effect, f32)]) -> Params {
+        let mut p = p;
+        for (e, v) in fx {
+            p.fx[e.index()] = *v;
+        }
+        p
+    }
+
+    fn at(out: &[u8], w: usize, x: usize, y: usize) -> [u8; 3] {
+        let o = (y * w + x) * 3;
+        [out[o], out[o + 1], out[o + 2]]
+    }
+
+    /// A picture `top` above and `bottom` below its middle.
+    fn halves(w: usize, h: usize, top: [u8; 3], bottom: [u8; 3]) -> Pic {
+        Pic { w, h, rgb: (0..w * h).flat_map(|i| if i / w < h / 2 { top } else { bottom }).collect() }
+    }
+
+    #[test]
+    fn the_new_effects_and_settings_draw_what_they_say() {
+        let (w, h) = (64, 36);
+        let mut out = vec![0u8; w * h * 3];
+        let p = Params { video_size: [16.0, 9.0], ..Default::default() };
+        let near = |c: [u8; 3], e: [u8; 3]| c.iter().zip(e).all(|(a, b)| (*a as i32 - b as i32).abs() <= 2);
+        // Grade: a quarter brighter (and the contrast it starts with) on grey.
+        let grey = pic(16, 9, [128, 128, 128]);
+        let mut g = with(p, &[(Effect::Grade, 1.0)]);
+        g.p[Effect::Grade.index()][0] = 0.25;
+        draw(&mut out, &[], w, h, Some(&grey), None, &g);
+        assert!(near(at(&out, w, 30, 18), [192, 192, 192]), "{:?}", at(&out, w, 30, 18));
+        // Vignette: the corners dark, the middle as it was.
+        draw(&mut out, &[], w, h, Some(&grey), None, &with(p, &[(Effect::Vignette, 1.0)]));
+        assert!(at(&out, w, 0, 0)[0] < 40 && near(at(&out, w, 32, 18), [128, 128, 128]));
+        // Mirror, top onto bottom: red over blue becomes red all over.
+        let rb = halves(16, 9, [255, 0, 0], [0, 0, 255]);
+        let mut m = with(p, &[(Effect::Mirror, 1.0)]);
+        m.p[Effect::Mirror.index()][0] = 2.0;
+        draw(&mut out, &[], w, h, Some(&rb), None, &m);
+        assert_eq!((at(&out, w, 10, 2), at(&out, w, 10, 33)), ([255, 0, 0], [255, 0, 0]));
+        // Tint, multiplied by green: white turns green.
+        let white = pic(16, 9, [255, 255, 255]);
+        let mut t = with(p, &[(Effect::Tint, 1.0)]);
+        t.p[Effect::Tint.index()][0] = 1.0;
+        t.tint = [0.0, 1.0, 0.0];
+        draw(&mut out, &[], w, h, Some(&white), None, &t);
+        assert_eq!(at(&out, w, 20, 20), [0, 255, 0]);
+        // Edges over black: none in a flat picture, a white line where red meets blue.
+        draw(&mut out, &[], w, h, Some(&white), None, &with(p, &[(Effect::Edges, 1.0)]));
+        assert_eq!(at(&out, w, 20, 10), [0, 0, 0]);
+        let bw = halves(16, 9, [255, 255, 255], [0, 0, 0]);
+        let mut edges = with(p, &[(Effect::Edges, 1.0)]);
+        edges.p[Effect::Edges.index()][0] = 4.0;
+        draw(&mut out, &[], w, h, Some(&bw), None, &edges);
+        let line = (0..h).map(|y| at(&out, w, 20, y)[0]).max().unwrap();
+        assert!(line > 60 && at(&out, w, 20, 2) == [0, 0, 0] && at(&out, w, 20, 33) == [0, 0, 0], "{line}");
+        // Strobe in a colour of its own.
+        let mut s = with(p, &[(Effect::Strobe, 1.0)]);
+        s.strobe = [1.0, 0.0, 0.0];
+        draw(&mut out, &[], w, h, Some(&grey), None, &s);
+        assert!(out.chunks(3).all(|c| c == [255, 0, 0]));
+        // Echo: the last frame (white) under this one (black), moved a little.
+        let black = pic(16, 9, [0, 0, 0]);
+        let prev = vec![255u8; w * h * 3];
+        let mut e = with(p, &[(Effect::Echo, 1.0)]);
+        e.p[Effect::Echo.index()] = [0.0, 0.0, 1.0, 0.0];
+        draw(&mut out, &prev, w, h, Some(&black), None, &e);
+        assert!(near(at(&out, w, 30, 18), [217, 217, 217]), "{:?}", at(&out, w, 30, 18));
+        // The clip's frame: cropped on the left half, half see-through.
+        let framed = Params { frame: Framing { crop: [0.5, 0.0, 0.0, 0.0], opacity: 0.5, ..Default::default() }, ..p };
+        draw(&mut out, &[], w, h, Some(&white), None, &framed);
+        assert_eq!((at(&out, w, 10, 18), at(&out, w, 50, 18)), ([0, 0, 0], [128, 128, 128]));
+        // Grain, scanlines and blur stay in their range and change a flat picture only a little (blur not at all).
+        draw(&mut out, &[], w, h, Some(&grey), None, &with(p, &[(Effect::Blur, 1.0), (Effect::ZoomBlur, 1.0)]));
+        assert!(near(at(&out, w, 32, 18), [128, 128, 128]));
+        draw(&mut out, &[], w, h, Some(&grey), None, &with(p, &[(Effect::Scanlines, 1.0), (Effect::Grain, 1.0)]));
+        assert!(out.iter().any(|v| *v != 128));
+    }
+
+    #[test]
+    fn a_look_morphs_its_amounts_and_settings_and_switches_its_choices_at_the_start() {
+        let mut a = with(Params::default(), &[(Effect::Zoom, 0.2)]);
+        let mut b = with(Params::default(), &[(Effect::Zoom, 1.0), (Effect::Hue, 0.5)]);
+        a.p[Effect::Pixels.index()][0] = 10.0;
+        b.p[Effect::Pixels.index()][0] = 30.0;
+        a.p[Effect::Mirror.index()][0] = 0.0;
+        b.p[Effect::Mirror.index()][0] = 4.0;
+        a.tint = [0.0; 3];
+        b.tint = [1.0; 3];
+        let m = Params::morph(&a, &b, 0.25);
+        assert!((m.get(Effect::Zoom) - 0.4).abs() < 1e-6);
+        assert!((m.get(Effect::Hue) - 0.125).abs() < 1e-6);
+        assert!((m.param(Effect::Pixels, 0) - 15.0).abs() < 1e-5);
+        assert_eq!(m.param(Effect::Mirror, 0), 4.0, "the axis is the new Look's at once");
+        assert!((m.tint[0] - 0.25).abs() < 1e-6);
+        assert_eq!(Params::morph(&a, &b, 1.0), b);
+    }
+
+    /// The stage's settings as they were before the effects had settings of their own (0.93).
+    #[derive(Clone, Copy, Default)]
+    struct OldParams {
+        video_size: [f32; 2],
+        fill: bool,
+        zoom: f32,
+        spin: f32,
+        shake: [f32; 2],
+        mirror: f32,
+        kaleido: f32,
+        pixels: f32,
+        split: f32,
+        glitch: f32,
+        seed: f32,
+        hue: f32,
+        poster: f32,
+        flash: f32,
+        invert: f32,
+        strobe: f32,
+        gate: f32,
+        trails: f32,
+        tint: [f32; 4],
+        transition: f32,
+        mix: f32,
+        old_size: [f32; 2],
+    }
+
+    /// The same frame in today's settings: every effect as it starts, its amount as before.
+    fn now_params(o: &OldParams) -> Params {
+        use krabton_engine::video::Effect as E;
+        let mut p = Params { video_size: o.video_size, frame: Framing { fill: o.fill, ..Default::default() }, old_frame: Framing { fill: o.fill, ..Default::default() }, spin: o.spin, shake: o.shake, seed: o.seed, tint: [o.tint[0], o.tint[1], o.tint[2]], transition: o.transition, mix: o.mix, old_size: o.old_size, ..Default::default() };
+        for (e, v) in [(E::Zoom, o.zoom), (E::Mirror, o.mirror), (E::Kaleido, o.kaleido), (E::Pixels, o.pixels), (E::Split, o.split), (E::Glitch, o.glitch), (E::Hue, o.hue), (E::Poster, o.poster), (E::Flash, o.flash), (E::Invert, o.invert), (E::Strobe, o.strobe), (E::Gate, o.gate), (E::Trails, o.trails), (E::Tint, o.tint[3])] {
+            p.fx[e.index()] = v;
+        }
+        p
+    }
+
+    /// A picture with something in every pixel: red across, green down, blue in a checker.
+    fn gradient(w: usize, h: usize) -> Pic {
+        Pic { w, h, rgb: (0..w * h).flat_map(|i| [(i % w * 255 / w) as u8, (i / w * 255 / h) as u8, if (i % w / 4 + i / w / 4) % 2 == 0 { 200 } else { 30 }]).collect() }
+    }
+
+    #[test]
+    fn a_set_from_before_the_settings_looks_exactly_as_it_did() {
+        let (w, h) = (96, 54);
+        let pic = gradient(40, 30);
+        let other = gradient(20, 20);
+        let base = OldParams { video_size: [40.0, 30.0], fill: true, mix: 1.0, old_size: [20.0, 20.0], seed: 37.3, ..Default::default() };
+        let mut prev = vec![0u8; w * h * 3];
+        for (k, b) in prev.iter_mut().enumerate() {
+            *b = (k * 7 % 251) as u8;
+        }
+        let cases = [
+            OldParams { zoom: 0.6, spin: 0.13, shake: [0.02, -0.01], ..base },
+            OldParams { mirror: 0.7, kaleido: 0.4, ..base },
+            OldParams { pixels: 0.5, split: 0.8, glitch: 0.9, ..base },
+            OldParams { hue: 0.3, poster: 0.6, flash: 0.4, ..base },
+            OldParams { invert: 0.5, strobe: 0.3, gate: 0.2, trails: 0.7, tint: [0.2, 0.9, 0.4, 0.6], ..base },
+            OldParams { fill: false, transition: 1.0, mix: 0.4, ..base },
+            OldParams { transition: 3.0, mix: 0.6, zoom: 0.2, ..base },
+        ];
+        for (i, o) in cases.iter().enumerate() {
+            let (mut was, mut now) = (vec![0u8; w * h * 3], vec![0u8; w * h * 3]);
+            old_draw(&mut was, &prev, w, h, Some(&pic), Some(&other), o);
+            draw(&mut now, &prev, w, h, Some(&pic), Some(&other), &now_params(o));
+            let worst = was.iter().zip(&now).map(|(a, b)| (*a as i32 - *b as i32).abs()).max().unwrap();
+            assert!(worst <= 1, "case {i}: off by {worst}");
+        }
+    }
+
+    /// The processor's drawing as it was before the effects had settings (0.93), to hold the new one to.
+    fn old_draw(out: &mut [u8], prev: &[u8], w: usize, h: usize, new: Option<&Pic>, old: Option<&Pic>, p: &OldParams) {
+        let stage = [w as f32, h as f32];
+        let aspect = stage[0] / stage[1];
+        // The shader's pixels are the stage's 1280 wide.
+        let scale = w as f32 / super::super::stage::STAGE_W as f32;
+        let place = |st: [f32; 2], size: [f32; 2]| {
+            let va = size[0] / size[1].max(1.0);
+            let mut k = [1.0, 1.0];
+            if p.fill == (va > aspect) {
+                k[0] = aspect / va;
+            } else {
+                k[1] = va / aspect;
+            }
+            [(st[0] - 0.5) * k[0] + 0.5, (st[1] - 0.5) * k[1] + 0.5]
+        };
+        let one = |pic: Option<&Pic>, size: [f32; 2], st: [f32; 2]| -> [f32; 3] {
+            let Some(pic) = pic.filter(|_| size[0] > 0.0) else { return [0.0; 3] };
+            let uv = place(st, size);
+            if !(0.0..=1.0).contains(&uv[0]) || !(0.0..=1.0).contains(&uv[1]) {
+                return [0.0; 3];
+            }
+            pic.sample(uv[0], uv[1])
+        };
+        let pick = |st: [f32; 2]| -> [f32; 3] {
+            let fresh = |st| one(new, p.video_size, st);
+            let stale = |st| one(old, p.old_size, st);
+            let m = p.mix.clamp(0.0, 1.0);
+            if p.transition < 0.5 {
+                return fresh(st);
+            }
+            if p.transition < 1.5 {
+                return mix3(stale(st), fresh(st), m);
+            }
+            let peak = 1.0 - (m * 2.0 - 1.0).abs();
+            if p.transition < 2.5 {
+                let c = if m < 0.5 { stale(st) } else { fresh(st) };
+                return mix3(c, [1.0; 3], peak);
+            }
+            let band = (st[1] * 24.0 + hash(p.seed) * 3.0).floor();
+            let q = [st[0] + (hash(band * 1.31 + p.seed) - 0.5) * 0.3 * peak, st[1]];
+            if hash(band * 7.13 + p.seed.floor()) < m {
+                fresh(q)
+            } else {
+                stale(q)
+            }
+        };
+        let at = |q: [f32; 2]| -> [f32; 3] {
+            let st = [q[0] / aspect + 0.5, q[1] + 0.5];
+            let off = p.split * 0.03;
+            if off < 0.0005 {
+                return pick(st);
+            }
+            [pick([st[0] + off, st[1]])[0], pick(st)[1], pick([st[0] - off, st[1]])[2]]
+        };
+        let row = |y: usize, line: &mut [u8]| {
+            for x in 0..w {
+                let uv = [(x as f32 + 0.5) / stage[0], (y as f32 + 0.5) / stage[1]];
+                let mut st = uv;
+                if p.glitch > 0.001 {
+                    let band = (st[1] * 18.0 + hash(p.seed) * 5.0).floor();
+                    if hash(band * 3.17 + p.seed * 11.0) < p.glitch * 0.7 {
+                        st[0] += (hash(band * 1.71 + p.seed) - 0.5) * 0.4 * p.glitch;
+                    }
+                }
+                if p.pixels > 0.001 {
+                    let px = (1.0 + 39.0 * p.pixels * p.pixels) * scale;
+                    st = [((st[0] * stage[0] / px).floor() + 0.5) * px / stage[0], ((st[1] * stage[1] / px).floor() + 0.5) * px / stage[1]];
+                }
+                let mut q = [(st[0] - 0.5) * aspect, st[1] - 0.5];
+                let z = 1.0 + p.zoom * 1.5;
+                q = [q[0] / z, q[1] / z];
+                let a = p.spin * std::f32::consts::TAU;
+                q = [a.cos() * q[0] - a.sin() * q[1], a.sin() * q[0] + a.cos() * q[1]];
+                q = [q[0] - p.shake[0] * aspect, q[1] - p.shake[1]];
+                let mut c = at(q);
+                if p.mirror > 0.001 {
+                    c = mix3(c, at([-q[0].abs(), q[1]]), p.mirror);
+                }
+                if p.kaleido > 0.001 {
+                    let seg = std::f32::consts::TAU / 6.0;
+                    let ang = (q[1].atan2(q[0])).rem_euclid(seg);
+                    let ang = (ang - seg * 0.5).abs();
+                    let r = (q[0] * q[0] + q[1] * q[1]).sqrt();
+                    c = mix3(c, at([ang.cos() * r, ang.sin() * r]), p.kaleido);
+                }
+                if p.hue > 0.001 {
+                    let (s, co) = (p.hue * std::f32::consts::TAU).sin_cos();
+                    let k = 0.57735f32;
+                    let dot = k * (c[0] + c[1] + c[2]);
+                    let cross = [k * (c[2] - c[1]), k * (c[0] - c[2]), k * (c[1] - c[0])];
+                    c = [0, 1, 2].map(|i| (c[i] * co + cross[i] * s + k * dot * (1.0 - co)).clamp(0.0, 1.0));
+                }
+                if p.poster > 0.001 {
+                    let levels = 24.0 + (2.0 - 24.0) * p.poster;
+                    c = c.map(|v| (v * levels + 0.5).floor() / levels);
+                }
+                let luma = 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2];
+                c = mix3(c, [0, 1, 2].map(|i| p.tint[i] * (0.2 + luma * 1.3)), p.tint[3]);
+                c = mix3(c, c.map(|v| 1.0 - v), p.invert);
+                c = mix3(c, [1.0; 3], p.flash * 0.85);
+                c = c.map(|v| v * (1.0 - p.gate));
+                c = mix3(c, [1.0; 3], p.strobe);
+                if p.trails > 0.001 && prev.len() == w * h * 3 {
+                    let qx = ((uv[0] - 0.5) * 0.985 + 0.5).clamp(0.0, 1.0);
+                    let qy = ((uv[1] - 0.5) * 0.985 + 0.5).clamp(0.0, 1.0);
+                    let (px, py) = (((qx * w as f32) as usize).min(w - 1), ((qy * h as f32) as usize).min(h - 1));
+                    let o = (py * w + px) * 3;
+                    let was = [prev[o] as f32 / 255.0, prev[o + 1] as f32 / 255.0, prev[o + 2] as f32 / 255.0];
+                    let blend = mix3(c, was, p.trails * 0.9);
+                    c = [0, 1, 2].map(|i| c[i].max(blend[i]));
+                }
+                for (i, v) in c.iter().enumerate() {
+                    line[x * 3 + i] = (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+                }
+            }
+        };
+        // The rows shared out over the processor's cores.
+        let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).clamp(1, 16);
+        let rows_each = h.div_ceil(threads).max(1);
+        std::thread::scope(|s| {
+            for (k, chunk) in out.chunks_mut(rows_each * w * 3).enumerate() {
+                let row = &row;
+                s.spawn(move || {
+                    for (j, line) in chunk.chunks_mut(w * 3).enumerate() {
+                        row(k * rows_each + j, line);
+                    }
+                });
+            }
+        });
+    }
+
 
     /// A short real export with the ffmpeg of `KRABTON_FFMPEG` (skipped without one).
     #[test]

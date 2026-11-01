@@ -236,7 +236,14 @@ pub struct EngineStatus {
     pub listen_master: crate::scope::ScopeBuffer,
     pub listen_ids: [AtomicU64; LISTEN_TRACKS],
     pub listen: Vec<crate::scope::ScopeBuffer>,
+    /// Record Video: the master's sound in stereo (after its volume, before
+    /// the metronome), written while `recording` is on.
+    pub recording: AtomicBool,
+    pub record_master: crate::scope::ScopeBuffer,
 }
+
+/// How much of the master Record Video keeps between two reads (samples).
+pub const RECORD_LEN: usize = 1 << 17;
 
 /// The visual state of every sequencer (see `MidiFxState::visual`), by
 /// device id, so each editor moves, not only a track's first.
@@ -313,6 +320,8 @@ impl EngineStatus {
             listen_master: crate::scope::ScopeBuffer::new(LISTEN_LEN, false),
             listen_ids: std::array::from_fn(|_| AtomicU64::new(0)),
             listen: (0..LISTEN_TRACKS).map(|_| crate::scope::ScopeBuffer::new(LISTEN_LEN, false)).collect(),
+            recording: AtomicBool::new(false),
+            record_master: crate::scope::ScopeBuffer::new(RECORD_LEN, true),
         }
     }
 }
@@ -2764,6 +2773,9 @@ impl Engine {
             self.resample.write(&m.l[..seg], &m.r[..seg]);
             if listening {
                 status.listen_master.write(&m.l[..seg], &m.r[..seg]);
+            }
+            if status.recording.load(RELAXED) {
+                status.record_master.write(&m.l[..seg], &m.r[..seg]);
             }
         }
 
