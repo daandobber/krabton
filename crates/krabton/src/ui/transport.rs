@@ -466,6 +466,10 @@ impl App {
                     ui.separator();
                     ui.add(egui::ProgressBar::new(job.progress.fraction()).desired_width(120.0).text("Exporting"));
                 }
+                if let Some(job) = &self.video.export {
+                    ui.separator();
+                    ui.add(egui::ProgressBar::new(job.state().fraction()).desired_width(120.0).text("Exporting video")).on_hover_text("Export Video: the Video's window can cancel it");
+                }
             });
         });
     }

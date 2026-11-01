@@ -51,6 +51,25 @@ pub fn render_with_plugins(
     progress: Option<&RenderProgress>,
     processors: Vec<(u64, Box<dyn AudioProcessor>)>,
 ) -> (Option<Vec<f32>>, Vec<Box<dyn AudioProcessor>>) {
+    render_watched(project, source, sample_rate, tail_beats, progress, processors, f64::INFINITY, |_, _| {})
+}
+
+/// Like [`render_with_plugins`], stopping every `every` frames (it may be a
+/// fraction: the stops fall on the nearest frame, without drifting) to hand
+/// `watch` the engine's status and the stop's number, as the Video reads
+/// them while it plays (where the song is, the notes struck, the sound it
+/// listens to). The first stop is after the first `every` frames.
+#[allow(clippy::too_many_arguments)]
+pub fn render_watched(
+    project: &Project,
+    source: RenderSource,
+    sample_rate: u32,
+    tail_beats: f64,
+    progress: Option<&RenderProgress>,
+    processors: Vec<(u64, Box<dyn AudioProcessor>)>,
+    every: f64,
+    mut watch: impl FnMut(&crate::engine::EngineStatus, usize),
+) -> (Option<Vec<f32>>, Vec<Box<dyn AudioProcessor>>) {
     let mut p = project.clone();
     p.loop_enabled = false;
     p.metronome = false;
@@ -77,6 +96,10 @@ pub fn render_with_plugins(
     let mut buf = vec![0.0f32; 2048];
     let mut done = 0;
     let mut stopped = false;
+    let status = handle.status.clone();
+    // The next stop for `watch`.
+    let mut stop = 0usize;
+    let stop_at = |k: usize| if every.is_finite() && every > 0.0 { ((k + 1) as f64 * every).round() as usize } else { usize::MAX };
     while done < total {
         if let Some(pr) = progress {
             if pr.cancel.load(Ordering::Relaxed) {
@@ -90,12 +113,16 @@ pub fn render_with_plugins(
             handle.send(Command::Stop);
             stopped = true;
         }
-        let n = (total - done).min(1024).min(if stopped { usize::MAX } else { play_frames - done }).max(1);
+        let n = (total - done).min(1024).min(if stopped { usize::MAX } else { play_frames - done }).min(stop_at(stop).saturating_sub(done)).max(1);
         let chunk = &mut buf[..n * 2];
         engine.process(chunk);
         out.extend_from_slice(chunk);
         done += n;
         handle.collect_garbage();
+        while done >= stop_at(stop) {
+            watch(&status, stop);
+            stop += 1;
+        }
     }
     if let Some(pr) = progress {
         pr.fraction.0.store(1.0);
@@ -162,6 +189,28 @@ mod tests {
         assert!((out.len() as i64 - expected as i64).abs() < 8, "{} vs {}", out.len(), expected);
         let peak = out.iter().fold(0.0f32, |m, v| m.max(v.abs()));
         assert!(peak > 0.1, "peak {peak}");
+    }
+
+    #[test]
+    fn a_watched_render_stops_on_every_video_frame() {
+        let p = crate::demo::demo_project();
+        // 30 frames a second at 44.1 kHz: 1470 samples a frame.
+        let mut stops = Vec::new();
+        let (out, _) = render_watched(&p, RenderSource::Scene { scene: 3, beats: 4.0 }, 44100, 0.0, None, Vec::new(), 44100.0 / 30.0, |st, k| {
+            stops.push((k, st.song_pos.load(), st.playing.load(std::sync::atomic::Ordering::Relaxed)));
+        });
+        let frames = out.unwrap().len() / 2;
+        // Four beats at the demo's tempo, a stop each 1470 samples, numbered in order.
+        assert_eq!(stops.len(), frames / 1470);
+        assert!(stops.iter().enumerate().all(|(i, s)| s.0 == i));
+        // The song moves on between stops: a frame of it each time.
+        let beats_per_frame = p.bpm / 60.0 / 30.0;
+        let step = stops[10].1 - stops[9].1;
+        assert!((step - beats_per_frame).abs() < 1e-3, "{step} vs {beats_per_frame}");
+        assert!(stops[5].2, "it plays");
+        // The same audio as without the stops.
+        let plain = render(&p, RenderSource::Scene { scene: 3, beats: 4.0 }, 44100, 0.0, None).unwrap();
+        assert_eq!(plain.len(), frames * 2);
     }
 
     #[test]

@@ -3247,7 +3247,10 @@ impl App {
                             self.edit_arrow(*key, *modifiers);
                         }
                     } else if *pressed && !*repeat && !typing {
-                        self.key_down(*key, *modifiers);
+                        // The Video's timeline keys first, while the pointer is on its window.
+                        if !self.video_key(ctx, *key, *modifiers) {
+                            self.key_down(*key, *modifiers);
+                        }
                     } else if !*pressed {
                         // With no text on the system clipboard the window sends
                         // no paste for Ctrl+V (only V let go): paste on that.
@@ -3439,7 +3442,7 @@ impl App {
         self.band = Default::default();
         self.tape_load();
         // The Video starts on the set's clip.
-        self.video.playing = self.project.video.current;
+        self.video.play_now(self.project.video.current);
     }
 
     pub fn new_project(&mut self) {
@@ -3946,15 +3949,17 @@ impl App {
                     self.video_window = true;
                     self.video.link_open = true;
                 }
-                // videotrim=FROM,TO: the playing Video clip plays from FROM to TO (seconds).
+                // videotrim=FROM,TO: the Video clip edited plays only that part (seconds);
+                // the rest of the timeline's actions are in `video_script`.
                 "videotrim" => {
                     let t: Vec<f32> = arg.split(',').filter_map(|v| v.trim().parse().ok()).collect();
-                    let i = self.video.playing;
+                    let i = self.project.video.current;
                     if let (Some(c), [a, b, ..]) = (self.project.video.clips.get_mut(i), t.as_slice()) {
-                        c.start = *a;
-                        c.end = Some(*b);
+                        c.parts = vec![(*a, *b)];
+                        krabton_engine::video::normalize_parts(&mut c.parts);
                     }
                 }
+                _ if self.video_script(name, arg) => {}
                 "videoload" => {
                     self.video_window = true;
                     self.video_add(&[PathBuf::from(arg.trim())]);
@@ -3975,15 +3980,18 @@ impl App {
                 },
                 "videomode" => {
                     let modes = krabton_engine::video::PlayMode::ALL;
-                    self.project.video.play = modes[nums.first().copied().unwrap_or(0).min(modes.len() - 1)];
+                    let i = self.project.video.current;
+                    if let Some(c) = self.project.video.clips.get_mut(i) {
+                        c.play.mode = modes[nums.first().copied().unwrap_or(0).min(modes.len() - 1)];
+                    }
                 }
                 "videoscreen" => self.video.screen_open = true,
                 // videoat: prints where the Video's film is (and its cue), to check by script.
                 "videoat" => {
                     let set = &self.project.video;
-                    let cue = set.clips.get(self.video.playing).and_then(|c| c.cues.as_ref()).map(|c| format!(", cue {} of {} at {:.3}", c.at(self.video.at) + 1, c.len(), c.times.get(c.at(self.video.at)).copied().unwrap_or(0.0)));
+                    let cue = set.clips.get(self.video.playing()).and_then(|c| c.cues.as_ref()).map(|c| format!(", cue {} of {} at {:.3}", c.at(self.video.at) + 1, c.len(), c.times.get(c.at(self.video.at)).copied().unwrap_or(0.0)));
                     // And the note its track's clip is on, to compare.
-                    let track = set.clips.get(self.video.playing).and_then(|c| c.cues.as_ref()).and_then(|c| c.track).and_then(|id| self.project.tracks.iter().position(|t| t.id == id));
+                    let track = set.clips.get(self.video.playing()).and_then(|c| c.cues.as_ref()).and_then(|c| c.track).and_then(|id| self.project.tracks.iter().position(|t| t.id == id));
                     let on = track.and_then(|t| {
                         let ts = self.engine.status.tracks.get(t)?;
                         let (slot, pos) = (ts.playing_slot.load(std::sync::atomic::Ordering::Relaxed), ts.clip_pos.load());
@@ -3991,7 +3999,8 @@ impl App {
                         let n = clip.notes().into_iter().filter(|n| n.start <= pos).max_by(|a, b| a.start.total_cmp(&b.start))?;
                         Some(format!("; its clip at {pos:.2} beats, on the note of cue {}", n.pitch as i32 - 35))
                     });
-                    println!("video at {:.3} s, clip {}{}{}", self.video.at, self.video.playing, cue.unwrap_or_default(), on.unwrap_or_default());
+                    let parts = set.clips.get(self.video.playing()).filter(|c| c.is_cut()).map(|c| format!(", parts {:?}", c.parts));
+                    println!("video at {:.3} s, clip {}{}{}{}", self.video.at, self.video.playing(), cue.unwrap_or_default(), parts.unwrap_or_default(), on.unwrap_or_default());
                 }
                 "bandwin" => self.band.window = true,
                 // bandon[=1]: Band on in every device that can be in it (=1: and parts).

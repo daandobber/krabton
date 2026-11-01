@@ -354,7 +354,7 @@ impl App {
             self.project.video.links = links;
         }
         self.video_pick(i);
-        self.video.playhead.reset();
+        self.video.dir.playhead.reset();
         self.video_window = true;
     }
 }

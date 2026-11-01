@@ -1,18 +1,23 @@
-//! The Video in the app: the clips read into memory, the ears on the music
-//! (the master's sound and a few tracks', the notes, the beat), where the
-//! film is, and the picture with its effects handed to the stage. The
-//! window and the screen are in `ui::video_view`; what is saved with the set
-//! is `krabton_engine::video::VideoSet`.
+//! The Video in the app: the clips read into memory, the reckoning of
+//! every frame (`director`: the ears on the music, the clip that plays and
+//! where its film is), and the picture with its effects handed to the
+//! stage. The window and the screen are in `ui::video_view`; what is saved
+//! with the set is `krabton_engine::video::VideoSet`; `export` renders it
+//! to a film with the song's sound.
 
+pub mod director;
+pub mod export;
 pub mod ffmpeg;
 pub mod gif;
 pub mod media;
 pub mod stage;
+pub mod strip;
 pub mod ytdl;
 
 use crate::app::App;
-use krabton_engine::engine::{LISTEN_LEN, LISTEN_TRACKS};
-use krabton_engine::video::{self as kv, BeatClock, Dice, Effect, Listener, Look, NoteFollower, Playhead, Reading, Source};
+use director::{Asks, Director, Shot};
+use krabton_engine::project::Project;
+use krabton_engine::video::{self as kv, Dice, Effect, Look, Transition, VideoClip, VideoSet};
 use media::Media;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -20,78 +25,33 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-/// One sound listened to: its ears, how far it was read, and its hits this frame.
-struct Ear {
-    listener: Listener,
-    read_to: u64,
-    kick: bool,
-    hit: bool,
-}
-
-impl Ear {
-    fn new(sr: f32, read_to: u64) -> Self {
-        Self { listener: Listener::new(sr), read_to, kick: false, hit: false }
-    }
-
-    /// Takes in what came since the last frame (or, when nothing came, as
-    /// much silence as the master moved on: an idle track).
-    fn hear(&mut self, buf: &krabton_engine::scope::ScopeBuffer, moved: usize, scratch: &mut (Vec<f32>, Vec<f32>)) {
-        let new = buf.written().saturating_sub(self.read_to).min(LISTEN_LEN as u64) as usize;
-        if new > 0 {
-            // The newest `new` samples, up to where the buffer is now.
-            self.read_to = buf.read(new, &mut scratch.0, &mut scratch.1);
-            self.listener.feed(&scratch.0);
-        } else if moved > 0 {
-            scratch.0.clear();
-            scratch.0.resize(moved, 0.0);
-            self.listener.feed(&scratch.0);
-        }
-        (self.kick, self.hit) = self.listener.take_hits();
-    }
-
-    fn reading(&self, s: Source) -> Reading {
-        let hit = match s {
-            Source::Kick => self.kick,
-            Source::Hits => self.hit,
-            _ => false,
-        };
-        Reading { value: self.listener.value(s), hit }
-    }
-}
-
 /// The Video while Krabton runs.
 pub struct VideoRuntime {
     /// Clips read (or being read), by path.
     pub media: HashMap<PathBuf, Arc<Media>>,
     /// Small pictures of them for the bank.
     pub thumbs: HashMap<PathBuf, egui::TextureHandle>,
-    sample_rate: f32,
-    master: Option<Ear>,
-    /// The tracks listened to, by slot of `EngineStatus::listen` (track id, its ears).
-    tracks: [Option<(u64, Ear)>; LISTEN_TRACKS],
-    /// Notes of a track (by id), or of all of them (None).
-    notes: HashMap<Option<u64>, NoteFollower>,
-    pub clock: BeatClock,
-    pub playhead: Playhead,
-    pub look: Look,
-    /// Each link's source now (for its meter), and whether a continuous one
-    /// is up (it hits when it rises past the middle).
-    pub readings: Vec<f32>,
-    up: Vec<bool>,
-    /// The clip playing now (Next Clip and the scenes change it, not the set).
-    pub playing: usize,
-    playing_path: Option<PathBuf>,
-    last_scene: Option<usize>,
-    /// The picture shown, and which frame of which clip it is.
+    /// The frames of each film along the timeline, made as they are needed.
+    pub strips: HashMap<PathBuf, strip::Strip>,
+    /// The ears, the clips and where they are.
+    pub dir: Director,
+    /// What the last frame showed.
+    pub shot: Shot,
+    /// The picture shown, and which frame of which clip it is (and the
+    /// same for the clip it is changing from).
     pub texture: Option<egui::TextureHandle>,
     shown: Option<(PathBuf, usize)>,
+    pub old_texture: Option<egui::TextureHandle>,
+    old_shown: Option<(PathBuf, usize)>,
     pub stage: stage::Stage,
     pub params: stage::Params,
-    /// Where the film is (seconds) and how long it is, for the window.
+    /// Where the film that plays is (seconds).
     pub at: f64,
     /// The second window (for a projector) and whether it fills its screen.
     pub screen_open: bool,
     pub fullscreen: bool,
+    /// The full screen the screen's window was last told.
+    pub full_sent: Option<bool>,
     /// ffmpeg being fetched.
     pub fetch: Option<Arc<Mutex<ffmpeg::Fetch>>>,
     /// A film being fetched from a link, the link typed, whether the box
@@ -101,10 +61,25 @@ pub struct VideoRuntime {
     pub link_open: bool,
     pub link_sound: bool,
     last: Option<Instant>,
-    /// A beat that runs on while the song is stopped (for the strobe).
-    free_beat: f64,
-    dice: Dice,
-    scratch: (Vec<f32>, Vec<f32>),
+    /// The timeline: the film stands still, a part's start marked (it plays
+    /// whole until its end is marked), the parts picked, one part played
+    /// alone, a place to put the film (seconds of it), and what of the
+    /// film shows (from, how long; 0: all of it).
+    pub paused: bool,
+    pub mark_in: Option<f32>,
+    pub picked: Vec<usize>,
+    pub solo: Option<usize>,
+    pub seek: Option<f64>,
+    pub view: (f32, f32),
+    /// The clip the timeline shows (the parts picked and the marks are its own).
+    pub editing: Option<usize>,
+    audition_was: (bool, Option<usize>),
+    /// Where the window was last frame (its keys work while the pointer is on it).
+    pub window_rect: Option<egui::Rect>,
+    /// Export Video: its box, and the film being made.
+    pub export_open: bool,
+    pub export_opts: export::Opts,
+    pub export: Option<export::Job>,
 }
 
 impl Default for VideoRuntime {
@@ -112,51 +87,50 @@ impl Default for VideoRuntime {
         Self {
             media: HashMap::new(),
             thumbs: HashMap::new(),
-            sample_rate: 0.0,
-            master: None,
-            tracks: Default::default(),
-            notes: HashMap::new(),
-            clock: BeatClock::default(),
-            playhead: Playhead::default(),
-            look: Look::default(),
-            readings: Vec::new(),
-            up: Vec::new(),
-            playing: 0,
-            playing_path: None,
-            last_scene: None,
+            strips: HashMap::new(),
+            dir: Director::default(),
+            shot: Shot::default(),
             texture: None,
             shown: None,
+            old_texture: None,
+            old_shown: None,
             stage: stage::Stage::default(),
             params: stage::Params::default(),
             at: 0.0,
             screen_open: false,
             fullscreen: false,
+            full_sent: None,
             fetch: None,
             grab: None,
             link: String::new(),
             link_open: false,
             link_sound: false,
             last: None,
-            free_beat: 0.0,
-            dice: Dice::new(0x5EED),
-            scratch: (Vec::new(), Vec::new()),
+            paused: false,
+            mark_in: None,
+            picked: Vec::new(),
+            solo: None,
+            seek: None,
+            view: (0.0, 0.0),
+            editing: None,
+            audition_was: (false, None),
+            window_rect: None,
+            export_open: false,
+            export_opts: export::Opts::default(),
+            export: None,
         }
     }
 }
 
 impl VideoRuntime {
-    /// The ears on the master's sound (for the window's meters).
-    pub fn master_value(&self, s: Source) -> f32 {
-        match s {
-            Source::Beat | Source::Bar | Source::Ramp => self.clock.value(s),
-            Source::Notes | Source::Pitch => self.notes.get(&None).map_or(0.0, |n| n.value(s)),
-            _ => self.master.as_ref().map_or(0.0, |e| e.listener.value(s)),
-        }
+    /// The clip that plays now (in the bank).
+    pub fn playing(&self) -> usize {
+        self.dir.switch.clip
     }
 
     /// The clip that plays now, if it is read (or being read).
-    pub fn playing_media(&self, set: &kv::VideoSet) -> Option<Arc<Media>> {
-        let clip = set.clips.get(self.playing.min(set.clips.len().saturating_sub(1)))?;
+    pub fn playing_media(&self, set: &VideoSet) -> Option<Arc<Media>> {
+        let clip = set.clips.get(self.playing().min(set.clips.len().saturating_sub(1)))?;
         self.media.get(&clip.path).cloned()
     }
 
@@ -164,6 +138,92 @@ impl VideoRuntime {
     pub fn reload_films(&mut self) {
         self.media.retain(|_, m| !m.info().needs_ffmpeg);
         self.shown = None;
+        self.old_shown = None;
+    }
+
+    /// Plays clip `i` at once, from its start (a set opened, a clip cut).
+    pub fn play_now(&mut self, i: usize) {
+        self.dir.switch = kv::Switch { clip: i, ..Default::default() };
+    }
+
+    /// The clip as it plays for now: the whole film while a part is being
+    /// marked, one part while it is played alone (only the clip edited, while it plays).
+    pub fn audition(&self, set: &VideoSet) -> Option<VideoClip> {
+        let i = self.playing();
+        if self.editing != Some(i) || set.current != i {
+            return None;
+        }
+        let c = set.clips.get(i)?;
+        if self.mark_in.is_some() && c.is_cut() {
+            return Some(VideoClip { parts: Vec::new(), ..c.clone() });
+        }
+        let part = *c.parts.get(self.solo?)?;
+        Some(VideoClip { parts: vec![part], ..c.clone() })
+    }
+}
+
+/// What the effects make of a frame, for the stage (and an export):
+/// `sizes` are the pictures' (the clip that plays, the one it is changing
+/// from; None: no picture yet).
+pub fn stage_params(set: &VideoSet, project: &Project, look: &Look, shot: &Shot, sizes: (Option<[f32; 2]>, Option<[f32; 2]>), dice: &mut Dice) -> stage::Params {
+    let fx = |e: Effect| look.get(e);
+    let shake = fx(Effect::Shake) * 0.05;
+    let tint = match look.tint_link.and_then(|i| set.links.get(i)) {
+        Some(l) => {
+            let c = l.from.and_then(|id| project.tracks.iter().find(|t| t.id == id)).map(|t| t.color).unwrap_or([0xff, 0x40, 0xa0]);
+            [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, fx(Effect::Tint)]
+        }
+        None => [0.0; 4],
+    };
+    let transition = match (shot.from, set.transition) {
+        (None, _) | (_, Transition::Cut) => 0.0,
+        (_, Transition::Fade) => 1.0,
+        (_, Transition::Flash) => 2.0,
+        (_, Transition::Glitch) => 3.0,
+    };
+    stage::Params {
+        video_size: sizes.0.unwrap_or([0.0, 0.0]),
+        fill: set.fit == kv::Fit::Fill,
+        zoom: fx(Effect::Zoom),
+        spin: fx(Effect::Spin),
+        shake: [(dice.unit() - 0.5) * 2.0 * shake, (dice.unit() - 0.5) * 2.0 * shake],
+        mirror: fx(Effect::Mirror),
+        kaleido: fx(Effect::Kaleido),
+        pixels: fx(Effect::Pixels),
+        split: fx(Effect::Split),
+        glitch: fx(Effect::Glitch),
+        seed: dice.unit() * 100.0,
+        hue: fx(Effect::Hue),
+        poster: fx(Effect::Poster),
+        flash: fx(Effect::Flash),
+        invert: fx(Effect::Invert),
+        strobe: kv::strobe_light(fx(Effect::Strobe), shot.beat),
+        gate: fx(Effect::Gate),
+        trails: fx(Effect::Trails),
+        tint,
+        transition,
+        mix: shot.from.map_or(1.0, |f| f.2),
+        old_size: sizes.1.unwrap_or([0.0, 0.0]),
+    }
+}
+
+/// Each clip's film length (seconds; 0 for a picture or one not read yet).
+pub fn durations(set: &VideoSet, media: &HashMap<PathBuf, Arc<Media>>) -> Vec<f32> {
+    set.clips.iter().map(|c| media.get(&c.path).map_or(0.0, |m| m.info().duration)).collect()
+}
+
+/// Puts frame `i` of `m` on `tex` (made the first time), unless it is up already.
+fn show_frame(ctx: &egui::Context, tex: &mut Option<egui::TextureHandle>, shown: &mut Option<(PathBuf, usize)>, name: &str, m: &Media, i: usize) {
+    let key = (m.path.clone(), i);
+    if shown.as_ref() == Some(&key) {
+        return;
+    }
+    if let Some(img) = m.image(i) {
+        match tex {
+            Some(t) => t.set(img, egui::TextureOptions::LINEAR),
+            None => *tex = Some(ctx.load_texture(name, img, egui::TextureOptions::LINEAR)),
+        }
+        *shown = Some(key);
     }
 }
 
@@ -202,7 +262,7 @@ impl App {
     /// there is one.
     pub(crate) fn video_fit_links(&self, links: &mut [kv::VideoLink]) {
         let drums = self.project.tracks.iter().find(|t| t.instrument.as_ref().is_some_and(|i| i.is_drums())).map(|t| t.id);
-        for l in links.iter_mut().filter(|l| l.source == Source::Kick && l.from.is_none()) {
+        for l in links.iter_mut().filter(|l| l.source == kv::Source::Kick && l.from.is_none()) {
             l.from = drums;
         }
     }
@@ -215,12 +275,25 @@ impl App {
         self.project.video = set;
     }
 
-    /// Plays clip `i` of the bank (and makes it the set's).
+    /// Clip `i` of the bank: it is the one edited, and it plays at once.
     pub(crate) fn video_pick(&mut self, i: usize) {
         if i < self.project.video.clips.len() {
             self.project.video.current = i;
-            self.video.playing = i;
+            self.video.play_now(i);
         }
+    }
+
+    /// Clip `i` clicked in the bank: it is the one edited, and it plays now
+    /// or on the beat the set's *Launch* waits for (with its transition).
+    pub(crate) fn video_launch(&mut self, i: usize) {
+        if i >= self.project.video.clips.len() {
+            return;
+        }
+        self.project.video.current = i;
+        let st = self.status();
+        let (beat, playing) = (st.song_pos.load(), st.playing.load(Ordering::Relaxed));
+        let set = self.project.video.clone();
+        self.video.dir.launch(&set, i, beat, playing, self.project.bpm, self.project.beats_per_bar);
     }
 
     /// One frame of the Video: reads what is needed, listens, moves the film
@@ -233,7 +306,6 @@ impl App {
             self.video.last = None;
             return;
         }
-        status.listening.store(true, Ordering::Relaxed);
         let now = Instant::now();
         let dt = self.video.last.map_or(0.0, |l| now.duration_since(l).as_secs_f32()).min(0.25);
         self.video.last = Some(now);
@@ -252,174 +324,62 @@ impl App {
             keep
         });
         v.thumbs.retain(|p, _| set.clips.iter().any(|c| &c.path == p));
+        v.strips.retain(|p, _| set.clips.iter().any(|c| &c.path == p));
+        let durations = durations(&set, &v.media);
 
-        // Ears: the master, and the tracks the links listen to.
-        let sr = status.sample_rate.load();
-        if sr != v.sample_rate || v.master.is_none() {
-            v.sample_rate = sr;
-            v.master = Some(Ear::new(sr, status.listen_master.written()));
-            v.tracks = Default::default();
+        // The clip edited: its marks and picked parts are its own.
+        if v.editing != Some(set.current) {
+            v.editing = Some(set.current);
+            v.mark_in = None;
+            v.picked.clear();
+            v.solo = None;
+            v.view = (0.0, 0.0);
         }
-        let mut wanted: Vec<u64> = Vec::new();
-        for l in &set.links {
-            if let (true, Some(id)) = (l.source.listens(), l.from) {
-                if !wanted.contains(&id) && wanted.len() < LISTEN_TRACKS {
-                    wanted.push(id);
-                }
-            }
+        let audition = v.audition(&set);
+        let playing_clip = audition.as_ref().or(set.clips.get(v.playing()));
+        let dur = durations.get(v.playing()).copied().unwrap_or(0.0);
+        // A place in the film asked for (or, when what plays changes, the
+        // place it was): into its parts (a gap: the next part's start).
+        let aud_key = (v.mark_in.is_some(), v.solo);
+        let mut seek_film = v.seek.take();
+        if aud_key != v.audition_was && seek_film.is_none() {
+            seek_film = Some(v.at);
         }
-        for (k, slot) in v.tracks.iter_mut().enumerate() {
-            let want = wanted.get(k).copied();
-            if slot.as_ref().map(|s| s.0) != want {
-                *slot = want.map(|id| (id, Ear::new(sr, status.listen[k].written())));
-            }
-            status.listen_ids[k].store(want.unwrap_or(0), Ordering::Relaxed);
-        }
-        let before = v.master.as_ref().map_or(0, |e| e.read_to);
-        let moved = status.listen_master.written().saturating_sub(before).min(LISTEN_LEN as u64) as usize;
-        if let Some(ear) = v.master.as_mut() {
-            ear.hear(&status.listen_master, 0, &mut v.scratch);
-        }
-        for (k, slot) in v.tracks.iter_mut().enumerate() {
-            if let Some((_, ear)) = slot {
-                ear.hear(&status.listen[k], moved, &mut v.scratch);
-            }
-        }
-
-        // Notes: what started on every track since the last frame.
-        let mut all = (0u128, 0.0f32);
-        let mut struck: HashMap<u64, (u128, f32)> = HashMap::new();
-        for (i, t) in self.project.tracks.iter().enumerate() {
-            if let Some(ts) = status.tracks.get(i) {
-                let (mask, vel) = ts.take_struck();
-                if mask != 0 {
-                    struck.insert(t.id, (mask, vel));
-                    all.0 |= mask;
-                    all.1 = all.1.max(vel);
-                }
-            }
-        }
-        let mut followed: Vec<Option<u64>> = vec![None, set.slice_track];
-        followed.extend(set.clips.iter().filter_map(|c| c.cues.as_ref()).map(|c| c.track));
-        followed.extend(set.links.iter().filter(|l| l.source.follows_notes()).map(|l| l.from));
-        followed.sort();
-        followed.dedup();
-        v.notes.retain(|k, _| followed.contains(k));
-        for k in followed {
-            let (mask, vel) = match k {
-                Some(id) => struck.get(&id).copied().unwrap_or((0, 0.0)),
-                None => all,
-            };
-            v.notes.entry(k).or_default().frame(mask, vel, dt);
-        }
-
-        // The beat.
-        let playing = status.playing.load(Ordering::Relaxed);
-        let beat = status.song_pos.load();
-        let bpm = self.project.bpm;
-        v.clock.frame(beat, playing, self.project.beats_per_bar, dt);
-        v.free_beat += dt as f64 * bpm / 60.0;
-
-        // The links.
-        v.up.resize(set.links.len(), false);
-        v.readings.resize(set.links.len(), 0.0);
-        let mut readings = Vec::with_capacity(set.links.len());
-        for (i, l) in set.links.iter().enumerate() {
-            let mut r = match l.source {
-                s if s.listens() => {
-                    let ear = l.from.and_then(|id| v.tracks.iter().flatten().find(|t| t.0 == id).map(|t| &t.1)).or(v.master.as_ref());
-                    ear.map(|e| e.reading(s)).unwrap_or_default()
-                }
-                Source::Notes | Source::Pitch => v.notes.get(&l.from).map(|n| Reading { value: n.value(l.source), hit: n.hit }).unwrap_or_default(),
-                Source::Ramp => Reading { value: v.clock.value(Source::Ramp), hit: v.clock.bar_hit },
-                s => Reading { value: v.clock.value(s), hit: v.clock.hit(s) },
-            };
-            // A level or a band hits when it rises past the middle.
-            if matches!(l.source, Source::Level | Source::Bass | Source::Mids | Source::Highs) {
-                r.hit = !v.up[i] && r.value > 0.6;
-                if r.value > 0.6 {
-                    v.up[i] = true;
-                } else if r.value < 0.4 {
-                    v.up[i] = false;
-                }
-            }
-            v.readings[i] = r.value;
-            readings.push(r);
-        }
-        let mut k = 0;
-        v.look = kv::look(&set.links, set.amount, &mut v.dice, |_| {
-            k += 1;
-            readings[k - 1]
-        });
-
-        // Which clip: a scene that starts picks one, Next Clip moves on.
-        let n = set.clips.len();
-        if set.follow_scenes {
-            let scene = kv::scene_clip(status.tracks.iter().take(self.project.tracks.len()).map(|t| t.playing_slot.load(Ordering::Relaxed)), n);
-            if scene.is_some() && scene != v.last_scene {
-                v.playing = scene.unwrap_or(0);
-            }
-            v.last_scene = scene;
-        }
-        if v.look.next_clip && n > 1 {
-            v.playing = (v.playing + 1) % n;
-        }
-        v.playing = v.playing.min(n.saturating_sub(1));
-        let clip = set.clips.get(v.playing);
-        let media = clip.and_then(|c| v.media.get(&c.path).cloned());
-        let path = clip.map(|c| c.path.clone());
-        if path != v.playing_path {
-            v.playing_path = path.clone();
-            v.playhead.reset();
-        }
-
-        // Where the film is. A film cut by Slice to Drum Rack follows the
-        // notes of the track it was sliced to, and Gate the notes it holds.
-        let info = media.as_ref().map(|m| m.info()).unwrap_or_default();
-        let cues = clip.and_then(|c| c.cues.as_ref()).filter(|c| !c.is_empty());
-        let by = cues.map_or(set.slice_track, |c| c.track);
-        let slice_note = v.notes.get(&by).filter(|n| n.hit).map(|n| n.pitch);
-        let held = match (cues, by) {
-            (None, _) => 0,
-            (Some(_), Some(id)) => self.project.tracks.iter().position(|t| t.id == id).and_then(|i| status.tracks.get(i)).map_or(0, |ts| ts.inst_notes()),
-            (Some(_), None) => status.tracks.iter().take(self.project.tracks.len()).fold(0, |m, ts| m | ts.inst_notes()),
-        };
-        // Only the part of the film that is kept plays (its playhead counts from its start).
-        let (from, to) = clip.map_or((0.0, info.duration), |c| c.part(info.duration));
-        let input = kv::PlayInput {
-            dt,
-            duration: to - from,
-            beat,
-            playing,
-            bpm,
-            beats_per_bar: self.project.beats_per_bar,
-            speed: v.look.get(Effect::Speed),
-            freeze: v.look.get(Effect::Freeze),
-            scratch: v.look.get(Effect::Scratch),
-            jump: v.look.jump,
-            stutter: v.look.stutter,
-            note: if set.play == kv::PlayMode::Slices { slice_note } else { None },
-            clip: v.playing,
-            held,
-        };
-        v.at = from as f64 + v.playhead.advance(&set, &input);
-
-        // The picture: a new frame goes up when it changes.
-        let frame = media.as_ref().and_then(|m| m.frame_at(v.at).map(|i| (m.clone(), i)));
-        match (frame, &path) {
-            (Some((m, i)), Some(p)) => {
-                let key = (p.clone(), i);
-                if v.shown.as_ref() != Some(&key) {
-                    if let Some(img) = m.image(i) {
-                        match &mut v.texture {
-                            Some(t) => t.set(img, egui::TextureOptions::LINEAR),
-                            None => v.texture = Some(ctx.load_texture("video_frame", img, egui::TextureOptions::LINEAR)),
+        v.audition_was = aud_key;
+        let seek = match (seek_film, playing_clip) {
+            (Some(t), Some(c)) if c.is_cued() && c.play.mode == kv::PlayMode::Slices => Some(t),
+            (Some(t), Some(c)) => {
+                let spans = c.spans(dur);
+                Some(kv::joined_time(&spans, t).unwrap_or_else(|| {
+                    // The next part's start (round to the first after the last).
+                    let mut acc = 0.0;
+                    for &(a, b) in &spans {
+                        if t < a as f64 {
+                            return acc;
                         }
-                        v.shown = Some(key);
+                        acc += (b - a) as f64;
                     }
-                }
+                    0.0
+                }))
             }
-            _ => v.shown = None,
+            _ => None,
+        };
+        let asks = Asks { dt, durations: &durations, seek, hold: v.paused, audition: audition.as_ref() };
+        let shot = v.dir.frame(&set, &self.project, &status, &asks);
+        v.shot = shot;
+        v.at = shot.at;
+
+        // The pictures: a new frame goes up when it changes.
+        let media_of = |i: usize| set.clips.get(i).and_then(|c| v.media.get(&c.path).cloned());
+        let new = media_of(shot.clip).and_then(|m| m.frame_at(shot.at).map(|i| (m, i)));
+        match new {
+            Some((m, i)) => show_frame(ctx, &mut v.texture, &mut v.shown, "video_frame", &m, i),
+            None => v.shown = None,
+        }
+        let old = shot.from.and_then(|(c, at, _)| media_of(c).and_then(|m| m.frame_at(at).map(|i| (m, i))));
+        match old {
+            Some((m, i)) => show_frame(ctx, &mut v.old_texture, &mut v.old_shown, "video_frame_old", &m, i),
+            None => v.old_shown = None,
         }
         for (p, m) in &v.media {
             if !v.thumbs.contains_key(p) && m.frame_count() > 0 {
@@ -430,37 +390,9 @@ impl App {
         }
 
         // The effects for the stage.
-        let lk = v.look;
-        let fx = |e: Effect| lk.get(e);
-        let shake = fx(Effect::Shake) * 0.05;
-        let tint = match lk.tint_link.and_then(|i| set.links.get(i)) {
-            Some(l) => {
-                let c = l.from.and_then(|id| self.project.tracks.iter().find(|t| t.id == id)).map(|t| t.color).unwrap_or([0xff, 0x40, 0xa0]);
-                [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, fx(Effect::Tint)]
-            }
-            None => [0.0; 4],
-        };
-        let shown = v.shown.is_some();
-        v.params = stage::Params {
-            video_size: if shown { [info.width as f32, info.height as f32] } else { [0.0, 0.0] },
-            fill: set.fit == kv::Fit::Fill,
-            zoom: fx(Effect::Zoom),
-            spin: fx(Effect::Spin),
-            shake: [(v.dice.unit() - 0.5) * 2.0 * shake, (v.dice.unit() - 0.5) * 2.0 * shake],
-            mirror: fx(Effect::Mirror),
-            kaleido: fx(Effect::Kaleido),
-            pixels: fx(Effect::Pixels),
-            split: fx(Effect::Split),
-            glitch: fx(Effect::Glitch),
-            seed: v.dice.unit() * 100.0,
-            hue: fx(Effect::Hue),
-            poster: fx(Effect::Poster),
-            flash: fx(Effect::Flash),
-            invert: fx(Effect::Invert),
-            strobe: kv::strobe_light(fx(Effect::Strobe), if playing { beat } else { v.free_beat }),
-            gate: fx(Effect::Gate),
-            trails: fx(Effect::Trails),
-            tint,
-        };
+        let size = |i: usize| media_of(i).map(|m| m.info()).map(|i| [i.width as f32, i.height as f32]);
+        let sizes = (v.shown.as_ref().and(size(shot.clip)), shot.from.and_then(|f| v.old_shown.as_ref().and(size(f.0))));
+        let look = v.dir.look;
+        v.params = stage_params(&set, &self.project, &look, &shot, sizes, &mut v.dir.dice);
     }
 }

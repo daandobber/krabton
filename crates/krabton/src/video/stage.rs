@@ -39,6 +39,12 @@ pub struct Params {
     pub trails: f32,
     /// A colour (0..1) and how much of it.
     pub tint: [f32; 4],
+    /// The clip it is changing from: how (0 not changing, 1 Fade, 2 Flash,
+    /// 3 Glitch), how far (0: all of it, 1: all of the new one) and its
+    /// picture's size (0: none yet, black).
+    pub transition: f32,
+    pub mix: f32,
+    pub old_size: [f32; 2],
 }
 
 /// The OpenGL side: made the first time it draws.
@@ -75,8 +81,9 @@ impl Stage {
     }
 
     /// Draws the stage into `rect` (the effects are worked out the first
-    /// time it is drawn in frame `frame`), from the picture in `video`.
-    pub fn paint(&self, painter: &egui::Painter, rect: egui::Rect, video: Option<egui::TextureId>, params: Params, frame: u64) {
+    /// time it is drawn in frame `frame`), from the picture in `video` (and
+    /// `old`, the clip it is changing from).
+    pub fn paint(&self, painter: &egui::Painter, rect: egui::Rect, video: Option<egui::TextureId>, old: Option<egui::TextureId>, params: Params, frame: u64) {
         let state = self.state.clone();
         let cb = egui_glow::CallbackFn::new(move |info, p| {
             let Ok(mut st) = state.lock() else { return };
@@ -99,10 +106,11 @@ impl Stage {
             st.drawn = frame;
             let Some(g) = st.gl.as_mut() else { return };
             let video_tex = video.and_then(|id| p.texture(id));
+            let old_tex = old.and_then(|id| p.texture(id));
             // SAFETY: as above; every object used was made on this context.
             unsafe {
                 if fresh {
-                    g.draw_effects(gl, video_tex, &params);
+                    g.draw_effects(gl, video_tex, old_tex, &params);
                     gl.bind_framebuffer(glow::FRAMEBUFFER, p.intermediate_fbo());
                 }
                 let vp = info.viewport_in_pixels();
@@ -167,20 +175,54 @@ uniform float u_strobe;
 uniform float u_gate;
 uniform float u_trails;
 uniform vec4 u_tint;
+uniform sampler2D u_old;
+uniform vec2 u_old_size;
+uniform float u_old_has;
+uniform float u_transition;
+uniform float u_mix;
 I vec2 v_uv;
 
 float hash(float n) { return fract(sin(n) * 43758.5453); }
 
-// The picture at a point of the stage (0..1 both ways): filling the stage
-// (cut at the sides) or fitting in it (black bars).
-vec3 pick(vec2 st) {
+// Where a picture `size` big is at a point of the stage (0..1 both ways):
+// filling the stage (cut at the sides) or fitting in it (black bars).
+vec2 place(vec2 st, vec2 size) {
     float sa = u_stage.x / u_stage.y;
-    float va = u_video_size.x / max(u_video_size.y, 1.0);
+    float va = size.x / max(size.y, 1.0);
     vec2 k = vec2(1.0);
     if ((u_fill > 0.5) == (va > sa)) { k.x = sa / va; } else { k.y = va / sa; }
-    vec2 uv = (st - 0.5) * k + 0.5;
-    float inside = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
-    return texture2D(u_video, clamp(uv, 0.0, 1.0)).rgb * inside * u_has_video;
+    return (st - 0.5) * k + 0.5;
+}
+
+float inside(vec2 uv) {
+    return step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
+}
+
+vec3 pick_new(vec2 st) {
+    vec2 uv = place(st, u_video_size);
+    return texture2D(u_video, clamp(uv, 0.0, 1.0)).rgb * inside(uv) * u_has_video;
+}
+
+vec3 pick_old(vec2 st) {
+    vec2 uv = place(st, u_old_size);
+    return texture2D(u_old, clamp(uv, 0.0, 1.0)).rgb * inside(uv) * u_old_has;
+}
+
+// The picture at a point of the stage: the clip that plays, or while it
+// changes, the two together.
+vec3 pick(vec2 st) {
+    if (u_transition < 0.5) { return pick_new(st); }
+    float m = clamp(u_mix, 0.0, 1.0);
+    if (u_transition < 1.5) { return mix(pick_old(st), pick_new(st), m); }
+    float peak = 1.0 - abs(m * 2.0 - 1.0);
+    if (u_transition < 2.5) {
+        vec3 c = m < 0.5 ? pick_old(st) : pick_new(st);
+        return mix(c, vec3(1.0), peak);
+    }
+    // Glitch: strips of the new clip, more and more, pushed about.
+    float band = floor(st.y * 24.0 + hash(u_seed) * 3.0);
+    vec2 q = st + vec2((hash(band * 1.31 + u_seed) - 0.5) * 0.3 * peak, 0.0);
+    return hash(band * 7.13 + floor(u_seed)) < m ? pick_new(q) : pick_old(q);
 }
 
 // A point around the middle (x in the stage's proportion), with red and blue pulled apart.
@@ -354,7 +396,7 @@ impl Gl {
     }
 
     /// The effects, from the picture and the last stage into the other stage.
-    unsafe fn draw_effects(&mut self, gl: &glow::Context, video: Option<glow::Texture>, p: &Params) {
+    unsafe fn draw_effects(&mut self, gl: &glow::Context, video: Option<glow::Texture>, old: Option<glow::Texture>, p: &Params) {
         let next = 1 - self.cur;
         gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
         gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(self.tex[next]), 0);
@@ -364,12 +406,17 @@ impl Gl {
         gl.use_program(Some(self.fx));
         gl.active_texture(glow::TEXTURE1);
         gl.bind_texture(glow::TEXTURE_2D, Some(self.tex[self.cur]));
+        gl.active_texture(glow::TEXTURE2);
+        gl.bind_texture(glow::TEXTURE_2D, Some(old.unwrap_or(self.tex[self.cur])));
         gl.active_texture(glow::TEXTURE0);
         // Without a picture the shader reads nothing (it is multiplied by 0).
         gl.bind_texture(glow::TEXTURE_2D, Some(video.unwrap_or(self.tex[self.cur])));
         let u = |name: &str| gl.get_uniform_location(self.fx, name);
         gl.uniform_1_i32(u("u_video").as_ref(), 0);
         gl.uniform_1_i32(u("u_prev").as_ref(), 1);
+        gl.uniform_1_i32(u("u_old").as_ref(), 2);
+        gl.uniform_2_f32(u("u_old_size").as_ref(), p.old_size[0].max(1.0), p.old_size[1].max(1.0));
+        gl.uniform_1_f32(u("u_old_has").as_ref(), if old.is_some() && p.old_size[0] > 0.0 { 1.0 } else { 0.0 });
         gl.uniform_2_f32(u("u_stage").as_ref(), STAGE_W as f32, STAGE_H as f32);
         gl.uniform_2_f32(u("u_video_size").as_ref(), p.video_size[0].max(1.0), p.video_size[1].max(1.0));
         let has = video.is_some() && p.video_size[0] > 0.0;
@@ -391,12 +438,16 @@ impl Gl {
             ("u_strobe", p.strobe),
             ("u_gate", p.gate),
             ("u_trails", p.trails),
+            ("u_transition", p.transition),
+            ("u_mix", p.mix),
         ] {
             gl.uniform_1_f32(u(name).as_ref(), v);
         }
         gl.uniform_2_f32(u("u_shake").as_ref(), p.shake[0], p.shake[1]);
         gl.uniform_4_f32(u("u_tint").as_ref(), p.tint[0], p.tint[1], p.tint[2], p.tint[3]);
         self.quad(gl);
+        gl.active_texture(glow::TEXTURE2);
+        gl.bind_texture(glow::TEXTURE_2D, None);
         gl.active_texture(glow::TEXTURE1);
         gl.bind_texture(glow::TEXTURE_2D, None);
         gl.active_texture(glow::TEXTURE0);

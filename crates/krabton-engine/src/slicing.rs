@@ -624,7 +624,7 @@ mod tests {
         let done = p.slice_to_midi_track(0, SliceClip::Slot(0), &o, None).unwrap();
         assert_eq!(done.picture, Some(0));
         let v = &p.video;
-        assert_eq!((v.clips.len(), v.current, v.play), (1, 0, crate::video::PlayMode::Slices));
+        assert_eq!((v.clips.len(), v.current, v.clips[0].play.mode), (1, 0, crate::video::PlayMode::Slices));
         assert_eq!(v.clips[0].path, std::path::PathBuf::from("C:/films/Zoo.mp4"));
         let cues = v.clips[0].cues.clone().expect("cues");
         let pads = pads_of(&p, done.track);
