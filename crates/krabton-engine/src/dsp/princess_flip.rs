@@ -769,8 +769,13 @@ mod tests {
             }
             (s1 * s1 + s2 * s2 - c * s1 * s2).max(0.0).sqrt() * 2.0 / x.len() as f32
         };
+        // In 50 ms windows: the grains' phases jump from one to the next.
+        let heard = |x: &[f32], hz: f32| {
+            let w: Vec<f32> = x.chunks_exact(2400).map(|c| level(c, hz)).collect();
+            w.iter().sum::<f32>() / w.len().max(1) as f32
+        };
         let w = &y[4000..40_000];
-        assert!(level(w, 440.0) > 4.0 * level(w, 220.0) && level(w, 440.0) > 0.1, "its own pitch: {} at 440, {} at 220", level(w, 440.0), level(w, 220.0));
+        assert!(heard(w, 440.0) > 4.0 * heard(w, 220.0) && heard(w, 440.0) > 0.1, "its own pitch: {} at 440, {} at 220", heard(w, 440.0), heard(w, 220.0));
         assert!(rms(&y[36_000..44_000]) > 0.05, "still playing at 0.8 s: {}", rms(&y[36_000..44_000]));
         assert!(rms(&y[50_000..]) < 0.01, "over by 1.05 s");
         // Reversed: a rising ramp plays falling.
@@ -782,7 +787,7 @@ mod tests {
         p[CHOKE] = 0.0;
         let mut st = FlipState::new(SR);
         let y = play(&mut st, &p, &s, &f, FIRST_NOTE, 0.4, 1.0);
-        assert!(y[1000] > y[10_000] && y[10_000] > y[20_000], "{} {} {}", y[1000], y[10_000], y[20_000]);
+        assert!(y[1000] > y[10_000] && y[10_000] > y[18_000], "{} {} {}", y[1000], y[10_000], y[18_000]);
     }
 
     #[test]

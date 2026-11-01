@@ -1275,7 +1275,7 @@ pub fn for_instrument(name: &str) -> Option<Skin> {
         "Retro Machines" => RETRO,
         "Macro Drums" => Skin { top: hex(0x1f3a2e), bottom: hex(0x12241c), accent: hex(0x5fe3a1), knob: Knob::Led, cap: hex(0x2c4a3c), logo: Font::Sport, ..BASE },
         "Chip Drums" => CHIP_DRUMS,
-        "Analog Princess" | "Analog Princess Kits" => PRINCESS,
+        "Analog Princess" | "Analog Princess Kits" | "Princess Flip" => PRINCESS,
         "Stretch" => STRETCH,
         "Sampled Machines" => SAMPLER,
         "Drum Rack" => DRUM_RACK,
@@ -1295,6 +1295,7 @@ pub fn for_effect(kind: EffectKind) -> Option<Skin> {
         Beads => Skin { accent: hex(0xc83cd0), ..MODULE },
         Rings => Skin { accent: hex(0xd49a1e), heroes: &["Structure"], ..MODULE },
         Looper => LOOPER,
+        Fryer => PRINCESS,
         _ => match kind.category() {
             "Reverb & Resonance" => REVERB,
             "Delay & Loop" => DELAY,

@@ -193,20 +193,66 @@ fn step_note(params: &[f32], key: Scale, t: usize, note: i8, dir: i32) -> i8 {
     (note as i32 + dir).clamp(-24, 36) as i8
 }
 
-/// Analog Princess's panel.
+/// A sample on track `t`: its Sample voice playing it.
+pub(crate) fn put_on(params: &mut [f32], machine: &mut Machine, t: usize, s: krabton_engine::SampleRef) {
+    let t = t.min(TRACKS - 1);
+    machine.set_sample(t, Some(s));
+    if let Some(v) = params.get_mut(pm::tp(t, pm::T_VOICE)) {
+        *v = pm::SAMPLE_VOICE as f32;
+    }
+}
+
+fn load_onto(params: &mut [f32], machine: &mut Machine, t: usize, path: &std::path::Path, said: &mut Option<String>) {
+    match krabton_engine::SampleRef::load(path) {
+        Ok(s) => put_on(params, machine, t, s),
+        Err(e) => *said = Some(format!("Could not load the sample: {e}")),
+    }
+}
+
+/// The Princess Sounds' one-shots, by name.
+fn sound_names() -> Vec<String> {
+    static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    NAMES.get_or_init(|| krabton_engine::princess_sounds::one_shots().into_iter().map(|s| s.name).collect()).clone()
+}
+
+/// Analog Princess's panel: `edit` is the track being edited (a sample
+/// dropped on the machine goes there). Returns a message for the player.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn panel(ui: &mut Ui, id: Id, preset: &mut String, params: &mut Vec<f32>, machine: &mut Machine, live: &InstLive, key: Scale, height: f32, mv: Option<&mut ModView>) {
+pub(crate) fn panel(ui: &mut Ui, id: Id, preset: &mut String, params: &mut Vec<f32>, machine: &mut Machine, edit: &mut usize, live: &InstLive, key: Scale, height: f32, mv: Option<&mut ModView>) -> Option<String> {
     if params.len() < pm::SPECS.len() {
-        return;
+        return None;
     }
     machine.fix();
+    let mut said = None;
     let u = (height / H).clamp(10.0, 24.0);
-    let (rect, _) = ui.allocate_exact_size(vec2(W * u, H * u), Sense::hover());
+    let (rect, whole) = ui.allocate_exact_size(vec2(W * u, H * u), Sense::hover());
     let at = |x: f32, y: f32, w: f32, h: f32| Rect::from_min_size(rect.min + vec2(x * u, y * u), vec2(w * u, h * u));
     let p = ui.painter().clone();
     let vid = id.with("view");
     let mut st: View = ui.ctx().data(|d| d.get_temp(vid)).unwrap_or_default();
-    st.track = st.track.min(TRACKS - 1);
+    st.track = (*edit).min(TRACKS - 1);
+    // A sample dropped on a track's tab (or anywhere on the machine: the
+    // track being edited) plays on that track.
+    let tab_at = |pos: egui::Pos2| (0..TRACKS).find(|&t| at(SEQ_X + 0.3 + t as f32 * (SEQ_W - 0.6) / TRACKS as f32, 0.3, (SEQ_W - 0.6) / TRACKS as f32, 2.5).contains(pos));
+    let pointer = ui.input(|i| i.pointer.interact_pos().or(i.pointer.hover_pos()));
+    if let Some(item) = crate::widgets::drop_payload::<crate::app::BrowserItem>(&whole) {
+        if let crate::app::BrowserItem::Sample(path) = &*item {
+            let t = pointer.and_then(tab_at).unwrap_or(st.track);
+            load_onto(params, machine, t, path, &mut said);
+            st.track = t;
+        }
+    }
+    let here = crate::import::file_drop_pos(ui.ctx()).is_none_or(|p| rect.contains(p));
+    let files: Vec<std::path::PathBuf> = ui.ctx().input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect());
+    if let Some(path) = files.iter().find(|p| krabton_engine::sample::is_audio_file(p)).filter(|_| here) {
+        let t = crate::import::file_drop_pos(ui.ctx()).and_then(tab_at).unwrap_or(st.track);
+        load_onto(params, machine, t, path, &mut said);
+        st.track = t;
+        crate::import::take_file_drop(ui.ctx());
+    }
+    // While something is dragged over it, the tab it would go to lights.
+    let dragging = egui::DragAndDrop::has_payload_of_type::<crate::app::BrowserItem>(ui.ctx()) || crate::import::file_drop_pos(ui.ctx()).is_some();
+    let drop_tab = if dragging { crate::import::file_drop_pos(ui.ctx()).or(pointer).filter(|p| rect.contains(*p)).and_then(tab_at) } else { None };
     section(&p, at(PAT_X, 0.0, PAT_W, H), "Patterns", u);
     section(&p, at(SEQ_X, 0.0, SEQ_W, H), "Sequencer", u);
     section(&p, at(SND_X, 0.0, SND_W, H), "Sound", u);
@@ -328,6 +374,15 @@ pub(crate) fn panel(ui: &mut Ui, id: Id, preset: &mut String, params: &mut Vec<f
         p.rect_filled(r.translate(vec2(0.0, 1.5)), 3.0, Color32::from_black_alpha(100));
         p.rect_filled(r, 3.0, fill);
         p.rect_filled(Rect::from_min_size(r.left_bottom() - vec2(0.0, 3.0), vec2(r.width(), 3.0)), 1.5, if muted { shade(col, 0.3) } else { col });
+        if drop_tab == Some(t) {
+            p.rect_stroke(r.expand(2.0), 3.0, Stroke::new(2.0_f32, Color32::WHITE), StrokeKind::Outside);
+        }
+        if kn.params[pm::tp(t, pm::T_VOICE)].round() as usize == pm::SAMPLE_VOICE {
+            // A track playing a sample: a small wave on its tab.
+            let c = r.left_top() + vec2(u * 0.35, u * 0.35);
+            let pts: Vec<egui::Pos2> = (0..7).map(|k| c + vec2(k as f32 * u * 0.08, if k % 2 == 0 { -u * 0.12 } else { u * 0.12 })).collect();
+            p.add(egui::Shape::line(pts, Stroke::new(1.2_f32, col)));
+        }
         // A light that flashes with its hits.
         let flash = live.vals[8 + t].clamp(0.0, 1.0);
         let led = r.right_top() + vec2(-u * 0.3, u * 0.3);
@@ -576,9 +631,39 @@ pub(crate) fn panel(ui: &mut Ui, id: Id, preset: &mut String, params: &mut Vec<f
     let f = fit(&p, &name, FontId::proportional((u * 0.9).clamp(11.0, 20.0)), nr.width());
     p.text(nr.left_center(), Align2::LEFT_CENTER, name, f, col);
     let voice = kn.params[pm::tp(t, pm::T_VOICE)].round().max(0.0) as usize;
-    let vr = at(x + 3.7, 0.3, if is_808 { 9.0 } else { 15.0 }, 1.5);
+    let is_sample = voice == pm::SAMPLE_VOICE;
+    let vr = at(x + 3.7, 0.3, if is_808 { 9.0 } else if is_sample { 6.0 } else { 15.0 }, 1.5);
     if let Some(v) = names_display(ui, vr, id.with(("voice", t)), pm::VOICES, pm::VOICES[voice.min(pm::VOICES.len() - 1)], u) {
         kn.params[pm::tp(t, pm::T_VOICE)] = v as f32;
+    }
+    if is_sample {
+        // The track's sample: click to load one, right-click to take it off;
+        // or one of the Princess Sounds.
+        let sr = at(x + 9.9, 0.3, 6.4, 1.5);
+        screen_box(&p, sr, u);
+        let name = machine.sample(t).map_or("DROP A SAMPLE".to_string(), |s| s.name.to_uppercase());
+        let f = fit(&p, &name, crate::skin::Font::Lcd.id((sr.height() * 0.45).clamp(8.0, 14.0)), sr.width() - 6.0);
+        p.text(sr.center(), Align2::CENTER_CENTER, name, f, if machine.sample(t).is_some() { accent_now() } else { shade(accent_now(), 0.5) });
+        let resp = ui.interact(sr, id.with(("sample", t)), Sense::click()).on_hover_text("This track's sample: click to load one, right-click to take it off. Or drop one on its tab");
+        if resp.clicked() {
+            if let Some(path) = crate::import::audio_file_dialog().pick_file() {
+                load_onto(kn.params, machine, t, &path, &mut said);
+            }
+        }
+        if resp.secondary_clicked() {
+            machine.set_sample(t, None);
+        }
+        let names: Vec<String> = sound_names();
+        let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+        let current = machine.sample(t).map(|s| s.name.clone()).unwrap_or_default();
+        if let Some(i) = names_display(ui, at(x + 16.5, 0.3, SND_W - 0.6 - 16.2, 1.5), id.with(("sounds", t)), &refs, if refs.contains(&current.as_str()) { current.as_str() } else { "Princess Sounds" }, u) {
+            let sounds = krabton_engine::princess_sounds::one_shots();
+            match sounds.get(i).map(|s| krabton_engine::princess_sounds::ensure(&krabton_engine::princess_sounds::dir(), s)) {
+                Some(Ok(path)) => load_onto(kn.params, machine, t, &path, &mut said),
+                Some(Err(e)) => said = Some(format!("Could not make the sound: {e}")),
+                None => {}
+            }
+        }
     }
     if is_808 {
         kn.cycler(ui, at(x + 13.0, 0.1, 3.4, 1.9), pm::ROOT, "Root");
@@ -593,7 +678,13 @@ pub(crate) fn panel(ui: &mut Ui, id: Id, preset: &mut String, params: &mut Vec<f
     ];
     for (ri, row) in rows.iter().enumerate() {
         for (ci, (k, label)) in row.iter().enumerate() {
-            kn.knob(ui, at(x + ci as f32 * cw, 2.0 + ri as f32 * ch, cw, ch), pm::tp(t, *k), label);
+            let r = at(x + ci as f32 * cw, 2.0 + ri as f32 * ch, cw, ch);
+            if is_sample && *k == pm::T_B {
+                // Backwards or not: a button.
+                kn.toggle(ui, r, pm::tp(t, *k), label);
+            } else {
+                kn.knob(ui, r, pm::tp(t, *k), label);
+            }
         }
     }
     let y3 = 2.0 + 2.0 * ch;
@@ -611,7 +702,7 @@ pub(crate) fn panel(ui: &mut Ui, id: Id, preset: &mut String, params: &mut Vec<f
         kn.cycler(ui, at(x3, y3, 2.0 * cw, ch), pm::tp(t, pm::T_CHOKE), "Choke");
         kn.toggle(ui, at(x3 + 2.0 * cw, y3 + 0.6, 1.6 * cw, 1.6), pm::tp(t, pm::T_MUTE), "Mute");
         let hint = at(x3 + 3.8 * cw, y3 + 0.3, 2.2 * cw, ch);
-        let text = "a choke group cuts the others in it (the hats)";
+        let text = if is_sample { "drop a sample on a track's tab: it plays it" } else { "a choke group cuts the others in it (the hats)" };
         let gal = p.layout(text.to_string(), small_font(u * 0.85), crate::skin::ink_dim(), hint.width());
         p.galley(hint.left_top(), gal, crate::skin::ink_dim());
     }
@@ -680,10 +771,12 @@ pub(crate) fn panel(ui: &mut Ui, id: Id, preset: &mut String, params: &mut Vec<f
         resp.on_hover_text(format!("{label}: hold it down, or right-click to leave it on"));
     }
     drop(kn);
+    *edit = st.track;
     ui.ctx().data_mut(|d| d.insert_temp(vid, st));
     if playing || live.vals[8..20].iter().any(|v| *v > 0.01) {
         ui.ctx().request_repaint();
     }
+    said
 }
 
 #[cfg(test)]

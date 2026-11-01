@@ -225,6 +225,13 @@ mod tests {
     }
 
     /// The strength of `hz` in `x` (Goertzel), as an amplitude.
+    /// The strength of `hz` in 50 ms windows, on average: for a sound in
+    /// grains, whose phase jumps from one to the next.
+    fn heard(x: &[f32], hz: f32) -> f32 {
+        let w: Vec<f32> = x.chunks_exact(2400).map(|c| level(c, hz)).collect();
+        w.iter().sum::<f32>() / w.len().max(1) as f32
+    }
+
     fn level(x: &[f32], hz: f32) -> f32 {
         let w = TAU * hz / SR;
         let c = 2.0 * w.cos();
@@ -273,7 +280,7 @@ mod tests {
 
     #[test]
     fn the_808s_cascade_grinds_harder() {
-        let x = sine(110.0, 0.2, 0.5);
+        let x = sine(110.0, 0.4, 0.5);
         let harm = |stages: f32| {
             let p = params(&[(HEAT, 0.25), (STAGES, stages)]);
             let mut f = Fryer::new(SR);
@@ -297,9 +304,9 @@ mod tests {
         let w = 24_000..96_000;
         let shadow: Vec<f32> = wet[w.clone()].iter().zip(&dry[w]).map(|(a, b)| a - b).collect();
         // An octave down, at about half the level, the sound itself untouched.
-        let down = level(&shadow, 220.0);
+        let down = heard(&shadow, 220.0);
         assert!(down > 0.08 && down < 0.35, "an octave down under it: {down}");
-        assert!(level(&shadow, 440.0) < 0.05, "not the sound again: {}", level(&shadow, 440.0));
+        assert!(heard(&shadow, 440.0) < 0.05, "not the sound again: {}", heard(&shadow, 440.0));
         // Off: nothing under it.
         let mut f = Fryer::new(SR);
         let again = run(&mut f, &params(&[(SUBLIMINAL, 0.0)]), &x);
@@ -312,7 +319,7 @@ mod tests {
         let mut f = Fryer::new(SR);
         let dry = run(&mut f, &params(&[]), &hi);
         let shadow: Vec<f32> = wet[24_000..96_000].iter().zip(&dry[24_000..96_000]).map(|(a, b)| a - b).collect();
-        assert!(level(&shadow, 1500.0) < 0.01, "{}", level(&shadow, 1500.0));
+        assert!(heard(&shadow, 1500.0) < 0.01, "{}", heard(&shadow, 1500.0));
     }
 
     #[test]

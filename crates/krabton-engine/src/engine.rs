@@ -557,6 +557,7 @@ enum InstState {
     Stretch(Box<crate::dsp::stretch::StretchState>),
     Turntable(Box<crate::dsp::turntable::TurntableState>),
     Grit(Box<crate::dsp::grit::GritState>),
+    Flip(Box<crate::dsp::princess_flip::FlipState>),
     Plugin { instance: u64, proc: Option<Box<dyn AudioProcessor>>, pending: Vec<PluginEvent> },
     Theremin(Box<ThereminState>),
 }
@@ -671,6 +672,7 @@ impl InstState {
             Some(Instrument::Stretch { .. }) => InstState::Stretch(Box::new(crate::dsp::stretch::StretchState::new(sr))),
             Some(Instrument::Turntable { .. }) => InstState::Turntable(Box::new(crate::dsp::turntable::TurntableState::new(sr))),
             Some(Instrument::Grit { .. }) => InstState::Grit(Box::new(crate::dsp::grit::GritState::new(sr))),
+            Some(Instrument::Flip { .. }) => InstState::Flip(Box::new(crate::dsp::princess_flip::FlipState::new(sr))),
         }
     }
 
@@ -747,6 +749,7 @@ impl InstState {
                 | (InstState::Stretch(_), Some(Instrument::Stretch { .. }))
                 | (InstState::Turntable(_), Some(Instrument::Turntable { .. }))
                 | (InstState::Grit(_), Some(Instrument::Grit { .. }))
+                | (InstState::Flip(_), Some(Instrument::Flip { .. }))
         ) || matches!((self, i), (InstState::Plugin { instance, .. }, Some(Instrument::Plugin(p))) if *instance == p.instance)
             // Another bank needs a player of its own.
             || matches!((self, i), (InstState::Sf2(s), Some(Instrument::Sf2 { font, .. })) if s.is_for(font.as_ref()))
@@ -814,6 +817,7 @@ impl InstState {
             (InstState::Stretch(s), Instrument::Stretch { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Turntable(s), Instrument::Turntable { params, record, .. }) => s.note_on(ov.unwrap_or(params), record, pitch, vel),
             (InstState::Grit(s), Instrument::Grit { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Flip(s), Instrument::Flip { .. }) => s.note_on(pitch, vel),
             _ => {}
         }
     }
@@ -877,6 +881,7 @@ impl InstState {
             (InstState::Stretch(s), Instrument::Stretch { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Turntable(s), Instrument::Turntable { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Grit(s), Instrument::Grit { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Flip(s), Instrument::Flip { .. }) => s.note_off(pitch),
             _ => {}
         }
     }
@@ -940,6 +945,7 @@ impl InstState {
             InstState::Stretch(s) => s.all_off(),
             InstState::Turntable(s) => s.all_off(),
             InstState::Grit(s) => s.all_off(),
+            InstState::Flip(s) => s.all_off(),
             InstState::None => {}
         }
     }
@@ -992,6 +998,7 @@ impl InstState {
             InstState::Stretch(s) => s.visual(out),
             InstState::Turntable(s) => s.visual(out),
             InstState::Grit(s) => s.visual(out),
+            InstState::Flip(s) => s.visual(out),
             _ => return false,
         }
         true
@@ -1055,6 +1062,7 @@ impl InstState {
             (InstState::Stretch(s), Instrument::Stretch { params, sample, .. }) => s.render(ov.unwrap_or(params), sample.as_ref(), l, r),
             (InstState::Turntable(s), Instrument::Turntable { params, sample, record, .. }) => s.render(ov.unwrap_or(params), sample.as_ref(), record, l, r),
             (InstState::Grit(s), Instrument::Grit { params, pads, .. }) => s.render(ov.unwrap_or(params), pads, l, r),
+            (InstState::Flip(s), Instrument::Flip { params, sample, flip, .. }) => s.render(ov.unwrap_or(params), sample.as_ref(), flip, l, r),
             (InstState::Plugin { proc, pending, .. }, Instrument::Plugin(_)) => {
                 if let Some(p) = proc {
                     p.process(pending, l, r);
@@ -2541,6 +2549,11 @@ impl Engine {
                     InstState::Turntable(s) => s.set_transport(ctx.bpm, ctx.beat, ctx.playing),
                     // Its note repeat keeps the song's grid.
                     InstState::Grit(s) => s.set_transport(ctx.bpm, ctx.beat, ctx.playing),
+                    // Its stutter in the song's time, its chops in the song's key.
+                    InstState::Flip(s) => {
+                        s.set_transport(ctx.bpm);
+                        s.key = key_new.filter(|_| !track.key_fixed).unwrap_or(project.scale);
+                    }
                     _ => {}
                 }
                 // The Key drawer moves what it plays into its key (not drums).

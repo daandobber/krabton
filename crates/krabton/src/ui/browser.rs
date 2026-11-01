@@ -220,7 +220,7 @@ pub struct BrowserState {
     pub filter: String,
     last_filter: String,
     selected: Option<String>,
-    open: HashSet<String>,
+    pub(crate) open: HashSet<String>,
     closed_in_search: HashSet<String>,
     /// Folder listings: (path, is a folder).
     dirs: HashMap<PathBuf, Vec<(PathBuf, bool)>>,
@@ -378,7 +378,7 @@ pub(crate) fn device_names() -> Vec<&'static str> {
     devices().iter().map(|d| d.name).collect()
 }
 
-fn devices() -> [Dev; 52] {
+fn devices() -> [Dev; 53] {
     [
         Dev {
             name: "Analog",
@@ -468,6 +468,7 @@ fn devices() -> [Dev; 52] {
         Dev { name: "Stretch", hint: "A sample stretched 2 to 1000 times its length, as Paulstretch does: every window of it kept as a spectrum with its phases thrown to chance, so it turns into a slow, smeared, singing drone of itself. Every key a voice at its pitch (up to four); Position (scrub it on the sample while keys hold), the window (0.04 to 0.7 s), Onset to keep the attacks, Freeze (or the sustain pedal) to hold a moment, Shimmer an octave up, Tone and Space. Drop a sample on it; without one it stretches a chord of its own", presets: krabton_engine::dsp::stretch::preset_names(), make: BrowserItem::Stretch, kind: Some("Pad") },
         Dev { name: "Turntable", hint: "A DJ deck with a record of any sample on it (a song, a loop, a break): drag the platter round to scratch, forwards and back, the record following the hand and the pitch following the speed, the slipmat bringing it back up to the platter's speed when you let go. A motor that takes its time to start, stop and brake, a backspin, a pitch fader of 8, 16 or 50 %, Sync to the song's tempo (found when the record goes on) and Key Lock. Eight hot cues, loop rolls and six scratches played in the song's time from the keys (baby, forward, chirp, transformer, tear, flare), a cut fader, a DJ filter, and the crackle, hiss and wow of vinyl. Drop a sample on it", presets: krabton_engine::dsp::turntable::preset_names(), make: BrowserItem::Turntable, kind: None },
         Dev { name: "Grit", hint: "A pad sampler of the late eighties and the nineties: sixteen pads, each a sample (drop one on a pad, or chop a loop to the pads at its hits or on a grid) or one of its sixteen built-in sounds, with tune (by the rate it is read at, as the old machines did), level, pan, decay, a filter, reverse, a choke group and one-shot or gate. Its Character is the signal path of the old machines: 12 bits at 26 kHz read without interpolation (pitching up drops samples, the aliasing folds down), 12 bits at 40 kHz, 16-bit Vintage, 8-bit Lo, or Clean; a drive into the converter, its steps and noise, the zero-order hold and the output filter they had. Note Repeat on the song's grid (1/4 to 1/32, triplets) with Swing, and 16 Levels (one pad's sample on all sixteen in steps of tune, level, decay or filter)", presets: krabton_engine::dsp::grit::preset_names(), make: BrowserItem::Grit, kind: None },
+        Dev { name: "Princess Flip", hint: "A sample flip for pluggnb, to go with Analog Princess: drop any sample (soul, R&B, anime, a game, the sound of a video) and its key and tempo are heard and it is chopped at its hits or in bars into 8 to 16 chops over the keys from C3, moved into the song's key. Pitch (varispeed, as slowed records are), Slowed + Reverb, Half-Time (at its own pitch), the Wobble of a worn tape, Low Pass, a chop turned round, one-shot or gate, Choke, Stutter on held chops, Hiss and Analog Princess's Fry. The keys below C3 play the chosen chop at their pitch", presets: krabton_engine::dsp::princess_flip::preset_names(), make: BrowserItem::Flip, kind: None },
     ]
 }
 
@@ -725,16 +726,43 @@ impl App {
             Category::Plugins => self.plugin_nodes(),
             Category::Clips => self.clip_nodes(),
             Category::Samples => {
+                // Krabton's own first, then the places.
+                let mut out = vec![self.princess_sounds_node()];
                 let places = self.places();
                 if places.is_empty() {
-                    return vec![Node::Note("Add a folder with samples to Places (bottom of the sidebar).".into())];
+                    out.push(Node::Note("Add a folder with samples to Places (bottom of the sidebar).".into()));
                 }
-                places
-                    .into_iter()
-                    .map(|(label, path, _)| Node::Folder { tag: Some(dir_tag(&path)), label, icon: Icon::Folder, hint: path.display().to_string(), load: None, kids: Kids::Dir { path, samples_only: true } })
-                    .collect()
+                out.extend(places.into_iter().map(|(label, path, _)| Node::Folder { tag: Some(dir_tag(&path)), label, icon: Icon::Folder, hint: path.display().to_string(), load: None, kids: Kids::Dir { path, samples_only: true } }));
+                out
             }
         }
+    }
+
+    /// Princess Sounds: the folder of them once they are made; made in the
+    /// background the first time it is shown.
+    fn princess_sounds_node(&mut self) -> Node {
+        use crate::princess_lib::State;
+        let dir = krabton_engine::princess_sounds::dir();
+        let hint = "Samples in Analog Princess's sound, made by Krabton: bells, plucks, leads, chord stabs in every key, pads, flutes, vocal chops, 808s, FX and melody loops (named with their key and tempo). Drop them on the Drum Rack, the Sampler, Grit, Princess Flip, Analog Princess's tracks or as clips".to_string();
+        let state = match &self.princess_sounds {
+            Some(s) => s.lock().map(|s| s.clone()).unwrap_or(State::Ready),
+            None if krabton_engine::princess_sounds::installed(&dir) => State::Ready,
+            None => {
+                self.princess_sounds = Some(crate::princess_lib::start());
+                State::Making { done: 0, total: krabton_engine::princess_sounds::sounds().len() }
+            }
+        };
+        let ready = matches!(state, State::Ready);
+        let kids = match state {
+            State::Ready => Kids::Dir { path: dir.clone(), samples_only: true },
+            State::Making { done, total } => Kids::Nodes(vec![Node::Note(format!("Making them: {done} of {total}..."))]),
+            State::Failed(e) => Kids::Nodes(vec![Node::Note(format!("Could not make them: {e}"))]),
+        };
+        if ready && self.princess_sounds.take().is_some() {
+            // Made just now: read the folder afresh.
+            self.browser.dirs.retain(|p, _| !p.starts_with(&dir));
+        }
+        Node::Folder { tag: Some(dir_tag(&dir)), label: krabton_engine::princess_sounds::FOLDER.into(), icon: Icon::Folder, hint, load: None, kids }
     }
 
     /// Every preset of the built-in instruments (and the first FM bank),

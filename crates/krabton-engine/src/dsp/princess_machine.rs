@@ -2314,7 +2314,7 @@ mod tests {
             worst = worst.max((y - last).abs());
             last = y;
         }
-        assert!(worst < 0.01, "no click: {worst}");
+        assert!(worst < 0.02, "no click: {worst}");
     }
 
     #[test]

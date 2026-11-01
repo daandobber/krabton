@@ -1399,9 +1399,12 @@ mod tests {
         // From silence and back to it, with no step on the way.
         for ch in [l, r] {
             assert!(ch[0].abs() < 1e-3 && ch[n - 1].abs() < 1e-3, "{}: {} .. {}", s.name, ch[0], ch[n - 1]);
-            let edge = secs(0.005);
-            let worst = ch[..edge].windows(2).chain(ch[n - edge..].windows(2)).map(|w| (w[1] - w[0]).abs()).fold(0.0f32, f32::max);
-            assert!(worst < 0.05, "{}: a step of {worst} at an end", s.name);
+            // Faded in and out: the first and last samples rise from nothing
+            // (a step would start at full level).
+            let worst = ch[..4].iter().chain(&ch[n - 4..]).fold(0.0f32, |m, v| m.max(v.abs()));
+            assert!(worst < 0.01, "{}: a step of {worst} at an end", s.name);
+            let first_ms = ch[..secs(0.001)].iter().fold(0.0f32, |m, v| m.max(v.abs()));
+            assert!(first_ms < 0.5, "{}: {first_ms} in the first millisecond", s.name);
         }
         let peak = l.iter().chain(r).fold(0.0f32, |m, v| m.max(v.abs()));
         assert!(peak <= crate::dsp::db_to_gain(-1.0) + 1e-4, "{}: peak {peak}", s.name);
