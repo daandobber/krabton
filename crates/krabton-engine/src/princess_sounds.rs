@@ -4,7 +4,7 @@
 //! they are wanted and kept as WAV files (44.1 kHz, 16 bits, stereo) in
 //! Documents/Krabton/Library/Princess Sounds, a folder for each kind, so
 //! they are samples like any other: on the Drum Rack, the Sampler, Grit,
-//! Princess Flip, Analog Princess's tracks, as audio clips.
+//! Flipside, Analog Princess's tracks, as audio clips.
 //!
 //! - Bells and plucks: FM bells (a sine phase modulated by another, its
 //!   index dying faster than its level, so they go from bright to round),

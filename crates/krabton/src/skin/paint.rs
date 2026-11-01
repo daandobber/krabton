@@ -212,6 +212,31 @@ pub fn panel(rect: Rect, s: &Skin, track: Option<Color32>, ppp: f32) -> Shape {
             let band = Rect::from_min_max(inner.min, pos2(inner.right(), inner.top() + inner.height() * 0.42));
             out.push(Shape::mesh(gradient(band, 3.0, Color32::from_white_alpha(26), Color32::from_white_alpha(0))));
         }
+        Surface::Night => {
+            // Stars: specks, some pink, some blue, now and then a sparkle.
+            let n = ((inner.width() * inner.height()) / 700.0) as u32;
+            let mut m = Mesh::default();
+            for k in 0..n.min(900) {
+                let hx = hash(k.wrapping_mul(2654435761) ^ seed);
+                let hy = hash(hx ^ 0x9e37_79b9);
+                let at = pos2(x0 + (hx % w_px) as f32 * px, y0 + (hy % h_px) as f32 * px);
+                let a = 50 + (hy >> 20 & 0x7f) as u8;
+                let c = match hx >> 28 & 3 {
+                    0 => Color32::from_rgba_unmultiplied(0xff, 0xb8, 0xe2, a),
+                    1 => Color32::from_rgba_unmultiplied(0xb0, 0xee, 0xff, a),
+                    _ => Color32::from_white_alpha(a),
+                };
+                if hy >> 26 == 0 {
+                    let r = 2.5 + (hx >> 8 & 3) as f32;
+                    out.push(Shape::line_segment([at - vec2(r, 0.0), at + vec2(r, 0.0)], Stroke::new(1.0_f32, c)));
+                    out.push(Shape::line_segment([at - vec2(0.0, r), at + vec2(0.0, r)], Stroke::new(1.0_f32, c)));
+                } else {
+                    let s = if hx >> 6 & 7 == 0 { 2.0 * px } else { px };
+                    m.add_colored_rect(Rect::from_min_size(at, vec2(s, s)), c);
+                }
+            }
+            out.push(Shape::mesh(m));
+        }
         Surface::Flat | Surface::Burst | Surface::Velvet => {}
     }
     if let Some(wood) = s.cheeks {

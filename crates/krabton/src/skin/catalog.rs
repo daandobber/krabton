@@ -980,6 +980,28 @@ const PRINCESS: Skin = Skin {
     ..BASE
 };
 
+/// Flipside: late at night, a deep indigo sky with its stars, soft pink and
+/// pale blue, its name on a cassette's label.
+const FLIPSIDE: Skin = Skin {
+    top: hex(0x241d52),
+    bottom: hex(0x0d0b28),
+    surface: Surface::Night,
+    ink: hex(0xf6ecff),
+    dim: hex(0xb9acdf),
+    well: hex(0x1a1545),
+    well_ink: hex(0xf6ecff),
+    accent: hex(0xffa6d9),
+    knob: Knob::Neon,
+    cap: hex(0x9ee8ff),
+    logo: Font::Retro,
+    logo_size: 19.0,
+    logo_ink: hex(0x2a1f5c),
+    logo_case: Case::Lower,
+    plate: Some(hex(0xffe3f1)),
+    pads: &[hex(0xffa6d9), hex(0x9ee8ff), hex(0xc9b0ff), hex(0xfff0a8)],
+    ..BASE
+};
+
 /// Turntable: a silver deck, a black plinth, its red strobe light.
 const TURNTABLE: Skin = Skin {
     top: hex(0x3a3c40),
@@ -1275,7 +1297,8 @@ pub fn for_instrument(name: &str) -> Option<Skin> {
         "Retro Machines" => RETRO,
         "Macro Drums" => Skin { top: hex(0x1f3a2e), bottom: hex(0x12241c), accent: hex(0x5fe3a1), knob: Knob::Led, cap: hex(0x2c4a3c), logo: Font::Sport, ..BASE },
         "Chip Drums" => CHIP_DRUMS,
-        "Analog Princess" | "Analog Princess Kits" | "Princess Flip" => PRINCESS,
+        "Analog Princess" | "Analog Princess Kits" => PRINCESS,
+        "Flipside" => FLIPSIDE,
         "Stretch" => STRETCH,
         "Sampled Machines" => SAMPLER,
         "Drum Rack" => DRUM_RACK,

@@ -2551,7 +2551,7 @@ impl Engine {
                     InstState::Grit(s) => s.set_transport(ctx.bpm, ctx.beat, ctx.playing),
                     // Its stutter in the song's time, its chops in the song's key.
                     InstState::Flip(s) => {
-                        s.set_transport(ctx.bpm);
+                        s.set_transport(ctx.bpm, ctx.beat, ctx.playing);
                         s.key = key_new.filter(|_| !track.key_fixed).unwrap_or(project.scale);
                     }
                     _ => {}
