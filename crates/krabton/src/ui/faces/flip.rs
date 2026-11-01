@@ -48,7 +48,8 @@ pub(crate) fn face() -> Face {
         .named(x + 2.7, 7.6, 7.1, 3.5, "Mode", Ctl::Buttons, "Mode")
         // The envelope and what velocity does to the level.
         .screen(x + 10.2, 0.0, 11.9, 12.0, "glass:Envelope")
-        .row(x + 10.4, 0.3, 2.3, 10.8, &["Attack", "Decay", "Sustain", "Release", "Vel > Level"], Ctl::Fader)
+        .row(x + 10.4, 0.3, 2.3, 10.8, &["Attack", "Decay", "Sustain", "Release"], Ctl::Fader)
+        .named(x + 19.6, 0.3, 2.3, 10.8, "Vel > Level", Ctl::Fader, "Vel")
         // The filter.
         .screen(x + 22.3, 0.0, 12.9, 12.0, "glass:Filter")
         .named(x + 22.5, 0.3, 3.4, 10.8, "Filter Type", Ctl::Buttons, "Type")
@@ -312,16 +313,18 @@ fn label(ui: &mut Ui, r: Rect, p: &[f32], sample: Option<&SampleRef>, flip: &Fli
         pt.circle_filled(c, reel, LABEL_INK);
         pt.circle_stroke(c, reel * 0.55, Stroke::new(1.0_f32, LABEL));
     }
-    let side = Rect::from_min_max(pos2(r.left() + r.width() * 0.44, r.top()), pos2(r.right() - r.height() * 1.3, r.bottom() - 4.0));
+    // Right of the preset's display (it ends at 17.6 of the label's 39.4 units).
+    let side = Rect::from_min_max(pos2(r.left() + r.width() * 0.465, r.top()), pos2(r.right() - r.height() * 1.3, r.bottom() - 4.0));
     let name = sample.map_or("side A · drop a sample".to_string(), |s| format!("side A · {}", s.name));
-    let f = super::fit(pt, &name, crate::skin::Font::Retro.id((r.height() * 0.42).clamp(9.0, 13.0)), side.width() * 0.55);
-    pt.text(pos2(side.left(), side.center().y), Align2::LEFT_CENTER, name, f, LABEL_INK);
+    let f = super::fit(pt, &name, crate::skin::Font::Retro.id((r.height() * 0.42).clamp(9.0, 13.0)), side.width() * 0.52);
+    let room = Rect::from_min_max(side.min, pos2(side.left() + side.width() * 0.54, side.bottom()));
+    pt.with_clip_rect(room).text(pos2(side.left(), side.center().y), Align2::LEFT_CENTER, name, f, LABEL_INK);
     let shift = live.vals[pf::VIS_SHIFT].round() as i32;
     let key = flip.key_name().unwrap_or_else(|| "no key".into());
     let bpm = flip.bpm.map_or("no tempo".to_string(), |b| format!("{b:.1} BPM"));
     let text = if p[pf::SONG_KEY] >= 0.5 && flip.key.is_some() { format!("{key} · {bpm} · {shift:+} st") } else { format!("{key} · {bpm}") };
     let f = super::fit(pt, &text, crate::skin::Font::Lcd.id((r.height() * 0.6).clamp(10.0, 17.0)), side.width() * 0.44);
-    pt.text(pos2(side.right(), side.center().y), Align2::RIGHT_CENTER, text, f, LABEL_INK);
+    pt.with_clip_rect(Rect::from_min_max(pos2(room.right(), side.top()), side.max)).text(pos2(side.right(), side.center().y), Align2::RIGHT_CENTER, text, f, LABEL_INK);
 }
 
 /// Where the wave is drawn: frames to x and back.
@@ -566,7 +569,7 @@ fn wave(ui: &mut Ui, id: Id, r: Rect, p: &mut [f32], sample: Option<&SampleRef>,
         clip.line_segment([pos2(x, inner.top() + handle_h), pos2(x, wave.bottom())], Stroke::new(if hot { 2.0_f32 } else { 1.0 }, line_col));
         let note = krabton_engine::note_name(pf::FIRST_NOTE + k.min(pf::MAX_CHOPS - 1) as u8);
         let room = flip.lines().iter().map(|&(_, f)| map.x(f as f64)).filter(|&o| o > x + 1.0).fold(inner.right(), f32::min) - x;
-        let arrow = if c.reverse { "\u{2190}" } else { "" };
+        let arrow = if c.reverse { "<" } else { "" };
         let text = if room > 46.0 || hot || k == sel { format!("{}{arrow} {note}", k + 1) } else { format!("{}{arrow}", k + 1) };
         let w = painter.layout_no_wrap(text.clone(), hfont.clone(), Color32::WHITE).size().x + 8.0;
         let tab = Rect::from_min_size(pos2(x - 1.0, inner.top()), vec2(w, handle_h));
@@ -793,14 +796,14 @@ fn chop_buttons(ui: &mut Ui, id: Id, r: Rect, has: bool, flip: &mut Flip, cv: &m
         changed = true;
     }
     let style = AutoStyle::ALL[cv.style % AutoStyle::ALL.len()];
-    let resp = button(ui, cell(1.0, 5.2, 2.0), id.with("style"), &format!("{} \u{25b8}", style.name().to_uppercase()), false, on).on_hover_text("The auto-flip's feel: straight (the chops one after the other), stutter (some played over on sixteenths) or the pluggnb bounce (3, 3 and 2). Click for the next");
+    let resp = button(ui, cell(1.0, 4.9, 2.6), id.with("style"), &format!("FEEL: {}", style.name().to_uppercase()), false, on).on_hover_text("The auto-flip's feel: straight (the chops one after the other), stutter (some played over on sixteenths) or the pluggnb bounce (3, 3 and 2). Click for the next");
     if resp.clicked() {
         cv.style = (cv.style + 1) % AutoStyle::ALL.len();
     }
     if resp.secondary_clicked() {
         cv.style = (cv.style + AutoStyle::ALL.len() - 1) % AutoStyle::ALL.len();
     }
-    if button(ui, cell(1.0, 7.2, 2.2), id.with("auto"), "AUTO-FLIP", false, on).on_hover_text("Four bars that play the chops in a new order, in time with the song, as a clip in the track's selected slot (each click a new one)").clicked() {
+    if button(ui, cell(1.0, 7.5, 2.1), id.with("auto"), "AUTO-FLIP", false, on).on_hover_text("Four bars that play the chops in a new order, in time with the song, as a clip in the track's selected slot (each click a new one)").clicked() {
         if flip.chops.is_empty() {
             acts.said = Some("Flip a sample first: drop one on Flipside".into());
         } else {
