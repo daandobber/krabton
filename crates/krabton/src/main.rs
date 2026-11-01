@@ -19,6 +19,7 @@ mod mp3;
 mod drum_lib;
 mod firmware_lib;
 mod piano_lib;
+mod princess_lib;
 mod sf2_lib;
 mod singer_lib;
 mod orchestra_lib;

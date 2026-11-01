@@ -693,6 +693,24 @@ impl Dist {
     }
 }
 
+/// The machine's 808 distortions: `x` driven by `drive` (0..1) into one of
+/// them, never over the ceiling. `dc` keeps the Tube's offset (it follows
+/// the sound at 12 Hz).
+#[inline]
+pub fn shape(x: f32, drive: f32, dist: Dist, dc: &mut OnePole) -> f32 {
+    match dist {
+        Dist::Soft => fast_tanh(x * (1.0 + 4.0 * drive)) * CEILING,
+        Dist::Hard => fry(x, drive),
+        Dist::Fold => fast_tanh(fold(x * (1.0 + 5.0 * drive)) * 1.3) * CEILING,
+        Dist::Tube => {
+            let t = x * (1.0 + 4.0 * drive);
+            let y = fast_tanh(t + 0.45 * (0.3 + drive) * t * t);
+            // (the lopsided part's offset, taken out)
+            ((y - dc.lp(y)) * CEILING).clamp(-CEILING, CEILING)
+        }
+    }
+}
+
 /// The knobs of the machine's 808 at a hit.
 #[derive(Clone, Copy, Debug)]
 pub struct Knobs808 {
@@ -852,18 +870,7 @@ impl Princess808 {
         let sub = sine(self.adv(2, f * 0.5)) * self.env[0] * k.sub * 0.8;
         let click = self.lp.lp(rng.bipolar()) * self.env[2] * k.click * 1.2;
         let x = out1 * (1.0 - 0.6 * k.ring - 0.3 * k.feed) + out1 * s2 * 1.6 * k.ring + s2 * 0.6 * k.feed * self.env[0] + sub + click;
-        let drive = k.drive;
-        let y = match k.dist {
-            Dist::Soft => fast_tanh(x * (1.0 + 4.0 * drive)) * CEILING,
-            Dist::Hard => fry(x, drive),
-            Dist::Fold => fast_tanh(fold(x * (1.0 + 5.0 * drive)) * 1.3) * CEILING,
-            Dist::Tube => {
-                let t = x * (1.0 + 4.0 * drive);
-                let y = fast_tanh(t + 0.45 * (0.3 + drive) * t * t);
-                // (the lopsided part's offset, taken out)
-                ((y - self.dc.lp(y)) * CEILING).clamp(-CEILING, CEILING)
-            }
-        };
+        let y = shape(x, k.drive, k.dist, &mut self.dc);
         for (e, c) in self.env.iter_mut().zip(self.coef) {
             *e *= c;
         }

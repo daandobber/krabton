@@ -195,6 +195,8 @@ pub enum BrowserItem {
     Turntable(&'static str),
     /// A Grit preset.
     Grit(&'static str),
+    /// A Princess Flip preset.
+    Flip(&'static str),
 }
 
 /// A bank of DX7 voices for FM.
@@ -278,6 +280,7 @@ impl BrowserItem {
             BrowserItem::Stretch(p) => format!("Stretch: {p}"),
             BrowserItem::Turntable(p) => format!("Turntable: {p}"),
             BrowserItem::Grit(p) => format!("Grit: {p}"),
+            BrowserItem::Flip(p) => format!("Princess Flip: {p}"),
         }
     }
 }
@@ -578,6 +581,8 @@ pub struct App {
     pub(crate) tape_follow_sent: Option<Option<u64>>,
     /// Each Looper's loop as last written to a file (its version, the file).
     pub(crate) looper_files: std::collections::HashMap<u64, (u32, std::path::PathBuf)>,
+    /// The Princess Sounds being made (the first time the browser shows them).
+    pub(crate) princess_sounds: Option<crate::princess_lib::Install>,
     /// Clips being stretched, reversed, frozen or resampled, and the box for a stretch of any size.
     pub(crate) clip_jobs: Vec<crate::clip_tools::ClipJob>,
     pub(crate) stretch_custom: Option<(ClipSel, f64)>,
@@ -771,6 +776,7 @@ impl App {
             band: Default::default(),
             tape_follow_sent: None,
             looper_files: Default::default(),
+            princess_sounds: None,
             clip_jobs: Vec::new(),
             stretch_custom: None,
             shot: None,
@@ -1314,7 +1320,7 @@ impl App {
                 }
                 self.toast(format!("Loading {} ...", info.name));
             }
-            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::StreetOrgan(_) | BrowserItem::Harmonica(_) | BrowserItem::Calculator(_) | BrowserItem::Console(_) | BrowserItem::Handheld(_) | BrowserItem::Micro(_) | BrowserItem::Warp(_) | BrowserItem::Hybrid(_) | BrowserItem::Quartet(_) | BrowserItem::ChipFm(_) | BrowserItem::V2(_) | BrowserItem::Oidos(_) | BrowserItem::Orchestra(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) | BrowserItem::Coast(_) | BrowserItem::Crimson(_) | BrowserItem::Silicon(_) | BrowserItem::Theremin(_) | BrowserItem::Granulator(_) | BrowserItem::Keytone(_) | BrowserItem::Princess(_) | BrowserItem::Turntable(_) | BrowserItem::Grit(_) | BrowserItem::Stretch(_) => {
+            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::StreetOrgan(_) | BrowserItem::Harmonica(_) | BrowserItem::Calculator(_) | BrowserItem::Console(_) | BrowserItem::Handheld(_) | BrowserItem::Micro(_) | BrowserItem::Warp(_) | BrowserItem::Hybrid(_) | BrowserItem::Quartet(_) | BrowserItem::ChipFm(_) | BrowserItem::V2(_) | BrowserItem::Oidos(_) | BrowserItem::Orchestra(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) | BrowserItem::Coast(_) | BrowserItem::Crimson(_) | BrowserItem::Silicon(_) | BrowserItem::Theremin(_) | BrowserItem::Granulator(_) | BrowserItem::Keytone(_) | BrowserItem::Princess(_) | BrowserItem::Turntable(_) | BrowserItem::Grit(_) | BrowserItem::Stretch(_) | BrowserItem::Flip(_) => {
                 let inst = match item {
                     BrowserItem::Synth(p) => Instrument::synth(p),
                     BrowserItem::Macro(p) => Instrument::macro_osc(p),
@@ -1366,6 +1372,7 @@ impl App {
                     BrowserItem::Stretch(p) => Instrument::stretch(p),
                     BrowserItem::Turntable(p) => Instrument::turntable(p),
                     BrowserItem::Grit(p) => Instrument::grit(p),
+                    BrowserItem::Flip(p) => Instrument::flip(p),
                     BrowserItem::Drums(k) => Instrument::drums(k),
                     _ => Instrument::sampler(None),
                 };
@@ -1682,6 +1689,15 @@ impl App {
                                 Some(Instrument::Grit { pads, .. }) => {
                                     krabton_engine::dsp::grit::fix_pads(pads);
                                     crate::ui::faces::grit::put_on(&mut pads[self.sel_pad.min(krabton_engine::dsp::grit::PADS - 1)], sample);
+                                }
+                                // Flipped: listened to for its key and tempo, chopped.
+                                Some(Instrument::Flip { sample: s, flip, .. }) => {
+                                    *flip = krabton_engine::dsp::princess_flip::listen(&sample, krabton_engine::dsp::princess_flip::ChopBy::Hits, 12);
+                                    *s = Some(sample);
+                                }
+                                // On Analog Princess's chosen track, as its Sample voice.
+                                Some(Instrument::Princess { params, machine, .. }) => {
+                                    crate::ui::faces::princess::put_on(params, machine, self.sel_pad, sample);
                                 }
                                 Some(Instrument::Keytone { sample: s, params, .. }) => {
                                     *s = Some(sample);
@@ -3660,6 +3676,8 @@ impl App {
             match name {
                 // Convert to MIDI and grooves (see `ui::convert`).
                 _ if self.convert_script(name, arg) => {}
+                // Princess Flip, the Fryer, Analog Princess's samples and Princess Sounds (see `princess_lib`).
+                _ if self.princess_script(name, arg) => {}
                 "scene" => self.cmd(Command::LaunchScene(nums.first().copied().unwrap_or(0))),
                 // chain=TRACK: prints its instrument and effects (to check by script).
                 "chain" => {

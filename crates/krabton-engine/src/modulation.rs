@@ -298,6 +298,7 @@ pub fn instrument_specs(i: &Instrument) -> Option<&'static [ParamSpec]> {
         Instrument::Stretch { .. } => Some(crate::dsp::stretch::SPECS),
         Instrument::Turntable { .. } => Some(crate::dsp::turntable::SPECS),
         Instrument::Grit { .. } => Some(crate::dsp::grit::SPECS),
+        Instrument::Flip { .. } => Some(crate::dsp::princess_flip::SPECS),
         _ => None,
     }
 }
@@ -312,6 +313,7 @@ pub fn instrument_params(i: &Instrument) -> Option<&[f32]> {
         Instrument::Stretch { params, .. } => Some(params),
         Instrument::Turntable { params, .. } => Some(params),
         Instrument::Grit { params, .. } => Some(params),
+        Instrument::Flip { params, .. } => Some(params),
         _ => None,
     }
 }
@@ -327,6 +329,7 @@ pub fn instrument_params_mut(i: &mut Instrument) -> Option<&mut Vec<f32>> {
         Instrument::Stretch { params, .. } => Some(params),
         Instrument::Turntable { params, .. } => Some(params),
         Instrument::Grit { params, .. } => Some(params),
+        Instrument::Flip { params, .. } => Some(params),
         _ => None,
     }
 }

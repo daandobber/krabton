@@ -999,6 +999,8 @@ impl App {
                 let (c, act) = crate::ui::looper_view::looper_panel(ui, id, &mut params, loop_mem.as_ref(), h, mv.as_mut());
                 looper_act = act;
                 c
+            } else if kind == EffectKind::Fryer {
+                crate::ui::fryer_view::fryer_panel(ui, id, &mut params, h, mv.as_mut())
             } else if kind == EffectKind::Convolution {
                 let (c, act) = convolution_face(ui, id, &mut params, conv_file.as_ref(), accent, h, mv.as_mut(), &mut width);
                 conv_act = act;
@@ -2013,7 +2015,21 @@ impl App {
                     }
                     Instrument::Princess { preset, params, machine } => {
                         let key = self.project.scale;
-                        super::faces::princess::panel(ui, Id::new(("princess", track_id)), preset, params, machine, &live, key, h - 36.0, mv.as_mut());
+                        if let Some(msg) = super::faces::princess::panel(ui, Id::new(("princess", track_id)), preset, params, machine, &mut self.sel_pad, &live, key, h - 36.0, mv.as_mut()) {
+                            self.toast(msg);
+                        }
+                    }
+                    Instrument::Flip { preset, params, sample, flip } => {
+                        let played = super::faces::flip::panel(ui, Id::new(("flip", track_id)), preset, params, sample, flip, &live, h - 36.0, mv.as_mut());
+                        for (pitch, on) in played.notes {
+                            match on {
+                                Some(velocity) => self.cmd(Command::NoteOn { track: track_id, pitch, velocity }),
+                                None => self.cmd(Command::NoteOff { track: track_id, pitch }),
+                            }
+                        }
+                        if let Some(msg) = played.said {
+                            self.toast(msg);
+                        }
                     }
                     Instrument::Facet { preset, params } => {
                         ui.horizontal(|ui| {

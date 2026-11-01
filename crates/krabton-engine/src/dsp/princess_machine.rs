@@ -11,7 +11,10 @@
 //!   the rest goes past it), Pan, Level, a choke group and Mute. A track
 //!   playing the 808 takes the 808's knobs too (Glide, Distortion, Sub,
 //!   Click, the ringing 808's tune and decay) and its notes: in the song's
-//!   key or chromatic, from its Root.
+//!   key or chromatic, from its Root. A track can also play a sample of its
+//!   own (the Sample voice: a chop, a one-shot, a Princess Sound) through
+//!   the same chain, its Tune, Decay, Tone, the drop at the hit, Start and
+//!   Reverse its own.
 //! - Patterns A to H of 16, 32 or 64 steps, each track with a length of its
 //!   own if it likes (polymeter). A step has its velocity, an accent, a roll
 //!   (2 or 4 hits in the step, 3 or 6 over two steps for triplets, 8 over two,
@@ -32,10 +35,12 @@
 //!   keeps the peaks under it. Deep Fry turns most of them up at once.
 
 use super::drums::DrumVoice;
+use super::fry::{now_and_then, stutter_slice, Bus, BusKnobs, Fx};
 use super::princess::{Dist, Knobs808, Princess808, PrincessVoice, BASE_808};
 use super::reverb::Reverb;
 use super::*;
 use crate::params::{ParamSpec, Unit};
+use crate::sample::SampleRef;
 use crate::scale::{Scale, ScaleKind};
 use serde::{Deserialize, Serialize};
 
@@ -64,7 +69,9 @@ pub const SURF: usize = 10;
 pub const SUB: usize = 11;
 
 /// The voices a track can play.
-pub const VOICES: &[&str] = &["808", "Kick", "Snare", "Clap", "Hat", "Open Hat", "Hat Roll", "Rim", "808 Tom", "Bell", "Laser", "Surf", "Subliminal"];
+pub const VOICES: &[&str] = &["808", "Kick", "Snare", "Clap", "Hat", "Open Hat", "Hat Roll", "Rim", "808 Tom", "Bell", "Laser", "Surf", "Subliminal", "Sample"];
+/// The voice that plays the track's own sample (see `Machine::samples`).
+pub const SAMPLE_VOICE: usize = 13;
 /// What a roll does: off, so many hits, or a ramp.
 pub const ROLLS: &[&str] = &["Off", "2", "3", "4", "6", "8", "Up", "Down"];
 /// Chances a step can have (%).
@@ -92,6 +99,9 @@ pub fn drum_voice(i: usize) -> Option<DrumVoice> {
 
 /// The names of a voice's two knobs of its own.
 pub fn voice_knobs(i: usize) -> [&'static str; 2] {
+    if i == SAMPLE_VOICE {
+        return ["Start", "Reverse"];
+    }
     match drum_voice(i) {
         None => ["Ring", "Feed"],
         Some(DrumVoice::ApFried808) => ["Glide", "Ring"],
@@ -489,11 +499,23 @@ pub struct Machine {
     /// The patterns Chain plays in a row.
     #[serde(default)]
     pub chain: Vec<u8>,
+    /// Each track's own sample, for its Sample voice (none: silent). Kept
+    /// as the file it came from, as samples are.
+    #[serde(default = "no_samples", skip_serializing_if = "has_no_samples")]
+    pub samples: Vec<Option<SampleRef>>,
+}
+
+fn no_samples() -> Vec<Option<SampleRef>> {
+    vec![None; TRACKS]
+}
+
+fn has_no_samples(s: &[Option<SampleRef>]) -> bool {
+    s.iter().all(|x| x.is_none())
 }
 
 impl Default for Machine {
     fn default() -> Self {
-        Self { patterns: vec![Pattern::default(); PATTERNS], chain: vec![0, 0, 1, 0] }
+        Self { patterns: vec![Pattern::default(); PATTERNS], chain: vec![0, 0, 1, 0], samples: no_samples() }
     }
 }
 
@@ -519,6 +541,19 @@ impl Machine {
         }
         self.chain.retain(|&c| (c as usize) < PATTERNS);
         self.chain.truncate(MAX_CHAIN);
+        self.samples.resize(TRACKS, None);
+    }
+
+    /// Track `t` plays `s` (its Sample voice; `None` takes it off).
+    pub fn set_sample(&mut self, t: usize, s: Option<SampleRef>) {
+        self.samples.resize(TRACKS, None);
+        if let Some(slot) = self.samples.get_mut(t) {
+            *slot = s;
+        }
+    }
+
+    pub fn sample(&self, t: usize) -> Option<&SampleRef> {
+        self.samples.get(t).and_then(|s| s.as_ref())
     }
 
     pub fn pattern(&self, i: usize) -> Option<&Pattern> {
@@ -544,9 +579,114 @@ struct Pending {
     accent: bool,
 }
 
+/// A track's Sample voice: its sample read from where Start says (or
+/// backwards from the end), at the track's tune and note, dropping into its
+/// pitch at the hit as Pitch Env and Pitch Time say, dying away over its
+/// Decay (from 1 up it plays to its end), darker or driven by its Tone.
+/// What still sounded when it was hit again fades out over 2 ms, so it
+/// never clicks.
+#[derive(Clone, Copy, Debug, Default)]
+struct SampleVoice {
+    active: bool,
+    /// To be put in place at its first sample (where Start and Reverse put it).
+    begin: bool,
+    pos: f64,
+    /// The speed of the tune and note (the sample's own rate is taken in
+    /// as it plays) and the bend at the hit (semitones, dying away).
+    ratio: f64,
+    bend: f32,
+    bend_coef: f32,
+    start: f32,
+    reverse: bool,
+    env: f32,
+    coef: f32,
+    attack: f32,
+    tone: f32,
+    lp: OnePole,
+    last: f32,
+    tail: f32,
+    tail_step: f32,
+}
+
+impl SampleVoice {
+    #[allow(clippy::too_many_arguments)]
+    fn trigger(&mut self, ratio: f32, start: f32, reverse: bool, decay: f32, tone: f32, pitch_amt: f32, pitch_time: f32, sr: f32) {
+        // What was sounding goes out quickly.
+        self.tail = if self.active { self.last } else { 0.0 };
+        self.tail_step = self.tail.abs() / (0.002 * sr).max(1.0);
+        self.active = true;
+        self.begin = true;
+        self.ratio = ratio as f64;
+        self.start = start.clamp(0.0, 0.99);
+        self.reverse = reverse;
+        self.env = 0.0;
+        self.attack = 1.0 / (0.001 * sr).max(1.0);
+        // Decay 1 and over: to its end. Under it, from a second down to 40 ms.
+        self.coef = if decay >= 0.999 { 1.0 } else { decay_coef(0.04 * 25f32.powf(((decay - 0.1) / 0.9).clamp(0.0, 1.0)), sr) };
+        self.bend = (pitch_amt - 1.0).max(0.0) * 8.0;
+        self.bend_coef = decay_coef(0.04 * pitch_time.max(0.05), sr);
+        self.tone = tone.clamp(0.0, 1.0);
+        if self.tone < 0.49 {
+            self.lp.set(150.0 * 130f32.powf(self.tone / 0.49), sr);
+        }
+    }
+
+    #[inline]
+    fn tick(&mut self, s: Option<&SampleRef>, sr: f32) -> f32 {
+        let tail = if self.tail != 0.0 {
+            let t = self.tail;
+            self.tail = if t > 0.0 { (t - self.tail_step).max(0.0) } else { (t + self.tail_step).min(0.0) };
+            t
+        } else {
+            0.0
+        };
+        let Some(s) = s.filter(|s| s.frames() > 1 && self.active) else {
+            self.active = false;
+            self.last = 0.0;
+            return tail;
+        };
+        let n = s.frames() as f64;
+        if self.begin {
+            self.begin = false;
+            self.pos = if self.reverse { (1.0 - self.start as f64) * (n - 1.0) } else { self.start as f64 * (n - 1.0) };
+        }
+        if self.pos < 0.0 || self.pos > n - 1.0 || (self.env < 1e-4 && self.attack == 0.0) {
+            self.active = false;
+            self.last = 0.0;
+            return tail;
+        }
+        let (a, b) = s.read(self.pos);
+        let mut y = (a + b) * 0.5;
+        // In and out without a click: a millisecond in, and the last 2 ms out.
+        let left = if self.reverse { self.pos } else { n - 1.0 - self.pos };
+        let edge = ((left / (0.002 * s.sample_rate as f64)).min(1.0)) as f32;
+        if self.attack > 0.0 {
+            self.env = (self.env + self.attack).min(1.0);
+            if self.env >= 1.0 {
+                self.attack = 0.0;
+            }
+        } else {
+            self.env *= self.coef;
+        }
+        y *= self.env * edge;
+        if self.tone < 0.49 {
+            y = self.lp.lp(y);
+        } else if self.tone > 0.51 {
+            let d = 1.0 + 8.0 * (self.tone - 0.5);
+            y = fast_tanh(y * d) / fast_tanh(d).max(0.1) * 0.9;
+        }
+        let step = self.ratio * s.sample_rate as f64 / sr as f64 * 2f64.powf(self.bend as f64 / 12.0);
+        self.bend *= self.bend_coef;
+        self.pos += if self.reverse { -step } else { step };
+        self.last = y;
+        y + tail
+    }
+}
+
 struct Track {
     voice: Box<PrincessVoice>,
     bass: Princess808,
+    sample: SampleVoice,
     /// The voice it was hit with (an index into `VOICES`).
     kind: usize,
     active: bool,
@@ -572,6 +712,7 @@ impl Track {
         Self {
             voice: Box::default(),
             bass: Princess808::default(),
+            sample: SampleVoice::default(),
             kind: 0,
             active: false,
             vel: 1.0,
@@ -630,350 +771,6 @@ struct TrackKnobs {
     fry: f32,
     mute: bool,
     ducks: bool,
-}
-
-/// A time effect starting at a sample of the block.
-#[derive(Clone, Copy, Debug)]
-enum Fx {
-    /// A slice this long repeated for so long (samples).
-    Stutter(u32, u32),
-    /// Slowing to a stop over so long.
-    Tape(u32),
-    /// Flipping channels for so long.
-    Surf(u32),
-}
-
-/// The FRY section's knobs for a block.
-#[derive(Clone, Copy, Debug, Default)]
-struct BusKnobs {
-    drive: f32,
-    steps: f32,
-    rate: f32,
-    crush: bool,
-    ring: f32,
-    ring_inc: f32,
-    push: f32,
-    hard: bool,
-    ceiling: f32,
-    volume: f32,
-    lim_rel: f32,
-    stutter_hold: bool,
-    stutter_slice: u32,
-    tape_hold: bool,
-    tape_len: u32,
-    surf_hold: bool,
-}
-
-/// The FRY section and the kit's time effects.
-struct Bus {
-    sr: f32,
-    rng: Rng,
-    ring_ph: f32,
-    crushed: [f32; 2],
-    crush_ph: f32,
-    /// What came in, for the stutter.
-    cap: Vec<[f32; 2]>,
-    cap_w: usize,
-    stut_len: u32,
-    stut_t: u32,
-    stut_left: u32,
-    stut_start: usize,
-    stut_mix: f32,
-    stut_held: bool,
-    /// What the stutter let through, for the tape and the channels.
-    vari: Vec<[f32; 2]>,
-    vari_w: usize,
-    tape_len: u32,
-    tape_t: u32,
-    tape_left: u32,
-    tape_read: f64,
-    tape_mix: f32,
-    tape_held: bool,
-    surf_left: u32,
-    surf_chan: u32,
-    surf_t: u32,
-    surf_kind: u8,
-    surf_rate: f64,
-    surf_read: f64,
-    surf_mix: f32,
-    surf_held: bool,
-    surf_on: bool,
-    surf_filt: [Svf; 2],
-    surf_ph: f32,
-    lim: f32,
-}
-
-impl Bus {
-    fn new(sr: f32) -> Self {
-        Self {
-            sr,
-            rng: Rng::new(0xF2_1ED5),
-            ring_ph: 0.0,
-            crushed: [0.0; 2],
-            crush_ph: 0.0,
-            cap: vec![[0.0; 2]; (2.0 * sr) as usize + 2],
-            cap_w: 0,
-            stut_len: 0,
-            stut_t: 0,
-            stut_left: 0,
-            stut_start: 0,
-            stut_mix: 0.0,
-            stut_held: false,
-            vari: vec![[0.0; 2]; (3.0 * sr) as usize + 2],
-            vari_w: 0,
-            tape_len: 0,
-            tape_t: 0,
-            tape_left: 0,
-            tape_read: 0.0,
-            tape_mix: 0.0,
-            tape_held: false,
-            surf_left: 0,
-            surf_chan: 0,
-            surf_t: 0,
-            surf_kind: 0,
-            surf_rate: 1.0,
-            surf_read: 0.0,
-            surf_mix: 0.0,
-            surf_held: false,
-            surf_on: false,
-            surf_filt: [Svf::new(); 2],
-            surf_ph: 0.0,
-            lim: 1.0,
-        }
-    }
-
-    fn reset(&mut self) {
-        self.stut_len = 0;
-        self.stut_left = 0;
-        self.stut_mix = 0.0;
-        self.tape_len = 0;
-        self.tape_left = 0;
-        self.tape_mix = 0.0;
-        self.surf_left = 0;
-        self.surf_on = false;
-        self.surf_mix = 0.0;
-    }
-
-    fn start(&mut self, fx: Fx) {
-        match fx {
-            Fx::Stutter(slice, len) => {
-                if self.stut_left == 0 && !self.stut_held {
-                    self.stut_len = slice.clamp(16, self.cap.len() as u32 - 2);
-                    self.stut_t = 0;
-                    self.stut_start = self.cap_w;
-                }
-                self.stut_left = self.stut_left.max(len);
-            }
-            Fx::Tape(len) => {
-                if self.tape_left == 0 && !self.tape_held {
-                    self.start_tape(len);
-                }
-            }
-            Fx::Surf(len) => {
-                if !self.surf_on {
-                    self.surf_on = true;
-                    self.new_channel();
-                }
-                self.surf_left = self.surf_left.max(len);
-            }
-        }
-    }
-
-    fn start_tape(&mut self, len: u32) {
-        // At most so long that the reader stays in the buffer.
-        self.tape_len = len.clamp(64, (self.vari.len() as u32 - 4) * 2 - 8);
-        self.tape_left = self.tape_len;
-        self.tape_t = 0;
-        self.tape_read = self.vari_w as f64;
-    }
-
-    /// Flips to another channel.
-    fn new_channel(&mut self) {
-        let sr = self.sr;
-        self.surf_t = 0;
-        self.surf_chan = ((0.04 + 0.13 * self.rng.unipolar()) * sr) as u32;
-        let kind = (self.rng.unipolar() * 6.0) as u8 % 6;
-        // Not the same channel twice.
-        self.surf_kind = if kind == self.surf_kind { (kind + 1) % 6 } else { kind };
-        let vlen = self.vari.len() as f64;
-        match self.surf_kind {
-            0 => {
-                let f = 900.0 + 1800.0 * self.rng.unipolar();
-                self.surf_filt[0].set_q(f, 2.5, sr);
-                self.surf_filt[1].set_q(f, 2.5, sr);
-            }
-            1 => {
-                let f = 250.0 + 450.0 * self.rng.unipolar();
-                self.surf_filt[0].set_q(f, 0.9, sr);
-                self.surf_filt[1].set_q(f, 0.9, sr);
-            }
-            2 => {
-                self.surf_filt[0].set_q(1800.0, 0.8, sr);
-                self.surf_filt[1].set_q(1800.0, 0.8, sr);
-            }
-            3 => {
-                // An octave or a fifth down: read more slowly than it is written.
-                self.surf_rate = if self.rng.unipolar() < 0.5 { 0.5 } else { 0.667 };
-                self.surf_read = self.vari_w as f64;
-            }
-            4 => {
-                // Up: read faster, from far enough back to never catch up.
-                self.surf_rate = if self.rng.unipolar() < 0.5 { 2.0 } else { 1.5 };
-                let back = (self.surf_chan as f64 * (self.surf_rate - 1.0)).min(vlen - 4.0);
-                self.surf_read = (self.vari_w as f64 - back).rem_euclid(vlen);
-            }
-            _ => {
-                self.surf_filt[0].set_q(3000.0 + 3000.0 * self.rng.unipolar(), 1.2, sr);
-                self.surf_filt[1].set_q(3000.0, 1.2, sr);
-            }
-        }
-    }
-
-    #[inline]
-    fn read(buf: &[[f32; 2]], at: f64) -> [f32; 2] {
-        let n = buf.len();
-        let i = at.floor();
-        let f = (at - i) as f32;
-        let i0 = (i as i64).rem_euclid(n as i64) as usize;
-        let i1 = (i0 + 1) % n;
-        [buf[i0][0] + (buf[i1][0] - buf[i0][0]) * f, buf[i0][1] + (buf[i1][1] - buf[i0][1]) * f]
-    }
-
-    /// The fry chain on what is sent to it.
-    #[inline]
-    fn fry(&mut self, x: [f32; 2], k: &BusKnobs) -> [f32; 2] {
-        let mut y = x;
-        if k.ring > 0.0 {
-            let m = 1.0 - k.ring + k.ring * (self.ring_ph * TAU).sin();
-            self.ring_ph = (self.ring_ph + k.ring_inc).fract();
-            y = [y[0] * m, y[1] * m];
-        }
-        if k.drive > 0.0 {
-            let g = 1.0 + 14.0 * k.drive * k.drive;
-            let comp = 1.0 / (1.0 + 0.6 * k.drive);
-            y = [fast_tanh(y[0] * g) * comp, fast_tanh(y[1] * g) * comp];
-        }
-        if k.crush {
-            self.crush_ph += k.rate;
-            if self.crush_ph >= 1.0 {
-                self.crush_ph -= 1.0;
-                self.crushed = [(y[0] * k.steps).round() / k.steps, (y[1] * k.steps).round() / k.steps];
-            }
-            y = self.crushed;
-        }
-        y
-    }
-
-    /// The time effects, then the clip into the ceiling.
-    #[inline]
-    fn tick(&mut self, x: [f32; 2], k: &BusKnobs) -> [f32; 2] {
-        let sr = self.sr;
-        let smooth = 1.0 - (-1.0 / (0.002 * sr)).exp();
-        // The stutter: the slice as it came in, then again and again.
-        let clen = self.cap.len();
-        self.cap[self.cap_w] = x;
-        let mut y = x;
-        if self.stut_len > 0 {
-            let on = self.stut_left > 0 || self.stut_held;
-            let len = self.stut_len;
-            let ph = self.stut_t % len;
-            let s = self.cap[(self.stut_start + ph as usize) % clen];
-            // Short fades where it jumps back.
-            let fade = (0.002 * sr).max(1.0);
-            let mut g = ((len - ph) as f32 / fade).min(1.0);
-            if self.stut_t >= len {
-                g = g.min((ph as f32 + 1.0) / fade);
-            }
-            self.stut_mix += ((on as u8 as f32) - self.stut_mix) * smooth;
-            y = [x[0] + (s[0] * g - x[0]) * self.stut_mix, x[1] + (s[1] * g - x[1]) * self.stut_mix];
-            self.stut_t = self.stut_t.wrapping_add(1);
-            self.stut_left = self.stut_left.saturating_sub(1);
-            if !on && self.stut_mix < 1e-3 {
-                self.stut_len = 0;
-            }
-        }
-        self.cap_w = (self.cap_w + 1) % clen;
-        // Tape and channels read what the stutter let through.
-        let vlen = self.vari.len();
-        self.vari[self.vari_w] = y;
-        if self.tape_len > 0 {
-            let on = self.tape_left > 0 || self.tape_held;
-            let rate = (1.0 - self.tape_t as f64 / self.tape_len as f64).max(0.0);
-            let s = Self::read(&self.vari, self.tape_read);
-            let g = (rate as f32).sqrt();
-            self.tape_read = (self.tape_read + rate).rem_euclid(vlen as f64);
-            self.tape_mix += ((on as u8 as f32) - self.tape_mix) * smooth;
-            y = [y[0] + (s[0] * g - y[0]) * self.tape_mix, y[1] + (s[1] * g - y[1]) * self.tape_mix];
-            self.tape_t = (self.tape_t + 1).min(self.tape_len);
-            self.tape_left = self.tape_left.saturating_sub(1);
-            if !on && self.tape_mix < 1e-3 {
-                self.tape_len = 0;
-            }
-        } else if self.surf_on || self.surf_mix > 1e-3 {
-            let n = self.rng.bipolar();
-            let s = match self.surf_kind {
-                // A radio: a narrow band and a little hiss.
-                0 => [self.surf_filt[0].process(y[0], FilterMode::Band) * 2.2 + n * 0.05, self.surf_filt[1].process(y[1], FilterMode::Band) * 2.2 + n * 0.05],
-                // Through the wall.
-                1 => [self.surf_filt[0].process(y[0], FilterMode::Low) * 1.3, self.surf_filt[1].process(y[1], FilterMode::Low) * 1.3],
-                // A tinny speaker, ringing.
-                2 => {
-                    self.surf_ph = (self.surf_ph + 900.0 / sr).fract();
-                    let m = 0.5 + 0.5 * (self.surf_ph * TAU).sin();
-                    let mono = (y[0] + y[1]) * 0.5;
-                    let t = self.surf_filt[0].process(mono, FilterMode::High) * (0.6 + 0.8 * m) * 1.8;
-                    [t, t]
-                }
-                // Pitched down or up.
-                3 | 4 => {
-                    let s = Self::read(&self.vari, self.surf_read);
-                    self.surf_read = (self.surf_read + self.surf_rate).rem_euclid(vlen as f64);
-                    s
-                }
-                // Mostly static.
-                _ => {
-                    let st = self.surf_filt[0].process(n, FilterMode::Band) * 0.5;
-                    [st + y[0] * 0.25, st + y[1] * 0.25]
-                }
-            };
-            // The flip itself: a burst of static.
-            let burst_len = 0.012 * sr;
-            let burst = if (self.surf_t as f32) < burst_len { n * 0.3 * (1.0 - self.surf_t as f32 / burst_len) } else { 0.0 };
-            let target = if self.surf_on { 1.0 } else { 0.0 };
-            self.surf_mix += (target - self.surf_mix) * smooth * 2.0;
-            let m = self.surf_mix;
-            y = [y[0] + (s[0] + burst - y[0]) * m, y[1] + (s[1] + burst - y[1]) * m];
-            self.surf_t = self.surf_t.saturating_add(1);
-            if self.surf_on {
-                self.surf_left = self.surf_left.saturating_sub(1);
-                if self.surf_left == 0 && !self.surf_held {
-                    self.surf_on = false;
-                } else if self.surf_t >= self.surf_chan {
-                    self.new_channel();
-                }
-            }
-        }
-        self.vari_w = (self.vari_w + 1) % vlen;
-        // Pushed into a limiter a little over the ceiling, then clipped to it.
-        let ceil = k.ceiling;
-        let pre = [y[0] * k.push, y[1] * k.push];
-        let peak = pre[0].abs().max(pre[1].abs());
-        let thr = ceil * 1.4;
-        if peak * self.lim > thr {
-            self.lim = thr / peak.max(1e-9);
-        } else {
-            self.lim += (1.0 - self.lim) * k.lim_rel;
-        }
-        let z = [pre[0] * self.lim, pre[1] * self.lim];
-        let out = if k.hard { [z[0].clamp(-ceil, ceil), z[1].clamp(-ceil, ceil)] } else { [ceil * fast_tanh(z[0] / ceil), ceil * fast_tanh(z[1] / ceil)] };
-        let out = [out[0].clamp(-ceil, ceil) * k.volume, out[1].clamp(-ceil, ceil) * k.volume];
-        if out[0].is_finite() && out[1].is_finite() {
-            out
-        } else {
-            self.lim = 1.0;
-            [0.0, 0.0]
-        }
-    }
 }
 
 /// Analog Princess, the machine, as it plays.
@@ -1146,6 +943,16 @@ impl PrincessState {
             if slide && ringing {
                 return;
             }
+        } else if kind == SAMPLE_VOICE {
+            // Its sample, at the track's tune and the step's note (the keys
+            // below the drums at their own pitch, on the 808's track).
+            let semis = tune + note as f32 + key.map_or(0.0, |k| k as f32 - NOTES[BASS] as f32);
+            let ratio = 2f32.powf(semis / 12.0);
+            let decay = get(tp(t, T_DECAY)).clamp(0.1, 4.0);
+            let (pitch_amt, pitch_time) = (get(tp(t, T_PITCH)).clamp(0.0, 4.0), get(tp(t, T_PITCH_TIME)).clamp(0.25, 4.0));
+            tr.sample.trigger(ratio, get(tp(t, T_A)), get(tp(t, T_B)) >= 0.5, decay, get(tp(t, T_TONE)), pitch_amt, pitch_time, sr);
+            hz = BASE_808 * ratio;
+            tr.bass.stop();
         } else {
             let Some(dv) = drum_voice(kind) else { return };
             let semis = tune + note as f32 + key.map_or(0.0, |k| k as f32 - NOTES[BASS] as f32);
@@ -1181,7 +988,8 @@ impl PrincessState {
     pub fn note_on(&mut self, p: &[f32], pitch: u8, vel: f32) {
         let pitch = pitch & 127;
         let get = |i: usize| p.get(i).copied().unwrap_or(SPECS[i].default);
-        let is_808 = get(tp(BASS, T_VOICE)).round() as i32 == 0;
+        let bass_voice = get(tp(BASS, T_VOICE)).round() as usize;
+        let is_808 = bass_voice == 0;
         // The 808 slides while another of its keys is held.
         let range = KEYS_808.into_iter().fold(0u128, |m, n| m | 1 << n) | 1u128 << NOTES[BASS];
         let legato = is_808 && self.held & range & !(1u128 << pitch) != 0;
@@ -1193,7 +1001,8 @@ impl PrincessState {
                 played = true;
             }
         }
-        if !played && is_808 && KEYS_808.contains(&pitch) {
+        // A sample on the 808's track plays from them too (an 808 sample at its pitch).
+        if !played && (is_808 || bass_voice == SAMPLE_VOICE) && KEYS_808.contains(&pitch) {
             self.trigger(p, BASS, vel, 0, Some(pitch), legato, false);
         }
     }
@@ -1328,17 +1137,8 @@ impl PrincessState {
         let stut = (get(STUTTER) + df * 0.15).clamp(0.0, 1.0);
         let tape = (get(TAPE) + df * 0.05).clamp(0.0, 1.0);
         let surf = (get(CHANNEL_SURF) + df * 0.12).clamp(0.0, 1.0);
-        let tape_steps = [1, 2, 4, 8][(get(TAPE_TIME).round().max(0.0) as usize).min(3)];
-        if tape > 0.0 && bar == 16 - tape_steps && self.rng.unipolar() < tape {
-            self.event(i, Fx::Tape((tape_steps as f32 * 0.25 * spb) as u32));
-        } else if stut > 0.0 && bar % 4 == 0 && self.rng.unipolar() < stut {
-            let slice = stutter_slice(get(STUTTER_RATE), &mut self.rng) * spb;
-            let steps = if self.rng.unipolar() < 0.5 { 2.0 } else { 4.0 };
-            let len = (steps * 0.25 * spb).max(2.0 * slice);
-            self.event(i, Fx::Stutter(slice as u32, len as u32));
-        } else if surf > 0.0 && self.rng.unipolar() < surf * 0.3 {
-            let steps = 1.0 + (self.rng.unipolar() * 3.0).floor();
-            self.event(i, Fx::Surf((steps * 0.25 * spb) as u32));
+        if let Some(fx) = now_and_then(&mut self.rng, bar, [stut, tape, surf], get(TAPE_TIME), get(STUTTER_RATE), spb) {
+            self.event(i, fx);
         }
     }
 
@@ -1467,6 +1267,12 @@ impl PrincessState {
                         tr.active = false;
                     }
                     y
+                } else if tr.kind == SAMPLE_VOICE {
+                    let y = tr.sample.tick(m.sample(t), sr);
+                    if !tr.sample.active && tr.sample.tail == 0.0 {
+                        tr.active = false;
+                    }
+                    y
                 } else {
                     let dv = drum_voice(tr.kind).unwrap_or(DrumVoice::ApKick);
                     let y = tr.voice.tick(dv, rng);
@@ -1561,21 +1367,7 @@ impl PrincessState {
         };
         // Held buttons: on now, off when let go.
         let bus = &mut self.bus;
-        if bk.stutter_hold && !bus.stut_held {
-            bus.start(Fx::Stutter(bk.stutter_slice, 0));
-        }
-        bus.stut_held = bk.stutter_hold;
-        if bk.tape_hold && !bus.tape_held {
-            bus.start_tape(bk.tape_len);
-        }
-        bus.tape_held = bk.tape_hold;
-        if bk.surf_hold && !bus.surf_held {
-            bus.start(Fx::Surf(0));
-        }
-        bus.surf_held = bk.surf_hold;
-        if !bk.surf_hold && bus.surf_left == 0 {
-            bus.surf_on = false;
-        }
+        bus.holds(&bk);
         let mut ev = 0;
         for i in 0..n {
             while ev < self.n_events && self.events[ev].0 <= i {
@@ -1590,13 +1382,6 @@ impl PrincessState {
         }
         self.beat += n as f64 * bps;
     }
-}
-
-/// A stutter's slice (beats) at Stutter Rate `rate` (Mixed: any of them).
-fn stutter_slice(rate: f32, rng: &mut Rng) -> f32 {
-    let i = rate.round().max(0.0) as usize;
-    let i = if i >= 3 { (rng.unipolar() * 3.0) as usize % 3 } else { i };
-    [0.5, 0.25, 0.125][i]
 }
 
 // ------------------------------------------------------------ presets
@@ -1912,14 +1697,14 @@ pub fn preset_machine(name: &str) -> Machine {
                 (BELL, notes("12 . . . . . . . 7 . . . . . . . 10 . . . . . . . 15 . . . . . . .")),
             ]),
         ),
-        _ => return Machine { patterns: vec![Pattern::default(); PATTERNS], chain: vec![0, 0, 1, 0] },
+        _ => return Machine::default(),
     };
     let chain = match name {
         "Subliminal Drift" => vec![0, 1, 5, 0],
         "Deep Fried Meme" => vec![0, 7, 1, 3],
         _ => vec![0, 0, 1, 0, 2, 2, 1, 3],
     };
-    Machine { patterns: derive(&a, &b), chain }
+    Machine { patterns: derive(&a, &b), chain, samples: no_samples() }
 }
 
 /// A preset's knobs.
@@ -2463,6 +2248,93 @@ mod tests {
         assert_eq!(m.patterns[0].length, 32);
         assert!(m.patterns[0].lanes[0].steps[0].on);
         assert_eq!(m.patterns[0].lanes.len(), TRACKS);
+    }
+
+    /// A sample of a 1 kHz sine, `secs` long, at 44.1 kHz.
+    fn beep(secs: f32) -> SampleRef {
+        let n = (secs * 44_100.0) as usize;
+        let v: Vec<f32> = (0..n).map(|i| 0.8 * (TAU * 1000.0 * i as f32 / 44_100.0).sin()).collect();
+        SampleRef::new(crate::sample::SampleData::from_buffers("beep", None, 44_100, v.clone(), v))
+    }
+
+    #[test]
+    fn a_track_plays_its_sample_at_the_step() {
+        let mut m = machine_with(vec![(SNARE, lane("....x..........."))]);
+        m.set_sample(SNARE, Some(beep(0.1)));
+        let mut p = preset("Init");
+        p[tp(SNARE, T_VOICE)] = SAMPLE_VOICE as f32;
+        p[F_CLIP] = 0.0;
+        let mut s = PrincessState::new(SR);
+        let (l, _) = run(&mut s, &p, &m, 1.0);
+        // Step 4 at 120 BPM: half a second in.
+        assert_eq!(hits(&s, SNARE), vec![24_000]);
+        assert!(peak(&l[..23_900]) < 1e-4, "quiet before the step");
+        let heard = &l[24_100..24_000 + 4_000];
+        assert!(rms(heard) > 0.05, "the sample plays: {}", rms(heard));
+        // As long as the sample, then quiet.
+        assert!(peak(&l[24_000 + 5_400 + 2_000..36_000]) < 0.02, "{}", peak(&l[24_000 + 5_400 + 2_000..36_000]));
+        // An octave up plays it in half the time; without a sample, nothing.
+        p[tp(SNARE, T_TUNE)] = 12.0;
+        let mut s = PrincessState::new(SR);
+        let (l, _) = run(&mut s, &p, &m, 1.0);
+        assert!(rms(&l[24_100..26_000]) > 0.05 && peak(&l[24_000 + 2_700 + 600..30_000]) < 0.02);
+        m.set_sample(SNARE, None);
+        let mut s = PrincessState::new(SR);
+        let (l, _) = run(&mut s, &p, &m, 1.0);
+        assert_eq!(hits(&s, SNARE).len(), 1);
+        assert!(peak(&l) < 1e-4);
+    }
+
+    #[test]
+    fn a_sample_starts_where_start_says_backwards_too_and_never_clicks() {
+        // A ramp from 0 to 1: where it is read shows where it began.
+        let n = 44_100;
+        let ramp: Vec<f32> = (0..n).map(|i| i as f32 / n as f32).collect();
+        let smp = SampleRef::new(crate::sample::SampleData::from_buffers("ramp", None, 44_100, ramp.clone(), ramp));
+        let mut v = SampleVoice::default();
+        v.trigger(1.0, 0.5, false, 1.0, 0.5, 1.0, 1.0, SR);
+        let first: Vec<f32> = (0..200).map(|_| v.tick(Some(&smp), SR)).collect();
+        assert!((first[199] - 0.5).abs() < 0.02, "from halfway: {}", first[199]);
+        // Faded in from nothing.
+        assert!(first[0].abs() < 0.03);
+        let mut v = SampleVoice::default();
+        v.trigger(1.0, 0.0, true, 1.0, 0.5, 1.0, 1.0, SR);
+        let back: Vec<f32> = (0..200).map(|_| v.tick(Some(&smp), SR)).collect();
+        assert!(back[199] > 0.95 && back[199] < back[100], "backwards from the end");
+        // Hit again while it sounds: no jump bigger than the ramp's own steps.
+        let mut v = SampleVoice::default();
+        v.trigger(1.0, 0.8, false, 1.0, 0.5, 1.0, 1.0, SR);
+        let mut last = 0.0f32;
+        let mut worst = 0.0f32;
+        for i in 0..4000 {
+            if i == 2000 {
+                v.trigger(1.0, 0.0, false, 1.0, 0.5, 1.0, 1.0, SR);
+            }
+            let y = v.tick(Some(&smp), SR);
+            worst = worst.max((y - last).abs());
+            last = y;
+        }
+        assert!(worst < 0.02, "no click: {worst}");
+    }
+
+    #[test]
+    fn samples_are_kept_with_the_machine_and_old_ones_load_without() {
+        // An old machine (no samples) loads with none and saves as it was.
+        let old = serde_json::to_string(&preset_machine("Jerk")).unwrap();
+        assert!(!old.contains("samples"));
+        let mut back: Machine = serde_json::from_str(&old).unwrap();
+        back.fix();
+        assert_eq!(back.samples.len(), TRACKS);
+        assert!(back.samples.iter().all(|s| s.is_none()));
+        let mut m = Machine::default();
+        m.set_sample(PERC, Some(beep(0.05)));
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(json.contains("samples") && json.contains("beep"));
+        let back: Machine = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.sample(PERC).map(|s| s.name.as_str()), Some("beep"));
+        assert!(back.sample(KICK).is_none());
+        assert_eq!(VOICES[SAMPLE_VOICE], "Sample");
+        assert_eq!(voice_knobs(SAMPLE_VOICE), ["Start", "Reverse"]);
     }
 
     #[test]

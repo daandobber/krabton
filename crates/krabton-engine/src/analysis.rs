@@ -560,6 +560,327 @@ impl Flux {
     }
 }
 
+// ------------------------------------------------------------ the key
+
+/// A sample's key: its root (0 is C) and whether it is minor, with how sure
+/// the guess is (0..1: how much better the key fits than the next best).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Key {
+    pub root: u8,
+    pub minor: bool,
+    pub confidence: f32,
+}
+
+impl Key {
+    pub fn name(&self) -> String {
+        const NAMES: [&str; 12] = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+        format!("{} {}", NAMES[self.root as usize % 12], if self.minor { "minor" } else { "major" })
+    }
+
+    /// The key as a scale.
+    pub fn scale(&self) -> crate::scale::Scale {
+        crate::scale::Scale::new(self.root % 12, if self.minor { crate::scale::ScaleKind::Minor } else { crate::scale::ScaleKind::Major })
+    }
+}
+
+/// How much each note of the scale is heard in music in a major and in a
+/// minor key, from the tonic up (Krumhansl and Kessler's probe-tone
+/// ratings, 1982).
+const KK_MAJOR: [f32; 12] = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
+const KK_MINOR: [f32; 12] = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
+
+/// The rate the key is listened for at (about): the notes that make a key
+/// are all well under its Nyquist.
+const KEY_RATE: f32 = 11_025.0;
+
+/// How much of each of the twelve notes there is in a sample (its chroma),
+/// summed over the whole of it: the spectrum in windows of about 0.37 s,
+/// its peaks between A1 and A6 each given to the note they are nearest
+/// (less the further off they are), on a logarithmic scale of level, each
+/// window's twelve then made to add up to one (a quiet chord counts as much
+/// as a loud one, a silence not at all).
+pub fn chroma(s: &SampleData) -> [f32; 12] {
+    let mut out = [0.0f32; 12];
+    let n = s.frames();
+    if n == 0 {
+        return out;
+    }
+    // Down to about 11 kHz: the mean of each `step` frames.
+    let step = ((s.sample_rate as f32 / KEY_RATE).round() as usize).max(1);
+    let rate = s.sample_rate as f32 / step as f32;
+    let x: Vec<f32> = (0..n / step).map(|k| (k * step..(k + 1) * step).map(|i| mono(s, i)).sum::<f32>() / step as f32).collect();
+    let size = 4096;
+    let hop = size / 2;
+    if x.len() < size / 4 {
+        return out;
+    }
+    let mut fft = Fft::new(size);
+    let mut mags = Vec::with_capacity(size / 2);
+    let mut near: Vec<f32> = Vec::with_capacity(25);
+    let lo = ((55.0 * size as f32 / rate) as usize).max(2);
+    let hi = ((1760.0 * size as f32 / rate) as usize).min(size / 2 - 2);
+    let peak = x.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+    if peak < 1e-5 {
+        return out;
+    }
+    let mut start = 0usize;
+    loop {
+        let end = (start + size).min(x.len());
+        fft.magnitudes(&x[start..end], &mut mags);
+        let most = mags[lo..=hi].iter().fold(0.0f32, |m, v| m.max(*v));
+        if most > peak * 1e-4 {
+            let mut frame = [0.0f32; 12];
+            for k in lo..=hi {
+                let m = mags[k];
+                if m <= mags[k - 1] || m < mags[k + 1] || m < most * 0.01 {
+                    continue;
+                }
+                // A note stands well out of the bins round it (their median:
+                // a neighbouring note's peak does not count); noise does not.
+                near.clear();
+                near.extend_from_slice(&mags[k.saturating_sub(12)..(k + 13).min(mags.len())]);
+                let mid = near.len() / 2;
+                let median = *near.select_nth_unstable_by(mid, |a, b| a.total_cmp(b)).1;
+                if m < 5.0 * median {
+                    continue;
+                }
+                // The peak's frequency, between bins (a parabola through three).
+                let (a, b, c) = (mags[k - 1].max(1e-12).ln(), m.max(1e-12).ln(), mags[k + 1].max(1e-12).ln());
+                let d = 0.5 * (a - c) / (a - 2.0 * b + c).min(-1e-9);
+                let hz = (k as f32 + d.clamp(-0.5, 0.5)) * rate / size as f32;
+                let midi = 69.0 + 12.0 * (hz / 440.0).log2();
+                let near = midi.round();
+                let off = (midi - near).abs();
+                let w = (1.0 + 100.0 * m / most).ln() * (1.0 - 2.0 * off).max(0.0);
+                frame[(near as i32).rem_euclid(12) as usize] += w;
+            }
+            let sum: f32 = frame.iter().sum();
+            if sum > 0.0 {
+                for (o, f) in out.iter_mut().zip(frame) {
+                    *o += f / sum;
+                }
+            }
+        }
+        if end >= x.len() {
+            break;
+        }
+        start += hop;
+    }
+    out
+}
+
+/// How well a chroma fits each of the 24 keys (Pearson's correlation with
+/// the profile turned to that root): C major to B major, then C minor to
+/// B minor.
+pub fn key_fits(chroma: &[f32; 12]) -> [f32; 24] {
+    let corr = |profile: &[f32; 12], root: usize| {
+        let p = |i: usize| profile[(i + 12 - root) % 12];
+        let (mx, mp) = (chroma.iter().sum::<f32>() / 12.0, profile.iter().sum::<f32>() / 12.0);
+        let (mut num, mut dx, mut dp) = (0.0f32, 0.0f32, 0.0f32);
+        for i in 0..12 {
+            let (a, b) = (chroma[i] - mx, p(i) - mp);
+            num += a * b;
+            dx += a * a;
+            dp += b * b;
+        }
+        num / (dx * dp).sqrt().max(1e-9)
+    };
+    std::array::from_fn(|k| if k < 12 { corr(&KK_MAJOR, k) } else { corr(&KK_MINOR, k - 12) })
+}
+
+/// The key of a sample, heard (Krumhansl and Schmuckler's key finding): its
+/// chroma against the major and minor profiles in every key, the best fit.
+/// None for a sample with no notes in it (drums, noise, silence). Takes a
+/// moment for a whole song, so never on the audio thread.
+pub fn detect_key(s: &SampleData) -> Option<Key> {
+    let c = chroma(s);
+    let total: f32 = c.iter().sum();
+    if total <= 0.0 {
+        return None;
+    }
+    // Noise has every note alike: no key.
+    let flat = c.iter().fold(0.0f32, |m, v| m.max(*v)) / (total / 12.0);
+    if flat < 1.25 {
+        return None;
+    }
+    let fits = key_fits(&c);
+    let mut order: Vec<usize> = (0..24).collect();
+    order.sort_by(|a, b| fits[*b].total_cmp(&fits[*a]));
+    let best = order[0];
+    if fits[best] < 0.3 {
+        return None;
+    }
+    Some(Key { root: (best % 12) as u8, minor: best >= 12, confidence: (fits[best] - fits[order[1]]).clamp(0.0, 1.0) })
+}
+
+/// A key written in a sample's name: "A minor", "F# maj", "Ebm", "C#min",
+/// "Bb major" (a lone letter is no key: it may be a word).
+pub fn key_in_name(name: &str) -> Option<Key> {
+    let words: Vec<String> = name.split(|c: char| c.is_whitespace() || matches!(c, '_' | '-' | '(' | ')' | '[' | ']' | ',' | '.')).filter(|w| !w.is_empty()).map(|w| w.to_string()).collect();
+    let root_of = |w: &str| -> Option<(u8, usize)> {
+        let mut ch = w.chars();
+        // A capital: "am" is a word, "Am" a key.
+        let base = match ch.next()? {
+            'C' => 0i32,
+            'D' => 2,
+            'E' => 4,
+            'F' => 5,
+            'G' => 7,
+            'A' => 9,
+            'B' => 11,
+            _ => return None,
+        };
+        match ch.next() {
+            Some('#') | Some('♯') => Some(((base + 1).rem_euclid(12) as u8, 2)),
+            Some('b') | Some('♭') if w.len() > 1 => Some(((base - 1).rem_euclid(12) as u8, 2)),
+            _ => Some((base as u8, 1)),
+        }
+    };
+    // A chord's number after it ("maj7", "m9") still says the mode.
+    let mode_of = |m: &str| -> Option<bool> {
+        match m.trim_end_matches(|c: char| c.is_ascii_digit()).to_lowercase().as_str() {
+            "m" | "min" | "minor" => Some(true),
+            "maj" | "major" => Some(false),
+            _ => None,
+        }
+    };
+    for (i, w) in words.iter().enumerate() {
+        let Some((root, used)) = root_of(w) else { continue };
+        // "Bb" alone, then "minor": the flat is a flat; "Bbm": the m is the mode.
+        let rest = &w[w.char_indices().nth(used).map_or(w.len(), |(b, _)| b)..];
+        let minor = if rest.is_empty() { words.get(i + 1).and_then(|n| mode_of(n)) } else if rest == "M" { None } else { mode_of(rest) };
+        if let Some(minor) = minor {
+            return Some(Key { root, minor, confidence: 1.0 });
+        }
+    }
+    None
+}
+
+/// A tempo written in a sample's name ("150 BPM", "loop_140bpm",
+/// "BPM 92"), between 40 and 250.
+pub fn bpm_in_name(name: &str) -> Option<f64> {
+    let lower = name.to_lowercase();
+    let b = lower.as_bytes();
+    let number = |s: &[u8]| -> Option<f64> { std::str::from_utf8(s).ok()?.parse::<f64>().ok().filter(|v| (40.0..=250.0).contains(v)) };
+    let mut from = 0;
+    while let Some(at) = lower[from..].find("bpm").map(|k| k + from) {
+        // The number before it ("150 bpm", "150bpm", "150_bpm").
+        let mut e = at;
+        while e > 0 && matches!(b[e - 1], b' ' | b'_' | b'-') {
+            e -= 1;
+        }
+        let mut s = e;
+        while s > 0 && (b[s - 1].is_ascii_digit() || b[s - 1] == b'.') {
+            s -= 1;
+        }
+        if let Some(v) = (s < e).then(|| number(&b[s..e])).flatten() {
+            return Some(v);
+        }
+        // Or after it ("bpm 92").
+        let mut s = at + 3;
+        while s < b.len() && matches!(b[s], b' ' | b'_' | b'-' | b':' | b'=') {
+            s += 1;
+        }
+        let mut e = s;
+        while e < b.len() && (b[e].is_ascii_digit() || b[e] == b'.') {
+            e += 1;
+        }
+        if let Some(v) = (s < e).then(|| number(&b[s..e])).flatten() {
+            return Some(v);
+        }
+        from = at + 3;
+    }
+    None
+}
+
+#[cfg(test)]
+mod key_tests {
+    use super::*;
+    use std::f32::consts::TAU;
+
+    /// Chords one after the other (MIDI notes, a second each), each with
+    /// its root an octave below as a bass, the notes with a few harmonics
+    /// dying away as a piano's do.
+    fn chords(sr: u32, chords: &[&[u8]]) -> SampleData {
+        let len = sr as usize;
+        let mut x = vec![0.0f32; len * chords.len()];
+        for (c, notes) in chords.iter().enumerate() {
+            let mut all: Vec<(f32, f32)> = notes.iter().map(|&n| (n as f32, 0.25)).collect();
+            all.push((notes[0] as f32 - 12.0, 0.35));
+            for (midi, amp) in all {
+                let hz = 440.0 * 2f32.powf((midi - 69.0) / 12.0);
+                for i in 0..len {
+                    let t = i as f32 / sr as f32;
+                    let env = (-t * 1.5).exp() * (t / 0.005).min(1.0);
+                    let v: f32 = [1.0, 0.5, 0.3, 0.2].iter().enumerate().map(|(h, a)| a * (TAU * hz * (h + 1) as f32 * t).sin()).sum();
+                    x[c * len + i] += amp * env * v * 0.3;
+                }
+            }
+        }
+        SampleData::from_buffers("chords", None, sr, x.clone(), x)
+    }
+
+    /// A triad on `root` (MIDI), major or minor.
+    fn triad(root: u8, minor: bool) -> Vec<u8> {
+        vec![root, root + if minor { 3 } else { 4 }, root + 7]
+    }
+
+    #[test]
+    fn progressions_are_heard_in_their_keys() {
+        // (root, minor, the progression as (semitones from the root, minor)).
+        let cases: [(u8, bool, &[(u8, bool)]); 6] = [
+            (0, false, &[(0, false), (5, false), (7, false), (0, false)]),
+            (9, true, &[(0, true), (5, true), (7, false), (0, true)]),
+            (3, false, &[(0, false), (5, false), (7, false), (0, false)]),
+            (6, true, &[(0, true), (5, true), (7, false), (0, true)]),
+            (2, false, &[(0, false), (7, false), (9, true), (5, false), (0, false)]),
+            (4, true, &[(0, true), (8, false), (3, false), (7, false), (0, true)]),
+        ];
+        for (root, minor, prog) in cases {
+            let ch: Vec<Vec<u8>> = prog.iter().map(|&(s, m)| triad(48 + root + s, m)).collect();
+            let refs: Vec<&[u8]> = ch.iter().map(|c| &c[..]).collect();
+            for sr in [44_100, 48_000] {
+                let s = chords(sr, &refs);
+                let k = detect_key(&s).unwrap_or_else(|| panic!("no key for {root} {minor}"));
+                let want = Key { root, minor, confidence: 0.0 };
+                assert_eq!((k.root, k.minor), (root, minor), "heard {} for {}", k.name(), want.name());
+            }
+        }
+    }
+
+    #[test]
+    fn noise_and_silence_have_no_key() {
+        let mut seed = 77u32;
+        let x: Vec<f32> = (0..44_100 * 2)
+            .map(|_| {
+                seed ^= seed << 13;
+                seed ^= seed >> 17;
+                seed ^= seed << 5;
+                seed as f32 / u32::MAX as f32 - 0.5
+            })
+            .collect();
+        assert!(detect_key(&SampleData::from_buffers("noise", None, 44_100, x.clone(), x)).is_none());
+        assert!(detect_key(&SampleData::from_buffers("silence", None, 44_100, vec![0.0; 44_100], vec![0.0; 44_100])).is_none());
+    }
+
+    #[test]
+    fn keys_and_tempos_are_read_from_names() {
+        let k = |n: &str| key_in_name(n).map(|k| (k.root, k.minor));
+        assert_eq!(k("Plugg Melody A minor 150 BPM"), Some((9, true)));
+        assert_eq!(k("loop_F#m_140"), Some((6, true)));
+        assert_eq!(k("Bb major keys"), Some((10, false)));
+        assert_eq!(k("Ebmin chops"), Some((3, true)));
+        assert_eq!(k("C maj7 stab"), Some((0, false)));
+        assert_eq!(k("A Loop Called Love"), None);
+        assert_eq!(k("Drum Break"), None);
+        assert_eq!(bpm_in_name("Plugg Melody A minor 150 BPM"), Some(150.0));
+        assert_eq!(bpm_in_name("loop_140bpm"), Some(140.0));
+        assert_eq!(bpm_in_name("BPM 92 soul"), Some(92.0));
+        assert_eq!(bpm_in_name("drums 4 bpm"), None);
+        assert_eq!(bpm_in_name("no tempo here"), None);
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
