@@ -86,6 +86,10 @@ pub fn render_watched(
         }
         RenderSource::Scene { scene, beats } => {
             handle.send(Command::LaunchScene(scene));
+            // The song plays even when the scene has no clips (launching it
+            // then starts nothing): instruments that play by themselves (the
+            // Analog Princess's machine, a rhythm box) play as they do live.
+            handle.send(Command::Play);
             beats
         }
     };
@@ -211,6 +215,35 @@ mod tests {
         // The same audio as without the stops.
         let plain = render(&p, RenderSource::Scene { scene: 3, beats: 4.0 }, 44100, 0.0, None).unwrap();
         assert_eq!(plain.len(), frames * 2);
+    }
+
+    #[test]
+    fn a_machine_that_plays_by_itself_is_in_a_scene_without_clips() {
+        // Only an Analog Princess, its machine playing its pattern, no clips anywhere.
+        let mut p = crate::demo::demo_project();
+        let ti = p.tracks.iter().position(|t| t.instrument.is_some()).unwrap();
+        let mut t = p.tracks[ti].clone();
+        t.instrument = Some(crate::project::Instrument::princess("Pluggnb Bounce"));
+        for s in t.slots.iter_mut() {
+            *s = None;
+        }
+        t.arrangement.clear();
+        p.tracks = vec![t];
+        p.bpm = 120.0;
+        let sr = 48_000;
+        let mut playing = Vec::new();
+        let (out, _) = render_watched(&p, RenderSource::Scene { scene: 0, beats: 8.0 }, sr, 0.0, None, Vec::new(), 4800.0, |st, _| playing.push(st.playing.load(Ordering::Relaxed)));
+        let out = out.unwrap();
+        assert!(playing.iter().all(|p| *p), "the song plays");
+        // Loud, and loud where its steps fall: the kick on the first step of each bar,
+        // after the quiet end of the step before.
+        let peak = |from: f64, to: f64| {
+            let (a, b) = ((from * sr as f64) as usize * 2, (to * sr as f64) as usize * 2);
+            out[a.min(out.len())..b.min(out.len())].iter().fold(0.0f32, |m, v| m.max(v.abs()))
+        };
+        assert!(peak(0.0, 4.0) > 0.05, "silent: {}", peak(0.0, 4.0));
+        // A sixteenth at 120 BPM is 0.125 s; the bar starts at 2 s.
+        assert!(peak(2.0, 2.03) > 0.02, "a hit on the bar's first step: {}", peak(2.0, 2.03));
     }
 
     #[test]
