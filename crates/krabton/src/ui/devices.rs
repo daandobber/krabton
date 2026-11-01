@@ -662,7 +662,11 @@ impl App {
         let mut dui = ui.new_child(UiBuilder::new().max_rect(body.shrink(4.0)));
         dui.set_clip_rect(body);
         let h = (body.height() - 34.0).max(80.0);
-        egui::ScrollArea::horizontal().auto_shrink([false, false]).show(&mut dui, |ui| {
+        let mut area = egui::ScrollArea::horizontal().auto_shrink([false, false]);
+        if let Some(x) = self.script_dev_scroll.take() {
+            area = area.horizontal_scroll_offset(x);
+        }
+        area.show(&mut dui, |ui| {
             ui.horizontal_top(|ui| {
                 self.mod_strip(ui, h);
                 self.device_chain(ui, sel, h, false);

@@ -606,6 +606,8 @@ pub struct App {
     pub(crate) map_selected: Option<u64>,
     /// Size of everything asked for by a script (see `run_script`).
     script_zoom: Option<f32>,
+    /// How far the device view is scrolled, asked for by a script (devscroll=PX).
+    pub(crate) script_dev_scroll: Option<f32>,
     /// A script opening a track's menu of sequencers and MIDI effects.
     script_menu: Option<usize>,
     /// The Studio: where a track's strip is in its packed row (the rest of
@@ -790,6 +792,7 @@ impl App {
             video: Default::default(),
             map_selected: None,
             script_zoom: None,
+            script_dev_scroll: None,
             script_menu: None,
             pack_strip: None,
             auto_prev: Default::default(),
@@ -3922,6 +3925,8 @@ impl App {
                 }
                 "autoarm" => self.auto_arm = !self.auto_arm,
                 "zoom" => self.script_zoom = nums.first().map(|&z| (z as f32 / 100.0).clamp(0.5, 3.0)),
+                // devscroll=PX: the device view scrolled so far to the right.
+                "devscroll" => self.script_dev_scroll = arg.trim().parse::<f32>().ok(),
                 "glitchwin" => self.glitch_window = self.project.all_devices().find(|d| d.kind == krabton_engine::dsp::effects::EffectKind::Glitch).map(|d| d.id),
                 "rackcolumns" => self.prefs.layout.rack_columns = !self.prefs.layout.rack_columns,
                 "devices" => self.detail = DetailTab::Devices,

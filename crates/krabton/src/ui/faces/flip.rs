@@ -31,7 +31,7 @@ const CHOP_W: f32 = 24.0;
 
 pub(crate) fn face() -> Face {
     let x = CHOP_X + CHOP_W + 0.2;
-    Face::new(x + 79.8, 12.0)
+    Face::new(x + 79.6, 12.0)
         .screened(&["Chop"])
         .screen(0.0, 0.0, WAVE_W, 12.0, "glass:Flipside")
         .screen(0.3, 0.3, WAVE_W - 0.6, 1.5, "label")
@@ -57,30 +57,30 @@ pub(crate) fn face() -> Face {
         .named(x + 30.5, 0.3, 2.3, 10.8, "Env Amount", Ctl::Fader, "Env")
         .named(x + 32.8, 0.3, 2.3, 10.8, "Vel > Filter", Ctl::Fader, "Vel")
         // The voices.
-        .screen(x + 35.4, 0.0, 14.6, 12.0, "glass:Voices")
+        .screen(x + 35.4, 0.0, 11.6, 12.0, "glass:Voices")
         .named(x + 35.6, 0.3, 3.3, 5.6, "Voicing", Ctl::Buttons, "Voicing")
         .named(x + 35.6, 6.0, 3.3, 2.5, "Voices", Ctl::Lcd, "Voices")
         .named(x + 35.6, 8.6, 3.3, 2.5, "Choke", Ctl::Switch, "Choke")
         .named(x + 39.0, 0.3, 2.3, 10.8, "Glide", Ctl::Fader, "Glide")
         .named(x + 41.3, 0.3, 2.3, 10.8, "Vel > Pitch", Ctl::Fader, "Vel Pitch")
         .named(x + 43.7, 0.3, 3.0, 10.8, "Stutter", Ctl::Buttons, "Stutter")
-        .named(x + 46.8, 0.3, 3.0, 10.8, "Hiss", Ctl::Fader, "Hiss")
         // The LFO in the song's time.
-        .screen(x + 50.2, 0.0, 10.6, 12.0, "glass:LFO")
-        .named(x + 50.4, 0.3, 3.2, 2.6, "LFO Rate", Ctl::Lcd, "Rate")
-        .named(x + 50.4, 3.0, 3.2, 8.1, "LFO Shape", Ctl::Buttons, "Shape")
-        .named(x + 53.7, 0.3, 2.3, 10.8, "LFO > Pitch", Ctl::Fader, "Pitch")
-        .named(x + 56.0, 0.3, 2.3, 10.8, "LFO > Filter", Ctl::Fader, "Filter")
-        .named(x + 58.3, 0.3, 2.3, 10.8, "LFO > Pan", Ctl::Fader, "Pan")
-        // The tape and the crusher.
-        .screen(x + 61.0, 0.0, 9.0, 12.0, "glass:Tape")
-        .named(x + 61.2, 0.3, 2.3, 10.8, "Wobble", Ctl::Fader, "Wobble")
-        .named(x + 63.5, 0.3, 2.8, 10.8, "Wobble Type", Ctl::Buttons, "Kind")
-        .named(x + 66.4, 0.3, 1.8, 10.8, "Bits", Ctl::Fader, "Bits")
-        .named(x + 68.2, 0.3, 1.8, 10.8, "Crush Rate", Ctl::Fader, "Rate")
+        .screen(x + 47.2, 0.0, 10.6, 12.0, "glass:LFO")
+        .named(x + 47.4, 0.3, 3.2, 2.6, "LFO Rate", Ctl::Lcd, "Rate")
+        .named(x + 47.4, 3.0, 3.2, 8.1, "LFO Shape", Ctl::Buttons, "Shape")
+        .named(x + 50.7, 0.3, 2.3, 10.8, "LFO > Pitch", Ctl::Fader, "Pitch")
+        .named(x + 53.0, 0.3, 2.3, 10.8, "LFO > Filter", Ctl::Fader, "Filter")
+        .named(x + 55.3, 0.3, 2.3, 10.8, "LFO > Pan", Ctl::Fader, "Pan")
+        // The tape, its hiss and the crusher.
+        .screen(x + 58.0, 0.0, 11.6, 12.0, "glass:Tape")
+        .named(x + 58.2, 0.3, 2.3, 10.8, "Wobble", Ctl::Fader, "Wobble")
+        .named(x + 60.5, 0.3, 2.8, 10.8, "Wobble Type", Ctl::Buttons, "Kind")
+        .named(x + 63.4, 0.3, 2.3, 10.8, "Hiss", Ctl::Fader, "Hiss")
+        .named(x + 65.7, 0.3, 1.8, 10.8, "Bits", Ctl::Fader, "Bits")
+        .named(x + 67.6, 0.3, 1.8, 10.8, "Crush Rate", Ctl::Fader, "Rate")
         // The fry, the room, how wide, how loud.
-        .screen(x + 70.2, 0.0, 9.6, 12.0, "glass:Fry")
-        .row(x + 70.4, 0.3, 2.3, 10.8, &["Fry", "Reverb", "Width", "Volume"], Ctl::Fader)
+        .screen(x + 69.8, 0.0, 9.6, 12.0, "glass:Fry")
+        .row(x + 70.0, 0.3, 2.3, 10.8, &["Fry", "Reverb", "Width", "Volume"], Ctl::Fader)
 }
 
 /// The night: its sky, its pastels.
@@ -169,7 +169,7 @@ pub(crate) fn rechop(sample: Option<&SampleRef>, flip: &mut Flip, all: bool) {
 
 /// The chosen chop (0 up), as the Chop parameter says.
 pub(crate) fn chosen(p: &[f32], flip: &Flip) -> usize {
-    (p.get(pf::CHOP).copied().unwrap_or(1).round().max(1.0) as usize - 1).min(flip.chops.len().saturating_sub(1))
+    (p.get(pf::CHOP).copied().unwrap_or(1.0).round().max(1.0) as usize - 1).min(flip.chops.len().saturating_sub(1))
 }
 
 /// Flipside's panel.
