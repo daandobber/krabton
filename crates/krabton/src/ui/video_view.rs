@@ -61,6 +61,61 @@ fn ruler_step(px_per_sec: f32, min_px: f32) -> f32 {
     STEPS.iter().copied().find(|s| s * px_per_sec >= min_px).unwrap_or(3600.0)
 }
 
+/// How near a part's edge (pixels) a press takes the edge.
+const EDGE_ZONE: f32 = 7.0;
+/// How far outside a part its edge can still be taken.
+const EDGE_OUTSIDE: f32 = 4.0;
+
+/// What a press on a part does: trims its left or right edge, or moves it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PartGrab {
+    Left,
+    Right,
+    Move,
+}
+
+/// What a press at `x` does to a part drawn from `xa` to `xb` (pixels on
+/// the timeline, whatever its zoom): near an edge it takes the edge,
+/// inside it the part. A part narrower than three grab zones is split in
+/// thirds (the left third its start, the right third its end), so even a
+/// sliver can be trimmed and moved. Just outside an edge still takes it.
+/// None: nowhere near.
+pub(crate) fn part_grab(x: f32, xa: f32, xb: f32) -> Option<PartGrab> {
+    let (xa, xb) = (xa.min(xb), xa.max(xb));
+    if x < xa - EDGE_OUTSIDE || x > xb + EDGE_OUTSIDE {
+        return None;
+    }
+    if x < xa {
+        return Some(PartGrab::Left);
+    }
+    if x > xb {
+        return Some(PartGrab::Right);
+    }
+    let zone = if xb - xa < 3.0 * EDGE_ZONE { (xb - xa) / 3.0 } else { EDGE_ZONE };
+    Some(if x - xa <= zone {
+        PartGrab::Left
+    } else if xb - x <= zone {
+        PartGrab::Right
+    } else {
+        PartGrab::Move
+    })
+}
+
+/// The part a press at `x` takes and how, of parts drawn at `xs` (pixels,
+/// in order): the part it is inside first (where two touch, the left one's
+/// end), else an edge just outside one.
+pub(crate) fn hit_parts(x: f32, xs: &[(f32, f32)]) -> Option<(usize, PartGrab)> {
+    if let Some(k) = xs.iter().position(|&(a, b)| x >= a && x <= b) {
+        return part_grab(x, xs[k].0, xs[k].1).map(|g| (k, g));
+    }
+    // Outside every part: the nearest edge within reach.
+    xs.iter()
+        .enumerate()
+        .filter_map(|(k, &(a, b))| part_grab(x, a, b).map(|g| (k, g, (x - a).abs().min((x - b).abs()))))
+        .min_by(|p, q| p.2.total_cmp(&q.2))
+        .map(|(k, g, _)| (k, g))
+}
+
 /// What a drag on the timeline does, kept while it lasts.
 #[derive(Clone, Copy, Debug)]
 enum TimeDrag {
@@ -68,8 +123,8 @@ enum TimeDrag {
     New { from: f32, lo: f32, hi: f32 },
     /// Part `k` moved, held `grab` seconds from its start.
     Move { k: usize, grab: f32, lo: f32, hi: f32 },
-    /// Part `k`'s start (or end) moved.
-    Edge { k: usize, end: bool, lo: f32, hi: f32 },
+    /// Part `k`'s start (or end) moved, held `off` seconds from the edge.
+    Edge { k: usize, end: bool, off: f32, lo: f32, hi: f32 },
 }
 
 impl App {
@@ -805,25 +860,31 @@ impl App {
             }
             return;
         }
-        let hit_part = |x: f32| -> Option<(usize, Option<bool>)> {
-            // An edge within a few pixels (the end when it is nearer), else inside.
-            for (k, &(a, b)) in parts.iter().enumerate() {
-                let (xa, xb) = (x_of(a), x_of(b.min(dur)));
-                if (x - xb).abs() <= 5.0 {
-                    return Some((k, Some(true)));
-                }
-                if (x - xa).abs() <= 5.0 {
-                    return Some((k, Some(false)));
-                }
-            }
-            parts.iter().position(|&(a, b)| x > x_of(a) && x < x_of(b.min(dur))).map(|k| (k, None))
+        // The parts where they are drawn: a press near an edge trims it, inside moves it.
+        let xs: Vec<(f32, f32)> = parts.iter().map(|&(a, b)| (x_of(a), x_of(b.min(dur)))).collect();
+        let hit_part = |x: f32| -> Option<(usize, PartGrab)> { hit_parts(x, &xs) };
+        // The pointer's shape says what a drag does, and the edge it takes lights up.
+        let held: Option<TimeDrag> = drag.filter(|_| resp.dragged());
+        let lit = match held {
+            Some(TimeDrag::Edge { k, end, .. }) => Some((k, if end { PartGrab::Right } else { PartGrab::Left })),
+            Some(TimeDrag::Move { k, .. }) => Some((k, PartGrab::Move)),
+            _ => resp.hover_pos().and_then(|pt| hit_part(pt.x)),
         };
-        // The pointer's shape says what a drag does.
-        if let Some(pt) = resp.hover_pos() {
-            match hit_part(pt.x) {
-                Some((_, Some(_))) => ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal),
-                Some((_, None)) => ui.ctx().set_cursor_icon(egui::CursorIcon::Grab),
-                None => {}
+        match lit.map(|h| h.1) {
+            Some(PartGrab::Left | PartGrab::Right) => ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal),
+            Some(PartGrab::Move) if held.is_some() => ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing),
+            Some(PartGrab::Move) => ui.ctx().set_cursor_icon(egui::CursorIcon::Grab),
+            None => {}
+        }
+        // The handles on every part's edges (the one under the pointer brighter).
+        for (k, &(xa, xb)) in xs.iter().enumerate() {
+            let h = strip_r.height() * 0.5;
+            let y = strip_r.center().y;
+            let w = (xb - xa).max(0.0);
+            for (edge, x) in [(PartGrab::Left, xa + 3.0_f32.min(w * 0.25)), (PartGrab::Right, xb - 3.0_f32.min(w * 0.25))] {
+                let on = lit == Some((k, edge));
+                let col = if on { Color32::WHITE } else { ACCENT };
+                ps.rect_filled(Rect::from_center_size(pos2(x, y), vec2(if on { 4.0 } else { 3.0 }, h)), 1.5, col);
             }
         }
         let bounds = |k: Option<usize>, t: f32| -> (f32, f32) {
@@ -833,15 +894,20 @@ impl App {
             (lo, hi.max(lo))
         };
         if resp.drag_started() {
-            if let Some(pt) = resp.interact_pointer_pos() {
+            // Where the button went down, not where the pointer is now: egui
+            // only calls it a drag once it has moved a few pixels, by when an
+            // edge grabbed is already behind it (that moved the part instead).
+            let origin = ui.input(|inp| inp.pointer.press_origin()).or(resp.interact_pointer_pos());
+            if let Some(pt) = origin {
                 let t = t_of(pt.x);
                 let d = match hit_part(pt.x) {
-                    Some((k, Some(end))) => {
+                    Some((k, edge @ (PartGrab::Left | PartGrab::Right))) => {
                         let (a, b) = parts[k];
                         let (lo, hi) = bounds(Some(k), (a + b) * 0.5);
-                        TimeDrag::Edge { k, end, lo, hi }
+                        let end = edge == PartGrab::Right;
+                        TimeDrag::Edge { k, end, off: t - if end { b.min(dur) } else { a }, lo, hi }
                     }
-                    Some((k, None)) => {
+                    Some((k, PartGrab::Move)) => {
                         let (a, b) = parts[k];
                         let (lo, hi) = bounds(Some(k), (a + b) * 0.5);
                         self.video.picked = vec![k];
@@ -872,9 +938,10 @@ impl App {
                     ps2[k] = (a, a + len);
                     set_parts(self, ps2);
                 }
-                TimeDrag::Edge { k, end, lo, hi } => {
+                TimeDrag::Edge { k, end, off, lo, hi } => {
                     let mut ps2 = parts.clone();
                     let (a, b) = ps2[k];
+                    let t = t - off;
                     ps2[k] = if end { (a, t.clamp(a + kv::MIN_PART, hi.max(a + kv::MIN_PART))) } else { (t.clamp(lo, (b - kv::MIN_PART).max(lo)), b) };
                     set_parts(self, ps2);
                 }
@@ -1739,4 +1806,42 @@ pub(crate) enum VideoAct {
     MarkOut,
     Split,
     Delete,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_press_near_a_parts_edge_trims_it_and_inside_moves_it() {
+        // A part 100 px wide from 200: 7 px at each end take the edges.
+        assert_eq!(part_grab(201.0, 200.0, 300.0), Some(PartGrab::Left));
+        assert_eq!(part_grab(206.5, 200.0, 300.0), Some(PartGrab::Left));
+        assert_eq!(part_grab(250.0, 200.0, 300.0), Some(PartGrab::Move));
+        assert_eq!(part_grab(294.0, 200.0, 300.0), Some(PartGrab::Right));
+        // Just outside still takes the edge; further off, nothing.
+        assert_eq!(part_grab(197.0, 200.0, 300.0), Some(PartGrab::Left));
+        assert_eq!(part_grab(303.5, 200.0, 300.0), Some(PartGrab::Right));
+        assert_eq!(part_grab(190.0, 200.0, 300.0), None);
+        // A narrow part (12 px, less than three zones): in thirds, so it can be trimmed and moved.
+        assert_eq!(part_grab(101.0, 100.0, 112.0), Some(PartGrab::Left));
+        assert_eq!(part_grab(106.0, 100.0, 112.0), Some(PartGrab::Move));
+        assert_eq!(part_grab(111.0, 100.0, 112.0), Some(PartGrab::Right));
+        // The same seconds zoomed in ten times: the zone stays 7 pixels.
+        assert_eq!(part_grab(2006.0, 2000.0, 3000.0), Some(PartGrab::Left));
+        assert_eq!(part_grab(2010.0, 2000.0, 3000.0), Some(PartGrab::Move));
+    }
+
+    #[test]
+    fn touching_parts_give_the_left_ones_end_and_a_gap_near_an_edge_takes_it() {
+        let xs = [(100.0, 200.0), (200.0, 300.0), (400.0, 404.0)];
+        assert_eq!(hit_parts(200.0, &xs), Some((0, PartGrab::Right)));
+        assert_eq!(hit_parts(203.0, &xs), Some((1, PartGrab::Left)));
+        assert_eq!(hit_parts(150.0, &xs), Some((0, PartGrab::Move)));
+        // In the gap, a few pixels from the next part's start.
+        assert_eq!(hit_parts(397.0, &xs), Some((2, PartGrab::Left)));
+        assert_eq!(hit_parts(350.0, &xs), None);
+        // A sliver of 4 px still has a middle to move it by.
+        assert_eq!(hit_parts(402.0, &xs), Some((2, PartGrab::Move)));
+    }
 }
