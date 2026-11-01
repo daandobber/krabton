@@ -578,22 +578,25 @@ impl Clip {
         let mut audio = AudioClip::new(sample.clone(), project_bpm);
         let tempo = if dur > 1.5 { sample.analysis().tempo.filter(|t| t.confidence > 0.2) } else { None };
         let mut as_loop = None;
+        // A tempo in its name ("Melody A minor 150 BPM") is the loop's own.
+        let named = crate::analysis::bpm_in_name(&sample.name);
         if dur > 1.5 && dur <= 32.0 {
             let mut best: Option<(f64, f64)> = None;
             let mut beats = 1.0f64;
             while beats <= 256.0 {
                 let bpm = beats * 60.0 / dur;
-                // How far from the tempo heard (an octave off costs a little), or the project's.
-                let err = match tempo {
-                    Some(t) => [(1.0, 0.0), (2.0, 0.01), (0.5, 0.01)].iter().map(|&(o, pen)| (bpm / (t.bpm * o)).ln().abs() + pen).fold(f64::MAX, f64::min),
-                    None => (bpm / project_bpm - 1.0).abs(),
+                // How far from the tempo named or heard (an octave off costs a little), or the project's.
+                let err = match (named, tempo) {
+                    (Some(n), _) => (bpm / n - 1.0).abs(),
+                    (None, Some(t)) => [(1.0, 0.0), (2.0, 0.01), (0.5, 0.01)].iter().map(|&(o, pen)| (bpm / (t.bpm * o)).ln().abs() + pen).fold(f64::MAX, f64::min),
+                    (None, None) => (bpm / project_bpm - 1.0).abs(),
                 };
                 if (40.0..=250.0).contains(&bpm) && best.is_none_or(|b| err < b.1) {
                     best = Some((bpm, err));
                 }
                 beats *= 2.0;
             }
-            let tol = if tempo.is_some() { 0.03 } else { 0.2 };
+            let tol = if tempo.is_some() || named.is_some() { 0.03 } else { 0.2 };
             as_loop = best.filter(|b| b.1 < tol).map(|b| b.0);
         }
         let length = match (as_loop, tempo) {

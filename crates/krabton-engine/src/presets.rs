@@ -137,6 +137,7 @@ pub fn effect(kind: EffectKind) -> &'static [Preset] {
         E::Convolution => CONVOLUTION,
         E::Snowglobe => SNOWGLOBE,
         E::Looper => LOOPER,
+        E::Fryer => FRYER,
         E::AwTapeDelay2 => AW_TAPE_DELAY,
         E::AwPear2 => AW_PEAR2_PRESETS,
         E::AwIsolator3 => AW_ISOLATOR3_PRESETS,
@@ -761,6 +762,21 @@ static LOOPER: &[Preset] = &[
     p("Loop Only", &[("Monitor", C("Rec/OD Only"))]),
     p("Half Speed Tape", &[("Speed", N(-12.0))]),
     p("Backwards", &[("Reverse", N(1.0)), ("After Rec", C("Play"))]),
+];
+
+static FRYER: &[Preset] = &[
+    p("Light Fry", &[("Heat", N(0.25)), ("Clip", N(0.25))]),
+    p("808 Into 808", &[("Heat", N(0.6)), ("808s", C("808 Into 808")), ("Clip", N(0.5))]),
+    p("Three Deep", &[("Heat", N(0.75)), ("808s", C("Three Deep")), ("Distortion", C("Fold")), ("Clip", N(0.6))]),
+    p("2015 Ceiling", &[("Heat", N(0.4)), ("Clip", N(0.9)), ("Ceiling", N(-0.3))]),
+    p("Ring Growl", &[("Heat", N(0.3)), ("Ring", N(0.45)), ("Ring Hz", N(70.0))]),
+    p("Synced Ring", &[("Ring", N(0.6)), ("Ring Sync", C("1/64")), ("Heat", N(0.2))]),
+    p("Crushed", &[("Bits", N(6.0)), ("Downsample", N(4.0)), ("Heat", N(0.3))]),
+    p("Subliminal", &[("Heat", N(0.1)), ("Subliminal", N(0.7)), ("Sub Pitch", C("-12")), ("Sub Tone", N(600.0))]),
+    p("Channel Surfing", &[("Channel Surf", N(0.45)), ("Tape Stop", N(0.15)), ("Heat", N(0.2))]),
+    p("Stutter Plugg", &[("Stutter", N(0.35)), ("Stutter Rate", C("Mixed")), ("Heat", N(0.3)), ("Clip", N(0.4))]),
+    p("Deep Fried Meme", &[("Deep Fry", N(0.85)), ("Distortion", C("Fold")), ("Ceiling", N(-1.0))]),
+    p("Slowed Shadow", &[("Heat", N(0.0)), ("Subliminal", N(0.9)), ("Sub Pitch", C("-24")), ("Sub Tone", N(400.0)), ("Clip", N(0.1))]),
 ];
 
 static CONVOLUTION: &[Preset] = &[

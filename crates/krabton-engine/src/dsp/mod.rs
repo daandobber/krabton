@@ -77,6 +77,8 @@ pub mod princess_machine;
 pub mod stretch;
 pub mod turntable;
 pub mod grit;
+pub mod fry;
+pub mod princess_flip;
 
 use std::f32::consts::PI;
 

@@ -20,6 +20,7 @@ pub mod mp3_decode;
 pub mod modular;
 pub mod modulation;
 pub mod params;
+pub mod princess_sounds;
 pub mod presets;
 pub mod orchestra;
 pub mod piano;
