@@ -41,7 +41,34 @@ pub struct VideoSet {
     pub fit: Fit,
     /// How much the music moves the picture, everything at once (0..1).
     pub amount: f32,
-    pub links: Vec<VideoLink>,
+    /// The Looks (effects and links), as pads to change between.
+    pub looks: Vec<VideoLook>,
+    /// The Look edited, and the set's own: it plays unless the part, the
+    /// clip or the Look sequence has another.
+    pub look: usize,
+    /// When a Look pad clicked starts, and how many beats a change of Look
+    /// takes to morph (0: at once).
+    pub look_launch: Launch,
+    pub morph_beats: f32,
+    /// Looks in turn, a step every so often.
+    #[serde(default, skip_serializing_if = "is_default_seq")]
+    pub look_seq: LookSeq,
+    /// The scene that plays picks the set's Look (scene 1 the first).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub look_scenes: bool,
+    /// The notes of this track pick the set's Look (C1 the first).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub look_notes: Option<u64>,
+    /// Hits heard change the set's Look.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub look_hits: Option<HitTrigger>,
+    /// Hits heard change the clip.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clip_hits: Option<HitTrigger>,
+}
+
+fn is_default_seq(s: &LookSeq) -> bool {
+    *s == LookSeq::default()
 }
 
 impl Default for VideoSet {
@@ -56,7 +83,15 @@ impl Default for VideoSet {
             transition_beats: 1.0,
             fit: Fit::Fill,
             amount: 1.0,
-            links: preset("Pulse").map(|p| p.links).unwrap_or_default(),
+            looks: vec![VideoLook::new("Pulse", preset("Pulse").map(|p| p.links).unwrap_or_default())],
+            look: 0,
+            look_launch: Launch::Now,
+            morph_beats: 0.0,
+            look_seq: LookSeq::default(),
+            look_scenes: false,
+            look_notes: None,
+            look_hits: None,
+            clip_hits: None,
         }
     }
 }
@@ -76,6 +111,16 @@ struct SetFile {
     transition_beats: Option<f32>,
     fit: Option<Fit>,
     amount: Option<f32>,
+    looks: Option<Vec<VideoLook>>,
+    look: usize,
+    look_launch: Option<Launch>,
+    morph_beats: f32,
+    look_seq: LookSeq,
+    look_scenes: bool,
+    look_notes: Option<u64>,
+    look_hits: Option<HitTrigger>,
+    clip_hits: Option<HitTrigger>,
+    // Older sets: one Look of links.
     links: Option<Vec<VideoLink>>,
     // Older sets: how every clip played.
     play: Option<PlayMode>,
@@ -97,7 +142,16 @@ impl From<SetFile> for VideoSet {
             slices: f.slices.unwrap_or(p.slices),
             slice_track: f.slice_track,
             reverse: f.reverse.unwrap_or(p.reverse),
-            part_slices: false,
+            ..ClipPlay::default()
+        };
+        // An older set's links are its one Look (named as the preset they are, if they are one).
+        let looks = match (f.looks, f.links) {
+            (Some(looks), _) => looks,
+            (None, Some(links)) => {
+                let name = PRESET_NAMES.iter().copied().find(|n| preset(n).is_some_and(|p| same_links(&p.links, &links))).unwrap_or("Look 1");
+                vec![VideoLook::new(name, links)]
+            }
+            (None, None) => d.looks.clone(),
         };
         Self {
             clips: f.clips.into_iter().map(|c| c.into_clip(&old)).collect(),
@@ -109,9 +163,22 @@ impl From<SetFile> for VideoSet {
             transition_beats: f.transition_beats.unwrap_or(d.transition_beats),
             fit: f.fit.unwrap_or(d.fit),
             amount: f.amount.unwrap_or(d.amount),
-            links: f.links.unwrap_or(d.links),
+            looks,
+            look: f.look,
+            look_launch: f.look_launch.unwrap_or(d.look_launch),
+            morph_beats: f.morph_beats,
+            look_seq: f.look_seq,
+            look_scenes: f.look_scenes,
+            look_notes: f.look_notes,
+            look_hits: f.look_hits,
+            clip_hits: f.clip_hits,
         }
     }
+}
+
+/// Whether two lists of links are the same, whichever tracks they hear.
+pub fn same_links(a: &[VideoLink], b: &[VideoLink]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| (x.source, x.effect, x.amount) == (y.source, y.effect, y.amount) && x.low == y.low && x.response == y.response)
 }
 
 impl VideoSet {
@@ -125,10 +192,31 @@ impl VideoSet {
         self.clips.get(self.current.min(self.clips.len().saturating_sub(1)))
     }
 
-    /// Puts a preset's links in place (and its way of playing, when it has
-    /// one, on the clip that plays).
+    /// The Look edited (the set's own).
+    pub fn edited_look(&self) -> &VideoLook {
+        static NONE: std::sync::OnceLock<VideoLook> = std::sync::OnceLock::new();
+        self.looks.get(self.look).or(self.looks.first()).unwrap_or_else(|| NONE.get_or_init(VideoLook::default))
+    }
+
+    /// The Look edited, to change (one made when there is none).
+    pub fn edited_look_mut(&mut self) -> &mut VideoLook {
+        if self.looks.is_empty() {
+            self.looks.push(VideoLook::new("Look 1", Vec::new()));
+        }
+        self.look = self.look.min(self.looks.len() - 1);
+        &mut self.looks[self.look]
+    }
+
+    /// The links of the Look edited.
+    pub fn links(&self) -> &[VideoLink] {
+        &self.edited_look().links
+    }
+
+    /// Puts a preset's links in the Look edited, its effects as they start
+    /// (and its way of playing, when it has one, on the clip that plays).
     pub fn apply_preset(&mut self, p: &Preset) {
-        self.links = p.links.clone();
+        let look = self.edited_look_mut();
+        *look = VideoLook::new(p.name, p.links.clone());
         if let Some(play) = p.play {
             let i = self.current.min(self.clips.len().saturating_sub(1));
             if let Some(c) = self.clips.get_mut(i) {
@@ -148,11 +236,20 @@ impl VideoSet {
     /// Fixes what a hand-edited or older file might hold.
     pub fn sanitize(&mut self) {
         self.clips.truncate(MAX_CLIPS);
-        self.links.truncate(MAX_LINKS);
+        self.looks.truncate(MAX_LOOKS);
+        for l in &mut self.looks {
+            l.sanitize();
+        }
+        self.look = self.look.min(self.looks.len().saturating_sub(1));
         self.current = self.current.min(self.clips.len().saturating_sub(1));
+        self.look_seq.steps.truncate(MAX_STEPS);
+        for t in [&mut self.look_hits, &mut self.clip_hits].into_iter().flatten() {
+            t.sanitize();
+        }
         let ok = |v: f32, lo: f32, hi: f32, d: f32| if v.is_finite() { v.clamp(lo, hi) } else { d };
         self.amount = ok(self.amount, 0.0, 1.0, 1.0);
         self.transition_beats = ok(self.transition_beats, 0.0625, 16.0, 1.0);
+        self.morph_beats = ok(self.morph_beats, 0.0, 16.0, 0.0);
         for c in &mut self.clips {
             if let Some(cues) = &mut c.cues {
                 cues.sanitize();
@@ -160,14 +257,20 @@ impl VideoSet {
             if c.cues.as_ref().is_some_and(|q| q.times.is_empty()) {
                 c.cues = None;
             }
+            let before = c.parts.clone();
             normalize_parts(&mut c.parts);
+            c.retag_parts(&before);
+            c.frame.sanitize();
             let p = &mut c.play;
             p.speed = ok(p.speed, 0.0, 4.0, 1.0);
             p.bars = p.bars.clamp(1, 64);
             p.slices = p.slices.clamp(2, 64);
-        }
-        for l in &mut self.links {
-            l.amount = ok(l.amount, 0.0, 1.0, 0.5);
+            p.offset = ok(p.offset, 0.0, 1.0e6, 0.0);
+            p.seq.steps.truncate(MAX_STEPS);
+            p.seq.hits.sanitize();
+            if let Some(t) = &mut p.slice_hits {
+                t.sanitize();
+            }
         }
     }
 
@@ -208,11 +311,483 @@ pub struct ClipPlay {
     /// Slices: one slice for each part (when it has several), so the notes
     /// play the parts: C1 the first part, C#1 the second...
     pub part_slices: bool,
+    /// Forwards and back again (Loop and Tempo; with Reverse it starts backwards).
+    pub bounce: bool,
+    /// Where it starts (seconds into its parts, Loop and Tempo).
+    pub offset: f32,
+    /// It stands still: one frame (where `offset` puts it, or the slice a note picks).
+    pub freeze: bool,
+    /// Slices: hits heard in a sound pick them instead of notes (for
+    /// sequencers that make sound without notes).
+    pub slice_hits: Option<HitTrigger>,
+    /// Its parts one at a time, changing on the beat (Slices then cut the part that plays).
+    pub seq: PartSeq,
 }
 
 impl Default for ClipPlay {
     fn default() -> Self {
-        Self { mode: PlayMode::Loop, speed: 1.0, bars: 4, slices: 16, slice_track: None, reverse: false, part_slices: false }
+        Self { mode: PlayMode::Loop, speed: 1.0, bars: 4, slices: 16, slice_track: None, reverse: false, part_slices: false, bounce: false, offset: 0.0, freeze: false, slice_hits: None, seq: PartSeq::default() }
+    }
+}
+
+/// How often something changes in time with the song.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Every {
+    Beat,
+    Bar,
+    TwoBars,
+    FourBars,
+}
+
+impl Every {
+    pub const ALL: [Every; 4] = [Every::Beat, Every::Bar, Every::TwoBars, Every::FourBars];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Every::Beat => "Beat",
+            Every::Bar => "Bar",
+            Every::TwoBars => "2 bars",
+            Every::FourBars => "4 bars",
+        }
+    }
+
+    /// How many beats that is.
+    pub fn beats(self, beats_per_bar: u32) -> f64 {
+        let bar = beats_per_bar.max(1) as f64;
+        match self {
+            Every::Beat => 1.0,
+            Every::Bar => bar,
+            Every::TwoBars => 2.0 * bar,
+            Every::FourBars => 4.0 * bar,
+        }
+    }
+
+    /// The step of the song's position `beat` (the first bar's first: 0).
+    pub fn step(self, beat: f64, beats_per_bar: u32) -> i64 {
+        ((beat + 1e-9) / self.beats(beats_per_bar)).floor() as i64
+    }
+
+    pub fn next(self) -> Self {
+        let i = Self::ALL.iter().position(|m| *m == self).unwrap_or(0);
+        Self::ALL[(i + 1) % Self::ALL.len()]
+    }
+}
+
+/// Which part a clip's part sequence plays when.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PartOrder {
+    /// One after the other, round again.
+    InOrder,
+    /// Up to the last and back down.
+    PingPong,
+    /// Another one by chance, never the same twice.
+    Random,
+    /// The notes of a track: C3 the first part, C#3 the second...
+    Notes,
+    /// As its steps say, one a step.
+    Steps,
+    /// Hits heard in a sound.
+    Hits,
+}
+
+impl PartOrder {
+    pub const ALL: [PartOrder; 6] = [PartOrder::InOrder, PartOrder::PingPong, PartOrder::Random, PartOrder::Steps, PartOrder::Notes, PartOrder::Hits];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            PartOrder::InOrder => "In order",
+            PartOrder::PingPong => "Ping-pong",
+            PartOrder::Random => "Random",
+            PartOrder::Notes => "Notes",
+            PartOrder::Steps => "Steps",
+            PartOrder::Hits => "Hits heard",
+        }
+    }
+
+    pub fn about(self) -> &'static str {
+        match self {
+            PartOrder::InOrder => "One part after the other, a step each, round again",
+            PartOrder::PingPong => "Up to the last part and back down",
+            PartOrder::Random => "Another part by chance every step, never the same twice",
+            PartOrder::Notes => "The notes of a track pick the part, as they come: C3 the first part, C#3 the second (below C3 they still play slices)",
+            PartOrder::Steps => "As the steps say: a part for every step, or the one before held",
+            PartOrder::Hits => "Hits heard in a sound change the part (for sequencers that make sound without notes)",
+        }
+    }
+
+    /// Whether the song's steps change it (else notes or hits do).
+    pub fn on_steps(self) -> bool {
+        matches!(self, PartOrder::InOrder | PartOrder::PingPong | PartOrder::Random | PartOrder::Steps)
+    }
+}
+
+/// The note that picks the first part (C3): the parts sit above the slices.
+pub const PART_NOTE: u8 = 60;
+
+/// Steps in a sequence, at most.
+pub const MAX_STEPS: usize = 16;
+
+/// A clip's parts one at a time: which part plays changes every `every`,
+/// as `order` says; Loop runs round in it, Tempo fits it into its bars and
+/// Slices cut it alone.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PartSeq {
+    pub on: bool,
+    pub every: Every,
+    pub order: PartOrder,
+    /// Notes: the track whose notes pick the part (None: every track).
+    pub track: Option<u64>,
+    /// Steps: a part (from 0) for every step; None holds the one before.
+    pub steps: Vec<Option<u8>>,
+    /// Hits: what hears them and what a hit does.
+    pub hits: HitTrigger,
+}
+
+impl Default for PartSeq {
+    fn default() -> Self {
+        Self { on: false, every: Every::Bar, order: PartOrder::InOrder, track: None, steps: vec![Some(0), Some(1), Some(2), Some(3)], hits: HitTrigger::default() }
+    }
+}
+
+impl PartSeq {
+    /// The part step `step` of the song plays, of `n` (None: it holds the
+    /// one before; Random, Notes and Hits are not a matter of the step).
+    pub fn part_at(&self, step: i64, n: usize) -> Option<usize> {
+        if n == 0 {
+            return None;
+        }
+        match self.order {
+            PartOrder::InOrder => Some(step.rem_euclid(n as i64) as usize),
+            PartOrder::PingPong if n > 1 => {
+                let lap = 2 * (n as i64 - 1);
+                let i = step.rem_euclid(lap);
+                Some(if i < n as i64 { i } else { lap - i } as usize)
+            }
+            PartOrder::PingPong => Some(0),
+            PartOrder::Steps if !self.steps.is_empty() => self.steps[step.rem_euclid(self.steps.len() as i64) as usize].map(|k| k as usize % n),
+            _ => None,
+        }
+    }
+}
+
+/// The part a note picks: C3 the first, round again after the last; None below C3.
+pub fn part_for_note(pitch: u8, parts: usize) -> Option<usize> {
+    (pitch >= PART_NOTE && parts > 0).then(|| (pitch - PART_NOTE) as usize % parts)
+}
+
+/// Which band a hit is heard in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HitBand {
+    /// The low end: kicks.
+    Kick,
+    /// The middle: snares, claps.
+    Snare,
+    /// The top: hats, shakers.
+    Hats,
+    /// Any of them.
+    Any,
+}
+
+impl HitBand {
+    pub const ALL: [HitBand; 4] = [HitBand::Kick, HitBand::Snare, HitBand::Hats, HitBand::Any];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            HitBand::Kick => "Kicks",
+            HitBand::Snare => "Snares",
+            HitBand::Hats => "Hats",
+            HitBand::Any => "Any hit",
+        }
+    }
+}
+
+/// Where a hit moves something along a row: the next, the one before,
+/// another by chance, or one by the hit's band.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StepTo {
+    Next,
+    Previous,
+    Random,
+    /// The hit's band: a kick the first, a snare the second, a hat the third.
+    ByBand,
+}
+
+impl StepTo {
+    pub const ALL: [StepTo; 4] = [StepTo::Next, StepTo::Previous, StepTo::Random, StepTo::ByBand];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            StepTo::Next => "Next",
+            StepTo::Previous => "Previous",
+            StepTo::Random => "Random",
+            StepTo::ByBand => "By band",
+        }
+    }
+
+    pub fn about(self) -> &'static str {
+        match self {
+            StepTo::Next => "Every hit the next one, round again",
+            StepTo::Previous => "Every hit the one before",
+            StepTo::Random => "Every hit another one by chance, never the same twice",
+            StepTo::ByBand => "A kick the first, a snare the second, a hat the third",
+        }
+    }
+}
+
+/// A move along a row, resolved by whoever keeps the row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Step {
+    Next,
+    Previous,
+    Random,
+    To(usize),
+}
+
+impl Step {
+    /// From `now`, of `n`.
+    pub fn from(self, now: usize, n: usize, dice: &mut Dice) -> usize {
+        let n = n.max(1);
+        match self {
+            Step::Next => (now + 1) % n,
+            Step::Previous => (now + n - 1) % n,
+            Step::Random => other_slice(dice, now, n as u32),
+            Step::To(k) => k % n,
+        }
+    }
+
+    /// What a hit in `band` (0 kick, 1 snare, 2 hat) does, as `to` says.
+    pub fn of_hit(to: StepTo, band: usize) -> Step {
+        match to {
+            StepTo::Next => Step::Next,
+            StepTo::Previous => Step::Previous,
+            StepTo::Random => Step::Random,
+            StepTo::ByBand => Step::To(band),
+        }
+    }
+}
+
+/// Hits heard in a sound as a trigger: in which band, how keenly, no
+/// sooner than `gap` beats after the last, and (with `quantize`) put on
+/// the song's grid.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HitTrigger {
+    /// The track heard (None: the master).
+    pub track: Option<u64>,
+    pub band: HitBand,
+    /// 0..1: how small a hit still counts.
+    pub sensitivity: f32,
+    /// The least time between two hits (beats).
+    pub gap: f32,
+    /// Put on the next step of a grid this long (beats; 0: as heard).
+    pub quantize: f32,
+    pub to: StepTo,
+}
+
+impl Default for HitTrigger {
+    fn default() -> Self {
+        Self { track: None, band: HitBand::Kick, sensitivity: 0.5, gap: 0.25, quantize: 0.0, to: StepTo::Next }
+    }
+}
+
+/// The lengths a hit's gap and grid offer (beats; 0: none).
+pub const HIT_LENGTHS: [f32; 6] = [0.0, 0.125, 0.25, 0.5, 1.0, 2.0];
+
+impl HitTrigger {
+    pub fn sanitize(&mut self) {
+        let ok = |v: f32, lo: f32, hi: f32, d: f32| if v.is_finite() { v.clamp(lo, hi) } else { d };
+        self.sensitivity = ok(self.sensitivity, 0.0, 1.0, 0.5);
+        self.gap = ok(self.gap, 0.0, 16.0, 0.25);
+        self.quantize = ok(self.quantize, 0.0, 16.0, 0.0);
+    }
+}
+
+/// How sharply each band rose (dB over what it just was) since it was last
+/// asked, counted only when loud enough to matter, and how loud it was
+/// then next to the whole sound (dB, 0 or less): the low end, the middle
+/// and the top.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Rises {
+    pub rise: [f32; 3],
+    pub share: [f32; 3],
+}
+
+/// Hits heard, as a trigger fires them: the gap kept, the grid waited for.
+#[derive(Clone, Copy, Debug)]
+pub struct HitDetector {
+    since: f64,
+    /// A hit waiting for the grid: where (beats) and in which band.
+    pending: Option<(f64, usize)>,
+}
+
+impl Default for HitDetector {
+    fn default() -> Self {
+        Self { since: f64::INFINITY, pending: None }
+    }
+}
+
+impl HitDetector {
+    /// One frame: what the sound did (`rises`), `dt` seconds on, the song at
+    /// `beat`. The band (0 kick, 1 snare, 2 hat) of a hit that fires now.
+    pub fn frame(&mut self, t: &HitTrigger, rises: Rises, dt: f32, beat: f64, playing: bool, bpm: f64) -> Option<usize> {
+        self.since += dt.max(0.0) as f64;
+        let mut fired = None;
+        if let Some((at, band)) = self.pending {
+            let q = t.quantize.max(1e-3) as f64;
+            if !playing || beat >= at - 1e-9 || beat < at - 2.0 * q - 1e-6 {
+                self.pending = None;
+                fired = Some(band);
+            }
+        }
+        // How far a band has to rise: 12 dB with no keenness, 3 dB at most.
+        let need = 12.0 - 9.0 * t.sensitivity.clamp(0.0, 1.0);
+        let heard = match t.band {
+            HitBand::Kick => (rises.rise[0] > need).then_some(0),
+            HitBand::Snare => (rises.rise[1] > need).then_some(1),
+            HitBand::Hats => (rises.rise[2] > need).then_some(2),
+            // Any: the band that carries most of the sound, of those that rose.
+            HitBand::Any => (0..3).filter(|&b| rises.rise[b] > need).max_by(|&a, &b| rises.share[a].total_cmp(&rises.share[b])),
+        };
+        let gap = (t.gap.max(0.0) as f64 * 60.0 / bpm.max(1.0)).max(0.06);
+        if let (Some(band), true) = (heard, self.since >= gap) {
+            self.since = 0.0;
+            let q = t.quantize as f64;
+            if q > 0.0 && playing && fired.is_none() {
+                let start = (beat / q).floor() * q;
+                // Just after a step of the grid (a little late): on it, at once.
+                if beat - start < q * 0.15 {
+                    fired = Some(band);
+                } else {
+                    self.pending = Some((start + q, band));
+                }
+            } else if fired.is_none() {
+                fired = Some(band);
+            }
+        }
+        fired
+    }
+}
+
+/// Looks in turn: a step every `every`, each step a Look (None: the set's own).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LookSeq {
+    pub on: bool,
+    pub every: Every,
+    pub steps: Vec<Option<u8>>,
+}
+
+impl Default for LookSeq {
+    fn default() -> Self {
+        Self { on: false, every: Every::Bar, steps: vec![Some(0), Some(1), Some(0), Some(1)] }
+    }
+}
+
+impl LookSeq {
+    /// The Look the song's position `beat` asks for (None: the set's own).
+    pub fn look_at(&self, beat: f64, beats_per_bar: u32, looks: usize) -> Option<usize> {
+        if !self.on || self.steps.is_empty() || looks == 0 {
+            return None;
+        }
+        let step = self.every.step(beat, beats_per_bar).rem_euclid(self.steps.len() as i64) as usize;
+        self.steps[step].map(|k| k as usize).filter(|k| *k < looks)
+    }
+}
+
+/// Which Look plays, of `n`: the part's, else the clip's, else the Look
+/// sequence's step, else the set's own (the pad clicked, or picked by the
+/// notes, the hits or the scenes).
+pub fn look_for(part: Option<usize>, clip: Option<usize>, seq: Option<usize>, set: usize, n: usize) -> usize {
+    [part, clip, seq].into_iter().flatten().find(|k| *k < n).unwrap_or(set).min(n.saturating_sub(1))
+}
+
+/// Looks in the set, at most (the pads).
+pub const MAX_LOOKS: usize = 8;
+
+/// A Look: the effects (how much of each there always is, their own
+/// settings) and the links of the music to them, under a name. The set
+/// keeps a few, as pads to change between while it plays.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VideoLook {
+    pub name: String,
+    /// The effects set differently from how they start.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub fx: std::collections::BTreeMap<Effect, FxSetting>,
+    pub links: Vec<VideoLink>,
+}
+
+impl VideoLook {
+    pub fn new(name: impl Into<String>, links: Vec<VideoLink>) -> Self {
+        Self { name: name.into(), fx: Default::default(), links }
+    }
+
+    /// How effect `e` is set (as it starts when it is not).
+    pub fn setting(&self, e: Effect) -> FxSetting {
+        self.fx.get(&e).cloned().unwrap_or_default()
+    }
+
+    /// Effect `e`'s setting to change (made when it is not there yet).
+    pub fn setting_mut(&mut self, e: Effect) -> &mut FxSetting {
+        self.fx.entry(e).or_default()
+    }
+
+    /// The effects it uses: set, or moved by a link (in the lists' order).
+    pub fn effects(&self) -> Vec<Effect> {
+        Effect::ALL.iter().copied().filter(|e| self.fx.contains_key(e) || self.links.iter().any(|l| l.effect == *e)).collect()
+    }
+
+    pub fn sanitize(&mut self) {
+        self.links.truncate(MAX_LINKS);
+        for l in &mut self.links {
+            l.sanitize();
+        }
+        for (e, s) in self.fx.iter_mut() {
+            s.sanitize(*e);
+        }
+    }
+}
+
+/// How a clip sits on the screen: its own fit, how see-through, where,
+/// how big and turned, and what is cut off its sides.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ClipFrame {
+    /// None: the set's Fill or Fit.
+    pub fit: Option<Fit>,
+    pub opacity: f32,
+    pub zoom: f32,
+    /// Moved (fractions of the screen; right and down).
+    pub x: f32,
+    pub y: f32,
+    /// Turned (a turn: 1).
+    pub turn: f32,
+    /// Cut off the left, top, right and bottom (fractions of the picture).
+    pub crop: [f32; 4],
+}
+
+impl Default for ClipFrame {
+    fn default() -> Self {
+        Self { fit: None, opacity: 1.0, zoom: 1.0, x: 0.0, y: 0.0, turn: 0.0, crop: [0.0; 4] }
+    }
+}
+
+impl ClipFrame {
+    pub fn is_plain(&self) -> bool {
+        *self == Self::default()
+    }
+
+    pub fn sanitize(&mut self) {
+        let ok = |v: f32, lo: f32, hi: f32, d: f32| if v.is_finite() { v.clamp(lo, hi) } else { d };
+        self.opacity = ok(self.opacity, 0.0, 1.0, 1.0);
+        self.zoom = ok(self.zoom, 0.1, 8.0, 1.0);
+        self.x = ok(self.x, -1.0, 1.0, 0.0);
+        self.y = ok(self.y, -1.0, 1.0, 0.0);
+        self.turn = ok(self.turn, -1.0, 1.0, 0.0);
+        for c in &mut self.crop {
+            *c = ok(*c, 0.0, 0.45, 0.0);
+        }
     }
 }
 
@@ -230,6 +805,15 @@ pub struct VideoClip {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parts: Vec<(f32, f32)>,
     pub play: ClipPlay,
+    /// The Look it plays with (None: the set's), and each part's (by place
+    /// in `parts`; None: the clip's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub look: Option<usize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub part_looks: Vec<Option<usize>>,
+    /// How it sits on the screen.
+    #[serde(default, skip_serializing_if = "ClipFrame::is_plain")]
+    pub frame: ClipFrame,
 }
 
 /// A clip as a set's file holds it: older sets kept one part, as `start`
@@ -249,6 +833,12 @@ struct ClipFile {
     end: Option<f32>,
     #[serde(default)]
     play: Option<ClipPlay>,
+    #[serde(default)]
+    look: Option<usize>,
+    #[serde(default)]
+    part_looks: Vec<Option<usize>>,
+    #[serde(default)]
+    frame: ClipFrame,
 }
 
 impl ClipFile {
@@ -257,7 +847,7 @@ impl ClipFile {
         if parts.is_empty() && (self.start > 0.0 || self.end.is_some()) {
             parts.push((self.start, self.end.unwrap_or(TO_THE_END)));
         }
-        VideoClip { path: self.path, name: self.name, cues: self.cues, parts, play: self.play.unwrap_or_else(|| old.clone()) }
+        VideoClip { path: self.path, name: self.name, cues: self.cues, parts, play: self.play.unwrap_or_else(|| old.clone()), look: self.look, part_looks: self.part_looks, frame: self.frame }
     }
 }
 
@@ -306,7 +896,55 @@ pub fn normalize_parts(parts: &mut Vec<(f32, f32)>) {
 impl VideoClip {
     pub fn new(path: std::path::PathBuf) -> Self {
         let name = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-        Self { path, name, cues: None, parts: Vec::new(), play: ClipPlay::default() }
+        Self { path, name, cues: None, parts: Vec::new(), play: ClipPlay::default(), look: None, part_looks: Vec::new(), frame: ClipFrame::default() }
+    }
+
+    /// The Look part `k` has (None: the clip's).
+    pub fn part_look(&self, k: usize) -> Option<usize> {
+        self.part_looks.get(k).copied().flatten()
+    }
+
+    /// Gives part `k` a Look (None: the clip's).
+    pub fn set_part_look(&mut self, k: usize, look: Option<usize>) {
+        if k >= self.parts.len() {
+            return;
+        }
+        self.part_looks.resize(self.parts.len(), None);
+        self.part_looks[k] = look;
+        if self.part_looks.iter().all(Option::is_none) {
+            self.part_looks.clear();
+        }
+    }
+
+    /// After the parts changed from `before`: each part keeps the Look of
+    /// the part it overlaps most of those before.
+    pub fn retag_parts(&mut self, before: &[(f32, f32)]) {
+        if self.part_looks.iter().all(Option::is_none) {
+            self.part_looks.clear();
+            return;
+        }
+        let old = std::mem::take(&mut self.part_looks);
+        let looks: Vec<Option<usize>> = self
+            .parts
+            .iter()
+            .map(|&(a, b)| {
+                let best = before.iter().enumerate().map(|(j, &(c, d))| (j, (b.min(d) - a.max(c)).max(0.0))).filter(|x| x.1 > 0.0).max_by(|x, y| x.1.total_cmp(&y.1));
+                best.and_then(|(j, _)| old.get(j).copied().flatten())
+            })
+            .collect();
+        if looks.iter().any(Option::is_some) {
+            self.part_looks = looks;
+        }
+    }
+
+    /// Takes part `k` away (and its Look).
+    pub fn remove_part(&mut self, k: usize) {
+        if k < self.parts.len() {
+            self.parts.remove(k);
+            if k < self.part_looks.len() {
+                self.part_looks.remove(k);
+            }
+        }
     }
 
     /// Cut by Slice to Drum Rack: it plays whole, by its cues.
@@ -353,8 +991,10 @@ impl VideoClip {
 
     /// Keeps the part from `a` to `b` too (put in order, joined to any it touches).
     pub fn add_part(&mut self, a: f32, b: f32) {
+        let before = self.parts.clone();
         self.parts.push((a.min(b), a.max(b)));
         normalize_parts(&mut self.parts);
+        self.retag_parts(&before);
     }
 
     /// Cuts the part that holds `t` in two there. Whether it did.
@@ -366,6 +1006,9 @@ impl VideoClip {
         }
         self.parts[i] = (a, t);
         self.parts.insert(i + 1, (t, b));
+        if i < self.part_looks.len() {
+            self.part_looks.insert(i + 1, self.part_looks[i]);
+        }
         true
     }
 
@@ -752,10 +1395,16 @@ pub enum Source {
     Bar,
     /// Through the bar from 0 to 1, again every bar.
     Ramp,
+    /// Always full: the effect as much as the link's amount, whatever the music.
+    Fixed,
+    /// An LFO in time with the song (its shape and length on the link).
+    Lfo,
+    /// How loud a band of its own is (from and to, on the link).
+    Band,
 }
 
 impl Source {
-    pub const ALL: [Source; 11] = [Source::Kick, Source::Hits, Source::Bass, Source::Mids, Source::Highs, Source::Level, Source::Notes, Source::Pitch, Source::Beat, Source::Bar, Source::Ramp];
+    pub const ALL: [Source; 14] = [Source::Kick, Source::Hits, Source::Bass, Source::Mids, Source::Highs, Source::Band, Source::Level, Source::Notes, Source::Pitch, Source::Beat, Source::Bar, Source::Ramp, Source::Lfo, Source::Fixed];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -770,6 +1419,9 @@ impl Source {
             Source::Beat => "Beat",
             Source::Bar => "Bar",
             Source::Ramp => "Ramp",
+            Source::Fixed => "Fixed",
+            Source::Lfo => "LFO",
+            Source::Band => "Band",
         }
     }
 
@@ -786,12 +1438,15 @@ impl Source {
             Source::Beat => "Every beat of the song (while it plays), falling away after it",
             Source::Bar => "Every bar of the song (while it plays), falling away after it",
             Source::Ramp => "Through the bar from 0 to 1, every bar again (with Spin or Hue: round once a bar)",
+            Source::Fixed => "Always full: the effect stays at the link's amount, whatever the music (a look of its own)",
+            Source::Lfo => "An LFO in time with the song: its shape, and a cycle of so many beats",
+            Source::Band => "How loud a band of its own is (from and to, in Hz), next to how loud it was lately",
         }
     }
 
     /// Whether it hears a sound (the master's, or a track's).
     pub fn listens(self) -> bool {
-        matches!(self, Source::Level | Source::Bass | Source::Mids | Source::Highs | Source::Kick | Source::Hits)
+        matches!(self, Source::Level | Source::Bass | Source::Mids | Source::Highs | Source::Kick | Source::Hits | Source::Band)
     }
 
     /// Whether it follows a track's notes.
@@ -811,7 +1466,7 @@ impl Source {
 }
 
 /// What a source can do to the picture.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Effect {
     /// Brighter, to white.
     Flash,
@@ -857,10 +1512,27 @@ pub enum Effect {
     Scratch,
     /// The next clip of the bank, on a hit.
     NextClip,
+    /// Soft, out of focus.
+    Blur,
+    /// Darker towards the corners.
+    Vignette,
+    /// The lines of an old screen, curved like its glass.
+    Scanlines,
+    /// Film grain.
+    Grain,
+    /// Brightness, contrast and saturation.
+    Grade,
+    /// Only the outlines.
+    Edges,
+    /// Streaks out from a point, as when zooming in during the exposure.
+    ZoomBlur,
+    /// The last frame again under this one, moved a little: an echo.
+    Echo,
 }
 
 impl Effect {
-    pub const ALL: [Effect; 22] = [
+    /// In the order the lists show them: where the picture is, how it looks, its colours, what it leaves behind, the film.
+    pub const ALL: [Effect; 30] = [
         Effect::Zoom,
         Effect::Flash,
         Effect::Shake,
@@ -869,11 +1541,19 @@ impl Effect {
         Effect::Glitch,
         Effect::Hue,
         Effect::Tint,
+        Effect::Grade,
         Effect::Pixels,
         Effect::Poster,
+        Effect::Blur,
+        Effect::ZoomBlur,
+        Effect::Edges,
         Effect::Mirror,
         Effect::Kaleido,
+        Effect::Vignette,
+        Effect::Scanlines,
+        Effect::Grain,
         Effect::Trails,
+        Effect::Echo,
         Effect::Invert,
         Effect::Strobe,
         Effect::Gate,
@@ -884,7 +1564,7 @@ impl Effect {
         Effect::Scratch,
         Effect::NextClip,
     ];
-    pub const COUNT: usize = 22;
+    pub const COUNT: usize = 30;
 
     /// Its place in [`Look::fx`].
     pub fn index(self) -> usize {
@@ -915,6 +1595,14 @@ impl Effect {
             Effect::Stutter => "Stutter",
             Effect::Scratch => "Scratch",
             Effect::NextClip => "Next Clip",
+            Effect::Blur => "Blur",
+            Effect::Vignette => "Vignette",
+            Effect::Scanlines => "Scanlines",
+            Effect::Grain => "Grain",
+            Effect::Grade => "Grade",
+            Effect::Edges => "Edges",
+            Effect::ZoomBlur => "Zoom Blur",
+            Effect::Echo => "Echo",
         }
     }
 
@@ -942,7 +1630,142 @@ impl Effect {
             Effect::Stutter => "Repeats a sixteenth note of the film on a hit, for a beat (the amount: how often)",
             Effect::Scratch => "Pulled back up to a beat and let go, as a record under a hand",
             Effect::NextClip => "The next clip of the bank on a hit (the amount: how often)",
+            Effect::Blur => "Soft, out of focus",
+            Effect::Vignette => "Darker towards the corners",
+            Effect::Scanlines => "The lines of an old screen, its glass curved",
+            Effect::Grain => "Film grain, moving every frame",
+            Effect::Grade => "Brightness, contrast and saturation, as its settings say",
+            Effect::Edges => "Only the outlines, lit",
+            Effect::ZoomBlur => "Streaks out from a point, as when zooming during the exposure",
+            Effect::Echo => "The last frame again under this one, moved a little, fading",
         }
+    }
+
+    /// Its own settings, besides how much of it there is (see [`FxSetting`]).
+    pub fn params(self) -> &'static [FxParam] {
+        const CENTER_X: FxParam = FxParam::range("Center X", "Where it is centred, across (0: the middle)", -0.5, 0.5, 0.0);
+        const CENTER_Y: FxParam = FxParam::range("Center Y", "Where it is centred, up and down (0: the middle)", -0.5, 0.5, 0.0);
+        const RATE: FxParam = FxParam::range("Rate", "How many times a second it changes (60: every frame)", 1.0, 60.0, 60.0);
+        match self {
+            Effect::Zoom => {
+                const P: &[FxParam] = &[FxParam::range("Depth", "How far in at full (1.5: two and a half times as close)", 0.1, 4.0, 1.5), CENTER_X, CENTER_Y, FxParam::range("Ease", "How it comes in: above 1 late and sudden, below 1 early and soft", 0.25, 4.0, 1.0)];
+                P
+            }
+            Effect::Flash => {
+                const P: &[FxParam] = &[FxParam::range("Strength", "How near its colour it goes at full", 0.0, 1.0, 0.85)];
+                P
+            }
+            Effect::Shake => {
+                const P: &[FxParam] = &[FxParam::range("Size", "How far it is shaken at full (of the screen)", 0.0, 0.2, 0.05), RATE, FxParam::range("Across", "How much it goes sideways", 0.0, 1.0, 1.0), FxParam::range("Up and down", "How much it goes up and down", 0.0, 1.0, 1.0)];
+                P
+            }
+            Effect::Spin => {
+                const P: &[FxParam] = &[FxParam::range("Turns", "How far round at full (1: all the way, below 0 the other way)", -2.0, 2.0, 1.0), FxParam::range("Angle", "Turned this far always (a turn: 1)", -0.5, 0.5, 0.0), FxParam::range("Speed", "Turning on by itself while it is up: turns a bar", -4.0, 4.0, 0.0)];
+                P
+            }
+            Effect::Split => {
+                const P: &[FxParam] = &[FxParam::range("Size", "How far red and blue are pulled apart at full", 0.0, 0.1, 0.03), FxParam::range("Angle", "Which way they are pulled (0: sideways, 0.25: up and down)", 0.0, 0.5, 0.0)];
+                P
+            }
+            Effect::Glitch => {
+                const P: &[FxParam] = &[FxParam::range("Strips", "How many strips the picture is cut in", 2.0, 64.0, 18.0), FxParam::range("Shift", "How far a strip is pushed at full", 0.0, 1.0, 0.4), RATE];
+                P
+            }
+            Effect::Hue => {
+                const P: &[FxParam] = &[FxParam::range("Turn", "How far round the colour circle at full (1: all the way)", 0.0, 1.0, 1.0), FxParam::range("Saturation", "How strong the colours are (1: as they are)", 0.0, 2.0, 1.0)];
+                P
+            }
+            Effect::Tint => {
+                const P: &[FxParam] = &[FxParam::pick("Blend", "How its colour goes on the picture", &["Colour", "Multiply", "Screen", "Add"], 0.0)];
+                P
+            }
+            Effect::Pixels => {
+                const P: &[FxParam] = &[FxParam::range("Size", "How big the pixels get at full (pixels of the screen)", 2.0, 120.0, 40.0)];
+                P
+            }
+            Effect::Poster => {
+                const P: &[FxParam] = &[FxParam::range("Levels", "How few colours at full (of each of red, green and blue)", 2.0, 16.0, 2.0)];
+                P
+            }
+            Effect::Mirror => {
+                const P: &[FxParam] = &[FxParam::pick("Axis", "Which half is mirrored onto the other", &["Left onto right", "Right onto left", "Top onto bottom", "Bottom onto top", "Four ways"], 0.0)];
+                P
+            }
+            Effect::Kaleido => {
+                const P: &[FxParam] = &[FxParam::range("Segments", "How many mirrored wedges", 2.0, 16.0, 6.0), FxParam::range("Turn", "The wedges turned (a turn: 1)", 0.0, 1.0, 0.0)];
+                P
+            }
+            Effect::Trails => {
+                const P: &[FxParam] = &[FxParam::range("Drift", "The last frame drawn this much closer (below 1) or further (above 1)", 0.9, 1.1, 0.985), FxParam::range("Keep", "How much of the last frame stays", 0.0, 1.0, 0.9)];
+                P
+            }
+            Effect::Strobe => {
+                const P: &[FxParam] = &[FxParam::lengths("Rate", "How often it flashes", &["1/4", "1/8", "1/16", "1/32"], 2.0), FxParam::range("Duty", "How long each flash is lit (of its time)", 0.1, 0.9, 0.5)];
+                P
+            }
+            Effect::Gate => {
+                const P: &[FxParam] = &[FxParam::range("Threshold", "The source lifts it only above this", 0.0, 1.0, 0.0), FxParam::range("Softness", "How gradually it opens above the threshold (1: all the way up)", 0.0, 1.0, 1.0)];
+                P
+            }
+            Effect::Speed => {
+                const P: &[FxParam] = &[FxParam::range("Top", "How fast at full (times as filmed)", 1.0, 8.0, 4.0)];
+                P
+            }
+            Effect::Stutter => {
+                const P: &[FxParam] = &[FxParam::lengths("Length", "How much of the film is repeated", &["1/4", "1/8", "1/16", "1/32"], 2.0)];
+                P
+            }
+            Effect::Scratch => {
+                const P: &[FxParam] = &[FxParam::range("Reach", "How far back it is pulled at full (beats)", 0.0, 4.0, 1.0)];
+                P
+            }
+            Effect::Blur => {
+                const P: &[FxParam] = &[FxParam::range("Size", "How soft at full", 0.0, 1.0, 0.5)];
+                P
+            }
+            Effect::Vignette => {
+                const P: &[FxParam] = &[FxParam::range("Size", "How far in the dark comes at full", 0.0, 1.0, 0.5), FxParam::range("Softness", "How gradually it darkens", 0.05, 1.0, 0.5)];
+                P
+            }
+            Effect::Scanlines => {
+                const P: &[FxParam] = &[FxParam::range("Lines", "How many lines down the screen", 60.0, 720.0, 240.0), FxParam::range("Curve", "How much the glass bulges", 0.0, 1.0, 0.3)];
+                P
+            }
+            Effect::Grain => {
+                const P: &[FxParam] = &[FxParam::range("Size", "How coarse the grain is (pixels)", 1.0, 8.0, 1.0)];
+                P
+            }
+            Effect::Grade => {
+                const P: &[FxParam] = &[FxParam::range("Brightness", "Lighter (above 0) or darker", -1.0, 1.0, 0.0), FxParam::range("Contrast", "1: as it is", 0.0, 3.0, 1.25), FxParam::range("Saturation", "1: as it is, 0: grey", 0.0, 3.0, 1.25)];
+                P
+            }
+            Effect::Edges => {
+                const P: &[FxParam] = &[FxParam::range("Thickness", "How wide the outlines are (pixels)", 0.5, 4.0, 1.0), FxParam::pick("Over", "What the outlines are drawn over", &["Black", "The picture"], 0.0)];
+                P
+            }
+            Effect::ZoomBlur => {
+                const P: &[FxParam] = &[FxParam::range("Length", "How long the streaks are at full", 0.0, 1.0, 0.5), CENTER_X, CENTER_Y];
+                P
+            }
+            Effect::Echo => {
+                const P: &[FxParam] = &[FxParam::range("Across", "How far the echo moves each frame, across", -0.05, 0.05, 0.01), FxParam::range("Up and down", "How far it moves, up and down", -0.05, 0.05, 0.0), FxParam::range("Keep", "How much of the echo stays", 0.0, 1.0, 0.8)];
+                P
+            }
+            Effect::Invert | Effect::Freeze | Effect::Jump | Effect::NextClip => &[],
+        }
+    }
+
+    /// The colour it has unless one is picked (None: none, or Tint's track colour).
+    pub fn color(self) -> Option<[u8; 3]> {
+        match self {
+            Effect::Flash | Effect::Strobe | Effect::Edges => Some([0xff, 0xff, 0xff]),
+            _ => None,
+        }
+    }
+
+    /// Whether a colour can be picked for it.
+    pub fn has_color(self) -> bool {
+        self.color().is_some() || self == Effect::Tint
     }
 
     /// Whether it happens on a hit (the amount is how often), rather than
@@ -962,7 +1785,246 @@ impl Effect {
     }
 }
 
-/// A source moving an effect.
+/// One of an effect's own settings: a range, or a choice among a few.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FxParam {
+    pub name: &'static str,
+    pub about: &'static str,
+    pub min: f32,
+    pub max: f32,
+    pub default: f32,
+    /// A choice among these (the value is its place), instead of a range.
+    pub choices: &'static [&'static str],
+    /// The choices are lengths (clicked through, rather than a list).
+    pub length: bool,
+}
+
+impl FxParam {
+    const fn range(name: &'static str, about: &'static str, min: f32, max: f32, default: f32) -> Self {
+        Self { name, about, min, max, default, choices: &[], length: false }
+    }
+
+    const fn pick(name: &'static str, about: &'static str, choices: &'static [&'static str], default: f32) -> Self {
+        Self { name, about, min: 0.0, max: (choices.len() - 1) as f32, default, choices, length: false }
+    }
+
+    const fn lengths(name: &'static str, about: &'static str, choices: &'static [&'static str], default: f32) -> Self {
+        Self { name, about, min: 0.0, max: (choices.len() - 1) as f32, default, choices, length: true }
+    }
+
+    /// A value put in its range (a choice: a whole place), NaN its default.
+    pub fn fit(&self, v: f32) -> f32 {
+        if !v.is_finite() {
+            return self.default;
+        }
+        let v = v.clamp(self.min, self.max);
+        if self.choices.is_empty() {
+            v
+        } else {
+            v.round()
+        }
+    }
+}
+
+/// How one effect looks in a Look: how much of it there always is, its
+/// own settings and its colour.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FxSetting {
+    /// How much of it there always is, whatever the music (0..1); the links add to it.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub base: f32,
+    /// Its own settings (see [`Effect::params`]) by place; missing ones are their defaults.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub params: Vec<f32>,
+    /// Its colour (None: the effect's own, for Tint the track's).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<[u8; 3]>,
+}
+
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
+}
+
+impl FxSetting {
+    /// Setting `k` of effect `e` (its default when not set).
+    pub fn param(&self, e: Effect, k: usize) -> f32 {
+        let Some(p) = e.params().get(k) else { return 0.0 };
+        self.params.get(k).map_or(p.default, |v| p.fit(*v))
+    }
+
+    /// Sets setting `k` of effect `e` (the ones before it filled with their defaults).
+    pub fn set_param(&mut self, e: Effect, k: usize, v: f32) {
+        let defs = e.params();
+        if k >= defs.len() {
+            return;
+        }
+        while self.params.len() <= k {
+            self.params.push(defs[self.params.len()].default);
+        }
+        self.params[k] = defs[k].fit(v);
+    }
+
+    /// All four settings (unused ones 0), for the shader.
+    pub fn params4(&self, e: Effect) -> [f32; 4] {
+        [0, 1, 2, 3].map(|k| self.param(e, k))
+    }
+
+    /// Fixes what a hand-edited file might hold.
+    pub fn sanitize(&mut self, e: Effect) {
+        self.base = if self.base.is_finite() { self.base.clamp(0.0, 1.0) } else { 0.0 };
+        let defs = e.params();
+        self.params.truncate(defs.len());
+        for (v, d) in self.params.iter_mut().zip(defs) {
+            *v = d.fit(*v);
+        }
+    }
+
+    /// Nothing set differently from the start.
+    pub fn is_plain(&self, e: Effect) -> bool {
+        self.base == 0.0 && self.color.is_none() && (0..e.params().len()).all(|k| self.param(e, k) == e.params()[k].default)
+    }
+}
+
+/// How a link answers its source: smoothed as it rises (attack) and
+/// falls (release, seconds), turned upside down, only above a threshold,
+/// and bent by a curve. As it starts it answers as the source is.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Response {
+    pub attack: f32,
+    pub release: f32,
+    /// Above 1 it holds back and comes late; below 1 it comes early.
+    pub curve: f32,
+    pub invert: bool,
+    pub threshold: f32,
+}
+
+impl Default for Response {
+    fn default() -> Self {
+        Self { attack: 0.0, release: 0.0, curve: 1.0, invert: false, threshold: 0.0 }
+    }
+}
+
+impl Response {
+    pub fn is_plain(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The source's value `v` (0..1) as the link takes it: inverted, over
+    /// the threshold, bent.
+    pub fn shape(&self, v: f32) -> f32 {
+        let mut v = if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 };
+        if self.invert {
+            v = 1.0 - v;
+        }
+        let th = self.threshold.clamp(0.0, 0.99);
+        if th > 0.0 {
+            v = ((v - th) / (1.0 - th)).max(0.0);
+        }
+        let c = if self.curve.is_finite() { self.curve.clamp(0.1, 10.0) } else { 1.0 };
+        if c != 1.0 {
+            v = v.powf(c);
+        }
+        v
+    }
+
+    /// From `was` towards `v` over `dt` seconds, as fast as its attack or release says.
+    pub fn smooth(&self, was: f32, v: f32, dt: f32) -> f32 {
+        let t = if v > was { self.attack } else { self.release };
+        if !(t > 0.0) || !was.is_finite() {
+            return v;
+        }
+        was + (v - was) * (1.0 - (-dt.max(0.0) / t).exp())
+    }
+
+    pub fn sanitize(&mut self) {
+        let ok = |v: f32, lo: f32, hi: f32, d: f32| if v.is_finite() { v.clamp(lo, hi) } else { d };
+        self.attack = ok(self.attack, 0.0, 4.0, 0.0);
+        self.release = ok(self.release, 0.0, 4.0, 0.0);
+        self.curve = ok(self.curve, 0.1, 10.0, 1.0);
+        self.threshold = ok(self.threshold, 0.0, 0.99, 0.0);
+    }
+}
+
+/// The shape of an LFO.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LfoShape {
+    Sine,
+    Triangle,
+    /// Up, then down at once.
+    Saw,
+    /// Down, then up at once.
+    Ramp,
+    Square,
+    /// A new value by chance every cycle, held.
+    Random,
+}
+
+impl LfoShape {
+    pub const ALL: [LfoShape; 6] = [LfoShape::Sine, LfoShape::Triangle, LfoShape::Saw, LfoShape::Ramp, LfoShape::Square, LfoShape::Random];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            LfoShape::Sine => "Sine",
+            LfoShape::Triangle => "Triangle",
+            LfoShape::Saw => "Saw up",
+            LfoShape::Ramp => "Saw down",
+            LfoShape::Square => "Square",
+            LfoShape::Random => "Random",
+        }
+    }
+}
+
+/// An LFO in time with the song: a cycle every `beats`, started `phase` in.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Lfo {
+    pub shape: LfoShape,
+    pub beats: f32,
+    pub phase: f32,
+}
+
+impl Default for Lfo {
+    fn default() -> Self {
+        Self { shape: LfoShape::Sine, beats: 4.0, phase: 0.0 }
+    }
+}
+
+/// The cycle lengths an LFO offers (beats).
+pub const LFO_BEATS: [f32; 9] = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0];
+
+impl Lfo {
+    /// Its value (0..1) at song position `beat`, and the cycle it is in.
+    pub fn at(&self, beat: f64) -> (f32, i64) {
+        let len = if self.beats.is_finite() { self.beats.clamp(1.0 / 16.0, 256.0) } else { 4.0 } as f64;
+        let x = beat / len + self.phase as f64;
+        let cycle = x.floor() as i64;
+        let f = (x - x.floor()) as f32;
+        let v = match self.shape {
+            LfoShape::Sine => 0.5 - 0.5 * (f * std::f32::consts::TAU).cos(),
+            LfoShape::Triangle => 1.0 - (f * 2.0 - 1.0).abs(),
+            LfoShape::Saw => f,
+            LfoShape::Ramp => 1.0 - f,
+            LfoShape::Square => {
+                if f < 0.5 {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            LfoShape::Random => {
+                let mut d = Dice::new((cycle as u32).wrapping_mul(0x9E37_79B9) ^ 0x51ED);
+                d.next();
+                d.unit()
+            }
+        };
+        (v, cycle)
+    }
+}
+
+/// A source moving an effect: from `low` (the source at 0) to `amount`
+/// (at full), as its response says.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct VideoLink {
     pub source: Source,
@@ -971,11 +2033,49 @@ pub struct VideoLink {
     pub from: Option<u64>,
     pub effect: Effect,
     pub amount: f32,
+    /// Where the effect is with the source at 0 (the range's other end).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub low: f32,
+    #[serde(default, skip_serializing_if = "Response::is_plain")]
+    pub response: Response,
+    /// The LFO's shape and length (Source::Lfo).
+    #[serde(default, skip_serializing_if = "is_default_lfo")]
+    pub lfo: Lfo,
+    /// The band heard (Hz, from and to; Source::Band).
+    #[serde(default = "default_band", skip_serializing_if = "is_default_band")]
+    pub band: (f32, f32),
+}
+
+fn is_default_lfo(l: &Lfo) -> bool {
+    *l == Lfo::default()
+}
+
+fn default_band() -> (f32, f32) {
+    (200.0, 2000.0)
+}
+
+fn is_default_band(b: &(f32, f32)) -> bool {
+    *b == default_band()
 }
 
 impl VideoLink {
     pub fn new(source: Source, effect: Effect, amount: f32) -> Self {
-        Self { source, from: None, effect, amount }
+        Self { source, from: None, effect, amount, low: 0.0, response: Response::default(), lfo: Lfo::default(), band: default_band() }
+    }
+
+    pub fn sanitize(&mut self) {
+        let ok = |v: f32, d: f32| if v.is_finite() { v.clamp(0.0, 1.0) } else { d };
+        self.amount = ok(self.amount, 0.5);
+        self.low = ok(self.low, 0.0);
+        self.response.sanitize();
+        if !self.lfo.beats.is_finite() || self.lfo.beats <= 0.0 {
+            self.lfo.beats = 4.0;
+        }
+        self.lfo.phase = if self.lfo.phase.is_finite() { self.lfo.phase.rem_euclid(1.0) } else { 0.0 };
+        let (a, b) = self.band;
+        let hz = |v: f32, d: f32| if v.is_finite() { v.clamp(20.0, 20000.0) } else { d };
+        let (a, b) = (hz(a, 200.0), hz(b, 2000.0));
+        self.band = (a.min(b), a.max(b).max(a.min(b) * 1.05));
     }
 }
 
@@ -1054,6 +2154,8 @@ pub struct Listener {
     hit_new: bool,
     since_kick: f32,
     since_hit: f32,
+    /// How sharply the low end, the middle and the top rose since `take_rises`.
+    rises: Rises,
 }
 
 impl Listener {
@@ -1083,6 +2185,7 @@ impl Listener {
             hit_new: false,
             since_kick: 1.0,
             since_hit: 1.0,
+            rises: Rises::default(),
         }
     }
 
@@ -1126,6 +2229,12 @@ impl Listener {
         self.filled = 0;
         self.since_kick += dt;
         self.since_hit += dt;
+        // How sharply each band rises, when it is loud enough to matter (for the triggers).
+        for (k, b) in [BASS, MIDS, HIGHS].into_iter().enumerate() {
+            if quick[b] > self.loudest[b] - 12.0 && quick[b] > -50.0 {
+                self.rises.rise[k] = self.rises.rise[k].max(quick[b] - self.slow[b]);
+            }
+        }
         // A kick: the bass 6 dB over what it just was, loud enough, not just
         // after the last. (A bass note after a rest is one too: listening to
         // the drum track alone hears only the kicks.)
@@ -1183,6 +2292,77 @@ impl Listener {
         self.kick_new = false;
         self.hit_new = false;
         h
+    }
+
+    /// How sharply the bands rose since the last call (for the hit triggers).
+    pub fn take_rises(&mut self) -> Rises {
+        // How loud each band is now next to the whole: a kick is mostly low end, a hat mostly top.
+        for (k, b) in [BASS, MIDS, HIGHS].into_iter().enumerate() {
+            self.rises.share[k] = (self.env[b] - self.env[FULL]).min(0.0);
+        }
+        std::mem::take(&mut self.rises)
+    }
+}
+
+/// Listens to a band of its own (a band-pass from `lo` to `hi` Hz): how
+/// loud it is next to how loud it was lately, as the Listener's bands are.
+pub struct BandListener {
+    pub band: (f32, f32),
+    coef: [f32; 5],
+    z: [f32; 2],
+    pow: f32,
+    a_pow: f32,
+    env: f32,
+    loudest: f32,
+    hop: usize,
+    filled: usize,
+    hop_secs: f32,
+}
+
+impl BandListener {
+    pub fn new(sample_rate: f32, band: (f32, f32)) -> Self {
+        let sr = sample_rate.max(8000.0);
+        let lo = band.0.clamp(20.0, sr * 0.45);
+        let hi = band.1.clamp(lo * 1.05, sr * 0.49);
+        // A band-pass round the middle (geometric) of the band, as wide as it is.
+        let fc = (lo * hi).sqrt();
+        let q = (fc / (hi - lo)).max(0.1);
+        let w0 = 2.0 * std::f32::consts::PI * fc / sr;
+        let alpha = w0.sin() / (2.0 * q);
+        let a0 = 1.0 + alpha;
+        let coef = [alpha / a0, -alpha / a0, -2.0 * w0.cos() / a0, (1.0 - alpha) / a0, 0.0];
+        let hop = ((sr / 187.5).round() as usize).max(32);
+        Self { band, coef, z: [0.0; 2], pow: 0.0, a_pow: 1.0 - (-1.0 / (0.02 * sr)).exp(), env: -120.0, loudest: -60.0, hop, filled: 0, hop_secs: hop as f32 / sr }
+    }
+
+    pub fn feed(&mut self, samples: &[f32]) {
+        let [b0, b2, a1, a2, _] = self.coef;
+        for &x in samples {
+            let x = if x.is_finite() { x } else { 0.0 };
+            // Transposed direct form II (b1 is 0 for a band-pass).
+            let y = b0 * x + self.z[0];
+            self.z[0] = -a1 * y + self.z[1];
+            self.z[1] = b2 * x - a2 * y;
+            let y = if y.is_finite() { y } else { 0.0 };
+            if !self.z[0].is_finite() || !self.z[1].is_finite() {
+                self.z = [0.0; 2];
+            }
+            self.pow += self.a_pow * (y * y - self.pow);
+            self.filled += 1;
+            if self.filled >= self.hop {
+                self.filled = 0;
+                let db = 10.0 * (self.pow + 1e-12).log10();
+                self.env = db.max(self.env - 48.0 * self.hop_secs);
+                self.loudest = db.max(self.loudest - 3.0 * self.hop_secs).max(-60.0);
+            }
+        }
+    }
+
+    /// 0 (far under the loudest lately, or silence) to 1 (as loud as lately).
+    pub fn value(&self) -> f32 {
+        let v = (self.env - (self.loudest - RANGE_DB)) / RANGE_DB;
+        let floor = ((self.env + 70.0) / 20.0).clamp(0.0, 1.0);
+        v.clamp(0.0, 1.0) * floor
     }
 }
 
@@ -1305,11 +2485,24 @@ pub struct Look {
     pub next_clip: bool,
     /// The Tint link that is strongest now (its index in the links).
     pub tint_link: Option<usize>,
+    /// How far Spin's Speed has turned it (turns, kept by whoever plays it).
+    pub turned: f32,
 }
 
 impl Look {
     pub fn get(&self, e: Effect) -> f32 {
         self.fx[e.index()]
+    }
+
+    /// Between `a` (at 0) and `b` (at 1): every amount on the way; the hits and the Tint link are `b`'s.
+    pub fn morph(a: &Look, b: &Look, t: f32) -> Look {
+        let t = t.clamp(0.0, 1.0);
+        let mut out = *b;
+        for (o, (x, y)) in out.fx.iter_mut().zip(a.fx.iter().zip(b.fx.iter())) {
+            *o = x + (y - x) * t;
+        }
+        out.turned = a.turned + (b.turned - a.turned) * t;
+        out
     }
 }
 
@@ -1349,15 +2542,21 @@ impl Dice {
     }
 }
 
-/// Every link read and put together: an effect moved by two links takes the
-/// stronger. `amount` scales all of it; at 0 nothing moves.
-pub fn look(links: &[VideoLink], amount: f32, dice: &mut Dice, mut read: impl FnMut(&VideoLink) -> Reading) -> Look {
+/// Every link read and put together, on what the effects always have
+/// (their base in `fx`): an effect moved by two links takes the stronger,
+/// added to its base. `amount` scales the links (not the bases); at 0 the
+/// music moves nothing. A link goes from its `low` (the source at 0) to its
+/// `amount` (at full); Gate the other way round, from dark to open.
+pub fn look(links: &[VideoLink], fx: &std::collections::BTreeMap<Effect, FxSetting>, amount: f32, dice: &mut Dice, mut read: impl FnMut(&VideoLink) -> Reading) -> Look {
     let mut out = Look::default();
     let amount = amount.clamp(0.0, 1.0);
     let mut tint_best = 0.0;
+    let gate = fx.get(&Effect::Gate).cloned().unwrap_or_default();
+    let (th, soft) = (gate.param(Effect::Gate, 0), gate.param(Effect::Gate, 1));
     for (i, l) in links.iter().enumerate() {
         let r = read(l);
         let value = r.value.clamp(0.0, 1.0);
+        let range = |v: f32| l.low + (l.amount - l.low) * v;
         let v = if l.effect.on_hits() {
             // How often: the chance a hit does it.
             if r.hit && amount > 0.0 && dice.chance(l.amount) {
@@ -1371,10 +2570,11 @@ pub fn look(links: &[VideoLink], amount: f32, dice: &mut Dice, mut read: impl Fn
                 0.0
             }
         } else if l.effect == Effect::Gate {
-            // Dark by the amount, lifted by the source.
-            l.amount * (1.0 - value) * amount
+            // Dark by the amount, lifted by the source (above its threshold, as softly as it says).
+            let open = ((value - th) / (soft * (1.0 - th)).max(1e-4)).clamp(0.0, 1.0);
+            range(1.0 - open) * amount
         } else {
-            value * l.amount * amount
+            range(value) * amount
         };
         let slot = &mut out.fx[l.effect.index()];
         *slot = slot.max(v.clamp(0.0, 1.0));
@@ -1383,16 +2583,21 @@ pub fn look(links: &[VideoLink], amount: f32, dice: &mut Dice, mut read: impl Fn
             out.tint_link = Some(i);
         }
     }
+    // What every effect always has, under the links.
+    for (e, s) in fx {
+        let slot = &mut out.fx[e.index()];
+        *slot = (*slot + s.base).clamp(0.0, 1.0);
+    }
     out
 }
 
-/// The strobe's light now: on and off sixteen times a bar (four a beat),
-/// as bright as `amount`.
-pub fn strobe_light(amount: f32, beat: f64) -> f32 {
+/// The strobe's light now: on and off `per_beat` times a beat (four:
+/// sixteen times a bar), lit for `duty` of each, as bright as `amount`.
+pub fn strobe_light(amount: f32, beat: f64, per_beat: f32, duty: f32) -> f32 {
     if amount <= 0.0 {
         return 0.0;
     }
-    if (beat * 4.0).rem_euclid(1.0) < 0.5 {
+    if (beat * per_beat.max(0.01) as f64).rem_euclid(1.0) < duty.clamp(0.0, 1.0) as f64 {
         amount.min(1.0)
     } else {
         0.0
@@ -1438,7 +2643,7 @@ pub fn scene_clip(playing_slots: impl Iterator<Item = i32>, clips: usize) -> Opt
     Some(best.0 as usize % clips)
 }
 
-//// What moves the film this frame, besides the settings.
+/// What moves the film this frame, besides the settings.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PlayInput {
     /// Seconds since the last frame.
@@ -1450,14 +2655,21 @@ pub struct PlayInput {
     pub playing: bool,
     pub bpm: f64,
     pub beats_per_bar: u32,
-    /// The links: Speed, Freeze and Scratch (0..1), and the hits.
+    /// The links: how much faster (0: as filmed, 3: four times), how much
+    /// it stands still (0..1), how far it is pulled back (beats), and the hits.
     pub speed: f32,
     pub freeze: f32,
     pub scratch: f32,
     pub jump: bool,
     pub stutter: bool,
-    /// Slices: the note that just picked one.
+    /// How much of the film a stutter repeats (beats; 0: a sixteenth).
+    pub stutter_beats: f32,
+    /// Slices: the note that just picked one, or a hit heard that moves to another.
     pub note: Option<u8>,
+    pub slice_step: Option<Step>,
+    /// The part sequence: a note (from C3) or a hit that picks the part.
+    pub part_note: Option<u8>,
+    pub part_step: Option<Step>,
     /// Cues: the notes held now on the track that plays them (a 128-bit
     /// mask), so Gate holds the picture where its note ends.
     pub held: u128,
@@ -1479,7 +2691,7 @@ struct Stutter {
 
 /// Where the film is, frame by frame. It runs through the clip's parts
 /// played back to back (its `pos` counts in them), and says where that is
-/// in the film.
+/// in the film. With a part sequence it runs in one part at a time.
 #[derive(Clone, Debug, Default)]
 pub struct Playhead {
     /// Where it runs (seconds into the parts), before a stutter or scratch.
@@ -1491,7 +2703,24 @@ pub struct Playhead {
     /// Cues: the note that picked it (None: a jump).
     pitch: Option<u8>,
     stutter: Option<Stutter>,
+    /// The part sequence: the part that plays, and the song's step it is on.
+    pub part: Option<usize>,
+    step: Option<i64>,
     pub dice: Dice,
+}
+
+/// Which of `spans` (back to back) holds `t` seconds into them, and how far into it.
+fn part_of_joined(spans: &[(f32, f32)], t: f64) -> (usize, f64) {
+    let mut acc = 0.0;
+    for (k, &(a, b)) in spans.iter().enumerate() {
+        let len = (b - a) as f64;
+        if t < acc + len {
+            return (k, t - acc);
+        }
+        acc += len;
+    }
+    let last = spans.len().saturating_sub(1);
+    (last, spans.last().map_or(0.0, |s| (s.1 - s.0) as f64))
 }
 
 impl Playhead {
@@ -1502,12 +2731,51 @@ impl Playhead {
         self.slice = None;
         self.pitch = None;
         self.stutter = None;
+        self.part = None;
+        self.step = None;
     }
 
     /// The slice that `pos` (into the parts) is in.
     fn slice_at(clip: &VideoClip, spans: &[(f32, f32)], pos: f64) -> usize {
         let n = clip.slice_count(spans) as usize;
         (0..n).find(|&k| pos < clip.slice_bounds(spans, k).1).unwrap_or(n.saturating_sub(1))
+    }
+
+    /// The part sequence's part this frame, of `n`: on a new step of the
+    /// song as its order says, or as a note or a hit picks. Whether it changed.
+    fn pick_part(&mut self, seq: &PartSeq, n: usize, inp: &PlayInput) -> bool {
+        let before = self.part;
+        if seq.order.on_steps() {
+            if inp.playing {
+                let step = seq.every.step(inp.beat, inp.beats_per_bar);
+                if self.step != Some(step) {
+                    self.step = Some(step);
+                    let want = match seq.order {
+                        PartOrder::Random => Some(match self.part {
+                            Some(p) => other_slice(&mut self.dice, p, n as u32),
+                            None => self.dice.next() as usize % n,
+                        }),
+                        _ => seq.part_at(step, n),
+                    };
+                    if want.is_some() {
+                        self.part = want;
+                    }
+                }
+            } else {
+                // Stopped: it stays on its part, and is reckoned again from where the song starts.
+                self.step = None;
+            }
+        }
+        if seq.order == PartOrder::Notes {
+            if let Some(k) = inp.part_note.and_then(|p| part_for_note(p, n)) {
+                self.part = Some(k);
+            }
+        }
+        if let (PartOrder::Hits, Some(s)) = (seq.order, inp.part_step) {
+            self.part = Some(s.from(self.part.unwrap_or(0), n, &mut self.dice));
+        }
+        self.part = Some(self.part.unwrap_or(0).min(n - 1));
+        before != self.part
     }
 
     /// One frame of `clip`: moves on and returns where to show the film
@@ -1519,49 +2787,99 @@ impl Playhead {
         }
         let play = &clip.play;
         let cues = clip.cues.as_ref().filter(|c| !c.is_empty() && play.mode == PlayMode::Slices);
-        // Cues are times in the whole film; the rest plays the parts back to back.
-        let spans = clip.spans(inp.duration);
+        // Cues are times in the whole film; the rest plays the parts back to
+        // back, or with a part sequence one part at a time.
+        let all = clip.spans(inp.duration);
+        let mut seek = inp.seek;
+        let mut entered = false;
+        let spans = if cues.is_none() && play.seq.on && all.len() > 1 {
+            if let Some(t) = seek {
+                // Dragged somewhere: the part there, from where it was put.
+                let (k, local) = part_of_joined(&all, t.rem_euclid(joined_len(&all).max(1e-6) as f64));
+                self.part = Some(k);
+                seek = Some(local);
+            }
+            entered = self.pick_part(&play.seq, all.len(), inp);
+            vec![all[self.part.unwrap_or(0).min(all.len() - 1)]]
+        } else {
+            self.part = None;
+            self.step = None;
+            all
+        };
         let dur = if cues.is_some() { inp.duration as f64 } else { joined_len(&spans) as f64 };
         if dur <= 0.0 {
             self.reset();
             return 0.0;
         }
         let to_film = |t: f64| if cues.is_some() { t.clamp(0.0, dur) } else { film_time(&spans, t) };
+        let bounds = |k: usize| clip.slice_bounds(&spans, k);
+        if entered {
+            // Into another part: from its start (or the same slice of it).
+            self.offset = 0.0;
+            self.stutter = None;
+            self.pos = match self.slice.filter(|_| play.mode == PlayMode::Slices) {
+                Some(k) => bounds(k).0,
+                None if play.reverse => dur - 1e-6,
+                None => 0.0,
+            };
+        }
+        // Loop and Tempo show the film from the clip's offset, there and back with Bounce.
+        let free = cues.is_none() && play.mode != PlayMode::Slices;
+        let bounce = free && play.bounce;
+        let lap = if bounce && play.mode == PlayMode::Loop { 2.0 * dur } else { dur };
+        let show_of = |pos: f64| {
+            let mut s = pos.rem_euclid(lap);
+            if bounce && s >= dur {
+                s = 2.0 * dur - s;
+            }
+            if free {
+                s += play.offset.max(0.0) as f64;
+            }
+            s
+        };
         if inp.hold {
-            if let Some(t) = inp.seek {
+            if let Some(t) = seek {
                 self.seek(clip, &spans, cues, t.rem_euclid(dur), inp);
             }
             self.stutter = None;
-            return to_film(self.pos.rem_euclid(dur));
+            return to_film(show_of(self.pos).rem_euclid(dur));
         }
         let dt = inp.dt.clamp(0.0, 0.25) as f64;
         let dir = if play.reverse { -1.0 } else { 1.0 };
         let beat_secs = 60.0 / inp.bpm.max(1.0);
         let slices = clip.slice_count(&spans).max(1);
-        let bounds = |k: usize| clip.slice_bounds(&spans, k);
         // How much faster the links make it, and how much it stands still.
-        let push = (1.0 + 3.0 * inp.speed.clamp(0.0, 1.0) as f64) * (1.0 - inp.freeze.clamp(0.0, 1.0) as f64);
+        let still = if play.freeze { 1.0 } else { inp.freeze.clamp(0.0, 1.0) as f64 };
+        let push = (1.0 + inp.speed.clamp(0.0, 16.0) as f64) * (1.0 - still);
         match (play.mode, cues) {
             (PlayMode::Loop, _) => self.pos += dt * play.speed as f64 * push * dir,
             (PlayMode::Tempo, _) => {
-                // The whole clip (its parts back to back) in `bars` bars.
-                let lap = (play.bars.max(1) * inp.beats_per_bar.max(1)) as f64;
-                let rate = dur / (lap * beat_secs);
+                // The whole clip (its parts back to back, or the part that plays) in `bars` bars.
+                let len = (play.bars.max(1) * inp.beats_per_bar.max(1)) as f64;
+                let rate = dur / (len * beat_secs);
                 if inp.playing {
                     // Pinned to the song; the links push it off from there.
                     self.offset += dt * rate * (push - 1.0) * dir;
-                    let target = (inp.beat / lap).rem_euclid(1.0) * dur;
+                    let mut u = (inp.beat / len).rem_euclid(if bounce { 2.0 } else { 1.0 });
+                    if u > 1.0 {
+                        u = 2.0 - u;
+                    }
+                    let target = u * dur;
                     self.pos = if play.reverse { dur - target } else { target } + self.offset;
                 } else {
                     self.pos += dt * rate * push * dir;
                 }
             }
             (PlayMode::Slices, Some(c)) => {
-                if let Some(n) = inp.note {
+                let k = match (inp.note, inp.slice_step) {
+                    (Some(n), _) => Some((c.for_note(n), Some(n))),
+                    (None, Some(s)) => Some((s.from(self.slice.unwrap_or_else(|| c.at(self.pos)), c.len(), &mut self.dice), None)),
+                    _ => None,
+                };
+                if let Some((k, pitch)) = k {
                     // The piece of film under the pad's slice of sound, from its start.
-                    let k = c.for_note(n);
                     self.slice = Some(k);
-                    self.pitch = Some(n);
+                    self.pitch = pitch;
                     self.pos = c.piece(k, dur).0;
                     self.stutter = None;
                 } else if self.slice.is_some() {
@@ -1576,8 +2894,12 @@ impl Playhead {
                 }
             }
             (PlayMode::Slices, None) => {
-                if let Some(n) = inp.note {
-                    let k = slice_for_note(n, slices);
+                let k = match (inp.note, inp.slice_step) {
+                    (Some(n), _) => Some(slice_for_note(n, slices)),
+                    (None, Some(s)) => Some(s.from(self.slice.unwrap_or_else(|| Self::slice_at(clip, &spans, self.pos.rem_euclid(dur))), slices as usize, &mut self.dice)),
+                    _ => None,
+                };
+                if let Some(k) = k {
                     self.slice = Some(k);
                     let (a, b) = bounds(k);
                     self.pos = if play.reverse { b - 1e-6 } else { a };
@@ -1587,7 +2909,7 @@ impl Playhead {
                 }
             }
         }
-        if let Some(t) = inp.seek {
+        if let Some(t) = seek {
             self.seek(clip, &spans, cues, t.rem_euclid(dur), inp);
         }
         if let (true, Some(c)) = (inp.jump, cues) {
@@ -1626,14 +2948,15 @@ impl Playhead {
             }
             _ => {}
         }
-        self.pos = self.pos.rem_euclid(dur);
+        self.pos = self.pos.rem_euclid(lap);
         self.offset = self.offset.rem_euclid(dur);
-        // A stutter: a sixteenth note of film, over and over for a beat.
+        // A stutter: a sixteenth note of film (or as long as it says), over and over for a beat.
         if inp.stutter {
-            let len = (beat_secs / 4.0).min(dur);
-            self.stutter = Some(Stutter { anchor: self.pos, len, elapsed: 0.0, left: beat_secs });
+            let beats = if inp.stutter_beats > 0.0 { inp.stutter_beats as f64 } else { 0.25 };
+            let len = (beat_secs * beats).min(dur);
+            self.stutter = Some(Stutter { anchor: show_of(self.pos), len, elapsed: 0.0, left: beat_secs });
         }
-        let mut show = self.pos;
+        let mut show = show_of(self.pos);
         if let Some(s) = &mut self.stutter {
             s.elapsed += dt;
             s.left -= dt;
@@ -1643,14 +2966,16 @@ impl Playhead {
                 show = s.anchor + s.elapsed.rem_euclid(s.len);
             }
         }
-        // Scratch: pulled back by up to a beat of film.
-        show -= inp.scratch.clamp(0.0, 1.0) as f64 * beat_secs * dir;
+        // Scratch: pulled back by as many beats of film as it says.
+        show -= inp.scratch.clamp(0.0, 16.0) as f64 * beat_secs * dir;
         to_film(show.rem_euclid(dur))
     }
 
     /// Puts it at `t` (into the parts, or a cued film's own time), in the
     /// slice or cue there.
     fn seek(&mut self, clip: &VideoClip, spans: &[(f32, f32)], cues: Option<&Cues>, t: f64, inp: &PlayInput) {
+        // Shown from the clip's offset: put where it shows `t`.
+        let t = if cues.is_none() && clip.play.mode != PlayMode::Slices { (t - clip.play.offset.max(0.0) as f64).rem_euclid(joined_len(spans).max(1e-6) as f64) } else { t };
         if clip.play.mode == PlayMode::Tempo && inp.playing {
             self.offset += t - self.pos;
         }
@@ -1747,7 +3072,7 @@ mod tests {
         // From before every clip played its own way: each gets the set's.
         let set: VideoSet = serde_json::from_str(r#"{"clips":[{"path":"a.mp4","name":"a"},{"path":"b.gif","name":"b","start":1.0,"end":2.0}],"play":"Tempo","bars":8,"speed":2.0,"slices":4,"slice_track":7,"reverse":true}"#).unwrap();
         for c in &set.clips {
-            assert_eq!(c.play, ClipPlay { mode: PlayMode::Tempo, speed: 2.0, bars: 8, slices: 4, slice_track: Some(7), reverse: true, part_slices: false });
+            assert_eq!(c.play, ClipPlay { mode: PlayMode::Tempo, speed: 2.0, bars: 8, slices: 4, slice_track: Some(7), reverse: true, part_slices: false, ..Default::default() });
         }
         assert_eq!(set.clips[1].parts, vec![(1.0, 2.0)]);
         // Switching as before: at once, a cut.
@@ -1934,13 +3259,13 @@ mod tests {
         let links = vec![VideoLink::new(Source::Kick, Effect::Zoom, 0.5), VideoLink::new(Source::Bass, Effect::Zoom, 1.0), VideoLink::new(Source::Level, Effect::Gate, 0.8)];
         let mut dice = Dice::default();
         let read = |l: &VideoLink| Reading { value: if l.source == Source::Kick { 1.0 } else { 0.25 }, hit: false };
-        let lk = look(&links, 1.0, &mut dice, read);
+        let lk = look(&links, &Default::default(), 1.0, &mut dice, read);
         assert!((lk.get(Effect::Zoom) - 0.5).abs() < 1e-6);
         // Gate: dark by the amount, lifted by the level.
         assert!((lk.get(Effect::Gate) - 0.8 * 0.75).abs() < 1e-6);
-        let half = look(&links, 0.5, &mut dice, read);
+        let half = look(&links, &Default::default(), 0.5, &mut dice, read);
         assert!((half.get(Effect::Zoom) - 0.25).abs() < 1e-6);
-        let none = look(&links, 0.0, &mut dice, read);
+        let none = look(&links, &Default::default(), 0.0, &mut dice, read);
         assert!(none.fx.iter().all(|v| *v == 0.0));
     }
 
@@ -1952,10 +3277,10 @@ mod tests {
         let half = vec![VideoLink::new(Source::Kick, Effect::Stutter, 0.5)];
         let hit = |_: &VideoLink| Reading { value: 1.0, hit: true };
         let calm = |_: &VideoLink| Reading { value: 1.0, hit: false };
-        assert!(look(&always, 1.0, &mut dice, hit).jump);
-        assert!(!look(&always, 1.0, &mut dice, calm).jump);
-        assert!(!look(&never, 1.0, &mut dice, hit).jump);
-        let n = (0..1000).filter(|_| look(&half, 1.0, &mut dice, hit).stutter).count();
+        assert!(look(&always, &Default::default(), 1.0, &mut dice, hit).jump);
+        assert!(!look(&always, &Default::default(), 1.0, &mut dice, calm).jump);
+        assert!(!look(&never, &Default::default(), 1.0, &mut dice, hit).jump);
+        let n = (0..1000).filter(|_| look(&half, &Default::default(), 1.0, &mut dice, hit).stutter).count();
         assert!((400..600).contains(&n), "{n}");
     }
 
@@ -2307,9 +3632,12 @@ mod tests {
 
     #[test]
     fn the_strobe_is_on_half_of_every_sixteenth() {
-        assert_eq!(strobe_light(0.8, 0.1), 0.8);
-        assert_eq!(strobe_light(0.8, 0.2), 0.0);
-        assert_eq!(strobe_light(0.0, 0.1), 0.0);
+        assert_eq!(strobe_light(0.8, 0.1, 4.0, 0.5), 0.8);
+        assert_eq!(strobe_light(0.8, 0.2, 4.0, 0.5), 0.0);
+        assert_eq!(strobe_light(0.0, 0.1, 4.0, 0.5), 0.0);
+        // Eighths, lit a quarter of each.
+        assert_eq!(strobe_light(1.0, 0.1, 2.0, 0.25), 1.0);
+        assert_eq!(strobe_light(1.0, 0.2, 2.0, 0.25), 0.0);
     }
 
     #[test]
@@ -2330,7 +3658,7 @@ mod tests {
             assert!(Effect::ALL.iter().skip(i + 1).all(|o| o != e));
             assert!(e.index() < Effect::COUNT);
         }
-        assert_eq!(Source::Ramp.next(), Source::Kick);
+        assert_eq!(Source::Fixed.next(), Source::Kick);
         assert_eq!(PlayMode::Slices.next(), PlayMode::Loop);
     }
 
@@ -2339,7 +3667,7 @@ mod tests {
         let mut set = VideoSet { clips: vec![VideoClip::new("C:/films/sea.mp4".into()), VideoClip::new("/home/me/cat.gif".into())], current: 1, transition: Transition::Glitch, launch: Launch::Bar, clip_notes: Some(3), ..Default::default() };
         set.clips[0].play = ClipPlay { mode: PlayMode::Tempo, bars: 8, ..Default::default() };
         set.clips[0].parts = vec![(1.0, 2.0), (4.0, 5.5)];
-        set.links[0].from = Some(12);
+        set.looks[0].links[0].from = Some(12);
         let json = serde_json::to_string(&set).unwrap();
         let back: VideoSet = serde_json::from_str(&json).unwrap();
         assert_eq!(back, set);
@@ -2358,7 +3686,7 @@ mod tests {
         let c = odd_cues.clips[0].cues.as_ref().unwrap();
         assert_eq!((c.times.as_slice(), c.end, c.track, c.gate), (&[0.0, 1.0, 2.0][..], 2.0, None, false));
         assert_eq!(odd_cues.clips[1].cues, None, "no cues at all is no cues");
-        assert_eq!(bare.links, VideoSet::default().links);
+        assert_eq!(bare.looks, VideoSet::default().looks);
         // Out of range is put right (an old set's way of playing too, on its clip).
         let mut odd: VideoSet = serde_json::from_str(r#"{"clips":[{"path":"a.png","name":"a","parts":[[3.0,1.0],[2.5,4.0]]}],"current":9,"speed":99.0,"amount":-1.0,"slices":0,"transition_beats":-3.0}"#).unwrap();
         odd.sanitize();
@@ -2367,5 +3695,325 @@ mod tests {
         assert_eq!(odd.clips[0].parts, vec![(1.0, 4.0)]);
         assert!(VideoSet::default().is_empty());
         assert!(!set.is_empty());
+    }
+
+    /// A clip of an 8 s film with parts of 2 s (from 0) and 4 s (from 4), playing them one a bar.
+    fn sequenced(mode: PlayMode, f: impl FnOnce(&mut ClipPlay)) -> VideoClip {
+        let mut c = clip(mode, |p| {
+            p.seq.on = true;
+            p.seq.every = Every::Bar;
+            f(p);
+        });
+        c.parts = vec![(0.0, 2.0), (4.0, 8.0)];
+        c
+    }
+
+    #[test]
+    fn a_part_sequence_changes_part_exactly_on_the_bar_and_slices_cut_only_that_part() {
+        let c = sequenced(PlayMode::Slices, |p| p.slices = 4);
+        let mut ph = Playhead::default();
+        // The first bar: the first part. D1 (the third of four slices of its 2 s): from 1 s.
+        let mut i = input(0.0, 3.999);
+        i.note = Some(38);
+        assert!((ph.advance(&c, &i) - 1.0).abs() < 1e-9);
+        assert_eq!(ph.part, Some(0));
+        // Exactly on the second bar: the second part, the same slice of it (4 s in four: from 4 + 2).
+        assert!((ph.advance(&c, &input(0.0, 4.0)) - 6.0).abs() < 1e-9);
+        assert_eq!(ph.part, Some(1));
+        // A note now cuts this part only: C1 its start, E1 (round again) too.
+        let mut i = input(0.0, 5.0);
+        i.note = Some(36);
+        assert!((ph.advance(&c, &i) - 4.0).abs() < 1e-9);
+        i.note = Some(39);
+        assert!((ph.advance(&c, &i) - 7.0).abs() < 1e-9);
+        // It plays round in its slice, never into the other part.
+        i.note = None;
+        i.dt = 0.25;
+        for _ in 0..10 {
+            let at = ph.advance(&c, &input(0.25, 5.5));
+            assert!((7.0..8.0).contains(&at), "{at}");
+        }
+        // The third bar: the first part again.
+        ph.advance(&c, &input(0.0, 8.0));
+        assert_eq!(ph.part, Some(0));
+    }
+
+    #[test]
+    fn tempo_fits_each_part_of_a_sequence_into_its_bars_and_loop_stays_in_it() {
+        let c = sequenced(PlayMode::Tempo, |p| p.bars = 1);
+        let mut ph = Playhead::default();
+        // Half a bar: half of each part, whatever its length.
+        assert!((ph.advance(&c, &input(0.016, 2.0)) - 1.0).abs() < 1e-9);
+        assert!((ph.advance(&c, &input(0.016, 6.0)) - 6.0).abs() < 1e-9);
+        assert!((ph.advance(&c, &input(0.016, 10.0)) - 1.0).abs() < 1e-9);
+        // Loop: round in the part that plays, from its start when it comes.
+        let c = sequenced(PlayMode::Loop, |_| {});
+        let mut ph = Playhead::default();
+        for k in 0..20 {
+            let at = ph.advance(&c, &input(0.25, 0.1 + k as f64 * 0.1));
+            assert!((0.0..2.0).contains(&at), "{at}");
+        }
+        assert!((ph.advance(&c, &input(0.0, 4.0)) - 4.0).abs() < 1e-9, "the next part from its start");
+        // Stopped: it stays on its part.
+        let mut stopped = input(0.25, 0.0);
+        stopped.playing = false;
+        ph.advance(&c, &stopped);
+        assert_eq!(ph.part, Some(1));
+        // Without the sequence the parts play back to back as before.
+        let mut plain = c.clone();
+        plain.play.seq.on = false;
+        let mut ph = Playhead::default();
+        ph.advance(&plain, &input(0.0, 0.0));
+        assert_eq!(ph.part, None);
+    }
+
+    #[test]
+    fn parts_come_in_order_ping_pong_by_steps_by_chance_by_notes_or_by_hits() {
+        let mut seq = PartSeq::default();
+        assert_eq!((0..7).map(|s| seq.part_at(s, 3).unwrap()).collect::<Vec<_>>(), [0, 1, 2, 0, 1, 2, 0]);
+        seq.order = PartOrder::PingPong;
+        assert_eq!((0..7).map(|s| seq.part_at(s, 3).unwrap()).collect::<Vec<_>>(), [0, 1, 2, 1, 0, 1, 2]);
+        seq.order = PartOrder::Steps;
+        seq.steps = vec![Some(2), None, Some(4)];
+        assert_eq!((0..4).map(|s| seq.part_at(s, 3)).collect::<Vec<_>>(), [Some(2), None, Some(1), Some(2)]);
+        // A hold keeps the part before.
+        let c = sequenced(PlayMode::Loop, |p| (p.seq.order, p.seq.steps) = (PartOrder::Steps, vec![Some(1), None]));
+        let mut ph = Playhead::default();
+        ph.advance(&c, &input(0.0, 0.0));
+        ph.advance(&c, &input(0.0, 4.0));
+        assert_eq!(ph.part, Some(1));
+        // By chance: never the same twice running.
+        let mut c = sequenced(PlayMode::Loop, |p| (p.seq.order, p.seq.every) = (PartOrder::Random, Every::Beat));
+        c.parts = vec![(0.0, 1.0), (2.0, 3.0), (4.0, 5.0), (6.0, 7.0)];
+        let mut ph = Playhead::default();
+        let mut seen = Vec::new();
+        for b in 0..40 {
+            ph.advance(&c, &input(0.0, b as f64));
+            seen.push(ph.part.unwrap());
+        }
+        assert!(seen.windows(2).all(|w| w[0] != w[1]), "{seen:?}");
+        assert!((0..4).all(|k| seen.contains(&k)));
+        // Notes from C3: C#3 the second part; lower notes leave it.
+        let c = sequenced(PlayMode::Loop, |p| p.seq.order = PartOrder::Notes);
+        let mut ph = Playhead::default();
+        let mut i = input(0.0, 0.0);
+        i.part_note = Some(61);
+        assert!((ph.advance(&c, &i) - 4.0).abs() < 1e-9);
+        i.part_note = Some(40);
+        ph.advance(&c, &i);
+        assert_eq!(ph.part, Some(1));
+        assert_eq!((part_for_note(62, 2), part_for_note(59, 2)), (Some(0), None));
+        // Hits: the next one each time.
+        let c = sequenced(PlayMode::Loop, |p| p.seq.order = PartOrder::Hits);
+        let mut ph = Playhead::default();
+        let mut i = input(0.0, 0.0);
+        i.part_step = Some(Step::Next);
+        ph.advance(&c, &i);
+        assert_eq!(ph.part, Some(1));
+        ph.advance(&c, &i);
+        assert_eq!(ph.part, Some(0));
+    }
+
+    #[test]
+    fn bounce_runs_there_and_back_offset_starts_later_and_freeze_stands() {
+        // On to the end (8 s) and back: 10.25 s in, it is 2.25 s back from the end.
+        let c = clip(PlayMode::Loop, |p| p.bounce = true);
+        let mut ph = Playhead::default();
+        for _ in 0..40 {
+            ph.advance(&c, &input(0.25, 0.0));
+        }
+        assert!((ph.advance(&c, &input(0.25, 0.0)) - (16.0 - 10.25)).abs() < 1e-6);
+        // Offset: from 3 s on.
+        let c = clip(PlayMode::Loop, |p| p.offset = 3.0);
+        let mut ph = Playhead::default();
+        assert!((ph.advance(&c, &input(0.0, 0.0)) - 3.0).abs() < 1e-9);
+        // Freeze: one frame, whatever the time.
+        let c = clip(PlayMode::Loop, |p| (p.freeze, p.offset) = (true, 2.0));
+        let mut ph = Playhead::default();
+        for _ in 0..10 {
+            assert!((ph.advance(&c, &input(0.25, 0.0)) - 2.0).abs() < 1e-9);
+        }
+        // Tempo there and back: the second lap backwards.
+        let c = clip(PlayMode::Tempo, |p| (p.bars, p.bounce) = (2, true));
+        let mut ph = Playhead::default();
+        assert!((ph.advance(&c, &input(0.016, 10.0)) - 6.0).abs() < 1e-9);
+    }
+
+    /// Hits in eight beats of `kicks_and_hats` heard by `t`, a frame every 800 samples (60 a second at 48 kHz): when (s) and in which band.
+    fn hear_hits(t: &HitTrigger, beats: usize) -> Vec<(f64, usize)> {
+        let sound = kicks_and_hats(beats);
+        let mut ears = Listener::new(SR);
+        let mut det = HitDetector::default();
+        let mut out = Vec::new();
+        for (k, run) in sound.chunks(800).enumerate() {
+            ears.feed(run);
+            let now = ((k + 1) * 800) as f64 / SR as f64;
+            if let Some(b) = det.frame(t, ears.take_rises(), 800.0 / SR, now * 2.0, true, 120.0) {
+                out.push((now, b));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn a_drum_track_without_notes_drives_the_slices_at_its_kicks() {
+        let t = HitTrigger::default();
+        let hits = hear_hits(&t, 8);
+        // Every kick, within a frame of it (the hats between are not kicks).
+        assert_eq!(hits.len(), 8, "{hits:?}");
+        for (n, (at, band)) in hits.iter().enumerate() {
+            let late = at - n as f64 * 0.5;
+            assert!((0.0..=1.0 / 30.0).contains(&late), "kick {n} heard {late} s late");
+            assert_eq!(*band, 0);
+        }
+        // Each one the next slice: an 8 s film in eight slices shows 1 s, 2 s, 3 s...
+        let c = clip(PlayMode::Slices, |p| p.slices = 8);
+        let mut ph = Playhead::default();
+        let mut shown = Vec::new();
+        for (_, b) in &hits {
+            let mut i = input(0.0, 0.0);
+            i.slice_step = Some(Step::of_hit(t.to, *b));
+            shown.push(ph.advance(&c, &i));
+        }
+        assert_eq!(shown, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 0.0]);
+        // A gap of two beats: every other kick.
+        assert_eq!(hear_hits(&HitTrigger { gap: 2.0, ..t }, 8).len(), 4);
+        // The hats on the off-beats, put on the next beat.
+        let hats = hear_hits(&HitTrigger { band: HitBand::Hats, gap: 0.25, quantize: 1.0, ..t }, 8);
+        assert!(hats.len() >= 6, "{hats:?}");
+        for (at, band) in &hats {
+            let beat = at * 2.0;
+            assert!(beat - beat.floor() < 0.07, "on a beat: {beat}");
+            assert_eq!(*band, 2);
+        }
+        // Any hit, by its band: kicks pick the first, hats the third.
+        let any = hear_hits(&HitTrigger { band: HitBand::Any, to: StepTo::ByBand, gap: 0.125, ..t }, 8);
+        let kicks = any.iter().filter(|h| h.1 == 0).count();
+        let hat = any.iter().filter(|h| h.1 == 2).count();
+        assert!(kicks >= 7 && hat >= 7, "{any:?}");
+        assert_eq!(Step::of_hit(StepTo::ByBand, 2).from(0, 8, &mut Dice::default()), 2);
+        // A cued film is moved along its cues the same way.
+        let set = cued(false);
+        let mut ph = Playhead::default();
+        let mut i = input(0.0, 0.0);
+        i.slice_step = Some(Step::Next);
+        assert_eq!(ph.advance(&set.clips[0], &i), 0.7);
+        assert_eq!(ph.advance(&set.clips[0], &i), 1.9);
+    }
+
+    #[test]
+    fn a_look_has_effects_of_its_own_under_the_links_and_old_links_look_the_same() {
+        let links = vec![VideoLink::new(Source::Kick, Effect::Zoom, 0.5), VideoLink::new(Source::Level, Effect::Gate, 0.8)];
+        let read = |l: &VideoLink| Reading { value: if l.source == Source::Kick { 1.0 } else { 0.25 }, hit: false };
+        let plain = look(&links, &Default::default(), 1.0, &mut Dice::default(), read);
+        // Settings that are as they start change nothing.
+        let mut fx = std::collections::BTreeMap::new();
+        fx.insert(Effect::Gate, FxSetting { params: vec![0.0, 1.0], ..Default::default() });
+        fx.insert(Effect::Zoom, FxSetting::default());
+        assert_eq!(look(&links, &fx, 1.0, &mut Dice::default(), read), plain);
+        // A base: always there, the links on top, not scaled by the music.
+        fx.insert(Effect::Hue, FxSetting { base: 0.3, ..Default::default() });
+        fx.get_mut(&Effect::Zoom).unwrap().base = 0.25;
+        let lk = look(&links, &fx, 0.0, &mut Dice::default(), read);
+        assert!((lk.get(Effect::Hue) - 0.3).abs() < 1e-6 && (lk.get(Effect::Zoom) - 0.25).abs() < 1e-6);
+        let lk = look(&links, &fx, 1.0, &mut Dice::default(), read);
+        assert!((lk.get(Effect::Zoom) - 0.75).abs() < 1e-6);
+        // A range: from low at 0 to the amount at full.
+        let ranged = vec![VideoLink { low: 0.2, ..VideoLink::new(Source::Level, Effect::Pixels, 0.6) }];
+        let lk = look(&ranged, &Default::default(), 1.0, &mut Dice::default(), |_| Reading { value: 0.5, hit: false });
+        assert!((lk.get(Effect::Pixels) - 0.4).abs() < 1e-6);
+        // Gate's threshold: shut until the level is past it.
+        fx.insert(Effect::Gate, FxSetting { params: vec![0.5, 1.0], ..Default::default() });
+        assert!((look(&links, &fx, 1.0, &mut Dice::default(), read).get(Effect::Gate) - 0.8).abs() < 1e-6);
+        // Settings stay in their range; a choice is a whole place.
+        let mut s = FxSetting::default();
+        s.set_param(Effect::Mirror, 0, 2.6);
+        assert_eq!(s.param(Effect::Mirror, 0), 3.0);
+        s.set_param(Effect::Pixels, 0, 1000.0);
+        assert_eq!(s.param(Effect::Pixels, 0), 120.0);
+        assert_eq!(FxSetting::default().params4(Effect::Zoom), [1.5, 0.0, 0.0, 1.0]);
+        for e in Effect::ALL {
+            assert!(e.params().len() <= 4, "{e:?} has room for four settings");
+            assert!(e.params().iter().all(|p| (p.min..=p.max).contains(&p.default)), "{e:?}");
+        }
+    }
+
+    #[test]
+    fn a_links_response_smooths_bends_inverts_and_waits_for_its_threshold() {
+        let plain = Response::default();
+        assert_eq!((plain.shape(0.3), plain.smooth(0.0, 1.0, 0.016)), (0.3, 1.0));
+        let r = Response { curve: 2.0, threshold: 0.5, invert: true, ..plain };
+        // Inverted 0.1 is 0.9; over the half: 0.8, squared.
+        assert!((r.shape(0.1) - 0.64).abs() < 1e-6);
+        assert_eq!(r.shape(0.8), 0.0);
+        let slow = Response { attack: 0.1, release: 1.0, ..plain };
+        let up = slow.smooth(0.0, 1.0, 0.1);
+        assert!((up - (1.0 - (-1.0f32).exp())).abs() < 1e-6);
+        assert!(slow.smooth(1.0, 0.0, 0.1) > 0.9, "it lets go slowly");
+        // An LFO in time with the song.
+        let lfo = Lfo { shape: LfoShape::Triangle, beats: 4.0, phase: 0.0 };
+        assert_eq!(lfo.at(2.0), (1.0, 0));
+        assert_eq!(lfo.at(5.0).1, 1);
+        let saw = Lfo { shape: LfoShape::Saw, beats: 1.0, phase: 0.25 };
+        assert!((saw.at(0.5).0 - 0.75).abs() < 1e-6);
+        let random = Lfo { shape: LfoShape::Random, ..lfo };
+        assert_eq!(random.at(1.0), random.at(3.9), "held through its cycle");
+        // A band of its own hears a tone in it, not one outside it.
+        let tone = |hz: f32| (0..SR as usize).map(|i| 0.5 * (2.0 * std::f32::consts::PI * hz * i as f32 / SR).sin()).collect::<Vec<f32>>();
+        let mut inside = BandListener::new(SR, (800.0, 1200.0));
+        inside.feed(&tone(1000.0));
+        assert!(inside.value() > 0.9);
+        let mut both = BandListener::new(SR, (800.0, 1200.0));
+        both.feed(&tone(1000.0));
+        both.feed(&tone(80.0));
+        assert!(both.value() < 0.2, "{}", both.value());
+    }
+
+    #[test]
+    fn looks_change_by_part_clip_sequence_and_pad_and_old_sets_get_one_look() {
+        // The part's Look wins, then the clip's, then the sequence's, then the set's.
+        assert_eq!(look_for(Some(2), Some(1), Some(3), 0, 4), 2);
+        assert_eq!(look_for(None, Some(1), Some(3), 0, 4), 1);
+        assert_eq!(look_for(None, None, Some(3), 0, 4), 3);
+        assert_eq!(look_for(None, None, None, 0, 4), 0);
+        assert_eq!(look_for(Some(9), None, None, 1, 4), 1, "a Look that is gone");
+        // The sequence: a step a bar, exactly on the bar; a rest is the set's own.
+        let seq = LookSeq { on: true, every: Every::Bar, steps: vec![Some(1), None, Some(2)] };
+        assert_eq!(seq.look_at(3.999, 4, 3), Some(1));
+        assert_eq!(seq.look_at(4.0, 4, 3), None);
+        assert_eq!(seq.look_at(8.0, 4, 3), Some(2));
+        assert_eq!(seq.look_at(12.0, 4, 3), Some(1));
+        assert_eq!(seq.look_at(8.0, 4, 2), None, "no third Look");
+        assert_eq!(LookSeq { on: false, ..seq }.look_at(0.0, 4, 3), None);
+        // An older set: its links are its one Look (named as their preset), nothing in sequence.
+        let pulse = serde_json::to_string(&preset("Pulse").unwrap().links).unwrap();
+        let old: VideoSet = serde_json::from_str(&format!(r#"{{"clips":[],"links":{pulse}}}"#)).unwrap();
+        assert_eq!(old.looks.len(), 1);
+        assert_eq!(old.looks[0].name, "Pulse");
+        assert!(old.looks[0].fx.is_empty() && !old.look_seq.on);
+        let mine: VideoSet = serde_json::from_str(r#"{"clips":[],"links":[{"source":"Bass","effect":"Hue","amount":0.7}]}"#).unwrap();
+        assert_eq!((mine.looks[0].name.as_str(), mine.links()[0].amount), ("Look 1", 0.7));
+        assert_eq!(mine.links()[0].response, Response::default());
+        // Written again: Looks, no links of the old kind; it reads back the same.
+        let mut set = mine.clone();
+        set.looks.push(VideoLook::new("Two", vec![]));
+        set.looks[1].setting_mut(Effect::Grade).base = 1.0;
+        set.clips.push(VideoClip::new("a.mp4".into()));
+        set.clips[0].parts = vec![(0.0, 1.0), (2.0, 3.0)];
+        set.clips[0].set_part_look(1, Some(1));
+        set.look_seq.on = true;
+        let json = serde_json::to_string(&set).unwrap();
+        assert!(!json.contains("\"links\":[{\"source\":\"Bass\",\"effect\":\"Hue\",\"amount\":0.7}],\"looks\""));
+        let back: VideoSet = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, set);
+        // A part's Look stays with it as parts are split, kept and taken away.
+        let c = &mut set.clips[0];
+        assert!(c.split_part(2.5));
+        assert_eq!(c.part_looks, vec![None, Some(1), Some(1)]);
+        c.add_part(5.0, 6.0);
+        assert_eq!(c.part_look(1), Some(1));
+        assert_eq!(c.part_look(3), None);
+        c.remove_part(0);
+        assert_eq!(c.part_look(0), Some(1));
     }
 }
