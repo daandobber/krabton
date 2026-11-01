@@ -139,11 +139,6 @@ impl Director {
         }
     }
 
-    /// Starts listening afresh (the next frame takes up where the engine is).
-    pub fn deafen(&mut self) {
-        self.master = None;
-    }
-
     /// Clip `i` plays now (changing as the set says), or on the beat the set's
     /// *Launch* waits for, while the song plays at `beat`.
     pub fn launch(&mut self, set: &VideoSet, i: usize, beat: f64, playing: bool, bpm: f64, beats_per_bar: u32) {
