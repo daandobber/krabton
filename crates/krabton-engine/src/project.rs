@@ -1071,8 +1071,9 @@ pub enum Instrument {
         #[serde(default)]
         pads: Vec<crate::dsp::grit::GritPad>,
     },
-    /// Princess Flip: a sample flipped for pluggnb, chopped over the keys,
-    /// in the song's key (see `dsp::princess_flip`).
+    /// Flipside (Princess Flip before): a sample flipped for pluggnb,
+    /// chopped over the keys, in the song's key (see `dsp::princess_flip`).
+    /// Its tag stays `Flip`, so the sets made with it open as they were.
     Flip {
         preset: String,
         params: Vec<f32>,
@@ -1395,7 +1396,7 @@ impl Instrument {
             Instrument::Stretch { .. } => "Stretch",
             Instrument::Turntable { .. } => "Turntable",
             Instrument::Grit { .. } => "Grit",
-            Instrument::Flip { .. } => "Princess Flip",
+            Instrument::Flip { .. } => "Flipside",
         }
     }
 

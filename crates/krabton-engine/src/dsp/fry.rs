@@ -1,6 +1,6 @@
 //! The FRY section of Analog Princess, shared by the machine (its master
 //! section, see `princess_machine`), the Fryer effect (`fx::fryer`) and
-//! Princess Flip: what is sent to it through a ring modulator, a drive and a
+//! Flipside: what is sent to it through a ring modulator, a drive and a
 //! crusher ([`Bus::fry`]); then the time effects and the ceiling
 //! ([`Bus::tick`]): a stutter (a slice repeated), a tape stop (slowing to a
 //! stop), channel surfing (the sound flipping between a radio band, a

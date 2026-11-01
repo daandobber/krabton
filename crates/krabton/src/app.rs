@@ -195,7 +195,7 @@ pub enum BrowserItem {
     Turntable(&'static str),
     /// A Grit preset.
     Grit(&'static str),
-    /// A Princess Flip preset.
+    /// A Flipside preset.
     Flip(&'static str),
 }
 
@@ -280,7 +280,7 @@ impl BrowserItem {
             BrowserItem::Stretch(p) => format!("Stretch: {p}"),
             BrowserItem::Turntable(p) => format!("Turntable: {p}"),
             BrowserItem::Grit(p) => format!("Grit: {p}"),
-            BrowserItem::Flip(p) => format!("Princess Flip: {p}"),
+            BrowserItem::Flip(p) => format!("Flipside: {p}"),
         }
     }
 }
@@ -1691,10 +1691,7 @@ impl App {
                                     crate::ui::faces::grit::put_on(&mut pads[self.sel_pad.min(krabton_engine::dsp::grit::PADS - 1)], sample);
                                 }
                                 // Flipped: listened to for its key and tempo, chopped.
-                                Some(Instrument::Flip { sample: s, flip, .. }) => {
-                                    *flip = krabton_engine::dsp::princess_flip::listen(&sample, krabton_engine::dsp::princess_flip::ChopBy::Hits, 12);
-                                    *s = Some(sample);
-                                }
+                                Some(Instrument::Flip { sample: s, flip, .. }) => crate::ui::faces::flip::flip_onto(s, flip, sample),
                                 // On Analog Princess's chosen track, as its Sample voice.
                                 Some(Instrument::Princess { params, machine, .. }) => {
                                     crate::ui::faces::princess::put_on(params, machine, self.sel_pad, sample);
@@ -3676,7 +3673,7 @@ impl App {
             match name {
                 // Convert to MIDI and grooves (see `ui::convert`).
                 _ if self.convert_script(name, arg) => {}
-                // Princess Flip, the Fryer, Analog Princess's samples and Princess Sounds (see `princess_lib`).
+                // Flipside, the Fryer, Analog Princess's samples and Princess Sounds (see `princess_lib`).
                 _ if self.princess_script(name, arg) => {}
                 "scene" => self.cmd(Command::LaunchScene(nums.first().copied().unwrap_or(0))),
                 // chain=TRACK: prints its instrument and effects (to check by script).

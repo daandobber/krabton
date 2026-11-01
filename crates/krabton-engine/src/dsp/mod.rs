@@ -79,6 +79,8 @@ pub mod turntable;
 pub mod grit;
 pub mod fry;
 pub mod princess_flip;
+#[cfg(test)]
+pub(crate) mod princess_flip_legacy;
 
 use std::f32::consts::PI;
 

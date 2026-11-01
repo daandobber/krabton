@@ -157,6 +157,8 @@ pub enum Surface {
     Burst,
     /// Lacquer: a gloss across the top.
     Gloss,
+    /// A sky at night: specks of stars, a few sparkles, a glow low down.
+    Night,
 }
 
 /// The knobs.

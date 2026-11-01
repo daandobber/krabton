@@ -1396,6 +1396,8 @@ impl App {
         let mut toggle_editor = false;
         let mut open_rack = false;
         let mut mv = self.mod_view(ModOwner::Instrument(track_id));
+        // What Flipside asks of the set: an auto-flip, its chops sent elsewhere.
+        let mut flip_acts = (None, None);
         // Every track's instrument reports its sound for its screen.
         let status = self.status();
         let live = super::inst_screen::InstLive::read(&status, i);
@@ -2030,6 +2032,7 @@ impl App {
                         if let Some(msg) = played.said {
                             self.toast(msg);
                         }
+                        flip_acts = (played.auto, played.export);
                     }
                     Instrument::Facet { preset, params } => {
                         ui.horizontal(|ui| {
@@ -3033,6 +3036,16 @@ impl App {
         if let Some(note) = self.pending_pad_hit.take() {
             let ids = self.preview_note_on(i, note, 0.9);
             self.note_off(note, &ids);
+        }
+        if let Some(style) = flip_acts.0 {
+            if let Some(msg) = self.flip_auto_clip(i, style) {
+                self.toast(msg);
+            }
+        }
+        if let Some(to) = flip_acts.1 {
+            if let Some(msg) = self.flip_export(i, to) {
+                self.toast(msg);
+            }
         }
         if toggle_editor {
             self.toggle_plugin_editor(i);
