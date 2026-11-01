@@ -1072,7 +1072,8 @@ impl App {
             self.video.screen_open = true;
             self.video.fullscreen = true;
         }
-        pr.on_hover_text("Double-click: the picture alone, filling a screen (Esc leaves) · right-click: more").context_menu(|ui| {
+        // No tip here: it would cover the timeline (the Output tab says what a double-click does).
+        pr.context_menu(|ui| {
             if ui.button("Screen (a window of its own)").clicked() {
                 self.video.screen_open = true;
                 ui.close();
@@ -2070,9 +2071,11 @@ impl App {
         };
         fader(ui, "Opacity", &mut frame.opacity, 0.0..=1.0, "How see-through (0: not there, 1: all of it)");
         fader(ui, "Zoom", &mut frame.zoom, 0.25..=4.0, "How big (1: as it fits)");
-        if ui.add(egui::Button::new(RichText::new(if more { "Less" } else { "Where, turn and crop..." }).small()).frame(false)).clicked() {
-            more = !more;
-        }
+        row(ui, "", |ui| {
+            if ui.add(egui::Button::new(RichText::new(if more { "Fewer" } else { "Where, turn, crop..." }).small()).fill(PANEL2)).on_hover_text("Where it is on the screen, turned, and cut off at its sides").clicked() {
+                more = !more;
+            }
+        });
         if more {
             fader(ui, "Across", &mut frame.x, -1.0..=1.0, "Moved right (or left), in screens");
             fader(ui, "Down", &mut frame.y, -1.0..=1.0, "Moved down (or up), in screens");
@@ -2143,9 +2146,11 @@ impl App {
         let mut remove_fx = None;
         let mut remove_link = None;
         let mut add_link: Option<(Source, Effect)> = None;
+        // A few effects open, more shut (each says what moves it), to see them all at once.
+        let few = used.len() <= 2;
         for e in used {
             let open_id = Id::new(("video_card_open", e.index()));
-            let mut open = ui.ctx().data(|d| d.get_temp::<bool>(open_id)).unwrap_or(true);
+            let mut open = ui.ctx().data(|d| d.get_temp::<bool>(open_id)).unwrap_or(few);
             let mut s = look.setting(e);
             let links_n = look.links.iter().filter(|l| l.effect == e).count();
             let off = s.off;
@@ -2162,7 +2167,10 @@ impl App {
                     let mut on = !s.off;
                     switch(ui, &mut on, "Off: the Look without it, its settings and links kept");
                     s.off = !on;
-                    let name = ui.add(egui::Label::new(RichText::new(e.name()).strong().color(if on { TEXT } else { TEXT_DIM })).sense(Sense::click())).on_hover_text(e.about());
+                    // As wide for every effect, so the amounts line up from card to card.
+                    let (nr, name) = ui.allocate_exact_size(vec2(84.0, 18.0), Sense::click());
+                    ui.painter().with_clip_rect(nr).text(pos2(nr.left(), nr.center().y), Align2::LEFT_CENTER, e.name(), body(), if on { TEXT } else { TEXT_DIM });
+                    let name = name.on_hover_text(e.about());
                     if aresp.clicked() || name.clicked() {
                         open = !open;
                     }
@@ -2171,12 +2179,16 @@ impl App {
                         ui.spacing_mut().slider_width = ui.available_width().clamp(40.0, 120.0);
                         let tip = if e.on_hits() { "How often it happens on its own (links make it happen on hits)" } else { "Amount: how much of it there always is, whatever the music (the links add to it)" };
                         ui.add(egui::Slider::new(&mut s.base, 0.0..=1.0).show_value(false)).on_hover_text(tip);
+                        ui.label(RichText::new(if e.on_hits() { "on its own" } else { "always" }).small().color(TEXT_DIM)).on_hover_text(tip);
                     });
                 });
                 if !open {
-                    if links_n > 0 {
-                        hint(ui, &format!("Moved by {links_n} link{}", if links_n == 1 { "" } else { "s" }));
-                    }
+                    let by: Vec<String> = look.links.iter().filter(|l| l.effect == e).map(|l| if l.source.has_track() { format!("{} ({})", l.source.name(), track_name(tracks, l.from, if l.source.listens() { "master" } else { "all tracks" })) } else { l.source.name().to_string() }).collect();
+                    let said = if by.is_empty() { "Not moved by the music".to_string() } else { format!("Moved by {}", by.join(", ")) };
+                    ui.horizontal(|ui| {
+                        ui.add_space(18.0);
+                        ui.add(egui::Label::new(RichText::new(said).small().color(TEXT_DIM)).truncate());
+                    });
                     return;
                 }
                 note(ui, e.about());
@@ -2249,6 +2261,7 @@ impl App {
                             ui.spacing_mut().slider_width = ui.available_width().clamp(30.0, 120.0);
                             let tip = if l.effect.on_hits() { "How often a hit does it" } else { "How much at full" };
                             ui.add(egui::Slider::new(&mut l.amount, 0.0..=1.0).show_value(false)).on_hover_text(tip);
+                            ui.label(RichText::new(if l.effect.on_hits() { "how often" } else { "up to" }).small().color(TEXT_DIM));
                         });
                     });
                     // The source now, as a thin line under its row.

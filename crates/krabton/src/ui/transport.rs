@@ -203,8 +203,13 @@ impl App {
                 };
                 if level == 3 {
                     // No room: the views in one list.
-                    let now = views.iter().find(|v| v.0 == self.view).map_or("View", |v| v.1);
-                    ui.menu_button(RichText::new(format!("{now} ...")).color(TEXT_DARK).background_color(ACCENT), |ui| {
+                    // On the Video (a button of its own) the list is not lit.
+                    let now = views.iter().find(|v| v.0 == self.view).map(|v| v.1);
+                    let label = match now {
+                        Some(now) => RichText::new(format!("{now} ...")).color(TEXT_DARK).background_color(ACCENT),
+                        None => RichText::new("Views ...").color(TEXT),
+                    };
+                    ui.menu_button(label, |ui| {
                         for (v, name, _) in views.iter().rev() {
                             if ui.selectable_label(self.view == *v, *name).on_hover_text(tip(*v)).clicked() {
                                 self.view = *v;
