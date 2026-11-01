@@ -450,14 +450,7 @@ impl App {
             }
         };
         set.current = place(set.current);
-        let sw = &mut self.video.dir.switch;
-        sw.clip = place(sw.clip);
-        if let Some(p) = &mut sw.pending {
-            p.0 = place(p.0);
-        }
-        if let Some(f) = &mut sw.fade {
-            f.from = place(f.from);
-        }
+        self.video.dir.renumber(place);
         self.video.editing = Some(set.current);
     }
 
@@ -552,9 +545,8 @@ impl App {
             }
         });
         if !set.clips.is_empty() {
-            let w = pic.width().max(r.width().min(pic.width().max(560.0)));
-            let x0 = (pic.center().x - w * 0.5).max(r.left());
-            let bar = Rect::from_min_size(pos2(x0, pic.bottom() + 6.0), vec2(w.min(r.width()), bar_h));
+            // As wide as there is room for: the finer the timeline, the better.
+            let bar = Rect::from_min_size(pos2(r.left(), pic.bottom() + 6.0), vec2(r.width(), bar_h));
             let tl = Rect::from_min_size(pos2(bar.left(), bar.bottom() + 4.0), vec2(bar.width(), tl_h));
             let mut bar_ui = ui.new_child(UiBuilder::new().max_rect(bar).layout(egui::Layout::left_to_right(egui::Align::Center)));
             self.video_transport(&mut bar_ui);
@@ -589,7 +581,7 @@ impl App {
     /// The buttons over the timeline: pause, a frame back and on, where it
     /// is, Mark In and Out, split and delete, the zoom.
     fn video_transport(&mut self, ui: &mut Ui) {
-        let Some((i, clip, dur, live)) = self.video_edited() else { return };
+        let Some((_, clip, dur, live)) = self.video_edited() else { return };
         ui.spacing_mut().item_spacing.x = 4.0;
         let cued = clip.is_cued();
         let paused = self.video.paused;
@@ -620,7 +612,6 @@ impl App {
         if ui.add_enabled(picked && !cued, egui::Button::new("Delete")).on_hover_text("Takes the parts picked away (Delete): that bit of the film is skipped").clicked() {
             self.video_key_action(VideoAct::Delete);
         }
-        let _ = i;
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui.small_button("+").on_hover_text("Closer in (the wheel over the timeline)").clicked() {
                 self.video_zoom(dur, 0.5, None);

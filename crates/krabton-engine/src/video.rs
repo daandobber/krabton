@@ -273,8 +273,9 @@ pub const MIN_PART: f32 = 0.1;
 pub const TO_THE_END: f32 = 1.0e9;
 
 /// Puts parts in order: each the right way round and not before the
-/// film's start, the ones shorter than [`MIN_PART`] gone, overlapping or
-/// touching ones made one, no more than [`MAX_PARTS`]. (A part may end at
+/// film's start, the ones shorter than [`MIN_PART`] gone, overlapping ones
+/// made one (touching ones stay two, as a split leaves them), no more than
+/// [`MAX_PARTS`]. (A part may end at
 /// [`TO_THE_END`]: the film's end, whatever its length.)
 pub fn normalize_parts(parts: &mut Vec<(f32, f32)>) {
     parts.retain(|(a, b)| !a.is_nan() && !b.is_nan());
@@ -290,8 +291,12 @@ pub fn normalize_parts(parts: &mut Vec<(f32, f32)>) {
     let mut out: Vec<(f32, f32)> = Vec::with_capacity(parts.len());
     for &(a, b) in parts.iter() {
         match out.last_mut() {
-            Some(last) if a <= last.1 + 1e-4 => last.1 = last.1.max(b),
-            _ => out.push((a, b)),
+            Some(last) if a < last.1 - 1e-4 => last.1 = last.1.max(b),
+            // Apart (or touching: then from where the last ends).
+            last => {
+                let a = last.map_or(a, |l| a.max(l.1));
+                out.push((a, b));
+            }
         }
     }
     out.truncate(MAX_PARTS);
@@ -1705,8 +1710,8 @@ mod tests {
     fn parts_are_put_in_order_joined_where_they_overlap_and_tiny_ones_dropped() {
         let mut parts = vec![(5.0, 7.0), (6.5, 9.0), (2.0, 1.0), (3.0, 3.05), (-1.0, 0.5), (f32::NAN, 2.0), (9.0, 9.5)];
         normalize_parts(&mut parts);
-        // Turned the right way, joined where they overlap or touch, a twentieth of a second gone.
-        assert_eq!(parts, vec![(0.0, 0.5), (1.0, 2.0), (5.0, 9.5)]);
+        // Turned the right way, joined where they overlap (touching ones stay two), a twentieth of a second gone.
+        assert_eq!(parts, vec![(0.0, 0.5), (1.0, 2.0), (5.0, 9.0), (9.0, 9.5)]);
         // A part as short as can be stays; split in two only where both halves can be kept.
         let mut c = VideoClip::new("a.mp4".into());
         c.add_part(2.0, 2.0 + MIN_PART);
@@ -1716,6 +1721,9 @@ mod tests {
         assert!(!c.split_part(5.0), "in no part");
         assert!(c.split_part(1.5));
         assert_eq!(c.parts, vec![(0.0, 1.5), (1.5, 4.0)]);
+        // Another part kept later does not join them again.
+        c.add_part(6.0, 7.0);
+        assert_eq!(c.parts, vec![(0.0, 1.5), (1.5, 4.0), (6.0, 7.0)]);
         // Tiny parts of a film keep playing (back to back, no time lost).
         c.parts = vec![(1.0, 1.1), (3.0, 3.1), (5.0, 5.1)];
         assert!((c.joined_len(10.0) - 0.3).abs() < 1e-5);

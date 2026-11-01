@@ -139,6 +139,20 @@ impl Director {
         }
     }
 
+    /// The bank's clips put in another order: clip `i` is now `place(i)`
+    /// (the one playing goes on as it was).
+    pub fn renumber(&mut self, place: impl Fn(usize) -> usize) {
+        let sw = &mut self.switch;
+        sw.clip = place(sw.clip);
+        if let Some(p) = &mut sw.pending {
+            p.0 = place(p.0);
+        }
+        if let Some(f) = &mut sw.fade {
+            f.from = place(f.from);
+        }
+        self.on = self.on.map(&place);
+    }
+
     /// Clip `i` plays now (changing as the set says), or on the beat the set's
     /// *Launch* waits for, while the song plays at `beat`.
     pub fn launch(&mut self, set: &VideoSet, i: usize, beat: f64, playing: bool, bpm: f64, beats_per_bar: u32) {

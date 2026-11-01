@@ -44,6 +44,8 @@ pub fn frame_count(samples: usize, sample_rate: u32, fps: u32) -> usize {
 
 /// The sound under frame `k` (its first sample frame and the one after its
 /// last): each frame as long as its share, so a long song does not drift.
+/// (`render::render_watched` stops at the same places.)
+#[cfg(test)]
 pub fn frame_samples(k: usize, sample_rate: u32, fps: u32) -> (usize, usize) {
     let every = sample_rate as f64 / fps.max(1) as f64;
     ((k as f64 * every).round() as usize, ((k + 1) as f64 * every).round() as usize)
@@ -363,7 +365,14 @@ pub fn plan(work_project: &Project, source: RenderSource, sample_rate: u32, fps:
         let params = super::stage_params(&set, work_project, &look, &shot, (size(shot.clip), shot.from.and_then(|f| size(f.0))), &mut dir.dice);
         frames.push(Planned { shot, params });
     });
-    (audio.map(|a| (frames, a)), left)
+    // A frame for every whole frame's share of the sound.
+    (
+        audio.map(|a| {
+            frames.truncate(frame_count(a.len() / 2, sample_rate, fps));
+            (frames, a)
+        }),
+        left,
+    )
 }
 
 /// Starts making the film in the background.
