@@ -31,6 +31,9 @@ pub enum View {
     Tape,
     /// Touch: the selected track played with plates, a pulser, steps and cables.
     Touch,
+    /// The Video: its clips and Looks along the top, the picture and its
+    /// timeline in the middle, what it does on the right.
+    Video,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -600,8 +603,9 @@ pub struct App {
     pub(crate) glitch_window: Option<u64>,
     /// The Map, in a window, and the track chosen on it.
     pub(crate) map_window: bool,
-    /// The Video's window, and the Video as it runs (its clips, its ears, its screen).
-    pub(crate) video_window: bool,
+    /// The view the Video's button goes back to, and the Video as it runs
+    /// (its clips, its ears, its screen).
+    pub(crate) video_back: View,
     pub(crate) video: crate::video::VideoRuntime,
     pub(crate) map_selected: Option<u64>,
     /// Size of everything asked for by a script (see `run_script`).
@@ -788,7 +792,7 @@ impl App {
             auto_arm: false,
             glitch_window: None,
             map_window: false,
-            video_window: false,
+            video_back: View::Studio,
             video: Default::default(),
             map_selected: None,
             script_zoom: None,
@@ -3628,7 +3632,10 @@ impl App {
     /// Whether the detail panel (clip editor, devices) is out: the Rack has
     /// its own setting.
     pub(crate) fn detail_shown(&self) -> bool {
-        if self.view == View::Studio {
+        if self.view == View::Video {
+            // The Video has the whole window (it has its own side).
+            false
+        } else if self.view == View::Studio {
             self.prefs.layout.rack_detail
         } else {
             !self.prefs.layout.detail_hidden
@@ -3935,18 +3942,26 @@ impl App {
                 "devices" => self.detail = DetailTab::Devices,
                 "settings" => self.show_settings = true,
                 "mapwin" => self.map_window = true,
-                // video: its window (video=0 closes it); videoload=PATH: a clip into its bank; videotest=PATH: a
+                // video: its view (video=0 goes back); videoload=PATH: a clip into its bank; videotest=PATH: a
                 // test clip (a GIF made here) written there and loaded; videopreset=NAME;
                 // videomode=N (0 Loop, 1 Tempo, 2 Slices); videoscreen: its screen.
-                "video" => self.video_window = arg.trim() != "0",
+                "video" => {
+                    if arg.trim() == "0" {
+                        self.close_video();
+                    } else {
+                        self.open_video();
+                    }
+                }
+                // videotab=clip|look|triggers|output: the tab of the Video's side.
+                "videotab" => self.video.tab = crate::video::VideoTab::named(arg.trim()),
                 // videolink=URL: the Video fetches the film behind a link; videolinkbox opens its box.
                 "videolink" => {
-                    self.video_window = true;
+                    self.open_video();
                     self.video.link = arg.trim().to_string();
                     self.video_fetch_link();
                 }
                 "videolinkbox" => {
-                    self.video_window = true;
+                    self.open_video();
                     self.video.link_open = true;
                 }
                 // videotrim=FROM,TO: the Video clip edited plays only that part (seconds);
@@ -3961,14 +3976,14 @@ impl App {
                 }
                 _ if self.video_script(name, arg) => {}
                 "videoload" => {
-                    self.video_window = true;
+                    self.open_video();
                     self.video_add(&[PathBuf::from(arg.trim())]);
                 }
                 "videotest" => {
                     let path = PathBuf::from(arg.trim());
                     match std::fs::write(&path, crate::video::gif::test_pattern()) {
                         Ok(()) => {
-                            self.video_window = true;
+                            self.open_video();
                             self.video_add(&[path]);
                         }
                         Err(e) => eprintln!("videotest: {e}"),
@@ -4926,6 +4941,8 @@ impl eframe::App for App {
         self.grid_frame();
         self.move_frame();
         self.mod_frame();
+        // The Video's frame before anything is drawn, so its view shows this one.
+        self.video_frame(ctx);
         if self.big.on {
             self.ui_big(ctx, pad_input);
             self.ui_dialogs(ctx);
@@ -4961,7 +4978,9 @@ impl eframe::App for App {
         }
         // The browser runs from top to bottom, next to the detail view, as in Live.
         let fg = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("panel_grips")));
-        if self.browser.visible {
+        // The Video has the whole window: no browser, no detail view.
+        let whole = self.view == View::Video;
+        if !whole && self.browser.visible {
             let r = egui::SidePanel::left("browser")
                 .resizable(true)
                 .default_width(crate::prefs::Layout::or(self.prefs.layout.browser_w, 330.0))
@@ -4972,7 +4991,7 @@ impl eframe::App for App {
                 .rect;
             crate::widgets::grip_dots(&fg, egui::pos2(r.right(), r.center().y), true, theme::TEXT_DIM);
             self.remember_size(|l| &mut l.browser_w, r.width());
-        } else {
+        } else if !whole {
             egui::SidePanel::left("browser_hidden")
                 .resizable(false)
                 .exact_width(16.0)
@@ -4999,7 +5018,7 @@ impl eframe::App for App {
                 .rect;
             crate::widgets::grip_dots(&fg, egui::pos2(r.center().x, r.top()), false, theme::TEXT_DIM);
             self.remember_size(|l| &mut l.detail_h, r.height());
-        } else {
+        } else if !whole {
             // Folded away: a thin strip to bring it back.
             egui::TopBottomPanel::bottom("detail_hidden")
                 .resizable(false)
@@ -5040,6 +5059,7 @@ impl eframe::App for App {
                 View::Studio => self.ui_device_rack(ui),
                 View::Touch => self.ui_touch(ui),
                 View::Tape => self.ui_tape(ui),
+                View::Video => self.ui_video_view(ui),
             }
         });
         self.move_hud(ctx);

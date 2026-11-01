@@ -84,8 +84,48 @@ pub struct VideoRuntime {
     /// Record Video: the recording going on, and one being put together.
     pub rec: Option<record::Recorder>,
     pub rec_done: Option<std::thread::JoinHandle<Result<PathBuf, String>>>,
-    /// The side panel scrolled here once (by script, to look at it).
+    /// The side scrolled here once (by script, to look at it).
     pub side_scroll: Option<f32>,
+    /// The tab of the side that shows.
+    pub tab: VideoTab,
+}
+
+/// The tabs of the Video's side: how the clip plays, the Look's effects
+/// and what moves them, what changes the clips and Looks, where it goes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum VideoTab {
+    #[default]
+    Clip,
+    Look,
+    Triggers,
+    Output,
+}
+
+impl VideoTab {
+    pub const ALL: [VideoTab; 4] = [VideoTab::Clip, VideoTab::Look, VideoTab::Triggers, VideoTab::Output];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            VideoTab::Clip => "Clip",
+            VideoTab::Look => "Look",
+            VideoTab::Triggers => "Triggers",
+            VideoTab::Output => "Output",
+        }
+    }
+
+    pub fn about(self) -> &'static str {
+        match self {
+            VideoTab::Clip => "How the clip edited plays: its speed, slices, parts one at a time, how it sits on the screen",
+            VideoTab::Look => "The effects of the Look edited, each with what in the music moves it",
+            VideoTab::Triggers => "What changes the clips, the Looks, the slices and the parts: scenes, notes, hits",
+            VideoTab::Output => "The screen for a projector, Record Video and Export Video",
+        }
+    }
+
+    /// The tab by its name (a script's `videotab=look`); the Clip tab when there is none.
+    pub fn named(s: &str) -> Self {
+        Self::ALL.into_iter().find(|t| t.name().eq_ignore_ascii_case(s)).unwrap_or_default()
+    }
 }
 
 impl Default for VideoRuntime {
@@ -127,6 +167,7 @@ impl Default for VideoRuntime {
             rec: None,
             rec_done: None,
             side_scroll: None,
+            tab: VideoTab::Clip,
         }
     }
 }
@@ -276,7 +317,7 @@ fn show_frame(ctx: &egui::Context, tex: &mut Option<egui::TextureHandle>, shown:
 impl App {
     /// Whether the Video shows anywhere (it only listens and reads then).
     pub(crate) fn video_on(&self) -> bool {
-        self.video_window || self.video.screen_open || self.video.rec.is_some()
+        self.view == crate::app::View::Video || self.video.screen_open || self.video.rec.is_some()
     }
 
     /// Record Video starts, into `path` (or a new film in Documents/Krabton/Recorded).
