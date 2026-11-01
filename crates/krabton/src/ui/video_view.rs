@@ -1,16 +1,18 @@
-//! The Video's window, in the order a clip is made ready: the bank of
-//! clips along the top (click one to play it, drag to put it elsewhere),
-//! the picture with its timeline under it (the whole film as a strip of its
-//! frames, the parts that play lit: drag to keep a part, its edges to trim
-//! it, Mark In and Mark Out while it plays) and what the music does; beside
-//! it how the clip plays, how clips change, the look and the links. *Screen*
-//! opens the picture in a window of its own, for a second screen or a
-//! projector; *Export Video* makes a film of the song with it.
+//! The Video's view, laid out as a VJ desk. Along the top the deck: the
+//! clips of the bank (click one to play it, drag to put it elsewhere) and
+//! the Look pads, each under a line saying when a click starts it and how
+//! the change goes. In the middle the picture with its timeline under it
+//! (the whole film as a strip of its frames, the parts that play lit: drag
+//! to keep a part, its edges to trim it, Mark In and Mark Out while it
+//! plays) and what the music does. On the right a side with four tabs:
+//! *Clip* (how the clip edited plays), *Look* (the effects of the Look
+//! edited, each a card with the links that move it), *Triggers* (what
+//! changes the clips, the Looks, the slices and the parts) and *Output*
+//! (the screen for a projector, Record Video and Export Video).
 
-use super::windows::tool_window;
-use crate::app::{App, ExportSource};
+use crate::app::{App, ExportSource, View};
 use crate::theme::*;
-use crate::video::{export, ffmpeg, media, strip, ytdl};
+use crate::video::{export, ffmpeg, media, strip, ytdl, VideoTab};
 use crate::widgets::*;
 use egui::{pos2, vec2, Align2, Color32, Context, Id, Key, Rect, RichText, Sense, Stroke, Ui, UiBuilder};
 use krabton_engine::video::{self as kv, Effect, HitTrigger, Launch, PlayMode, Source, Transition, VideoLink};
@@ -112,32 +114,169 @@ fn beats_name(b: f32) -> String {
     }
 }
 
-/// What hears the hits and what a hit does: the sound, the band, how keen,
-/// the least gap and the grid (`what`: what it moves, for the hints).
-fn hit_editor(ui: &mut Ui, id: impl std::hash::Hash + Copy, t: &mut HitTrigger, tracks: &[(u64, String)], what: &str) {
+/// How wide the labels on the left of the side's rows are, so the
+/// controls after them line up.
+const LABEL_W: f32 = 84.0;
+
+/// A row of the side: its label in the dim colour on the left, the
+/// controls after it.
+fn row<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Hits in").small().color(TEXT_DIM));
-        track_dropdown(ui, (id, "track"), &mut t.track, tracks, "Master", "The sound heard: the whole song, or a track (a drum machine's own track hears only its drums)");
+        let (r, _) = ui.allocate_exact_size(vec2(LABEL_W, 20.0), Sense::hover());
+        ui.painter().with_clip_rect(r).text(pos2(r.left(), r.center().y), Align2::LEFT_CENTER, label, small(), TEXT_DIM);
+        add(ui)
+    })
+    .inner
+}
+
+/// A short line saying what something means, in the dim colour, under
+/// the controls of a row (where they start).
+fn hint(ui: &mut Ui, s: &str) {
+    ui.horizontal_top(|ui| {
+        ui.add_space(LABEL_W);
+        ui.vertical(|ui| {
+            ui.add(egui::Label::new(RichText::new(s).small().color(TEXT_DIM)).wrap());
+        });
+    });
+}
+
+/// A short line saying what something means, in the dim colour.
+fn note(ui: &mut Ui, s: &str) {
+    ui.add(egui::Label::new(RichText::new(s).small().color(TEXT_DIM)).wrap());
+}
+
+/// A heading for a part of the side: small capitals, a line under it.
+fn section(ui: &mut Ui, title: &str) {
+    ui.add_space(12.0);
+    ui.label(RichText::new(title.to_uppercase()).small().strong().color(TEXT_DIM));
+    let r = ui.available_rect_before_wrap();
+    ui.painter().line_segment([pos2(r.left(), r.top() + 1.0), pos2(r.right(), r.top() + 1.0)], Stroke::new(1.0_f32, LINE_SOFT));
+    ui.add_space(5.0);
+}
+
+/// The name of a group of the deck, in small capitals.
+fn deck_title(ui: &mut Ui, title: &str) {
+    ui.label(RichText::new(title).small().strong().color(TEXT));
+    ui.add_space(4.0);
+}
+
+/// A small on/off switch. Clicked: it turns.
+fn switch(ui: &mut Ui, on: &mut bool, tip: &str) -> egui::Response {
+    let (r, mut resp) = ui.allocate_exact_size(vec2(28.0, 16.0), Sense::click());
+    let p = ui.painter();
+    let track = Rect::from_center_size(r.center(), vec2(26.0, 14.0));
+    p.rect_filled(track, 7.0, if *on { ACCENT } else { PANEL3 });
+    let x = if *on { track.right() - 7.0 } else { track.left() + 7.0 };
+    p.circle_filled(pos2(x, track.center().y), 5.0, if *on { TEXT_DARK } else { TEXT_DIM });
+    if resp.clicked() {
+        *on = !*on;
+        resp.mark_changed();
+    }
+    resp.on_hover_text(tip)
+}
+
+/// A length to click through (right-click goes back), one of `lengths`
+/// (in beats, with its name). Whether it changed.
+fn length_button(ui: &mut Ui, value: &mut f32, lengths: &[(f32, &str)], tip: &str) -> bool {
+    let k = lengths.iter().position(|l| (l.0 - *value).abs() < 1e-3);
+    let label = k.map_or_else(|| format!("{value} beats"), |k| lengths[k].1.to_string());
+    let r = ui.add(egui::Button::new(RichText::new(label).color(TEXT)).fill(PANEL3).min_size(vec2(62.0, 0.0))).on_hover_text(format!("{tip}. Click: longer, right-click: shorter"));
+    let n = lengths.len();
+    let to = if r.clicked() {
+        Some(k.map_or(0, |k| (k + 1) % n))
+    } else if r.secondary_clicked() {
+        Some(k.map_or(0, |k| (k + n - 1) % n))
+    } else {
+        None
+    };
+    match to {
+        Some(t) => {
+            *value = lengths[t].0;
+            true
+        }
+        None => false,
+    }
+}
+
+/// The lengths of a change of clip, in beats.
+const CHANGE_LENGTHS: [(f32, &str); 5] = [(0.25, "1/4 beat"), (0.5, "1/2 beat"), (1.0, "1 beat"), (2.0, "2 beats"), (4.0, "4 beats")];
+/// The lengths of a change of Look (Cut: at once).
+const MORPH_LENGTHS: [(f32, &str); 6] = [(0.0, "Cut"), (0.25, "1/4 beat"), (0.5, "1/2 beat"), (1.0, "1 beat"), (2.0, "2 beats"), (4.0, "4 beats")];
+
+/// The name of a track (`none` for no track, the master or every one).
+fn track_name(tracks: &[(u64, String)], id: Option<u64>, none: &str) -> String {
+    match id {
+        None => none.to_string(),
+        Some(id) => tracks.iter().find(|t| t.0 == id).map_or("a track gone".to_string(), |t| t.1.clone()),
+    }
+}
+
+/// What hits drive, said in a few words: "kicks in Drums".
+fn hits_said(t: &HitTrigger, tracks: &[(u64, String)]) -> String {
+    let band = match t.band {
+        kv::HitBand::Any => "hits".to_string(),
+        b => b.name().to_lowercase(),
+    };
+    format!("{band} in {}", track_name(tracks, t.track, "the master"))
+}
+
+/// Over the clips: when a click starts one and how it changes to the next.
+fn clip_head(ui: &mut Ui, set: &mut kv::VideoSet) {
+    ui.spacing_mut().item_spacing.x = 6.0;
+    deck_title(ui, "CLIPS");
+    ui.label(RichText::new("Start").small().color(TEXT_DIM));
+    let launches: Vec<(Launch, String)> = Launch::ALL.iter().map(|l| (*l, launch_name(*l).to_string())).collect();
+    let tip = set.launch.about();
+    dropdown(ui, "video_launch", 84.0, &mut set.launch, &launches, tip);
+    ui.label(RichText::new("Change").small().color(TEXT_DIM));
+    let ts: Vec<(Transition, String)> = Transition::ALL.iter().map(|t| (*t, t.name().to_string())).collect();
+    let tip = set.transition.about();
+    dropdown(ui, "video_transition", 64.0, &mut set.transition, &ts, tip);
+    if set.transition != Transition::Cut {
+        length_button(ui, &mut set.transition_beats, &CHANGE_LENGTHS, "How long the change takes, in beats of the song");
+    }
+}
+
+/// Over the Look pads: when a click starts one and how long it morphs.
+fn look_head(ui: &mut Ui, set: &mut kv::VideoSet) {
+    ui.spacing_mut().item_spacing.x = 6.0;
+    deck_title(ui, "LOOKS");
+    ui.label(RichText::new("Start").small().color(TEXT_DIM));
+    let launches: Vec<(Launch, String)> = Launch::ALL.iter().map(|l| (*l, launch_name(*l).to_string())).collect();
+    dropdown(ui, "video_look_launch", 84.0, &mut set.look_launch, &launches, "When a Look pad clicked takes over (while the song plays)");
+    ui.label(RichText::new("Morph").small().color(TEXT_DIM)).on_hover_text("How long a change of Look takes");
+    length_button(ui, &mut set.morph_beats, &MORPH_LENGTHS, "How long a change of Look takes: its amounts, settings and colours move over to the next (Cut: at once)");
+}
+
+/// What hears the hits and what a hit does: the sound, the band, how
+/// sensitive, the least gap and the grid (`what`: what it moves, for the
+/// list of what a hit does).
+fn hit_editor(ui: &mut Ui, id: impl std::hash::Hash + Copy, t: &mut HitTrigger, tracks: &[(u64, String)], what: &str) {
+    row(ui, "Hits in", |ui| {
+        track_dropdown(ui, (id, "track"), &mut t.track, tracks, "Master", "The sound heard: the whole song, or one track (a drum machine's own track hears only its drums)");
         let bands: Vec<(kv::HitBand, String)> = kv::HitBand::ALL.iter().map(|b| (*b, b.name().to_string())).collect();
         dropdown(ui, (id, "band"), 74.0, &mut t.band, &bands, "Which hits: kicks (the low end), snares (the middle), hats (the top) or any");
     });
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("A hit:").small().color(TEXT_DIM));
+    row(ui, "Each hit", |ui| {
         let tos: Vec<(kv::StepTo, String)> = kv::StepTo::ALL.iter().map(|s| (*s, format!("{} {what}", s.name()))).collect();
         let tip = t.to.about();
-        dropdown(ui, (id, "to"), 120.0, &mut t.to, &tos, tip);
-        ui.label(RichText::new("Keen").small().color(TEXT_DIM));
-        ui.spacing_mut().slider_width = (ui.available_width() - 8.0).clamp(30.0, 90.0);
-        ui.add(egui::Slider::new(&mut t.sensitivity, 0.0..=1.0).show_value(false)).on_hover_text("How small a hit still counts (more: quieter hits too)");
+        dropdown(ui, (id, "to"), 130.0, &mut t.to, &tos, tip);
     });
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("Gap").small().color(TEXT_DIM)).on_hover_text("The least time between two hits (beats)");
+    row(ui, "Sensitivity", |ui| {
+        ui.spacing_mut().slider_width = (ui.available_width() - 48.0).clamp(40.0, 170.0);
+        ui.add(egui::Slider::new(&mut t.sensitivity, 0.0..=1.0).show_value(false)).on_hover_text("More: quieter hits count too");
+        ui.label(RichText::new(format!("{:.0} %", t.sensitivity * 100.0)).small().color(TEXT_DIM));
+    });
+    row(ui, "Gap", |ui| {
+        ui.spacing_mut().item_spacing.x = 3.0;
         for b in kv::HIT_LENGTHS.iter().skip(1).take(4) {
-            if choice(ui, &beats_name(*b), (t.gap - b).abs() < 1e-3, "The least time between two hits: one sooner is not heard").clicked() {
+            if choice(ui, &beats_name(*b), (t.gap - b).abs() < 1e-3, "The least time between two hits (in beats): one sooner is not heard").clicked() {
                 t.gap = *b;
             }
         }
-        ui.label(RichText::new("Grid").small().color(TEXT_DIM)).on_hover_text("A hit waits for the next step of this grid (Off: as heard)");
+    });
+    row(ui, "On the grid", |ui| {
+        ui.spacing_mut().item_spacing.x = 3.0;
         for b in [0.0, 0.25, 1.0] {
             if choice(ui, &beats_name(b), (t.quantize - b).abs() < 1e-3, "A hit waits for the next step of this grid (Off: at once, as heard)").clicked() {
                 t.quantize = b;
@@ -146,17 +285,62 @@ fn hit_editor(ui: &mut Ui, id: impl std::hash::Hash + Copy, t: &mut HitTrigger, 
     });
 }
 
-/// Whether hits heard drive something, and how (`what`: what they move).
-fn hits_switch(ui: &mut Ui, id: impl std::hash::Hash + Copy, t: &mut Option<HitTrigger>, tracks: &[(u64, String)], what: &str) {
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("Hits heard").small().color(TEXT_DIM));
-        let mut on = t.is_some() as usize;
-        if dropdown(ui, (id, "on"), 70.0, &mut on, &[(0, "Off".to_string()), (1, "On".to_string())], &format!("Hits in a sound change the {what} (for sequencers and drum machines that send no notes)")) {
-            *t = (on == 1).then(HitTrigger::default);
+/// A row that switches hits on and off for something, and their editor
+/// under it while they are on.
+fn hits_row(ui: &mut Ui, id: impl std::hash::Hash + Copy, t: &mut Option<HitTrigger>, tracks: &[(u64, String)], what: &str, tip: &str) {
+    row(ui, "Hits", |ui| {
+        let mut on = t.is_some();
+        if switch(ui, &mut on, tip).changed() || on != t.is_some() {
+            *t = on.then(HitTrigger::default);
         }
+        let said = t.as_ref().map_or("off".to_string(), |t| hits_said(t, tracks));
+        ui.label(RichText::new(said).small().color(TEXT_DIM));
     });
     if let Some(t) = t {
         hit_editor(ui, id, t, tracks, what);
+        ui.add_space(4.0);
+    }
+}
+
+/// How a link answers its source: where the effect rests, how fast it
+/// rises and falls, its curve, threshold and invert, and an LFO's or a
+/// band's own settings.
+fn link_response(ui: &mut Ui, i: usize, l: &mut VideoLink) {
+    let fader = |ui: &mut Ui, label: &str, v: &mut f32, range: std::ops::RangeInclusive<f32>, suffix: &str, tip: &str| {
+        row(ui, label, |ui| {
+            ui.spacing_mut().slider_width = (ui.available_width() - 64.0).max(40.0);
+            ui.add(egui::Slider::new(v, range).fixed_decimals(2).suffix(suffix)).on_hover_text(tip);
+        });
+    };
+    if !l.effect.on_hits() {
+        fader(ui, "At rest", &mut l.low, 0.0..=1.0, "", "Where the effect is with the source at nothing (the amount is where it is at full; above the amount turns it round)");
+    }
+    fader(ui, "Attack", &mut l.response.attack, 0.0..=2.0, " s", "How long it takes to rise (0: at once)");
+    fader(ui, "Release", &mut l.response.release, 0.0..=2.0, " s", "How long it takes to fall back (0: at once)");
+    fader(ui, "Curve", &mut l.response.curve, 0.25..=4.0, "", "Above 1 it holds back and comes late and sudden; below 1 early and soft");
+    fader(ui, "Threshold", &mut l.response.threshold, 0.0..=0.95, "", "It only moves above this");
+    row(ui, "", |ui| ui.checkbox(&mut l.response.invert, RichText::new("Invert").small()).on_hover_text("Upside down: the effect is up when the source is down"));
+    match l.source {
+        Source::Lfo => {
+            row(ui, "Shape", |ui| {
+                let shapes: Vec<(kv::LfoShape, String)> = kv::LfoShape::ALL.iter().map(|s| (*s, s.name().to_string())).collect();
+                dropdown(ui, ("video_lfo_shape", i), 90.0, &mut l.lfo.shape, &shapes, "The LFO's shape");
+            });
+            row(ui, "A cycle", |ui| {
+                let names: Vec<String> = kv::LFO_BEATS.iter().map(|b| if *b < 1.0 { format!("1/{} beat", (1.0 / b).round()) } else if *b == 1.0 { "1 beat".to_string() } else { format!("{b} beats") }).collect();
+                let lengths: Vec<(f32, &str)> = kv::LFO_BEATS.iter().zip(&names).map(|(b, n)| (*b, n.as_str())).collect();
+                length_button(ui, &mut l.lfo.beats, &lengths, "A cycle every so many beats of the song");
+            });
+            fader(ui, "Phase", &mut l.lfo.phase, 0.0..=1.0, "", "Where in its cycle it is on the song's first beat");
+        }
+        Source::Band => {
+            row(ui, "Band", |ui| {
+                ui.add(egui::DragValue::new(&mut l.band.0).range(20.0..=20000.0).speed(5.0).suffix(" Hz")).on_hover_text("From");
+                ui.label(RichText::new("to").small().color(TEXT_DIM));
+                ui.add(egui::DragValue::new(&mut l.band.1).range(20.0..=20000.0).speed(20.0).suffix(" Hz")).on_hover_text("To");
+            });
+        }
+        _ => {}
     }
 }
 
@@ -201,20 +385,6 @@ fn steps_row(ui: &mut Ui, id: impl std::hash::Hash + Copy, steps: &mut Vec<Optio
         }
     });
     let _ = id;
-}
-
-/// A heading for a group of the side panel, with a line under it.
-fn heading(ui: &mut Ui, title: &str) {
-    ui.add_space(10.0);
-    ui.label(RichText::new(title).strong().color(TEXT));
-    let r = ui.available_rect_before_wrap();
-    ui.painter().line_segment([pos2(r.left(), r.top() + 1.0), pos2(r.right(), r.top() + 1.0)], Stroke::new(1.0_f32, LINE_SOFT));
-    ui.add_space(5.0);
-}
-
-/// A short line saying what something means, in the dim colour.
-fn note(ui: &mut Ui, s: &str) {
-    ui.label(RichText::new(s).small().color(TEXT_DIM));
 }
 
 /// The sixteen-by-nine rect in `r`, in its middle.
@@ -309,19 +479,36 @@ enum TimeDrag {
 }
 
 impl App {
-    /// The Video: one frame of it, its window and its screen.
+    /// Whether the Video's view is up.
+    pub(crate) fn video_shown(&self) -> bool {
+        self.view == View::Video
+    }
+
+    /// To the Video's view, remembering the view before it to go back to.
+    pub(crate) fn open_video(&mut self) {
+        if self.view != View::Video {
+            self.video_back = self.view;
+            self.view = View::Video;
+        }
+    }
+
+    /// Back from the Video to the view before it.
+    pub(crate) fn close_video(&mut self) {
+        if self.view == View::Video {
+            self.view = if self.video_back == View::Video { View::Studio } else { self.video_back };
+        }
+    }
+
+    /// What the Video does wherever it shows: what was fetched or made
+    /// comes in, its screen and the box for Export Video. (The view itself
+    /// is `ui_video_view`; a frame of the Video is `video_frame`.)
     pub(crate) fn ui_video(&mut self, ctx: &Context) {
-        self.video.window_rect = None;
-        self.video_frame(ctx);
+        if !self.video_shown() {
+            self.video.window_rect = None;
+        }
         self.poll_ffmpeg_fetch();
         self.poll_link_grab(ctx);
         self.poll_video_export(ctx);
-        if self.video_window {
-            let (keep, _) = tool_window(ctx, "video", "Video", vec2(1180.0, 740.0), |ui| self.video_body(ui));
-            if !keep {
-                self.video_window = false;
-            }
-        }
         if self.video.screen_open {
             self.video_screen(ctx);
         }
@@ -411,51 +598,77 @@ impl App {
         self.video.link.clear();
     }
 
-    fn video_body(&mut self, ui: &mut Ui) {
-        // Films and pictures dropped on the Video (or anywhere, when the
-        // system does not say where the pointer is) come into its bank, and
-        // nowhere else.
-        let full = ui.available_rect_before_wrap();
-        self.video.window_rect = Some(full);
-        let here = crate::import::file_drop_pos(ui.ctx()).is_none_or(|p| full.contains(p));
+    /// The Video's view: the deck along the top (the clips over the
+    /// picture, the Looks over the side), the picture with its timeline
+    /// and what the music does in the middle, the side with its tabs on
+    /// the right. Films and pictures dropped on it come into its bank.
+    pub(crate) fn ui_video_view(&mut self, ui: &mut Ui) {
+        let all = ui.available_rect_before_wrap();
+        ui.allocate_rect(all, Sense::hover());
+        let here = crate::import::file_drop_pos(ui.ctx()).is_none_or(|p| all.contains(p));
         let dropped: Vec<PathBuf> = ui.ctx().input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).filter(|p| media::takes(p)).collect());
         if here && !dropped.is_empty() {
             self.video_add(&dropped);
             crate::import::take_file_drop(ui.ctx());
         }
-        ui.allocate_rect(full, Sense::hover());
-        let bank_h = 84.0;
-        let side_w = 340.0f32.min(full.width() * 0.4);
-        let bank = Rect::from_min_size(full.min, vec2(full.width(), bank_h));
-        let below = Rect::from_min_max(pos2(full.left(), bank.bottom() + 6.0), full.max);
-        let left = Rect::from_min_max(below.min, pos2(below.right() - side_w - 12.0, below.bottom()));
-        let side = Rect::from_min_max(pos2(left.right() + 12.0, below.top()), below.max);
-
-        let mut bank_ui = ui.new_child(UiBuilder::new().max_rect(bank));
-        self.video_bank(&mut bank_ui);
-        let mut left_ui = ui.new_child(UiBuilder::new().max_rect(left));
-        self.video_preview(&mut left_ui);
-        let mut side_ui = ui.new_child(UiBuilder::new().max_rect(side));
-        let mut side = egui::ScrollArea::vertical().id_salt("video_side").auto_shrink([false, false]);
-        if let Some(y) = self.video.side_scroll.take() {
-            side = side.vertical_scroll_offset(y);
-        }
-        side.show(&mut side_ui, |ui| self.video_controls(ui));
+        let full = all.shrink(8.0);
+        let gap = 8.0;
+        let side_w = (full.width() * 0.34).clamp(330.0, 440.0);
+        let deck_h = (full.height() * 0.16).clamp(88.0, 112.0);
+        let deck = Rect::from_min_size(full.min, vec2(full.width(), deck_h));
+        let top = deck.bottom() + gap;
+        let side = Rect::from_min_max(pos2(full.right() - side_w, top), full.max);
+        let centre = Rect::from_min_max(pos2(full.left(), top), pos2(side.left() - gap, full.bottom()));
+        // The timeline's keys work while the pointer is on the picture or the timeline.
+        self.video.window_rect = Some(centre);
+        self.video_deck(ui, deck, side_w, gap);
+        let mut centre_ui = ui.new_child(UiBuilder::new().max_rect(centre));
+        self.video_preview(&mut centre_ui);
+        self.video_side(ui, side);
     }
 
     // ------------------------------------------------------------------
-    // The bank
+    // The deck
     // ------------------------------------------------------------------
 
-    /// The clips, as pads: click one to play it, drag it to put it
-    /// elsewhere, right-click for more.
-    fn video_bank(&mut self, ui: &mut Ui) {
-        let r = ui.max_rect();
+    /// The deck: the clips of the bank on the left and the Look pads on
+    /// the right (as wide as the side under them), each under a line
+    /// saying when a click starts it and how the change goes.
+    fn video_deck(&mut self, ui: &mut Ui, r: Rect, looks_w: f32, gap: f32) {
+        let clips = Rect::from_min_max(r.min, pos2(r.right() - looks_w - gap, r.bottom()));
+        let looks = Rect::from_min_max(pos2(r.right() - looks_w, r.top()), r.max);
+        let head_h = 26.0;
+        for g in [clips, looks] {
+            rect_fill(ui.painter(), g, 4.0, PANEL);
+        }
+        let head = |g: Rect| Rect::from_min_size(g.min + vec2(10.0, 2.0), vec2(g.width() - 20.0, head_h));
+        let pads = |g: Rect| Rect::from_min_max(pos2(g.left() + 8.0, g.top() + head_h + 4.0), pos2(g.right() - 8.0, g.bottom() - 8.0));
+        let mut set = self.project.video.clone();
+        let mut h = ui.new_child(UiBuilder::new().max_rect(head(clips)).layout(egui::Layout::left_to_right(egui::Align::Center)));
+        clip_head(&mut h, &mut set);
+        let mut h = ui.new_child(UiBuilder::new().max_rect(head(looks)).layout(egui::Layout::left_to_right(egui::Align::Center)));
+        look_head(&mut h, &mut set);
+        if set != self.project.video {
+            self.project.video = set;
+        }
+        self.video_bank(ui, pads(clips));
+        let mut set = self.project.video.clone();
+        self.video_look_pads(ui, pads(looks), &mut set);
+        if set != self.project.video {
+            self.project.video = set;
+        }
+    }
+
+    /// The clips, as pads: click one to play it (and edit it), drag it to
+    /// put it elsewhere, right-click for more. The last pad adds a file or
+    /// a film from a link.
+    fn video_bank(&mut self, ui: &mut Ui, r: Rect) {
         let clips = self.project.video.clips.clone();
-        let pads = (clips.len() + 2).min(kv::MAX_CLIPS + 1).max(1);
+        let room = clips.len() < kv::MAX_CLIPS;
+        let slots = (clips.len() + usize::from(room)).max(1);
         let gap = 8.0;
-        let pw = ((r.width() - gap * (pads as f32 - 1.0)) / pads as f32).clamp(84.0, 136.0);
-        let ph = (r.height() - 4.0).min(76.0);
+        let ph = r.height();
+        let pw = ((r.width() - gap * (slots as f32 - 1.0)) / slots as f32).min(ph * 16.0 / 9.0).max(40.0);
         let pad_at = |i: usize| Rect::from_min_size(pos2(r.left() + i as f32 * (pw + gap), r.top()), vec2(pw, ph));
         let playing = self.video.playing();
         let pending = self.video.dir.switch.pending.map(|p| p.0);
@@ -478,10 +691,17 @@ impl App {
             let info = m.as_ref().map(|m| m.info()).unwrap_or_default();
             if let Some(t) = self.video.thumbs.get(&c.path) {
                 let [tw, th] = t.size();
-                let area = pad.shrink(3.0);
-                let s = (area.width() / tw as f32).min(area.height() / th as f32);
-                let img = Rect::from_center_size(area.center(), vec2(tw as f32 * s, th as f32 * s));
-                p.image(t.id(), img, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+                // Filling the pad (what sticks out cut off), as a clip in a VJ program.
+                let area = pad.shrink(1.0);
+                let (pa, ta) = (area.width() / area.height(), tw as f32 / th.max(1) as f32);
+                let uv = if ta > pa {
+                    let u = pa / ta;
+                    Rect::from_min_max(pos2((1.0 - u) * 0.5, 0.0), pos2((1.0 + u) * 0.5, 1.0))
+                } else {
+                    let v = ta / pa;
+                    Rect::from_min_max(pos2(0.0, (1.0 - v) * 0.5), pos2(1.0, (1.0 + v) * 0.5))
+                };
+                p.image(t.id(), area, uv, Color32::WHITE);
             }
             // Its number (the scene that picks it) or note, and its name on a dark band.
             let tag = if notes_pick { note_name(i) } else { (i + 1).to_string() };
@@ -523,7 +743,7 @@ impl App {
                     p.text(pos2(pad.center().x, pad.top() + 28.0), Align2::CENTER_CENTER, "reading...", small(), TEXT_DIM);
                 }
             }
-            // Playing: lit; waiting for its beat: dashed; the one edited: underlined.
+            // Playing: lit; waiting for its beat: blinking; the one edited: underlined.
             if playing == i {
                 rect_line(p, pad, 4.0, 2.0, ACCENT);
             } else if pending == Some(i) {
@@ -536,13 +756,13 @@ impl App {
             if edited == i {
                 p.rect_filled(Rect::from_min_size(pos2(pad.left() + 6.0, pad.bottom() + 2.0), vec2(pad.width() - 12.0, 2.0)), 1.0, SELECT);
             }
-            let tip = match (&info.error, info.note.is_empty()) {
+            let about = match (&info.error, info.note.is_empty()) {
                 (Some(e), _) => format!("{}\n{e}", c.path.display()),
                 (None, false) => format!("{}\n{}", c.path.display(), info.note),
                 (None, true) => c.path.display().to_string(),
             };
             let film = kv::is_film(&c.path);
-            let resp = resp.on_hover_text(format!("{tip}\nClick to play it and edit it (underlined); drag it to put it elsewhere in the bank; right-click for more"));
+            let resp = resp.on_hover_text(format!("{about}\nClick: play it and edit it (underlined) · drag: move it · right-click: more"));
             if resp.clicked() {
                 launch = Some(i);
             }
@@ -585,30 +805,28 @@ impl App {
                 ui.painter().line_segment([pos2(x, r.top()), pos2(x, r.top() + ph)], Stroke::new(3.0_f32, ACCENT));
             }
         }
-        // The empty pad: load more.
-        if clips.len() < kv::MAX_CLIPS {
+        // The last pad: a file, or a film from a link (or how its film is coming).
+        if room {
             let pad = pad_at(clips.len());
-            let resp = ui.interact(pad, Id::new("video_pad_add"), Sense::click());
+            let half = (pad.height() - 4.0) * 0.5;
+            let file = Rect::from_min_size(pad.min, vec2(pad.width(), half));
+            let link = Rect::from_min_size(pos2(pad.left(), pad.bottom() - half), vec2(pad.width(), half));
+            let resp = ui.interact(file, Id::new("video_pad_add"), Sense::click());
             let p = ui.painter();
-            let col = if resp.hovered() { TEXT } else { TEXT_DIM };
-            rect_line(p, pad, 4.0, 1.0, if resp.hovered() { ACCENT } else { LINE });
-            p.text(pad.center() - vec2(0.0, 8.0), Align2::CENTER_CENTER, "+", egui::FontId::proportional(22.0), col);
-            p.text(pad.center() + vec2(0.0, 14.0), Align2::CENTER_CENTER, "Film, picture, GIF", small(), col);
-            if resp.on_hover_text("Load films (needs ffmpeg), pictures (PNG, JPEG) or animated GIFs. Or drop them on this window").clicked() {
+            let hot = resp.hovered();
+            rect_line(p, file, 4.0, 1.0, if hot { ACCENT } else { LINE });
+            p.with_clip_rect(file).text(file.center(), Align2::CENTER_CENTER, "+ Add file", body(), if hot { TEXT } else { TEXT_DIM });
+            if resp.on_hover_text("Films (with ffmpeg), pictures (PNG, JPEG) or animated GIFs. Or drop them on this view").clicked() {
                 if let Some(paths) = rfd::FileDialog::new().set_title("Films, pictures or GIFs for the Video").add_filter("Films, pictures and GIFs", &media::EXTENSIONS).pick_files() {
                     self.video_add(&paths);
                 }
             }
-        }
-        // The pad for a link (YouTube and the like), or how its film is coming.
-        if clips.len() + 1 < kv::MAX_CLIPS {
-            let pad = pad_at(clips.len() + 1);
             let grab = self.video.grab.as_ref().and_then(|g| g.lock().ok().map(|s| s.clone()));
-            let resp = ui.interact(pad, Id::new("video_pad_link"), Sense::click());
+            let resp = ui.interact(link, Id::new("video_pad_link"), Sense::click());
             let p = ui.painter();
             let busy = grab.is_some();
-            let col = if resp.hovered() || busy { TEXT } else { TEXT_DIM };
-            rect_line(p, pad, 4.0, 1.0, if resp.hovered() || self.video.link_open || busy { ACCENT } else { LINE });
+            let hot = resp.hovered() || self.video.link_open || busy;
+            rect_line(p, link, 4.0, 1.0, if hot { ACCENT } else { LINE });
             match &grab {
                 Some(g) => {
                     let (what, f) = match g {
@@ -617,22 +835,23 @@ impl App {
                         ytdl::Grab::Film(f) => (format!("Fetching {:.0} %", f * 100.0), *f),
                         _ => (String::new(), 1.0),
                     };
-                    p.text(pad.center() - vec2(0.0, 6.0), Align2::CENTER_CENTER, what, small(), col);
-                    let bar = Rect::from_min_size(pos2(pad.left() + 8.0, pad.center().y + 12.0), vec2((pad.width() - 16.0) * f, 3.0));
+                    p.with_clip_rect(link).text(link.center() - vec2(0.0, 3.0), Align2::CENTER_CENTER, what, small(), TEXT);
+                    let bar = Rect::from_min_size(pos2(link.left() + 6.0, link.bottom() - 6.0), vec2((link.width() - 12.0) * f, 2.0));
                     p.rect_filled(bar, 1.0, ACCENT);
                 }
                 None => {
-                    p.text(pad.center() - vec2(0.0, 8.0), Align2::CENTER_CENTER, "Link", egui::FontId::proportional(16.0), col);
-                    p.text(pad.center() + vec2(0.0, 14.0), Align2::CENTER_CENTER, "YouTube and more", small(), col);
+                    p.with_clip_rect(link).text(link.center(), Align2::CENTER_CENTER, "+ From a link", body(), if resp.hovered() { TEXT } else { TEXT_DIM });
                 }
             }
-            let tip = if busy { "A film is being fetched from a link" } else { "A film from a link (YouTube and the many sites yt-dlp knows): paste it, and it comes into the bank. yt-dlp is fetched the first time" };
+            let tip = if busy { "A film is being fetched from a link" } else { "A film from a link (YouTube and the many sites yt-dlp knows): paste it, and it comes into the bank" };
             if resp.on_hover_text(tip).clicked() && !busy {
                 self.video.link_open = !self.video.link_open;
             }
             if self.video.link_open && !busy {
-                self.video_link_box(ui.ctx(), pos2(pad.left(), pad.bottom() + 4.0));
+                self.video_link_box(ui.ctx(), pos2(pad.left(), pad.bottom() + 6.0));
             }
+        } else if self.video.link_open {
+            self.video.link_open = false;
         }
         if let Some(i) = launch {
             self.video_launch(i);
@@ -666,6 +885,100 @@ impl App {
             set.current = set.current.min(set.clips.len().saturating_sub(1));
             let c = set.current;
             self.video.play_now(c);
+        }
+    }
+
+    /// The Look pads, two rows of four: click one to change to it (and
+    /// edit it in the Look tab), right-click for more; the last pad makes a
+    /// new Look. A pad says its effects under its name.
+    fn video_look_pads(&mut self, ui: &mut Ui, r: Rect, set: &mut kv::VideoSet) {
+        let playing = self.video.dir.look_playing();
+        let pending = self.video.dir.pads.pending.map(|p| p.0);
+        let own = self.video.dir.pads.clip;
+        let n = set.looks.len();
+        let slots = (n + 1).min(kv::MAX_LOOKS);
+        let (cols, gap) = (4, 6.0);
+        let w = (r.width() - gap * (cols as f32 - 1.0)) / cols as f32;
+        let h = ((r.height() - gap) / 2.0).max(20.0);
+        let mut launch = None;
+        let mut act: Option<(usize, &str)> = None;
+        for k in 0..slots {
+            let pad = Rect::from_min_size(pos2(r.left() + (k % cols) as f32 * (w + gap), r.top() + (k / cols) as f32 * (h + gap)), vec2(w, h));
+            let resp = ui.interact(pad, Id::new(("video_look_pad", k)), Sense::click());
+            let p = ui.painter();
+            if k == n {
+                rect_line(p, pad, 4.0, 1.0, if resp.hovered() { ACCENT } else { LINE });
+                p.text(pad.center(), Align2::CENTER_CENTER, "+ Look", body(), if resp.hovered() { TEXT } else { TEXT_DIM });
+                if resp.on_hover_text("A new Look: a copy of the one edited, to change").clicked() {
+                    act = Some((k, "new"));
+                }
+                continue;
+            }
+            let lit = playing == k;
+            rect_fill(p, pad, 4.0, if lit { ACCENT } else if resp.hovered() { PANEL3 } else { PANEL2 });
+            let (col, dim) = if lit { (TEXT_DARK, TEXT_DARK) } else { (TEXT, TEXT_DIM) };
+            let pc = p.with_clip_rect(pad.shrink(3.0));
+            let two = h >= 32.0;
+            let name_y = if two { pad.top() + h * 0.36 } else { pad.center().y };
+            pc.text(pos2(pad.left() + 8.0, name_y), Align2::LEFT_CENTER, look_label(k, &set.looks[k]), body(), col);
+            pc.text(pos2(pad.right() - 5.0, pad.top() + 3.0), Align2::RIGHT_TOP, (k + 1).to_string(), egui::FontId::proportional(9.0), dim);
+            if two {
+                let fx: Vec<&str> = set.looks[k].effects().iter().map(|e| e.name()).collect();
+                let said = if fx.is_empty() { "no effects".to_string() } else { fx.join(" · ") };
+                pc.text(pos2(pad.left() + 8.0, pad.top() + h * 0.74), Align2::LEFT_CENTER, said, small(), dim);
+            }
+            if pending == Some(k) {
+                let blink = (ui.input(|inp| inp.time) * 4.0) as i64 % 2 == 0;
+                rect_line(p, pad, 4.0, 2.0, if blink { ACCENT } else { LINE });
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(120));
+            } else if own == k && !lit {
+                rect_line(p, pad, 4.0, 1.5, ACCENT.gamma_multiply(0.6));
+            }
+            if set.look == k {
+                p.rect_filled(Rect::from_min_size(pos2(pad.left() + 6.0, pad.bottom() + 1.0), vec2(pad.width() - 12.0, 2.0)), 1.0, SELECT);
+            }
+            let resp = resp.on_hover_text("Click: this Look now (or on its beat), edited in the Look tab (underlined) · lit while it plays · right-click: more");
+            if resp.clicked() {
+                launch = Some(k);
+            }
+            resp.context_menu(|ui| {
+                ui.add(egui::TextEdit::singleline(&mut set.looks[k].name).hint_text("Its name").desired_width(140.0));
+                if ui.add_enabled(n < kv::MAX_LOOKS, egui::Button::new("Duplicate")).clicked() {
+                    act = Some((k, "dup"));
+                    ui.close();
+                }
+                if ui.add_enabled(n > 1, egui::Button::new("Delete")).clicked() {
+                    act = Some((k, "del"));
+                    ui.close();
+                }
+            });
+        }
+        match act {
+            Some((_, "new")) if n < kv::MAX_LOOKS => {
+                let mut l = set.edited_look().clone();
+                l.name = format!("Look {}", n + 1);
+                set.looks.push(l);
+                set.look = n;
+            }
+            Some((k, "dup")) if n < kv::MAX_LOOKS => {
+                let mut l = set.looks[k].clone();
+                l.name = format!("{} 2", l.name);
+                set.looks.insert(k + 1, l);
+                renumber_looks(set, |i| if i > k { i + 1 } else { i });
+                set.look = k + 1;
+            }
+            Some((k, "del")) if n > 1 => {
+                set.looks.remove(k);
+                renumber_looks(set, |i| if i > k { i - 1 } else { i.min(n - 2) });
+                set.look = set.look.min(set.looks.len() - 1);
+            }
+            _ => {}
+        }
+        if let Some(k) = launch {
+            set.look = k;
+            let st = self.status();
+            let (beat, playing) = (st.song_pos.load(), st.playing.load(std::sync::atomic::Ordering::Relaxed));
+            self.video.dir.launch_look(set, k, beat, playing, self.project.beats_per_bar);
         }
     }
 
@@ -736,14 +1049,13 @@ impl App {
     // The picture and its timeline
     // ------------------------------------------------------------------
 
-    /// The picture, the timeline of the clip edited under it, and what the
-    /// music does under that.
+    /// The middle: the picture (or, before there is anything to see, how
+    /// to start), under it the buttons for the film, its timeline, a line
+    /// saying what the mouse does on it, and what the music does.
     fn video_preview(&mut self, ui: &mut Ui) {
         let r = ui.max_rect();
-        let ears_h = 40.0;
-        let bar_h = 26.0;
-        let tl_h = 78.0;
-        let below_h = bar_h + tl_h + ears_h + 14.0;
+        let (bar_h, tl_h, hint_h, ears_h) = (28.0, 76.0, 16.0, 32.0);
+        let below_h = bar_h + tl_h + hint_h + ears_h + 14.0;
         let pic_area = Rect::from_min_max(r.min, pos2(r.right(), (r.bottom() - below_h).max(r.top() + 60.0)));
         // At the top of its place, in the middle across.
         let fitted = sixteen_nine(pic_area);
@@ -754,26 +1066,14 @@ impl App {
         let m = self.video.playing_media(&set);
         let info = m.as_ref().map(|m| m.info()).unwrap_or_default();
         self.draw_stage(&p, pic);
-        // What to do when there is nothing to see.
-        let mut msg_ui = ui.new_child(UiBuilder::new().max_rect(pic.shrink(24.0)).layout(egui::Layout::top_down(egui::Align::Center)));
-        if set.clips.is_empty() {
-            msg_ui.add_space(pic.height() * 0.22);
-            msg_ui.label(RichText::new("Drop a film, a picture or a GIF here, or click + above").color(TEXT).size(15.0));
-            msg_ui.add_space(6.0);
-            msg_ui.label(RichText::new("It plays along with the music: the kicks, the bass, the notes and the beat move it, as the links on the right say. Under the picture you keep the parts of a film that play. Screen puts it on a second screen or a projector.").color(TEXT_DIM));
-        } else if info.needs_ffmpeg {
-            self.ffmpeg_offer(&mut msg_ui, pic.height());
-        } else if let Some(e) = &info.error {
-            msg_ui.add_space(pic.height() * 0.35);
-            msg_ui.label(RichText::new(e).color(REC));
-        }
         // Right-click the picture: the screen.
         let pr = ui.interact(pic, Id::new("video_pic"), Sense::click());
         if pr.double_clicked() {
             self.video.screen_open = true;
             self.video.fullscreen = true;
         }
-        pr.on_hover_text("Double-click: the picture alone, filling a screen (Esc leaves). Right-click for more").context_menu(|ui| {
+        // No tip here: it would cover the timeline (the Output tab says what a double-click does).
+        pr.context_menu(|ui| {
             if ui.button("Screen (a window of its own)").clicked() {
                 self.video.screen_open = true;
                 ui.close();
@@ -784,18 +1084,73 @@ impl App {
                 ui.close();
             }
         });
-        if !set.clips.is_empty() {
-            // As wide as there is room for: the finer the timeline, the better.
-            let bar = Rect::from_min_size(pos2(r.left(), pic.bottom() + 6.0), vec2(r.width(), bar_h));
-            let tl = Rect::from_min_size(pos2(bar.left(), bar.bottom() + 4.0), vec2(bar.width(), tl_h));
+        // What to do when there is nothing to see.
+        let mut msg_ui = ui.new_child(UiBuilder::new().max_rect(pic.shrink(20.0)).layout(egui::Layout::top_down(egui::Align::Center)));
+        if set.clips.is_empty() {
+            self.video_welcome(&mut msg_ui, pic.height());
+        } else if info.needs_ffmpeg {
+            self.ffmpeg_offer(&mut msg_ui, pic.height());
+        } else if let Some(e) = &info.error {
+            msg_ui.add_space(pic.height() * 0.35);
+            msg_ui.label(RichText::new(e).color(REC));
+        }
+        // As wide as there is room for: the finer the timeline, the better.
+        let bar = Rect::from_min_size(pos2(r.left(), pic.bottom() + 6.0), vec2(r.width(), bar_h));
+        let tl = Rect::from_min_size(pos2(bar.left(), bar.bottom() + 4.0), vec2(bar.width(), tl_h));
+        let line = Rect::from_min_size(pos2(bar.left(), tl.bottom() + 2.0), vec2(bar.width(), hint_h));
+        let ears = Rect::from_min_size(pos2(bar.left(), line.bottom() + 2.0), vec2(bar.width(), ears_h));
+        if set.clips.is_empty() {
+            rect_fill(&p, tl, 3.0, PANEL);
+            p.text(tl.center(), Align2::CENTER_CENTER, "A film's timeline shows here: drag on it to keep the parts that play", small(), TEXT_DIM);
+        } else {
             let mut bar_ui = ui.new_child(UiBuilder::new().max_rect(bar).layout(egui::Layout::left_to_right(egui::Align::Center)));
             self.video_transport(&mut bar_ui);
             self.video_timeline(ui, tl);
-            let ears = Rect::from_min_size(pos2(bar.left(), tl.bottom() + 4.0), vec2(bar.width(), ears_h));
-            self.video_ears(ui, ears);
+            let said = self.video_timeline_hint();
+            p.with_clip_rect(line).text(pos2(line.left() + 2.0, line.center().y), Align2::LEFT_CENTER, said, small(), TEXT_DIM);
+        }
+        self.video_ears(ui, ears);
+    }
+
+    /// What the mouse does on the timeline now, said under it.
+    fn video_timeline_hint(&self) -> String {
+        let Some((_, clip, dur, _)) = self.video_edited() else { return String::new() };
+        if dur <= 0.0 {
+            String::new()
+        } else if clip.is_cued() {
+            "Cut by Slice to Drum Rack: the whole film plays, by its cues (the lines). Click to put the film there".to_string()
+        } else if clip.parts.is_empty() {
+            "The whole film plays. Drag on it to keep a part · click: put the film there · wheel: zoom".to_string()
         } else {
-            let ears = Rect::from_min_size(pos2(pic.left(), pic.bottom() + 8.0), vec2(pic.width(), ears_h));
-            self.video_ears(ui, ears);
+            "Drag a gap: another part · drag a part: move it · its edges: trim · Shift-click: pick more · right-click: more · double-click a gap: whole film".to_string()
+        }
+    }
+
+    /// Before there is a clip: how to start, in the picture.
+    fn video_welcome(&mut self, ui: &mut Ui, h: f32) {
+        ui.add_space((h * 0.12).max(4.0));
+        ui.label(RichText::new("Bring in a film, a picture or a GIF").color(TEXT).size(18.0));
+        ui.add_space(2.0);
+        ui.label(RichText::new("It plays along with the music: the kicks, the bass and the beat move it").color(TEXT_DIM));
+        ui.add_space(12.0);
+        let open = egui::Button::new(RichText::new("+ Add file...").color(TEXT_DARK).size(14.0)).fill(ACCENT).min_size(vec2(220.0, 30.0));
+        if ui.add(open).on_hover_text("Films (MP4, MOV, WebM and more), pictures (PNG, JPEG) or animated GIFs").clicked() {
+            if let Some(paths) = rfd::FileDialog::new().set_title("Films, pictures or GIFs for the Video").add_filter("Films, pictures and GIFs", &media::EXTENSIONS).pick_files() {
+                self.video_add(&paths);
+            }
+        }
+        ui.add_space(4.0);
+        let link = egui::Button::new(RichText::new("+ From a link (YouTube and more)...").size(14.0)).fill(PANEL3).min_size(vec2(220.0, 30.0));
+        if ui.add(link).on_hover_text("Paste a link: the film comes into the bank (fetched with yt-dlp, up to 720p)").clicked() {
+            self.video.link_open = true;
+        }
+        ui.add_space(6.0);
+        ui.label(RichText::new("or drop files anywhere on this view").small().color(TEXT_DIM));
+        if ffmpeg::find().is_none() {
+            ui.add_space(12.0);
+            ui.label(RichText::new("Films need ffmpeg, a free program. Pictures and GIFs play without it.").small().color(TEXT_DIM));
+            ui.add_space(4.0);
+            self.ffmpeg_fetch_row(ui);
         }
     }
 
@@ -1054,7 +1409,6 @@ impl App {
         };
         let resp = ui.interact(strip_r, Id::new("video_tl_strip"), Sense::click_and_drag());
         if cued {
-            let resp = resp.on_hover_text("Cut by Slice to Drum Rack: the whole film plays, by its cues (the lines). Click to put the film there");
             if resp.clicked() {
                 if let Some(pt) = resp.interact_pointer_pos() {
                     self.video_seek_to(i, t_of(pt.x) as f64, live);
@@ -1201,15 +1555,11 @@ impl App {
                 }
             }
         }
-        let tip = if parts.is_empty() {
-            "The whole film plays. Drag on it to keep a part (the rest is skipped); click to put the film there; the wheel zooms".to_string()
-        } else {
-            format!("{} part{} play back to back ({:.1} s of {:.1} s): drag on a gap for another, drag a part to move it, its edges to trim it; click to pick one (Shift: more); right-click for more; double-click a gap for the whole film", parts.len(), if parts.len() == 1 { "" } else { "s" }, kv::joined_len(&spans), dur)
-        };
+        // What the mouse does here is said under the timeline (a tip would cover the meters).
         let menu_k: Option<usize> = ui.ctx().data(|dd| dd.get_temp(menu_id)).flatten();
         let here = self.video.at as f32;
         let mut act = None;
-        resp.on_hover_text(tip).context_menu(|ui| {
+        resp.context_menu(|ui| {
             if let Some(k) = menu_k.filter(|k| *k < parts.len()) {
                 let (a, b) = parts[k];
                 ui.label(RichText::new(format!("Part {}: {} to {}", k + 1, clock(a as f64), clock(b.min(dur) as f64))).small().color(TEXT_DIM));
@@ -1345,11 +1695,12 @@ impl App {
         }
     }
 
-    /// The Video's keys, while the pointer is on its window: I and O mark
-    /// a part, S splits, Delete takes the parts picked away, K pauses, comma
-    /// and period step a frame. Whether it took the key.
+    /// The Video's keys, while the pointer is on its picture or timeline
+    /// (elsewhere the letters still play notes): I and O mark a part, S
+    /// splits, Delete takes the parts picked away, K pauses, comma and
+    /// period step a frame. Whether it took the key.
     pub(crate) fn video_key(&mut self, ctx: &Context, key: Key, m: egui::Modifiers) -> bool {
-        let over = self.video_window && self.video.window_rect.is_some_and(|r| ctx.input(|i| i.pointer.hover_pos()).is_some_and(|p| r.contains(p)));
+        let over = self.video_shown() && self.video.window_rect.is_some_and(|r| ctx.input(|i| i.pointer.hover_pos()).is_some_and(|p| r.contains(p)));
         if !over || !m.is_none() || self.project.video.clips.is_empty() {
             return false;
         }
@@ -1393,6 +1744,14 @@ impl App {
         ui.add_space(4.0);
         ui.label(RichText::new("ffmpeg is a free program that reads nearly every film. Krabton can fetch it into its library for you.").color(TEXT_DIM));
         ui.add_space(8.0);
+        self.ffmpeg_fetch_row(ui);
+        ui.add_space(6.0);
+        ui.label(RichText::new("Pictures and GIFs play without it.").small().color(TEXT_DIM));
+    }
+
+    /// ffmpeg's button: how big it is, how far it is fetched (or how to
+    /// install it where Krabton cannot fetch it), and to look for it again.
+    fn ffmpeg_fetch_row(&mut self, ui: &mut Ui) {
         let state = self.video.fetch.as_ref().and_then(|f| f.lock().ok().map(|s| s.clone()));
         match (state, ffmpeg::download()) {
             (Some(ffmpeg::Fetch::Downloading { bytes }), Some((_, total))) => {
@@ -1412,8 +1771,6 @@ impl App {
                 ui.label(RichText::new(format!("Install it ({}), then start Krabton again", ffmpeg::install_hint().trim_start_matches("or install it yourself ").trim_matches(['(', ')']))).color(TEXT));
             }
         }
-        ui.add_space(6.0);
-        ui.label(RichText::new("Pictures and GIFs play without it.").small().color(TEXT_DIM));
         if ui.small_button("Look again").on_hover_text("Installed it just now? Krabton looks for it again").clicked() {
             ffmpeg::forget();
             self.video.reload_films();
@@ -1438,31 +1795,51 @@ impl App {
     }
 
     // ------------------------------------------------------------------
-    // The side panel
+    // The side
     // ------------------------------------------------------------------
 
-    /// The screen, how the clip edited plays (its parts one at a time, how
-    /// it sits on the screen), how clips change, the Looks and how they
-    /// change, the Look edited (its effects and links), the export.
-    fn video_controls(&mut self, ui: &mut Ui) {
-        let mut set = self.project.video.clone();
-        let tracks: Vec<(u64, String)> = self.project.tracks.iter().map(|t| (t.id, t.name.clone())).collect();
-
-        // The screen: the picture alone in a window of its own.
-        let screen = self.video.screen_open;
-        ui.horizontal(|ui| {
-            let w = (ui.available_width() - 6.0) * 0.5;
-            if ui.add_sized([w, 28.0], egui::Button::new(RichText::new(if screen { "Screen is open" } else { "Screen" }).color(if screen { TEXT_DARK } else { TEXT })).fill(if screen { ACCENT } else { PANEL3 })).on_hover_text("The picture alone in a window of its own: drag it to a second screen or a projector, double-click it to fill that screen (Esc leaves). Click again to close it").clicked() {
-                self.video.screen_open = !screen;
-                self.video.fullscreen = false;
+    /// The side: four tabs, and what the one picked holds.
+    fn video_side(&mut self, ui: &mut Ui, r: Rect) {
+        rect_fill(ui.painter(), r, 4.0, PANEL);
+        let tabs = Rect::from_min_size(r.min + vec2(6.0, 6.0), vec2(r.width() - 12.0, 24.0));
+        let n = VideoTab::ALL.len() as f32;
+        let w = (tabs.width() - 4.0 * (n - 1.0)) / n;
+        for (k, t) in VideoTab::ALL.iter().enumerate() {
+            let b = Rect::from_min_size(pos2(tabs.left() + k as f32 * (w + 4.0), tabs.top()), vec2(w, tabs.height()));
+            if button(ui, b, Id::new(("video_tab", k)), t.name(), self.video.tab == *t, ACCENT).on_hover_text(t.about()).clicked() {
+                self.video.tab = *t;
             }
-            if ui.add_sized([w, 28.0], egui::Button::new("Full screen")).on_hover_text("The picture filling a screen at once (on the screen Krabton is on; Esc or a double-click leaves)").clicked() {
-                self.video.screen_open = true;
-                self.video.fullscreen = true;
+        }
+        let y = tabs.bottom() + 6.0;
+        ui.painter().line_segment([pos2(r.left(), y), pos2(r.right(), y)], Stroke::new(1.0_f32, LINE_SOFT));
+        let body = Rect::from_min_max(pos2(r.left() + 10.0, y + 2.0), pos2(r.right() - 4.0, r.bottom() - 4.0));
+        let mut body_ui = ui.new_child(UiBuilder::new().max_rect(body));
+        let tab = self.video.tab;
+        let mut area = egui::ScrollArea::vertical().id_salt(("video_side", tab.name())).auto_shrink([false, false]);
+        if let Some(y) = self.video.side_scroll.take() {
+            area = area.vertical_scroll_offset(y);
+        }
+        area.show(&mut body_ui, |ui| {
+            // Room on the right for the scroll bar.
+            ui.set_max_width(ui.available_width() - 10.0);
+            let mut set = self.project.video.clone();
+            let tracks: Vec<(u64, String)> = self.project.tracks.iter().map(|t| (t.id, t.name.clone())).collect();
+            match tab {
+                VideoTab::Clip => self.video_tab_clip(ui, &mut set, &tracks),
+                VideoTab::Look => self.video_tab_look(ui, &mut set, &tracks),
+                VideoTab::Triggers => self.video_tab_triggers(ui, &mut set, &tracks),
+                VideoTab::Output => self.video_tab_output(ui, &mut set),
             }
+            if set != self.project.video {
+                self.project.video = set;
+            }
+            ui.add_space(12.0);
         });
-        self.video_record_row(ui);
+    }
 
+    /// The Clip tab: the clip edited, how it plays, its parts one at a
+    /// time, its Look and how it sits on the screen.
+    fn video_tab_clip(&mut self, ui: &mut Ui, set: &mut kv::VideoSet, tracks: &[(u64, String)]) {
         let edited = set.current.min(set.clips.len().saturating_sub(1));
         let look_names: Vec<String> = set.looks.iter().enumerate().map(|(k, l)| look_label(k, l)).collect();
         let part_now = (self.video.playing() == edited).then_some(self.video.dir.playhead.part).flatten();
@@ -1472,326 +1849,279 @@ impl App {
         };
         // The step of a sequence the song is on (while it plays).
         let step_now = |every: kv::Every| -> Option<i64> { song.0.then(|| every.step(song.1, song.2)) };
-        if let Some(clip) = set.clips.get_mut(edited) {
-            heading(ui, "This clip");
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(format!("{}", edited + 1)).color(TEXT_DIM));
-                ui.add(egui::TextEdit::singleline(&mut clip.name).desired_width(ui.available_width()).hint_text("Its name"));
-            });
-            let dur = self.video.media.get(&clip.path).map_or(0.0, |m| m.info().duration);
-            let cued = clip.is_cued();
-            if dur > 0.0 {
-                let what = if cued {
-                    format!("{} long, cut in {} cues by Slice to Drum Rack", clock(dur as f64), clip.cues.as_ref().map_or(0, |c| c.len()))
-                } else if clip.is_cut() {
-                    format!("{} of {} plays: {} part{} back to back", clock(clip.joined_len(dur) as f64), clock(dur as f64), clip.parts.len(), if clip.parts.len() == 1 { "" } else { "s" })
-                } else {
-                    format!("{} long, all of it plays (drag on the timeline to keep parts)", clock(dur as f64))
-                };
-                note(ui, &what);
-            }
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Plays").small().color(TEXT_DIM));
-                let modes: Vec<(PlayMode, String)> = PlayMode::ALL.iter().map(|m| (*m, m.name().to_string())).collect();
-                let tip = clip.play.mode.about();
-                dropdown(ui, ("video_mode", edited), 70.0, &mut clip.play.mode, &modes, tip);
-                if !(cued && clip.play.mode == PlayMode::Slices) {
-                    let mut dir = match (clip.play.reverse, clip.play.bounce) {
-                        (_, true) => 2,
-                        (true, false) => 1,
-                        _ => 0,
-                    };
-                    let free = clip.play.mode != PlayMode::Slices;
-                    let dirs: Vec<(usize, String)> = [(0, "Forward"), (1, "Reverse"), (2, "Ping-pong")].iter().filter(|(k, _)| *k < 2 || free).map(|(k, s)| (*k, s.to_string())).collect();
-                    if dropdown(ui, ("video_dir", edited), 82.0, &mut dir, &dirs, "Which way it plays: forwards, backwards, or there and back (Loop and Tempo)") {
-                        clip.play.reverse = dir == 1;
-                        clip.play.bounce = dir == 2;
-                    }
-                }
-                if choice(ui, "Freeze", clip.play.freeze, "It stands still on one frame: where Start puts it, or the slice a note picks").clicked() {
-                    clip.play.freeze = !clip.play.freeze;
-                }
-            });
-            let parts_n = clip.spans(dur).len();
-            let seq_on = clip.play.seq.on && parts_n > 1 && !cued;
-            let what = if seq_on { "the part that plays" } else if clip.is_cut() { "its parts back to back" } else { "the whole clip" };
-            let plain = match clip.play.mode {
-                PlayMode::Loop => format!("Round and round on its own, at its speed ({what})"),
-                PlayMode::Tempo => format!("In time with the song: {what} in {} bar{}, following where the song is", clip.play.bars, if clip.play.bars == 1 { "" } else { "s" }),
-                PlayMode::Slices if cued => "Each note shows the film from its cue, as filmed, for as long as its pad's sound plays".to_string(),
-                PlayMode::Slices if seq_on => format!("Cut in {} slices of the part that plays: the notes (or hits) pick one", clip.play.slices),
-                PlayMode::Slices if clip.play.part_slices && parts_n > 1 => format!("Notes play its parts, like pads: C1 the first part, C#1 the second ({parts_n} parts)"),
-                PlayMode::Slices => format!("Cut in {} slices that notes play, like pads: C1 the first, C#1 the second...", clip.play.slices),
-            };
-            note(ui, &plain);
-            match clip.play.mode {
-                PlayMode::Tempo => {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("Lasts").small().color(TEXT_DIM));
-                        for b in [1, 2, 4, 8, 16] {
-                            if choice(ui, &b.to_string(), clip.play.bars == b, "How many bars it takes, in time with the song").clicked() {
-                                clip.play.bars = b;
-                            }
-                        }
-                        ui.label(RichText::new("bars").small().color(TEXT_DIM));
-                    });
-                }
-                // Cues play as filmed, as their sound does.
-                PlayMode::Slices if cued => {}
-                PlayMode::Loop | PlayMode::Slices => {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("Speed").small().color(TEXT_DIM));
-                        ui.spacing_mut().slider_width = (ui.available_width() - 120.0).max(60.0);
-                        ui.add(egui::Slider::new(&mut clip.play.speed, 0.0..=4.0).show_value(false)).on_hover_text("How fast it plays (1: as filmed)");
-                        ui.add(egui::DragValue::new(&mut clip.play.speed).range(0.0..=4.0).speed(0.005).fixed_decimals(3).suffix("×")).on_hover_text("Finely: drag, or double-click to type");
-                    });
-                }
-            }
-            if clip.play.mode != PlayMode::Slices && dur > 0.0 {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Start").small().color(TEXT_DIM));
-                    let len = clip.joined_len(dur).max(0.1);
-                    ui.spacing_mut().slider_width = (ui.available_width() - 90.0).max(60.0);
-                    ui.add(egui::Slider::new(&mut clip.play.offset, 0.0..=len).show_value(false)).on_hover_text("Where in its parts it starts (and where Freeze stands)");
-                    ui.add(egui::DragValue::new(&mut clip.play.offset).range(0.0..=len).speed(0.01).fixed_decimals(2).suffix(" s"));
-                });
-            }
-            let mut even = false;
-            if let (true, Some(cues)) = (cued && clip.play.mode == PlayMode::Slices, clip.cues.as_mut()) {
-                // Cut where Slice to Drum Rack cut its sound.
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new(format!("{} cues, played by", cues.len())).small().color(TEXT_DIM));
-                    track_dropdown(ui, ("video_cue_track", edited), &mut cues.track, &tracks, "Every track", "Whose notes show the cues (the track it was sliced to)");
-                    let (name, tip) = if cues.gate { ("Gate", "Gate: the picture stands still where its note ends, as the pad's sound stops. Click for One-Shot") } else { ("One-Shot", "One-Shot: each piece plays on to its end, as the pad's sound does. Click for Gate") };
-                    if choice(ui, name, false, tip).clicked() {
-                        cues.gate = !cues.gate;
-                    }
-                    if choice(ui, "Even", false, "Forget the cues: back to equal slices (and parts can be kept again)").clicked() {
-                        even = true;
-                    }
-                });
-            } else if clip.play.mode == PlayMode::Slices {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new("Slices").small().color(TEXT_DIM));
-                    let by_part = clip.play.part_slices && parts_n > 1 && !seq_on;
-                    for n in [4, 8, 16, 32] {
-                        if choice(ui, &n.to_string(), !by_part && clip.play.slices == n, "In how many equal slices it is cut (of its parts back to back, or of the part that plays)").clicked() {
-                            clip.play.slices = n;
-                            clip.play.part_slices = false;
-                        }
-                    }
-                    let tip = if parts_n > 1 { "One slice for each part: the notes play the parts" } else { "One slice for each part: keep a few parts on the timeline first" };
-                    if ui.add_enabled(parts_n > 1 && !seq_on, egui::Button::new(RichText::new("Parts").color(if by_part { TEXT_DARK } else { TEXT })).fill(if by_part { ACCENT } else { PANEL3 })).on_hover_text(tip).on_disabled_hover_text(tip).clicked() {
-                        clip.play.part_slices = !clip.play.part_slices;
-                    }
-                });
-            }
-            if clip.play.mode == PlayMode::Slices {
-                // What picks the slices (or the cues): a track's notes, or hits heard in a sound.
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Driven by").small().color(TEXT_DIM));
-                    let mut by = clip.play.slice_hits.is_some() as usize;
-                    if dropdown(ui, ("video_slice_by", edited), 110.0, &mut by, &[(0, "Notes".to_string()), (1, "Hits heard".to_string())], "Notes: a track's notes pick the slices, like pads. Hits heard: kicks, snares or hats in a sound move to another slice (for sequencers and drum machines that send no notes)") {
-                        clip.play.slice_hits = (by == 1).then(HitTrigger::default);
-                    }
-                    if clip.play.slice_hits.is_none() && !cued {
-                        track_dropdown(ui, ("video_slice_track", edited), &mut clip.play.slice_track, &tracks, "Every track", "Whose notes pick the slices");
-                    }
-                });
-                if let Some(t) = &mut clip.play.slice_hits {
-                    hit_editor(ui, ("video_slice_hits", edited), t, &tracks, "slice");
-                }
+        let Some(clip) = set.clips.get_mut(edited) else {
+            ui.add_space(8.0);
+            note(ui, "No clip yet. Add a film, a picture or a GIF with + Add file in the deck (or drop one on this view): how it plays is set here.");
+            return;
+        };
+        let mut go_triggers = false;
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            let (b, _) = ui.allocate_exact_size(vec2(22.0, 20.0), Sense::hover());
+            rect_fill(ui.painter(), b, 3.0, PANEL3);
+            ui.painter().text(b.center(), Align2::CENTER_CENTER, (edited + 1).to_string(), small(), TEXT);
+            ui.add(egui::TextEdit::singleline(&mut clip.name).desired_width(ui.available_width()).hint_text("Its name"));
+        });
+        let dur = self.video.media.get(&clip.path).map_or(0.0, |m| m.info().duration);
+        let cued = clip.is_cued();
+        let parts_n = clip.spans(dur).len();
+        if dur > 0.0 {
+            let what = if cued {
+                format!("{} long, cut in {} cues by Slice to Drum Rack", clock(dur as f64), clip.cues.as_ref().map_or(0, |c| c.len()))
+            } else if clip.is_cut() {
+                format!("{} of {} plays: {} part{} back to back", clock(clip.joined_len(dur) as f64), clock(dur as f64), clip.parts.len(), if clip.parts.len() == 1 { "" } else { "s" })
             } else {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Jump cuts in").small().color(TEXT_DIM));
-                    for n in [4, 8, 16, 32] {
-                        if choice(ui, &n.to_string(), clip.play.slices == n, "Where a Jump link can cut to: the clip (or the part that plays) in this many equal slices").clicked() {
-                            clip.play.slices = n;
-                        }
-                    }
-                });
-            }
-            if even {
-                clip.cues = None;
-            }
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Look").small().color(TEXT_DIM));
-                look_dropdown(ui, ("video_clip_look", edited), &mut clip.look, &look_names, "The set's", "The Look this clip plays with (a part's own wins over it; the set's: whatever the pads, the sequence, the notes or the scenes say)");
-            });
+                format!("{} long: all of it plays (drag on the timeline to keep parts)", clock(dur as f64))
+            };
+            note(ui, &what);
+        } else {
+            note(ui, "A picture: it shows as it is");
+        }
 
-            // Its parts one at a time, changing on the beat.
-            if !cued {
-                let seq = &mut clip.play.seq;
-                egui::CollapsingHeader::new(RichText::new("Parts one at a time").color(TEXT)).id_salt(("video_seq", edited, seq.on)).default_open(seq.on).show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        let tip = if parts_n > 1 { "Plays one part at a time, changing on the beat as the order says; Slices then cut the part that plays, Tempo fits it into its bars" } else { "Keep two parts or more on the timeline first" };
-                        if ui.add_enabled(parts_n > 1, egui::Button::new(RichText::new(if seq.on { "On" } else { "Off" }).color(if seq.on { TEXT_DARK } else { TEXT })).fill(if seq.on { ACCENT } else { PANEL3 })).on_hover_text(tip).on_disabled_hover_text(tip).clicked() {
-                            seq.on = !seq.on;
-                        }
-                        if seq.order.on_steps() {
-                            ui.label(RichText::new("every").small().color(TEXT_DIM));
-                            if choice(ui, seq.every.name(), false, "How often it may change part, on the song's beat. Click for the next").clicked() {
-                                seq.every = seq.every.next();
-                            }
-                        }
-                        let orders: Vec<(kv::PartOrder, String)> = kv::PartOrder::ALL.iter().map(|o| (*o, o.name().to_string())).collect();
-                        let tip = seq.order.about();
-                        dropdown(ui, ("video_seq_order", edited), 90.0, &mut seq.order, &orders, tip);
-                    });
-                    match seq.order {
-                        kv::PartOrder::Steps => {
-                            let now = step_now(seq.every).map(|s| s.rem_euclid(seq.steps.len().max(1) as i64) as usize);
-                            steps_row(ui, ("video_seq_steps", edited), &mut seq.steps, parts_n.max(1), now, "Hold", |k| (k + 1).to_string(), "Each step a part (click for the next part, right-click to pick, or Hold: the part before stays)");
-                        }
-                        kv::PartOrder::Notes => {
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("Notes of").small().color(TEXT_DIM));
-                                track_dropdown(ui, ("video_seq_track", edited), &mut seq.track, &tracks, "Every track", "Whose notes pick the part: C3 the first, C#3 the second (below C3 they still play slices)");
-                            });
-                        }
-                        kv::PartOrder::Hits => hit_editor(ui, ("video_seq_hits", edited), &mut seq.hits, &tracks, "part"),
-                        _ => {}
-                    }
-                    if seq.on && parts_n > 1 {
-                        let k = part_now.map_or("-".to_string(), |k| (k + 1).to_string());
-                        note(ui, &format!("Part {k} of {parts_n} plays now (lit on the timeline)"));
-                    }
-                });
-            }
-
-            // How it sits on the screen.
-            let frame = &mut clip.frame;
-            egui::CollapsingHeader::new(RichText::new("On the screen").color(TEXT)).id_salt(("video_frame", edited)).default_open(!frame.is_plain()).show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Fit").small().color(TEXT_DIM));
-                    let fits = vec![(None, "The set's".to_string()), (Some(kv::Fit::Fill), "Fill".to_string()), (Some(kv::Fit::Fit), "Fit".to_string())];
-                    dropdown(ui, ("video_clip_fit", edited), 90.0, &mut frame.fit, &fits, "Fill: the whole screen, cutting off what sticks out. Fit: the whole picture, with black bars");
-                    if ui.small_button("Reset").on_hover_text("As it was: the whole picture, in the middle").clicked() {
-                        *frame = kv::ClipFrame::default();
-                    }
-                });
-                let row = |ui: &mut Ui, label: &str, v: &mut f32, range: std::ops::RangeInclusive<f32>, tip: &str| {
-                    ui.horizontal(|ui| {
-                        ui.add_sized([62.0, 18.0], egui::Label::new(RichText::new(label).small().color(TEXT_DIM)));
-                        ui.spacing_mut().slider_width = (ui.available_width() - 60.0).max(50.0);
-                        ui.add(egui::Slider::new(v, range).fixed_decimals(2)).on_hover_text(tip);
-                    });
+        section(ui, "How it plays");
+        row(ui, "Mode", |ui| {
+            let modes: Vec<(PlayMode, String)> = PlayMode::ALL.iter().map(|m| (*m, m.name().to_string())).collect();
+            let tip = clip.play.mode.about();
+            dropdown(ui, ("video_mode", edited), 70.0, &mut clip.play.mode, &modes, tip);
+            if !(cued && clip.play.mode == PlayMode::Slices) {
+                let mut dir = match (clip.play.reverse, clip.play.bounce) {
+                    (_, true) => 2,
+                    (true, false) => 1,
+                    _ => 0,
                 };
-                row(ui, "Opacity", &mut frame.opacity, 0.0..=1.0, "How see-through (0: not there, 1: all of it)");
-                row(ui, "Zoom", &mut frame.zoom, 0.25..=4.0, "How big (1: as it fits)");
-                row(ui, "Across", &mut frame.x, -1.0..=1.0, "Moved right (or left), in screens");
-                row(ui, "Down", &mut frame.y, -1.0..=1.0, "Moved down (or up), in screens");
-                row(ui, "Turn", &mut frame.turn, -0.5..=0.5, "Turned (0.25: a quarter of the way round)");
-                for (k, side) in ["Crop left", "Crop top", "Crop right", "Crop bottom"].iter().enumerate() {
-                    row(ui, side, &mut frame.crop[k], 0.0..=0.45, "Cut off this side (of the picture)");
+                let free = clip.play.mode != PlayMode::Slices;
+                let dirs: Vec<(usize, String)> = [(0, "Forward"), (1, "Reverse"), (2, "Ping-pong")].iter().filter(|(k, _)| *k < 2 || free).map(|(k, s)| (*k, s.to_string())).collect();
+                if dropdown(ui, ("video_dir", edited), 82.0, &mut dir, &dirs, "Which way it plays: forwards, backwards, or there and back (Loop and Tempo)") {
+                    clip.play.reverse = dir == 1;
+                    clip.play.bounce = dir == 2;
+                }
+            }
+            if choice(ui, "Freeze", clip.play.freeze, "It stands still on one frame: where Start puts it, or the slice a note picks").clicked() {
+                clip.play.freeze = !clip.play.freeze;
+            }
+        });
+        let seq_on = clip.play.seq.on && parts_n > 1 && !cued;
+        let what = if seq_on { "the part that plays" } else if clip.is_cut() { "its parts back to back" } else { "the whole clip" };
+        let plain = match clip.play.mode {
+            PlayMode::Loop => format!("Round and round on its own, at its speed ({what})"),
+            PlayMode::Tempo => format!("In time with the song: {what} in {} bar{}, following where the song is", clip.play.bars, if clip.play.bars == 1 { "" } else { "s" }),
+            PlayMode::Slices if cued => "Each note shows the film from its cue, as filmed, for as long as its pad's sound plays".to_string(),
+            PlayMode::Slices if seq_on => format!("Cut in {} slices of the part that plays: the notes (or hits) pick one", clip.play.slices),
+            PlayMode::Slices if clip.play.part_slices && parts_n > 1 => format!("Notes play its parts, like pads: C1 the first part, C#1 the second ({parts_n} parts)"),
+            PlayMode::Slices => format!("Cut in {} slices that notes play, like pads: C1 the first, C#1 the second...", clip.play.slices),
+        };
+        hint(ui, &plain);
+        match clip.play.mode {
+            PlayMode::Tempo => {
+                row(ui, "Length", |ui| {
+                    ui.spacing_mut().item_spacing.x = 3.0;
+                    for b in [1, 2, 4, 8, 16] {
+                        if choice(ui, &b.to_string(), clip.play.bars == b, "How many bars it takes, in time with the song").clicked() {
+                            clip.play.bars = b;
+                        }
+                    }
+                    ui.label(RichText::new("bars").small().color(TEXT_DIM));
+                });
+            }
+            // Cues play as filmed, as their sound does.
+            PlayMode::Slices if cued => {}
+            PlayMode::Loop | PlayMode::Slices => {
+                row(ui, "Speed", |ui| {
+                    ui.spacing_mut().slider_width = (ui.available_width() - 70.0).max(50.0);
+                    ui.add(egui::Slider::new(&mut clip.play.speed, 0.0..=4.0).show_value(false)).on_hover_text("How fast it plays (1: as filmed)");
+                    ui.add(egui::DragValue::new(&mut clip.play.speed).range(0.0..=4.0).speed(0.005).fixed_decimals(3).suffix("×")).on_hover_text("Finely: drag, or double-click to type");
+                });
+            }
+        }
+        if clip.play.mode != PlayMode::Slices && dur > 0.0 {
+            row(ui, "Start", |ui| {
+                let len = clip.joined_len(dur).max(0.1);
+                ui.spacing_mut().slider_width = (ui.available_width() - 70.0).max(50.0);
+                ui.add(egui::Slider::new(&mut clip.play.offset, 0.0..=len).show_value(false)).on_hover_text("Where in its parts it starts (and where Freeze stands)");
+                ui.add(egui::DragValue::new(&mut clip.play.offset).range(0.0..=len).speed(0.01).fixed_decimals(2).suffix(" s"));
+            });
+        }
+        let mut even = false;
+        if let (true, Some(cues)) = (cued && clip.play.mode == PlayMode::Slices, clip.cues.as_mut()) {
+            // Cut where Slice to Drum Rack cut its sound.
+            row(ui, "Cues", |ui| {
+                ui.label(RichText::new(format!("{}", cues.len())).color(TEXT));
+                let (name, tip) = if cues.gate { ("Gate", "Gate: the picture stands still where its note ends, as the pad's sound stops. Click for One-Shot") } else { ("One-Shot", "One-Shot: each piece plays on to its end, as the pad's sound does. Click for Gate") };
+                if choice(ui, name, false, tip).clicked() {
+                    cues.gate = !cues.gate;
+                }
+                if choice(ui, "Even", false, "Forget the cues: back to equal slices (and parts can be kept again)").clicked() {
+                    even = true;
+                }
+            });
+        } else if clip.play.mode == PlayMode::Slices {
+            row(ui, "Slices", |ui| {
+                ui.spacing_mut().item_spacing.x = 3.0;
+                let by_part = clip.play.part_slices && parts_n > 1 && !seq_on;
+                for n in [4, 8, 16, 32] {
+                    if choice(ui, &n.to_string(), !by_part && clip.play.slices == n, "In how many equal slices it is cut (of its parts back to back, or of the part that plays)").clicked() {
+                        clip.play.slices = n;
+                        clip.play.part_slices = false;
+                    }
+                }
+                let tip = if parts_n > 1 { "One slice for each part: the notes play the parts" } else { "One slice for each part: keep a few parts on the timeline first" };
+                if ui.add_enabled(parts_n > 1 && !seq_on, egui::Button::new(RichText::new("Parts").color(if by_part { TEXT_DARK } else { TEXT })).fill(if by_part { ACCENT } else { PANEL3 })).on_hover_text(tip).on_disabled_hover_text(tip).clicked() {
+                    clip.play.part_slices = !clip.play.part_slices;
+                }
+            });
+        } else {
+            row(ui, "Jump cuts", |ui| {
+                ui.spacing_mut().item_spacing.x = 3.0;
+                for n in [4, 8, 16, 32] {
+                    if choice(ui, &n.to_string(), clip.play.slices == n, "Where a Jump effect can cut to: the clip (or the part that plays) in this many equal slices").clicked() {
+                        clip.play.slices = n;
+                    }
+                }
+                ui.label(RichText::new("slices").small().color(TEXT_DIM));
+            });
+        }
+        if clip.play.mode == PlayMode::Slices {
+            let by = match (&clip.cues, &clip.play.slice_hits) {
+                (Some(q), _) if cued => format!("the notes of {}", track_name(tracks, q.track, "any track")),
+                (_, Some(t)) => hits_said(t, tracks),
+                _ => format!("the notes of {}", track_name(tracks, clip.play.slice_track, "any track")),
+            };
+            row(ui, "Played by", |ui| {
+                ui.label(RichText::new(by).color(TEXT));
+                if ui.small_button("Change...").on_hover_text("In the Triggers tab").clicked() {
+                    go_triggers = true;
                 }
             });
         }
+        if even {
+            clip.cues = None;
+        }
+        row(ui, "Look", |ui| {
+            look_dropdown(ui, ("video_clip_look", edited), &mut clip.look, &look_names, "Same as the deck", "The Look this clip plays with (a part's own wins over it). Same as the deck: whatever the Look pads, the sequence, the notes or the scenes say");
+        });
+        hint(ui, "A part can have a Look of its own: right-click it on the timeline");
 
-        heading(ui, "Changing clips");
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("A click starts").small().color(TEXT_DIM));
-            let launches: Vec<(Launch, String)> = Launch::ALL.iter().map(|l| (*l, launch_name(*l).to_string())).collect();
-            let tip = set.launch.about();
-            dropdown(ui, "video_launch", 100.0, &mut set.launch, &launches, tip);
-        });
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Transition").small().color(TEXT_DIM));
-            let ts: Vec<(Transition, String)> = Transition::ALL.iter().map(|t| (*t, t.name().to_string())).collect();
-            let tip = set.transition.about();
-            dropdown(ui, "video_transition", 80.0, &mut set.transition, &ts, tip);
-            if set.transition != Transition::Cut {
-                for (b, label) in [(0.25, "1/4"), (0.5, "1/2"), (1.0, "1"), (2.0, "2"), (4.0, "4")] {
-                    if choice(ui, label, (set.transition_beats - b).abs() < 1e-3, "How long the change takes, in beats of the song").clicked() {
-                        set.transition_beats = b;
-                    }
-                }
-            }
-        });
-        ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("Picked by").small().color(TEXT_DIM));
-            if choice(ui, "Scenes", set.follow_scenes, "The scene that plays picks the clip: scene 1 the first clip (its number on its pad), scene 2 the second, and on").clicked() {
-                set.follow_scenes = !set.follow_scenes;
-            }
-            ui.label(RichText::new("Notes of").small().color(TEXT_DIM));
-            track_dropdown(ui, "video_clip_notes", &mut set.clip_notes, &tracks, "No track", "The notes of a track pick the clip: C1 the first (its note on its pad), C#1 the second, and on");
-        });
-        hits_switch(ui, "video_clip_hits", &mut set.clip_hits, &tracks, "clip");
-        let how = match (set.follow_scenes, set.clip_notes.is_some(), set.clip_hits.is_some()) {
-            (false, false, false) => "Clips change when you click them in the bank, and with a Next Clip link",
-            (true, false, false) => "Clips change with the scenes (and clicks, and Next Clip)",
-            (false, true, false) => "Clips change with that track's notes (and clicks, and Next Clip)",
-            (_, _, true) => "Clips change with the hits heard (and whatever else is on, clicks, and Next Clip)",
-            (true, true, false) => "Clips change with the scenes and that track's notes (and clicks, and Next Clip)",
-        };
-        note(ui, how);
-
-        heading(ui, "Looks");
-        self.video_look_pads(ui, &mut set);
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("A pad starts").small().color(TEXT_DIM));
-            let launches: Vec<(Launch, String)> = Launch::ALL.iter().map(|l| (*l, launch_name(*l).to_string())).collect();
-            dropdown(ui, "video_look_launch", 100.0, &mut set.look_launch, &launches, "When a Look pad clicked takes over (while the song plays)");
-        });
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Morph").small().color(TEXT_DIM)).on_hover_text("How long a change of Look takes: its amounts, settings and colours move over to the next; what is chosen (an axis, a blend) changes at the start");
-            for (b, label) in [(0.0, "Cut"), (0.25, "1/4"), (0.5, "1/2"), (1.0, "1"), (2.0, "2"), (4.0, "4")] {
-                if choice(ui, label, (set.morph_beats - b).abs() < 1e-3, "How long a change of Look takes, in beats (Cut: at once)").clicked() {
-                    set.morph_beats = b;
-                }
-            }
-        });
-        ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("Picked by").small().color(TEXT_DIM));
-            if choice(ui, "Scenes", set.look_scenes, "The scene that plays picks the Look: scene 1 the first pad, and on").clicked() {
-                set.look_scenes = !set.look_scenes;
-            }
-            ui.label(RichText::new("Notes of").small().color(TEXT_DIM));
-            track_dropdown(ui, "video_look_notes", &mut set.look_notes, &tracks, "No track", "The notes of a track pick the Look: C1 the first pad, C#1 the second (a track of its own keeps them apart from the clips' notes)");
-        });
-        hits_switch(ui, "video_look_hits", &mut set.look_hits, &tracks, "Look");
-        let n_looks = set.looks.len().max(1);
-        let seq = &mut set.look_seq;
-        egui::CollapsingHeader::new(RichText::new("Look sequence").color(TEXT)).id_salt(("video_look_seq", seq.on)).default_open(seq.on).show(ui, |ui| {
-            ui.horizontal(|ui| {
-                if choice(ui, if seq.on { "On" } else { "Off" }, seq.on, "Looks in turn: a step every so often, each step a Look (or the set's own)").clicked() {
-                    seq.on = !seq.on;
-                }
-                ui.label(RichText::new("a step every").small().color(TEXT_DIM));
-                if choice(ui, seq.every.name(), false, "How long each step lasts, on the song's beat. Click for the next").clicked() {
-                    seq.every = seq.every.next();
-                }
+        // Its parts one at a time, changing on the beat.
+        if !cued {
+            section(ui, "One part at a time");
+            let seq = &mut clip.play.seq;
+            row(ui, "Parts", |ui| {
+                let tip = if parts_n > 1 { "Plays one part at a time, changing on the beat as the order says" } else { "Keep two parts or more on the timeline first" };
+                let mut on = seq.on;
+                ui.add_enabled_ui(parts_n > 1, |ui| switch(ui, &mut on, tip));
+                seq.on = on;
+                let said = if parts_n < 2 { "keep two parts or more first".to_string() } else if seq.on { "one at a time".to_string() } else { "back to back".to_string() };
+                ui.label(RichText::new(said).small().color(TEXT_DIM));
             });
-            let now = step_now(seq.every).filter(|_| seq.on).map(|s| s.rem_euclid(seq.steps.len().max(1) as i64) as usize);
-            let names = look_names.clone();
-            steps_row(ui, "video_look_steps", &mut seq.steps, n_looks, now, "-", |k| names.get(k).map_or((k + 1).to_string(), |n| short(n, 5)), "Each step a Look (click for the next, right-click to pick; -: the set's own pad)");
-        });
-        note(ui, "Which Look plays: a part's own, else its clip's, else the sequence's step, else the set's (the pad clicked, or picked by the scenes, the notes or the hits)");
-
-        heading(ui, &format!("Look {}: {}", set.look.min(n_looks - 1) + 1, set.edited_look().name));
-        ui.horizontal(|ui| {
-            let fits = vec![(kv::Fit::Fill, "Fill".to_string()), (kv::Fit::Fit, "Fit".to_string())];
-            dropdown(ui, "video_fit", 52.0, &mut set.fit, &fits, "Fill: the whole screen, cutting off what sticks out. Fit: the whole picture, with black bars (a clip can have its own)");
-            ui.label(RichText::new("Music").small().color(TEXT_DIM)).on_hover_text("How much the music moves the picture, all the links at once");
-            ui.spacing_mut().slider_width = (ui.available_width() - 50.0).max(40.0);
-            ui.add(egui::Slider::new(&mut set.amount, 0.0..=1.0).show_value(false)).on_hover_text("How much the music moves the picture, all the links at once (0: the clip as it is, with what the effects always have)");
-            ui.label(RichText::new(format!("{:.0} %", set.amount * 100.0)).small().color(TEXT_DIM));
-        });
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Fill from").small().color(TEXT_DIM));
-            let mut pick: Option<&str> = None;
-            egui::ComboBox::from_id_salt("video_preset").width(110.0).selected_text("a preset...").show_ui(ui, |ui| {
-                for name in kv::PRESET_NAMES {
-                    if let Some(pr) = kv::preset(name) {
-                        if ui.selectable_label(kv::same_links(set.links(), &pr.links), name).on_hover_text(pr.about).clicked() {
-                            pick = Some(name);
+            if seq.on && parts_n > 1 {
+                row(ui, "Order", |ui| {
+                    let orders: Vec<(kv::PartOrder, String)> = kv::PartOrder::ALL.iter().map(|o| (*o, o.name().to_string())).collect();
+                    let tip = seq.order.about();
+                    dropdown(ui, ("video_seq_order", edited), 96.0, &mut seq.order, &orders, tip);
+                    if seq.order.on_steps() {
+                        ui.label(RichText::new("every").small().color(TEXT_DIM));
+                        if choice(ui, seq.every.name(), false, "How often it may change part, on the song's beat. Click for the next").clicked() {
+                            seq.every = seq.every.next();
                         }
                     }
+                });
+                hint(ui, seq.order.about());
+                match seq.order {
+                    kv::PartOrder::Steps => {
+                        let now = step_now(seq.every).map(|s| s.rem_euclid(seq.steps.len().max(1) as i64) as usize);
+                        ui.horizontal_top(|ui| {
+                            let (r, _) = ui.allocate_exact_size(vec2(LABEL_W, 22.0), Sense::hover());
+                            ui.painter().text(pos2(r.left(), r.center().y), Align2::LEFT_CENTER, "Steps", small(), TEXT_DIM);
+                            ui.vertical(|ui| steps_row(ui, ("video_seq_steps", edited), &mut seq.steps, parts_n.max(1), now, "Hold", |k| (k + 1).to_string(), "Each step a part (click for the next part, right-click to pick, or Hold: the part before stays)"));
+                        });
+                    }
+                    kv::PartOrder::Notes | kv::PartOrder::Hits => {
+                        let by = if seq.order == kv::PartOrder::Notes { format!("the notes of {}", track_name(tracks, seq.track, "any track")) } else { hits_said(&seq.hits, tracks) };
+                        row(ui, "Played by", |ui| {
+                            ui.label(RichText::new(by).color(TEXT));
+                            if ui.small_button("Change...").on_hover_text("In the Triggers tab").clicked() {
+                                go_triggers = true;
+                            }
+                        });
+                    }
+                    _ => {}
                 }
-            })
-            .response
-            .on_hover_text("Puts a preset's links in this Look (its effects as they start)");
+                let k = part_now.map_or("-".to_string(), |k| (k + 1).to_string());
+                hint(ui, &format!("Part {k} of {parts_n} plays now (lit on the timeline)"));
+            }
+        }
+
+        // How it sits on the screen.
+        section(ui, "On the screen");
+        let frame = &mut clip.frame;
+        row(ui, "Fit", |ui| {
+            let fits = vec![(None, "Same as Output".to_string()), (Some(kv::Fit::Fill), "Fill".to_string()), (Some(kv::Fit::Fit), "Fit".to_string())];
+            dropdown(ui, ("video_clip_fit", edited), 112.0, &mut frame.fit, &fits, "Fill: the whole screen, cutting off what sticks out. Fit: the whole picture, with black bars");
+            if ui.add_enabled(!frame.is_plain(), egui::Button::new("Reset")).on_hover_text("As it was: the whole picture, in the middle").clicked() {
+                *frame = kv::ClipFrame::default();
+            }
+        });
+        let open_id = Id::new(("video_frame_more", edited));
+        let mut more = ui.ctx().data(|d| d.get_temp::<bool>(open_id)).unwrap_or(!frame.is_plain());
+        let fader = |ui: &mut Ui, label: &str, v: &mut f32, range: std::ops::RangeInclusive<f32>, tip: &str| {
+            row(ui, label, |ui| {
+                ui.spacing_mut().slider_width = (ui.available_width() - 56.0).max(50.0);
+                ui.add(egui::Slider::new(v, range).fixed_decimals(2)).on_hover_text(tip);
+            });
+        };
+        fader(ui, "Opacity", &mut frame.opacity, 0.0..=1.0, "How see-through (0: not there, 1: all of it)");
+        fader(ui, "Zoom", &mut frame.zoom, 0.25..=4.0, "How big (1: as it fits)");
+        row(ui, "", |ui| {
+            if ui.add(egui::Button::new(RichText::new(if more { "Fewer" } else { "Where, turn, crop..." }).small()).fill(PANEL2)).on_hover_text("Where it is on the screen, turned, and cut off at its sides").clicked() {
+                more = !more;
+            }
+        });
+        if more {
+            fader(ui, "Across", &mut frame.x, -1.0..=1.0, "Moved right (or left), in screens");
+            fader(ui, "Down", &mut frame.y, -1.0..=1.0, "Moved down (or up), in screens");
+            fader(ui, "Turn", &mut frame.turn, -0.5..=0.5, "Turned (0.25: a quarter of the way round)");
+            for (k, side) in ["Crop left", "Crop top", "Crop right", "Crop bottom"].iter().enumerate() {
+                fader(ui, side, &mut frame.crop[k], 0.0..=0.45, "Cut off this side (of the picture)");
+            }
+        }
+        ui.ctx().data_mut(|d| d.insert_temp(open_id, more));
+        if go_triggers {
+            self.video.tab = VideoTab::Triggers;
+        }
+    }
+
+    /// The Look tab: the Look edited, its name, a preset, how much the
+    /// music moves it, and its effects, each a card with its settings and
+    /// the links that move it.
+    fn video_tab_look(&mut self, ui: &mut Ui, set: &mut kv::VideoSet, tracks: &[(u64, String)]) {
+        let n_looks = set.looks.len().max(1);
+        let k = set.look.min(n_looks - 1);
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            let (b, _) = ui.allocate_exact_size(vec2(22.0, 20.0), Sense::hover());
+            rect_fill(ui.painter(), b, 3.0, PANEL3);
+            ui.painter().text(b.center(), Align2::CENTER_CENTER, (k + 1).to_string(), small(), TEXT);
+            let look = set.edited_look_mut();
+            ui.add(egui::TextEdit::singleline(&mut look.name).desired_width(ui.available_width()).hint_text(format!("Look {}", k + 1)));
+        });
+        note(ui, "Click a Look pad in the deck to edit another. Changes show at once.");
+        ui.add_space(4.0);
+        row(ui, "Preset", |ui| {
+            let mut pick: Option<&str> = None;
+            egui::ComboBox::from_id_salt("video_preset")
+                .width(150.0)
+                .selected_text("Fill from a preset...")
+                .show_ui(ui, |ui| {
+                    for name in kv::PRESET_NAMES {
+                        if let Some(pr) = kv::preset(name) {
+                            if ui.selectable_label(kv::same_links(set.links(), &pr.links), name).on_hover_text(pr.about).clicked() {
+                                pick = Some(name);
+                            }
+                        }
+                    }
+                })
+                .response
+                .on_hover_text("Puts a preset's links in this Look (its effects as they start)");
             if let Some(pr) = pick.and_then(kv::preset) {
                 set.apply_preset(&pr);
                 let mut links = std::mem::take(&mut set.edited_look_mut().links);
@@ -1799,13 +2129,400 @@ impl App {
                 set.edited_look_mut().links = links;
             }
         });
-        self.video_effects(ui, &mut set, &tracks);
-        self.video_links(ui, &mut set, &tracks);
-        if set != self.project.video {
-            self.project.video = set;
-        }
+        row(ui, "Music", |ui| {
+            ui.spacing_mut().slider_width = (ui.available_width() - 48.0).max(50.0);
+            ui.add(egui::Slider::new(&mut set.amount, 0.0..=1.0).show_value(false)).on_hover_text("How much the music moves the picture: every link of every Look at once (0: the clip as it is, with what the effects always have)");
+            ui.label(RichText::new(format!("{:.0} %", set.amount * 100.0)).small().color(TEXT_DIM));
+        });
+        hint(ui, "How much the music moves it, in every Look");
 
-        heading(ui, "Export");
+        let readings = self.video.dir.readings.clone();
+        let look = set.edited_look_mut();
+        let used = look.effects();
+        section(ui, &format!("Effects ({})", used.len()));
+        if used.is_empty() {
+            note(ui, "No effects yet: add one below, or fill the Look from a preset.");
+        }
+        let mut remove_fx = None;
+        let mut remove_link = None;
+        let mut add_link: Option<(Source, Effect)> = None;
+        // A few effects open, more shut (each says what moves it), to see them all at once.
+        let few = used.len() <= 2;
+        for e in used {
+            let open_id = Id::new(("video_card_open", e.index()));
+            let mut open = ui.ctx().data(|d| d.get_temp::<bool>(open_id)).unwrap_or(few);
+            let mut s = look.setting(e);
+            let links_n = look.links.iter().filter(|l| l.effect == e).count();
+            let off = s.off;
+            egui::Frame::new().fill(PANEL2).stroke(Stroke::new(1.0_f32, if off { LINE_SOFT } else { LINE })).corner_radius(4).inner_margin(egui::Margin::same(8)).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                // The head: open or shut, on or off, its name, how much of it there always is.
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    let (ar, aresp) = ui.allocate_exact_size(vec2(12.0, 18.0), Sense::click());
+                    let c = ar.center();
+                    let col = if aresp.hovered() { TEXT } else { TEXT_DIM };
+                    let tri = if open { vec![c + vec2(-4.0, -2.0), c + vec2(4.0, -2.0), c + vec2(0.0, 3.0)] } else { vec![c + vec2(-2.0, -4.0), c + vec2(3.0, 0.0), c + vec2(-2.0, 4.0)] };
+                    ui.painter().add(egui::Shape::convex_polygon(tri, col, Stroke::NONE));
+                    let mut on = !s.off;
+                    switch(ui, &mut on, "Off: the Look without it, its settings and links kept");
+                    s.off = !on;
+                    // As wide for every effect, so the amounts line up from card to card.
+                    let (nr, name) = ui.allocate_exact_size(vec2(84.0, 18.0), Sense::click());
+                    ui.painter().with_clip_rect(nr).text(pos2(nr.left(), nr.center().y), Align2::LEFT_CENTER, e.name(), body(), if on { TEXT } else { TEXT_DIM });
+                    let name = name.on_hover_text(e.about());
+                    if aresp.clicked() || name.clicked() {
+                        open = !open;
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(RichText::new(format!("{:>3.0} %", s.base * 100.0)).small().color(TEXT_DIM));
+                        ui.spacing_mut().slider_width = ui.available_width().clamp(40.0, 120.0);
+                        let tip = if e.on_hits() { "How often it happens on its own (links make it happen on hits)" } else { "Amount: how much of it there always is, whatever the music (the links add to it)" };
+                        ui.add(egui::Slider::new(&mut s.base, 0.0..=1.0).show_value(false)).on_hover_text(tip);
+                        ui.label(RichText::new(if e.on_hits() { "on its own" } else { "always" }).small().color(TEXT_DIM)).on_hover_text(tip);
+                    });
+                });
+                if !open {
+                    let by: Vec<String> = look.links.iter().filter(|l| l.effect == e).map(|l| if l.source.has_track() { format!("{} ({})", l.source.name(), track_name(tracks, l.from, if l.source.listens() { "master" } else { "all tracks" })) } else { l.source.name().to_string() }).collect();
+                    let said = if by.is_empty() { "Not moved by the music".to_string() } else { format!("Moved by {}", by.join(", ")) };
+                    ui.horizontal(|ui| {
+                        ui.add_space(18.0);
+                        ui.add(egui::Label::new(RichText::new(said).small().color(TEXT_DIM)).truncate());
+                    });
+                    return;
+                }
+                note(ui, e.about());
+                ui.add_space(2.0);
+                for (k, def) in e.params().iter().enumerate() {
+                    let mut v = s.param(e, k);
+                    let changed = row(ui, def.name, |ui| {
+                        if def.choices.is_empty() {
+                            ui.spacing_mut().slider_width = (ui.available_width() - 56.0).max(50.0);
+                            let dec = if def.max - def.min > 20.0 { 0 } else { 2 };
+                            ui.add(egui::Slider::new(&mut v, def.min..=def.max).fixed_decimals(dec)).on_hover_text(def.about).changed()
+                        } else if def.length {
+                            // Lengths: clicked through, as everywhere.
+                            ui.spacing_mut().item_spacing.x = 3.0;
+                            let mut c = false;
+                            for (i, name) in def.choices.iter().enumerate() {
+                                if choice(ui, name, v.round() as usize == i, def.about).clicked() {
+                                    v = i as f32;
+                                    c = true;
+                                }
+                            }
+                            c
+                        } else {
+                            let mut i = v.round() as usize;
+                            let opts: Vec<(usize, String)> = def.choices.iter().enumerate().map(|(i, n)| (i, n.to_string())).collect();
+                            let c = dropdown(ui, ("video_fx_choice", e.index(), k), 120.0, &mut i, &opts, def.about);
+                            v = i as f32;
+                            c
+                        }
+                    });
+                    if changed {
+                        s.set_param(e, k, v);
+                    }
+                }
+                if e.has_color() {
+                    row(ui, "Colour", |ui| {
+                        let own = s.color.is_some();
+                        let label = if e == Effect::Tint { "The track's" } else { "White" };
+                        if choice(ui, label, !own, if e == Effect::Tint { "In the colour of the track its link hears" } else { "Its own colour: white" }).clicked() {
+                            s.color = None;
+                        }
+                        let mut c = s.color.or(e.color()).unwrap_or([0xff, 0x40, 0xa0]);
+                        if ui.color_edit_button_srgb(&mut c).on_hover_text("A colour of its own").changed() || (own && s.color != Some(c)) {
+                            s.color = Some(c);
+                        }
+                    });
+                }
+                // The links that move it, in the card.
+                ui.add_space(4.0);
+                ui.label(RichText::new("MOVED BY").small().color(TEXT_DIM));
+                if links_n == 0 {
+                    note(ui, "Nothing in the music: it stays as set. Add a link to move it.");
+                }
+                for (i, l) in look.links.iter_mut().enumerate().filter(|(_, l)| l.effect == e) {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        let sources: Vec<(Source, String)> = Source::ALL.iter().map(|s| (*s, s.name().to_string())).collect();
+                        let tip = l.source.about();
+                        dropdown(ui, ("video_link_src", i), 60.0, &mut l.source, &sources, tip);
+                        if l.source.has_track() {
+                            let none = if l.source.listens() { "Master" } else { "All tracks" };
+                            track_dropdown(ui, ("video_link_from", i), &mut l.from, tracks, none, if l.source.listens() { "The sound it listens to: the master (the whole song) or a track" } else { "Whose notes: every track's, or one's" });
+                        } else {
+                            ui.add_sized([96.0, 20.0], egui::Label::new(RichText::new("the song").small().color(TEXT_DIM)));
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("x").on_hover_text("Take this link away").clicked() {
+                                remove_link = Some(i);
+                            }
+                            // Its word in front of the slider only where there is room for both.
+                            let room = ui.available_width() - 6.0;
+                            let said = room >= 110.0;
+                            ui.spacing_mut().slider_width = if said { (room - 56.0).min(120.0) } else { room.max(24.0) };
+                            let tip = if l.effect.on_hits() { "How often a hit does it" } else { "How much at full" };
+                            ui.add(egui::Slider::new(&mut l.amount, 0.0..=1.0).show_value(false)).on_hover_text(tip);
+                            if said {
+                                ui.label(RichText::new(if l.effect.on_hits() { "how often" } else { "up to" }).small().color(TEXT_DIM));
+                            }
+                        });
+                    });
+                    // The source now, as a thin line under its row.
+                    let v = readings.get(i).copied().unwrap_or(0.0).clamp(0.0, 1.0);
+                    let y = ui.cursor().top() - 1.0;
+                    let line = Rect::from_min_max(pos2(ui.max_rect().left(), y - 2.0), pos2(ui.max_rect().right(), y));
+                    let p = ui.painter();
+                    p.rect_filled(line, 1.0, PANEL3);
+                    p.rect_filled(Rect::from_min_size(line.min, vec2(line.width() * v * l.amount.max(0.15), line.height())), 1.0, ACCENT);
+                    let more = l.low != 0.0 || !l.response.is_plain() || matches!(l.source, Source::Lfo | Source::Band);
+                    egui::CollapsingHeader::new(RichText::new("Response").small().color(TEXT_DIM)).id_salt(("video_link_more", i)).default_open(more).show(ui, |ui| link_response(ui, i, l));
+                    ui.add_space(2.0);
+                }
+                // Another link, and putting it back as it starts or taking it away.
+                ui.horizontal(|ui| {
+                    if look.links.len() < kv::MAX_LINKS {
+                        egui::ComboBox::from_id_salt(("video_card_link", e.index()))
+                            .width(140.0)
+                            .height(360.0)
+                            .selected_text("+ Move it with...")
+                            .show_ui(ui, |ui| {
+                                for src in Source::ALL {
+                                    if ui.selectable_label(false, src.name()).on_hover_text(src.about()).clicked() {
+                                        add_link = Some((src, e));
+                                    }
+                                }
+                            })
+                            .response
+                            .on_hover_text("A link: something in the music (a kick, the bass, the beat, an LFO...) moves this effect");
+                    } else {
+                        ui.label(RichText::new(format!("{} links at most", kv::MAX_LINKS)).small().color(TEXT_DIM));
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("Remove").on_hover_text("Takes the effect and its links out of this Look").clicked() {
+                            remove_fx = Some(e);
+                        }
+                        if ui.small_button("Reset").on_hover_text("Its settings and colour as they start (its amount and links stay)").clicked() {
+                            s.params.clear();
+                            s.color = None;
+                        }
+                    });
+                });
+            });
+            ui.ctx().data_mut(|d| d.insert_temp(open_id, open));
+            if s != look.setting(e) {
+                *look.setting_mut(e) = s;
+            }
+            ui.add_space(6.0);
+        }
+        if let Some(i) = remove_link {
+            look.links.remove(i);
+        }
+        if let Some(e) = remove_fx {
+            look.fx.remove(&e);
+            look.links.retain(|l| l.effect != e);
+        }
+        // The effects not in it yet: the picture's always there, the film's moved by a kick to start with.
+        let in_use = look.effects();
+        let mut add: Option<Effect> = None;
+        egui::ComboBox::from_id_salt("video_fx_add")
+            .width(ui.available_width().min(220.0))
+            .height(420.0)
+            .selected_text(RichText::new("+ Add effect...").color(TEXT))
+            .show_ui(ui, |ui| {
+                for (film, title) in [(false, "THE PICTURE"), (true, "WHERE THE FILM IS (moved by a link)")] {
+                    ui.label(RichText::new(title).small().color(TEXT_DIM));
+                    for e in Effect::ALL.iter().filter(|e| e.moves_film() == film && !in_use.contains(e)) {
+                        if ui.selectable_label(false, e.name()).on_hover_text(e.about()).clicked() {
+                            add = Some(*e);
+                        }
+                    }
+                }
+            })
+            .response
+            .on_hover_text("An effect for this Look: the picture's are there at half to start with, the film's are moved by the kick");
+        if let Some(e) = add {
+            if e.moves_film() {
+                if look.links.len() < kv::MAX_LINKS {
+                    let mut link = [VideoLink::new(Source::Kick, e, 0.5)];
+                    self.video_fit_links(&mut link);
+                    look.links.extend(link);
+                }
+            } else {
+                look.setting_mut(e).base = 0.5;
+            }
+            ui.ctx().data_mut(|d| d.insert_temp(Id::new(("video_card_open", e.index())), true));
+        }
+        if let Some((src, e)) = add_link {
+            let mut link = [VideoLink::new(src, e, 0.5)];
+            self.video_fit_links(&mut link);
+            look.links.extend(link);
+        }
+    }
+
+    /// The Triggers tab: what changes the clips and the Looks, and what
+    /// plays the slices and the parts of the clip edited.
+    fn video_tab_triggers(&mut self, ui: &mut Ui, set: &mut kv::VideoSet, tracks: &[(u64, String)]) {
+        let song = {
+            let st = self.status();
+            (st.playing.load(std::sync::atomic::Ordering::Relaxed), st.song_pos.load(), self.project.beats_per_bar)
+        };
+        ui.add_space(6.0);
+        note(ui, "What changes the picture as the music plays. A click on a pad in the deck always does too.");
+
+        section(ui, "Clips change with");
+        row(ui, "Scenes", |ui| {
+            switch(ui, &mut set.follow_scenes, "The scene that plays picks the clip: scene 1 the first clip (its number on its pad), scene 2 the second, and on");
+            ui.label(RichText::new("scene 1 plays clip 1, and on").small().color(TEXT_DIM));
+        });
+        row(ui, "Notes of", |ui| {
+            track_dropdown(ui, "video_clip_notes", &mut set.clip_notes, tracks, "No track", "The notes of a track pick the clip: C1 the first (its note on its pad), C#1 the second, and on");
+            ui.label(RichText::new("C1 clip 1, C#1 clip 2").small().color(TEXT_DIM));
+        });
+        hits_row(ui, "video_clip_hits", &mut set.clip_hits, tracks, "clip", "Hits in a sound change the clip (for sequencers and drum machines that send no notes)");
+        let how = match (set.follow_scenes, set.clip_notes.is_some(), set.clip_hits.is_some()) {
+            (false, false, false) => "Now: only clicks in the deck (and a Next Clip effect)",
+            (true, false, false) => "Now: the scenes, clicks and a Next Clip effect",
+            (false, true, false) => "Now: that track's notes, clicks and a Next Clip effect",
+            (_, _, true) => "Now: the hits (and whatever else is on), clicks and a Next Clip effect",
+            (true, true, false) => "Now: the scenes, that track's notes, clicks and a Next Clip effect",
+        };
+        hint(ui, how);
+
+        section(ui, "Looks change with");
+        row(ui, "Scenes", |ui| {
+            switch(ui, &mut set.look_scenes, "The scene that plays picks the Look: scene 1 the first pad, and on");
+            ui.label(RichText::new("scene 1 plays Look 1, and on").small().color(TEXT_DIM));
+        });
+        row(ui, "Notes of", |ui| {
+            track_dropdown(ui, "video_look_notes", &mut set.look_notes, tracks, "No track", "The notes of a track pick the Look: C1 the first pad, C#1 the second (a track of its own keeps them apart from the clips' notes)");
+            ui.label(RichText::new("C1 Look 1, C#1 Look 2").small().color(TEXT_DIM));
+        });
+        hits_row(ui, "video_look_hits", &mut set.look_hits, tracks, "Look", "Hits in a sound change the Look");
+        let n_looks = set.looks.len().max(1);
+        let look_names: Vec<String> = set.looks.iter().enumerate().map(|(k, l)| look_label(k, l)).collect();
+        let seq = &mut set.look_seq;
+        row(ui, "Sequence", |ui| {
+            switch(ui, &mut seq.on, "Looks in turn on the song's beat: a step every so often, each step a Look (or -: the deck's own)");
+            if seq.on {
+                ui.label(RichText::new("a step every").small().color(TEXT_DIM));
+                if choice(ui, seq.every.name(), false, "How long each step lasts, on the song's beat. Click for the next").clicked() {
+                    seq.every = seq.every.next();
+                }
+            } else {
+                ui.label(RichText::new("off").small().color(TEXT_DIM));
+            }
+        });
+        if seq.on {
+            let now = song.0.then(|| seq.every.step(song.1, song.2)).map(|s| s.rem_euclid(seq.steps.len().max(1) as i64) as usize);
+            ui.horizontal_top(|ui| {
+                ui.add_space(LABEL_W);
+                ui.vertical(|ui| steps_row(ui, "video_look_steps", &mut seq.steps, n_looks, now, "-", |k| look_names.get(k).map_or((k + 1).to_string(), |n| short(n, 5)), "Each step a Look (click for the next, right-click to pick; -: the deck's own)"));
+            });
+        }
+        hint(ui, "Which Look plays: a part's own, else its clip's, else the sequence's step, else the deck's (the pad clicked, or the scenes, notes or hits)");
+
+        // The clip edited: what plays its slices and its parts.
+        let edited = set.current.min(set.clips.len().saturating_sub(1));
+        let Some(clip) = set.clips.get_mut(edited) else { return };
+        let dur = self.video.media.get(&clip.path).map_or(0.0, |m| m.info().duration);
+        let parts_n = clip.spans(dur).len();
+        let cued = clip.is_cued();
+        section(ui, &format!("Clip {}: its slices", edited + 1));
+        if clip.play.mode != PlayMode::Slices {
+            hint(ui, &format!("It plays in {}: choose Slices in the Clip tab for notes or hits to cut it up", clip.play.mode.name()));
+        } else if let (true, Some(cues)) = (cued, clip.cues.as_mut()) {
+            row(ui, "Notes of", |ui| {
+                track_dropdown(ui, ("video_cue_track", edited), &mut cues.track, tracks, "Any track", "Whose notes show the cues (the track it was sliced to)");
+            });
+            hint(ui, "Each note shows the film from its cue, as the Drum Rack plays its sound");
+        } else {
+            row(ui, "Played by", |ui| {
+                let mut by = clip.play.slice_hits.is_some() as usize;
+                if dropdown(ui, ("video_slice_by", edited), 96.0, &mut by, &[(0, "Notes".to_string()), (1, "Hits".to_string())], "Notes: a track's notes pick the slices, like pads. Hits: kicks, snares or hats in a sound move to another slice (for sequencers and drum machines that send no notes)") {
+                    clip.play.slice_hits = (by == 1).then(HitTrigger::default);
+                }
+                if clip.play.slice_hits.is_none() {
+                    track_dropdown(ui, ("video_slice_track", edited), &mut clip.play.slice_track, tracks, "Any track", "Whose notes pick the slices");
+                }
+            });
+            match &mut clip.play.slice_hits {
+                Some(t) => hit_editor(ui, ("video_slice_hits", edited), t, tracks, "slice"),
+                None => hint(ui, "C1 the first slice, C#1 the second, and on"),
+            }
+        }
+        if !cued {
+            section(ui, &format!("Clip {}: its parts", edited + 1));
+            let seq = &mut clip.play.seq;
+            match (seq.on && parts_n > 1, seq.order) {
+                (false, _) => hint(ui, "They play back to back. Switch on One part at a time in the Clip tab for them to change on the beat, by notes or by hits"),
+                (true, kv::PartOrder::Notes) => {
+                    row(ui, "Notes of", |ui| {
+                        track_dropdown(ui, ("video_seq_track", edited), &mut seq.track, tracks, "Any track", "Whose notes pick the part: C3 the first, C#3 the second (below C3 they still play slices)");
+                    });
+                    hint(ui, "C3 the first part, C#3 the second (above the slices, so one track can play both)");
+                }
+                (true, kv::PartOrder::Hits) => hit_editor(ui, ("video_seq_hits", edited), &mut seq.hits, tracks, "part"),
+                (true, o) => {
+                    row(ui, "Played by", |ui| {
+                        let mut by = 0usize;
+                        let opts = [(0, o.name().to_string()), (1, "Notes".to_string()), (2, "Hits".to_string())];
+                        if dropdown(ui, ("video_seq_by", edited), 96.0, &mut by, &opts, "How the parts change: in an order of their own (set in the Clip tab), by a track's notes or by hits") {
+                            seq.order = if by == 1 { kv::PartOrder::Notes } else { kv::PartOrder::Hits };
+                        }
+                    });
+                    hint(ui, &format!("{} every {}", o.about(), seq.every.name().to_lowercase()));
+                }
+            }
+        }
+    }
+
+    /// The Output tab: the screen for a projector, how the picture fills
+    /// it, Record Video, Export Video, the size of a film, ffmpeg and the keys.
+    fn video_tab_output(&mut self, ui: &mut Ui, set: &mut kv::VideoSet) {
+        section(ui, "Screen");
+        let screen = self.video.screen_open;
+        ui.horizontal(|ui| {
+            let w = (ui.available_width() - 6.0) * 0.5;
+            if ui.add_sized([w, 28.0], egui::Button::new(RichText::new(if screen { "Close the screen" } else { "Screen" }).color(if screen { TEXT_DARK } else { TEXT })).fill(if screen { ACCENT } else { PANEL3 })).on_hover_text("The picture alone in a window of its own (click again to close it)").clicked() {
+                self.video.screen_open = !screen;
+                self.video.fullscreen = false;
+            }
+            if ui.add_sized([w, 28.0], egui::Button::new("Full screen")).on_hover_text("The picture filling the screen Krabton is on, at once (Esc or a double-click leaves)").clicked() {
+                self.video.screen_open = true;
+                self.video.fullscreen = true;
+            }
+        });
+        note(ui, "Drag the screen's window to a projector or a second screen and double-click it to fill that screen (double-click, F11 or Esc to leave). Double-click the picture here for the same.");
+        ui.add_space(4.0);
+        row(ui, "Picture", |ui| {
+            let fits = vec![(kv::Fit::Fill, "Fill".to_string()), (kv::Fit::Fit, "Fit".to_string())];
+            dropdown(ui, "video_fit", 70.0, &mut set.fit, &fits, "Fill: the whole screen, cutting off what sticks out. Fit: the whole picture, with black bars (a clip can have its own)");
+            ui.label(RichText::new(if set.fit == kv::Fit::Fill { "no bars, the edges cut" } else { "all of it, with bars" }).small().color(TEXT_DIM));
+        });
+
+        section(ui, "Record");
+        ui.horizontal(|ui| {
+            let on = self.video.rec.is_some();
+            let label = if on { "Stop recording" } else { "Record Video" };
+            let b = egui::Button::new(RichText::new(label).color(TEXT)).fill(if on { REC } else { PANEL3 });
+            if ui.add_sized([150.0, 28.0], b).on_hover_text("Records the picture and the master's sound as you play. Click again to stop").clicked() {
+                if on {
+                    self.video_record_stop();
+                } else {
+                    self.video_record_start(None);
+                }
+            }
+            if let Some(r) = &self.video.rec {
+                let (secs, bytes) = r.progress();
+                ui.label(RichText::new(format!("REC {}  {:.1} MB", clock(secs), bytes as f64 / 1e6)).color(REC).font(mono()));
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+            }
+        });
+        note(ui, "What shows and the master's sound, live, into a film (MP4) in Documents/Krabton/Recorded");
+
+        section(ui, "Export");
         match &self.video.export {
             Some(job) => {
                 let st = job.state();
@@ -1820,334 +2537,44 @@ impl App {
                 }
             }
             None => {
-                if ui.add_enabled(!self.project.video.clips.is_empty(), egui::Button::new("Export Video...")).on_hover_text("A film (MP4) of the song with its sound and the Video as it plays to it: its cuts, its Looks, the links").clicked() {
+                if ui.add_enabled(!self.project.video.clips.is_empty(), egui::Button::new("Export Video...").min_size(vec2(150.0, 28.0))).on_hover_text("A film (MP4) of the song with its sound and the Video as it plays to it").on_disabled_hover_text("Add a clip first").clicked() {
                     self.video.export_open = true;
                 }
             }
         }
-        ui.add_space(8.0);
-        note(ui, "Pictures and GIFs play as they are; films need ffmpeg. Drop files on this window to add them.");
-    }
-
-    /// The Look pads: click one to change to it (and edit it), right-click
-    /// for more; the last pad makes a new Look.
-    fn video_look_pads(&mut self, ui: &mut Ui, set: &mut kv::VideoSet) {
-        let playing = self.video.dir.look_playing();
-        let pending = self.video.dir.pads.pending.map(|p| p.0);
-        let own = self.video.dir.pads.clip;
-        let n = set.looks.len();
-        let cols = 4;
-        let gap = 4.0;
-        let w = ((ui.available_width() - gap * (cols as f32 - 1.0)) / cols as f32).max(40.0);
-        let mut launch = None;
-        let mut act: Option<(usize, &str)> = None;
-        for row in 0..(n + 1).min(kv::MAX_LOOKS).div_ceil(cols).max(1) {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = gap;
-                for k in row * cols..((row + 1) * cols).min((n + 1).min(kv::MAX_LOOKS)) {
-                    let (r, resp) = ui.allocate_exact_size(vec2(w, 30.0), Sense::click());
-                    let p = ui.painter();
-                    if k == n {
-                        rect_line(p, r, 4.0, 1.0, if resp.hovered() { ACCENT } else { LINE });
-                        p.text(r.center(), Align2::CENTER_CENTER, "+ Look", small(), if resp.hovered() { TEXT } else { TEXT_DIM });
-                        if resp.on_hover_text("A new Look: a copy of the one edited, to change").clicked() {
-                            act = Some((k, "new"));
-                        }
-                        continue;
-                    }
-                    let lit = playing == k;
-                    rect_fill(p, r, 4.0, if lit { ACCENT } else if resp.hovered() { PANEL3 } else { PANEL2 });
-                    let col = if lit { TEXT_DARK } else { TEXT };
-                    p.with_clip_rect(r.shrink(3.0)).text(r.center(), Align2::CENTER_CENTER, short(&look_label(k, &set.looks[k]), 14), small(), col);
-                    p.text(r.min + vec2(3.0, 2.0), Align2::LEFT_TOP, (k + 1).to_string(), egui::FontId::proportional(9.0), if lit { TEXT_DARK } else { TEXT_DIM });
-                    if pending == Some(k) {
-                        let blink = (ui.input(|inp| inp.time) * 4.0) as i64 % 2 == 0;
-                        rect_line(p, r, 4.0, 2.0, if blink { ACCENT } else { LINE });
-                        ui.ctx().request_repaint_after(std::time::Duration::from_millis(120));
-                    } else if own == k && !lit {
-                        rect_line(p, r, 4.0, 1.5, ACCENT.gamma_multiply(0.6));
-                    }
-                    if set.look == k {
-                        p.rect_filled(Rect::from_min_size(pos2(r.left() + 6.0, r.bottom() + 1.0), vec2(r.width() - 12.0, 2.0)), 1.0, SELECT);
-                    }
-                    let resp = resp.on_hover_text(format!("{}\nClick: the set's Look now (or on its beat) and edited here (underlined); lit while it plays. Right-click for more", set.looks[k].name));
-                    if resp.clicked() {
-                        launch = Some(k);
-                    }
-                    resp.context_menu(|ui| {
-                        ui.add(egui::TextEdit::singleline(&mut set.looks[k].name).hint_text("Its name").desired_width(140.0));
-                        if ui.add_enabled(n < kv::MAX_LOOKS, egui::Button::new("Duplicate")).clicked() {
-                            act = Some((k, "dup"));
-                            ui.close();
-                        }
-                        if ui.add_enabled(n > 1, egui::Button::new("Delete")).clicked() {
-                            act = Some((k, "del"));
-                            ui.close();
-                        }
-                    });
-                }
-            });
-            ui.add_space(3.0);
-        }
-        match act {
-            Some((_, "new")) if n < kv::MAX_LOOKS => {
-                let mut l = set.edited_look().clone();
-                l.name = format!("Look {}", n + 1);
-                set.looks.push(l);
-                set.look = n;
-            }
-            Some((k, "dup")) if n < kv::MAX_LOOKS => {
-                let mut l = set.looks[k].clone();
-                l.name = format!("{} 2", l.name);
-                set.looks.insert(k + 1, l);
-                renumber_looks(set, |i| if i > k { i + 1 } else { i });
-                set.look = k + 1;
-            }
-            Some((k, "del")) if n > 1 => {
-                set.looks.remove(k);
-                renumber_looks(set, |i| if i > k { i - 1 } else { i.min(n - 2) });
-                set.look = set.look.min(set.looks.len() - 1);
-            }
-            _ => {}
-        }
-        if let Some(k) = launch {
-            set.look = k;
-            let st = self.status();
-            let (beat, playing) = (st.song_pos.load(), st.playing.load(std::sync::atomic::Ordering::Relaxed));
-            self.video.dir.launch_look(set, k, beat, playing, self.project.beats_per_bar);
-        }
-    }
-
-    /// The effects of the Look edited, each in a section of its own: how
-    /// much of it there always is, its settings, its colour.
-    fn video_effects(&mut self, ui: &mut Ui, set: &mut kv::VideoSet, _tracks: &[(u64, String)]) {
-        let look = set.edited_look_mut();
+        note(ui, "A film of the arrangement or a scene with the song's sound: the clips, their changes, the Looks and every link, made in the background");
         ui.add_space(4.0);
-        ui.label(RichText::new("Effects").strong().color(TEXT));
-        let used = look.effects();
-        if used.is_empty() {
-            note(ui, "No effects yet: add one below, or a link");
-        }
-        let mut drop = None;
-        for e in used {
-            let linked = look.links.iter().filter(|l| l.effect == e).count();
-            let s = look.setting_mut(e);
-            let title = if s.base > 0.0 { format!("{}  {:.0} %", e.name(), s.base * 100.0) } else { e.name().to_string() };
-            egui::CollapsingHeader::new(RichText::new(title).color(TEXT)).id_salt(("video_fx", e.index())).default_open(true).show(ui, |ui| {
-                note(ui, e.about());
-                ui.horizontal(|ui| {
-                    ui.add_sized([70.0, 18.0], egui::Label::new(RichText::new("Always").small().color(TEXT_DIM)));
-                    ui.spacing_mut().slider_width = (ui.available_width() - 60.0).max(50.0);
-                    let tip = if e.on_hits() { "How often it happens on its own (it is a thing of hits: links make it happen)" } else { "How much of it there is whatever the music (the links add to it)" };
-                    ui.add(egui::Slider::new(&mut s.base, 0.0..=1.0).fixed_decimals(2)).on_hover_text(tip);
-                });
-                for (k, def) in e.params().iter().enumerate() {
-                    let mut v = s.param(e, k);
-                    let changed = ui
-                        .horizontal(|ui| {
-                            ui.add_sized([70.0, 18.0], egui::Label::new(RichText::new(def.name).small().color(TEXT_DIM))).on_hover_text(def.about);
-                            if def.choices.is_empty() {
-                                ui.spacing_mut().slider_width = (ui.available_width() - 60.0).max(50.0);
-                                let dec = if def.max - def.min > 20.0 { 0 } else { 2 };
-                                ui.add(egui::Slider::new(&mut v, def.min..=def.max).fixed_decimals(dec)).on_hover_text(def.about).changed()
-                            } else if def.length {
-                                // Lengths: clicked through, as everywhere.
-                                let mut c = false;
-                                for (i, name) in def.choices.iter().enumerate() {
-                                    if choice(ui, name, v.round() as usize == i, def.about).clicked() {
-                                        v = i as f32;
-                                        c = true;
-                                    }
-                                }
-                                c
-                            } else {
-                                let mut i = v.round() as usize;
-                                let opts: Vec<(usize, String)> = def.choices.iter().enumerate().map(|(i, n)| (i, n.to_string())).collect();
-                                let c = dropdown(ui, ("video_fx_choice", e.index(), k), 120.0, &mut i, &opts, def.about);
-                                v = i as f32;
-                                c
-                            }
-                        })
-                        .inner;
-                    if changed {
-                        s.set_param(e, k, v);
-                    }
-                }
-                if e.has_color() {
-                    ui.horizontal(|ui| {
-                        ui.add_sized([70.0, 18.0], egui::Label::new(RichText::new("Colour").small().color(TEXT_DIM)));
-                        let mut own = s.color.is_some();
-                        let label = if e == Effect::Tint { "The track's" } else { "White" };
-                        if choice(ui, label, !own, if e == Effect::Tint { "In the colour of the track its link hears" } else { "Its own colour: white" }).clicked() {
-                            own = false;
-                            s.color = None;
-                        }
-                        let mut c = s.color.or(e.color()).unwrap_or([0xff, 0x40, 0xa0]);
-                        if ui.color_edit_button_srgb(&mut c).on_hover_text("A colour of its own").changed() || (own && s.color != Some(c)) {
-                            s.color = Some(c);
-                        }
-                    });
-                }
-                ui.horizontal(|ui| {
-                    if linked > 0 {
-                        note(ui, &format!("{linked} link{} move{} it", if linked == 1 { "" } else { "s" }, if linked == 1 { "s" } else { "" }));
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.small_button("Reset").on_hover_text("Its settings as they start, nothing always (its links stay)").clicked() {
-                            drop = Some(e);
-                        }
-                    });
-                });
-            });
-        }
-        if let Some(e) = drop {
-            look.fx.remove(&e);
-        }
-        // Only what is set differently is kept (a section opened changes nothing).
-        look.fx.retain(|e, s| !s.is_plain(*e));
-        ui.horizontal(|ui| {
-            let mut add: Option<Effect> = None;
-            egui::ComboBox::from_id_salt("video_fx_add").width(150.0).selected_text("+ Effect...").height(360.0).show_ui(ui, |ui| {
-                for e in Effect::ALL.iter().filter(|e| !e.moves_film()) {
-                    if ui.selectable_label(false, e.name()).on_hover_text(e.about()).clicked() {
-                        add = Some(*e);
-                    }
-                }
-            })
-            .response
-            .on_hover_text("An effect that is always there (at half to start with), whatever the music: a look of its own. Links can move it too");
-            if let Some(e) = add {
-                let s = look.setting_mut(e);
-                if s.base == 0.0 {
-                    s.base = 0.5;
-                }
+        let o = &mut self.video.export_opts;
+        row(ui, "Size", |ui| {
+            let mut size = (o.width, o.height);
+            let sizes: Vec<((u32, u32), String)> = export::SIZES.iter().map(|&(w, h)| ((w, h), format!("{h}p ({w} by {h})"))).collect();
+            if dropdown(ui, "video_out_size", 130.0, &mut size, &sizes, "How big a film is (Record Video and Export Video)") {
+                (o.width, o.height) = size;
             }
         });
-    }
-
-    /// The links of the Look edited: a source in the music moving an effect.
-    fn video_links(&mut self, ui: &mut Ui, set: &mut kv::VideoSet, tracks: &[(u64, String)]) {
-        ui.add_space(6.0);
-        ui.label(RichText::new("Links").strong().color(TEXT));
-        note(ui, "Each link: a source in the music moves an effect, from its low to its amount");
-        let readings = self.video.dir.readings.clone();
-        let look = set.edited_look_mut();
-        let mut remove = None;
-        for (i, l) in look.links.iter_mut().enumerate() {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 3.0;
-                let sources: Vec<(Source, String)> = Source::ALL.iter().map(|s| (*s, s.name().to_string())).collect();
-                let tip = l.source.about();
-                dropdown(ui, ("video_link_src", i), 58.0, &mut l.source, &sources, tip);
-                if l.source.has_track() {
-                    let none = if l.source.listens() { "Master" } else { "All" };
-                    track_dropdown(ui, ("video_link_from", i), &mut l.from, tracks, none, if l.source.listens() { "The sound it listens to: the master (the whole song) or a track" } else { "Whose notes: every track's, or one's" });
-                } else {
-                    ui.add_sized([66.0, 20.0], egui::Label::new(RichText::new("Song").small().color(TEXT_DIM)));
-                }
-                ui.label(RichText::new(">").color(TEXT_DIM));
-                let effects: Vec<(Effect, String)> = Effect::ALL.iter().map(|e| (*e, e.name().to_string())).collect();
-                let tip = l.effect.about();
-                dropdown(ui, ("video_link_fx", i), 72.0, &mut l.effect, &effects, tip);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("x").on_hover_text("Take this link away").clicked() {
-                        remove = Some(i);
-                    }
-                    ui.spacing_mut().slider_width = ui.available_width().clamp(30.0, 100.0);
-                    let tip = if l.effect.on_hits() { "How often a hit does it" } else { "How much at full" };
-                    ui.add(egui::Slider::new(&mut l.amount, 0.0..=1.0).show_value(false)).on_hover_text(tip);
-                });
-            });
-            // The source now, as a thin line under its row.
-            let v = readings.get(i).copied().unwrap_or(0.0).clamp(0.0, 1.0);
-            let y = ui.cursor().top() - 1.0;
-            let line = Rect::from_min_max(pos2(ui.max_rect().left(), y - 2.0), pos2(ui.max_rect().right(), y));
-            let p = ui.painter();
-            p.rect_filled(line, 1.0, PANEL2);
-            p.rect_filled(Rect::from_min_size(line.min, vec2(line.width() * v * l.amount.max(0.15), line.height())), 1.0, ACCENT);
-            let more = l.low != 0.0 || !l.response.is_plain() || matches!(l.source, Source::Lfo | Source::Band);
-            egui::CollapsingHeader::new(RichText::new("Response").small().color(TEXT_DIM)).id_salt(("video_link_more", i)).default_open(more).show(ui, |ui| {
-                let row = |ui: &mut Ui, label: &str, v: &mut f32, range: std::ops::RangeInclusive<f32>, suffix: &str, tip: &str| {
-                    ui.horizontal(|ui| {
-                        ui.add_sized([64.0, 18.0], egui::Label::new(RichText::new(label).small().color(TEXT_DIM))).on_hover_text(tip);
-                        ui.spacing_mut().slider_width = (ui.available_width() - 70.0).max(50.0);
-                        ui.add(egui::Slider::new(v, range).fixed_decimals(2).suffix(suffix)).on_hover_text(tip);
-                    });
-                };
-                if !l.effect.on_hits() {
-                    row(ui, "Low", &mut l.low, 0.0..=1.0, "", "Where the effect is with the source at nothing (the amount is where it is at full; a low above the amount turns it round)");
-                }
-                row(ui, "Attack", &mut l.response.attack, 0.0..=2.0, " s", "How long it takes to rise (0: at once)");
-                row(ui, "Release", &mut l.response.release, 0.0..=2.0, " s", "How long it takes to fall back (0: at once)");
-                row(ui, "Curve", &mut l.response.curve, 0.25..=4.0, "", "Above 1 it holds back and comes late and sudden; below 1 early and soft");
-                row(ui, "Threshold", &mut l.response.threshold, 0.0..=0.95, "", "It only moves above this");
-                ui.horizontal(|ui| {
-                    ui.add_space(68.0);
-                    ui.checkbox(&mut l.response.invert, RichText::new("Invert").small()).on_hover_text("Upside down: the effect is up when the source is down");
-                });
-                match l.source {
-                    Source::Lfo => {
-                        ui.horizontal(|ui| {
-                            ui.add_sized([64.0, 18.0], egui::Label::new(RichText::new("Shape").small().color(TEXT_DIM)));
-                            let shapes: Vec<(kv::LfoShape, String)> = kv::LfoShape::ALL.iter().map(|s| (*s, s.name().to_string())).collect();
-                            dropdown(ui, ("video_lfo_shape", i), 90.0, &mut l.lfo.shape, &shapes, "The LFO's shape");
-                        });
-                        ui.horizontal_wrapped(|ui| {
-                            ui.add_sized([64.0, 18.0], egui::Label::new(RichText::new("Beats").small().color(TEXT_DIM)));
-                            for b in kv::LFO_BEATS {
-                                let label = if b < 1.0 { format!("1/{}", (1.0 / b).round()) } else { format!("{b}") };
-                                if choice(ui, &label, (l.lfo.beats - b).abs() < 1e-3, "A cycle every so many beats of the song").clicked() {
-                                    l.lfo.beats = b;
-                                }
-                            }
-                        });
-                        row(ui, "Phase", &mut l.lfo.phase, 0.0..=1.0, "", "Where in its cycle it is on the song's first beat");
-                    }
-                    Source::Band => {
-                        ui.horizontal(|ui| {
-                            ui.add_sized([64.0, 18.0], egui::Label::new(RichText::new("Band").small().color(TEXT_DIM)));
-                            ui.add(egui::DragValue::new(&mut l.band.0).range(20.0..=20000.0).speed(5.0).suffix(" Hz")).on_hover_text("From");
-                            ui.label(RichText::new("to").small().color(TEXT_DIM));
-                            ui.add(egui::DragValue::new(&mut l.band.1).range(20.0..=20000.0).speed(20.0).suffix(" Hz")).on_hover_text("To");
-                        });
-                    }
-                    _ => {}
-                }
-            });
-            ui.add_space(3.0);
-        }
-        if let Some(i) = remove {
-            look.links.remove(i);
-        }
-        if look.links.len() < kv::MAX_LINKS && ui.button("+ Link").on_hover_text("A new link: the kick zooming in, to start from").clicked() {
-            let mut link = [VideoLink::new(Source::Kick, Effect::Zoom, 0.4)];
-            self.video_fit_links(&mut link);
-            look.links.extend(link);
-        }
-    }
-
-    /// Record Video: what the Video shows and the master's sound, as it is
-    /// played, into a film.
-    fn video_record_row(&mut self, ui: &mut Ui) {
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            let on = self.video.rec.is_some();
-            let label = if on { "Stop recording" } else { "Record Video" };
-            let b = egui::Button::new(RichText::new(label).color(if on { TEXT } else { TEXT })).fill(if on { REC } else { PANEL3 });
-            let tip = "Records the picture as it shows and the master's sound as you play, live, into a film (MP4) in Documents/Krabton/Recorded. Click again to stop";
-            if ui.add_sized([ui.available_width().min(150.0), 24.0], b).on_hover_text(tip).clicked() {
-                if on {
-                    self.video_record_stop();
-                } else {
-                    self.video_record_start(None);
-                }
-            }
-            if let Some(r) = &self.video.rec {
-                let (secs, bytes) = r.progress();
-                ui.label(RichText::new(format!("REC {}  {:.1} MB", clock(secs), bytes as f64 / 1e6)).color(REC).font(mono()));
-                ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
-            }
+        row(ui, "Frames", |ui| {
+            let rates: Vec<(u32, String)> = export::RATES.iter().map(|f| (*f, f.to_string())).collect();
+            dropdown(ui, "video_out_fps", 50.0, &mut o.fps, &rates, "How smooth: 24 or 25 as cinema, 30 as most video, 60 for fast effects");
+            ui.label(RichText::new("a second").small().color(TEXT_DIM));
         });
+
+        section(ui, "ffmpeg");
+        match ffmpeg::find() {
+            Some(p) => note(ui, &format!("Films play, record and export with {}", p.display())),
+            None => {
+                note(ui, "Films need ffmpeg, a free program that reads nearly every film. Pictures and GIFs play without it.");
+                ui.add_space(4.0);
+                self.ffmpeg_fetch_row(ui);
+            }
+        }
+
+        section(ui, "Keys");
+        note(ui, "With the pointer on the picture or the timeline:");
+        for (k, what) in [("I", "Mark In: a part starts here"), ("O", "Mark Out: the part ends here"), ("S", "Split the part the film is in"), ("Delete", "Take the parts picked away"), ("K", "Pause (the music goes on)"), (", and .", "A frame back, a frame on"), ("Esc", "Forget Mark In")] {
+            row(ui, k, |ui| {
+                ui.label(RichText::new(what).small().color(TEXT));
+            });
+        }
     }
 
     /// The box for Export Video: what of the song, how big, how smooth.

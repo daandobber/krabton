@@ -169,7 +169,7 @@ impl App {
     /// ffmpeg the Video says so and offers to fetch it.
     pub(crate) fn open_film_slice_dialog(&mut self, path: &Path) {
         if crate::video::ffmpeg::find().is_none() {
-            self.video_window = true;
+            self.open_video();
             if let Some(i) = self.project.video.clips.iter().position(|c| c.path == path) {
                 self.video_pick(i);
             }
@@ -353,7 +353,7 @@ impl App {
         }
         self.video_pick(i);
         self.video.dir.playhead.reset();
-        self.video_window = true;
+        self.open_video();
     }
 }
 

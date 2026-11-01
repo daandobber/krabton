@@ -1840,6 +1840,10 @@ pub struct FxSetting {
     /// Its colour (None: the effect's own, for Tint the track's).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub color: Option<[u8; 3]>,
+    /// Switched off: it does nothing, its settings and links kept (to see
+    /// the Look without it).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub off: bool,
 }
 
 fn is_zero(v: &f32) -> bool {
@@ -1882,7 +1886,7 @@ impl FxSetting {
 
     /// Nothing set differently from the start.
     pub fn is_plain(&self, e: Effect) -> bool {
-        self.base == 0.0 && self.color.is_none() && (0..e.params().len()).all(|k| self.param(e, k) == e.params()[k].default)
+        self.base == 0.0 && self.color.is_none() && !self.off && (0..e.params().len()).all(|k| self.param(e, k) == e.params()[k].default)
     }
 }
 
@@ -2546,15 +2550,21 @@ impl Dice {
 /// (their base in `fx`): an effect moved by two links takes the stronger,
 /// added to its base. `amount` scales the links (not the bases); at 0 the
 /// music moves nothing. A link goes from its `low` (the source at 0) to its
-/// `amount` (at full); Gate the other way round, from dark to open.
+/// `amount` (at full); Gate the other way round, from dark to open. An
+/// effect switched off does nothing, its base nor its links.
 pub fn look(links: &[VideoLink], fx: &std::collections::BTreeMap<Effect, FxSetting>, amount: f32, dice: &mut Dice, mut read: impl FnMut(&VideoLink) -> Reading) -> Look {
     let mut out = Look::default();
     let amount = amount.clamp(0.0, 1.0);
     let mut tint_best = 0.0;
     let gate = fx.get(&Effect::Gate).cloned().unwrap_or_default();
     let (th, soft) = (gate.param(Effect::Gate, 0), gate.param(Effect::Gate, 1));
+    let off = |e: Effect| fx.get(&e).is_some_and(|s| s.off);
     for (i, l) in links.iter().enumerate() {
+        // Read all the same, so a link keeps its place and its smoothing.
         let r = read(l);
+        if off(l.effect) {
+            continue;
+        }
         let value = r.value.clamp(0.0, 1.0);
         let range = |v: f32| l.low + (l.amount - l.low) * v;
         let v = if l.effect.on_hits() {
@@ -2584,7 +2594,7 @@ pub fn look(links: &[VideoLink], fx: &std::collections::BTreeMap<Effect, FxSetti
         }
     }
     // What every effect always has, under the links.
-    for (e, s) in fx {
+    for (e, s) in fx.iter().filter(|(_, s)| !s.off) {
         let slot = &mut out.fx[e.index()];
         *slot = (*slot + s.base).clamp(0.0, 1.0);
     }
@@ -3920,6 +3930,13 @@ mod tests {
         let ranged = vec![VideoLink { low: 0.2, ..VideoLink::new(Source::Level, Effect::Pixels, 0.6) }];
         let lk = look(&ranged, &Default::default(), 1.0, &mut Dice::default(), |_| Reading { value: 0.5, hit: false });
         assert!((lk.get(Effect::Pixels) - 0.4).abs() < 1e-6);
+        // Switched off: neither its base nor its links (the others as they were).
+        let mut quiet = fx.clone();
+        quiet.get_mut(&Effect::Zoom).unwrap().off = true;
+        let lk = look(&links, &quiet, 1.0, &mut Dice::default(), read);
+        assert_eq!(lk.get(Effect::Zoom), 0.0);
+        assert!((lk.get(Effect::Hue) - 0.3).abs() < 1e-6);
+        assert!(!FxSetting { off: true, ..Default::default() }.is_plain(Effect::Zoom));
         // Gate's threshold: shut until the level is past it.
         fx.insert(Effect::Gate, FxSetting { params: vec![0.5, 1.0], ..Default::default() });
         assert!((look(&links, &fx, 1.0, &mut Dice::default(), read).get(Effect::Gate) - 0.8).abs() < 1e-6);

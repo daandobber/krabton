@@ -174,10 +174,14 @@ impl App {
                     self.enter_big_picture();
                 }
                 ui.separator();
-                // The Video, in its window.
-                let video_on = self.video_window;
+                // The Video, a view of its own (a click again goes back).
+                let video_on = self.view == View::Video;
                 if ui.add(egui::Button::new(RichText::new("Video").color(if video_on { TEXT_DARK } else { TEXT })).fill(if video_on { ACCENT } else { PANEL3 })).on_hover_text("The Video: films, pictures and GIFs that play along with the music, for a second screen or a projector").clicked() {
-                    self.video_window = !video_on;
+                    if video_on {
+                        self.close_video();
+                    } else {
+                        self.open_video();
+                    }
                 }
                 // The Map, in its window.
                 let map_on = self.map_window;
@@ -199,8 +203,13 @@ impl App {
                 };
                 if level == 3 {
                     // No room: the views in one list.
-                    let now = views.iter().find(|v| v.0 == self.view).map_or("View", |v| v.1);
-                    ui.menu_button(RichText::new(format!("{now} ...")).color(TEXT_DARK).background_color(ACCENT), |ui| {
+                    // On the Video (a button of its own) the list is not lit.
+                    let now = views.iter().find(|v| v.0 == self.view).map(|v| v.1);
+                    let label = match now {
+                        Some(now) => RichText::new(format!("{now} ...")).color(TEXT_DARK).background_color(ACCENT),
+                        None => RichText::new("Views ...").color(TEXT),
+                    };
+                    ui.menu_button(label, |ui| {
                         for (v, name, _) in views.iter().rev() {
                             if ui.selectable_label(self.view == *v, *name).on_hover_text(tip(*v)).clicked() {
                                 self.view = *v;
@@ -372,7 +381,7 @@ impl App {
                 ui.close();
             }
             if ui.button("Video...").on_hover_text("Films, pictures and GIFs that play along with the music").clicked() {
-                self.video_window = true;
+                self.open_video();
                 ui.close();
             }
             if ui.button("Audio & MIDI Settings...   Ctrl+,").on_hover_text("Which device Krabton plays to and records from, and the MIDI inputs").clicked() {
