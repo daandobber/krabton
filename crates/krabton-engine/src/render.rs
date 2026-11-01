@@ -232,9 +232,15 @@ mod tests {
         p.bpm = 120.0;
         let sr = 48_000;
         let mut playing = Vec::new();
-        let (out, _) = render_watched(&p, RenderSource::Scene { scene: 0, beats: 8.0 }, sr, 0.0, None, Vec::new(), 4800.0, |st, _| playing.push(st.playing.load(Ordering::Relaxed)));
+        let mut struck = 0u128;
+        let (out, _) = render_watched(&p, RenderSource::Scene { scene: 0, beats: 8.0 }, sr, 0.0, None, Vec::new(), 4800.0, |st, _| {
+            playing.push(st.playing.load(Ordering::Relaxed));
+            struck |= st.tracks[0].take_struck().0;
+        });
         let out = out.unwrap();
         assert!(playing.iter().all(|p| *p), "the song plays");
+        // Its own steps come as no notes, yet it says what it struck (for the Video): the kick on C1, the snare on D1.
+        assert!(struck >> 36 & 1 == 1 && struck >> 38 & 1 == 1, "{struck:b}");
         // Loud, and loud where its steps fall: the kick on the first step of each bar,
         // after the quiet end of the step before.
         let peak = |from: f64, to: f64| {

@@ -2598,6 +2598,15 @@ impl Engine {
                 if pos < seg {
                     instrument.render(inst, ov, &mut l[pos..seg], &mut r[pos..seg], sr);
                 }
+                // A machine's own steps come as no notes: it says what it struck, for the Video.
+                if let (InstState::Princess(s), Some(ts)) = (&mut *instrument, status.tracks.get(ti)) {
+                    let (mask, vel) = s.take_struck();
+                    if mask != 0 {
+                        ts.struck[0].fetch_or(mask as u64, RELAXED);
+                        ts.struck[1].fetch_or((mask >> 64) as u64, RELAXED);
+                        ts.struck_vel.store_max(vel);
+                    }
+                }
                 if let Some(ts) = status.tracks.get(ti) {
                     ts.inst_scope.write(&l[..seg], &r[..seg]);
                     let mut held = [0u64; 2];

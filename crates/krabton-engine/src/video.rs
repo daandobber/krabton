@@ -3727,8 +3727,6 @@ mod tests {
         i.note = Some(39);
         assert!((ph.advance(&c, &i) - 7.0).abs() < 1e-9);
         // It plays round in its slice, never into the other part.
-        i.note = None;
-        i.dt = 0.25;
         for _ in 0..10 {
             let at = ph.advance(&c, &input(0.25, 5.5));
             assert!((7.0..8.0).contains(&at), "{at}");
