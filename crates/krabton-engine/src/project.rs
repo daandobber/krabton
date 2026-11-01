@@ -2966,8 +2966,8 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("video.krab");
         p.video.clips.push(crate::video::VideoClip::new(dir.join("sea.mp4")));
-        p.video.play = crate::video::PlayMode::Slices;
-        p.video.slice_track = Some(p.tracks[0].id);
+        p.video.clips[0].play.mode = crate::video::PlayMode::Slices;
+        p.video.clips[0].play.slice_track = Some(p.tracks[0].id);
         p.video.links[1].from = Some(p.tracks[1].id);
         p.save(&path).unwrap();
         let (q, _) = Project::load(&path).unwrap();

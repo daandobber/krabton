@@ -17,27 +17,27 @@ use serde::{Deserialize, Serialize};
 pub const MAX_CLIPS: usize = 8;
 /// Links at the same time.
 pub const MAX_LINKS: usize = 8;
+/// Parts kept of one film.
+pub const MAX_PARTS: usize = 64;
 
 /// The Video's part of the project.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(from = "SetFile")]
 pub struct VideoSet {
-    /// The bank: films, pictures and GIFs, by path.
+    /// The bank: films, pictures and GIFs, by path, each with how it plays.
     pub clips: Vec<VideoClip>,
     /// The one that plays (in `clips`).
     pub current: usize,
-    pub play: PlayMode,
-    /// Loop and Slices: how fast it plays (1: as filmed).
-    pub speed: f32,
-    /// Tempo: the whole clip lasts this many bars.
-    pub bars: u32,
-    /// Where it can be cut: the clip in this many equal slices (Slices, Jump).
-    pub slices: u32,
-    /// Slices: the track whose notes pick them (None: any track).
-    pub slice_track: Option<u64>,
-    pub reverse: bool,
     /// The scene that plays picks the clip (scene 1 the first, ...).
     pub follow_scenes: bool,
+    /// The notes of this track pick the clip (C1 the first, ...; None: they do not).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clip_notes: Option<u64>,
+    /// When a clip clicked in the bank starts (while the song plays).
+    pub launch: Launch,
+    /// How one clip makes way for the next, and in how many beats.
+    pub transition: Transition,
+    pub transition_beats: f32,
     pub fit: Fit,
     /// How much the music moves the picture, everything at once (0..1).
     pub amount: f32,
@@ -49,16 +49,67 @@ impl Default for VideoSet {
         Self {
             clips: Vec::new(),
             current: 0,
-            play: PlayMode::Loop,
-            speed: 1.0,
-            bars: 4,
-            slices: 16,
-            slice_track: None,
-            reverse: false,
             follow_scenes: false,
+            clip_notes: None,
+            launch: Launch::Now,
+            transition: Transition::Cut,
+            transition_beats: 1.0,
             fit: Fit::Fill,
             amount: 1.0,
             links: preset("Pulse").map(|p| p.links).unwrap_or_default(),
+        }
+    }
+}
+
+/// The Video as a set's file holds it: also what older sets wrote, when
+/// how a clip plays was the same for every clip (`play`, `speed`, ...):
+/// each clip of such a set gets those.
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct SetFile {
+    clips: Vec<ClipFile>,
+    current: usize,
+    follow_scenes: bool,
+    clip_notes: Option<u64>,
+    launch: Option<Launch>,
+    transition: Option<Transition>,
+    transition_beats: Option<f32>,
+    fit: Option<Fit>,
+    amount: Option<f32>,
+    links: Option<Vec<VideoLink>>,
+    // Older sets: how every clip played.
+    play: Option<PlayMode>,
+    speed: Option<f32>,
+    bars: Option<u32>,
+    slices: Option<u32>,
+    slice_track: Option<u64>,
+    reverse: Option<bool>,
+}
+
+impl From<SetFile> for VideoSet {
+    fn from(f: SetFile) -> Self {
+        let d = VideoSet::default();
+        let p = ClipPlay::default();
+        let old = ClipPlay {
+            mode: f.play.unwrap_or(p.mode),
+            speed: f.speed.unwrap_or(p.speed),
+            bars: f.bars.unwrap_or(p.bars),
+            slices: f.slices.unwrap_or(p.slices),
+            slice_track: f.slice_track,
+            reverse: f.reverse.unwrap_or(p.reverse),
+            part_slices: false,
+        };
+        Self {
+            clips: f.clips.into_iter().map(|c| c.into_clip(&old)).collect(),
+            current: f.current,
+            follow_scenes: f.follow_scenes,
+            clip_notes: f.clip_notes,
+            launch: f.launch.unwrap_or(d.launch),
+            transition: f.transition.unwrap_or(d.transition),
+            transition_beats: f.transition_beats.unwrap_or(d.transition_beats),
+            fit: f.fit.unwrap_or(d.fit),
+            amount: f.amount.unwrap_or(d.amount),
+            links: f.links.unwrap_or(d.links),
         }
     }
 }
@@ -74,12 +125,24 @@ impl VideoSet {
         self.clips.get(self.current.min(self.clips.len().saturating_sub(1)))
     }
 
-    /// Puts a preset's links (and its way of playing, when it has one) in place.
+    /// Puts a preset's links in place (and its way of playing, when it has
+    /// one, on the clip that plays).
     pub fn apply_preset(&mut self, p: &Preset) {
         self.links = p.links.clone();
         if let Some(play) = p.play {
-            self.play = play;
+            let i = self.current.min(self.clips.len().saturating_sub(1));
+            if let Some(c) = self.clips.get_mut(i) {
+                c.play.mode = play;
+            }
         }
+    }
+
+    /// The transition's length in seconds at `bpm` (0 for a cut).
+    pub fn transition_secs(&self, bpm: f64) -> f64 {
+        if self.transition == Transition::Cut {
+            return 0.0;
+        }
+        self.transition_beats.clamp(0.0, 64.0) as f64 * 60.0 / bpm.max(1.0)
     }
 
     /// Fixes what a hand-edited or older file might hold.
@@ -88,10 +151,8 @@ impl VideoSet {
         self.links.truncate(MAX_LINKS);
         self.current = self.current.min(self.clips.len().saturating_sub(1));
         let ok = |v: f32, lo: f32, hi: f32, d: f32| if v.is_finite() { v.clamp(lo, hi) } else { d };
-        self.speed = ok(self.speed, 0.0, 4.0, 1.0);
         self.amount = ok(self.amount, 0.0, 1.0, 1.0);
-        self.bars = self.bars.clamp(1, 64);
-        self.slices = self.slices.clamp(2, 64);
+        self.transition_beats = ok(self.transition_beats, 0.0625, 16.0, 1.0);
         for c in &mut self.clips {
             if let Some(cues) = &mut c.cues {
                 cues.sanitize();
@@ -99,6 +160,11 @@ impl VideoSet {
             if c.cues.as_ref().is_some_and(|q| q.times.is_empty()) {
                 c.cues = None;
             }
+            normalize_parts(&mut c.parts);
+            let p = &mut c.play;
+            p.speed = ok(p.speed, 0.0, 4.0, 1.0);
+            p.bars = p.bars.clamp(1, 64);
+            p.slices = p.slices.clamp(2, 64);
         }
         for l in &mut self.links {
             l.amount = ok(l.amount, 0.0, 1.0, 0.5);
@@ -118,56 +184,401 @@ impl VideoSet {
             None => return None,
         };
         self.clips[i].cues = Some(cues);
+        self.clips[i].play.mode = PlayMode::Slices;
         self.current = i;
-        self.play = PlayMode::Slices;
         Some(i)
+    }
+}
+
+/// How a clip plays. Each clip has its own: a short loop can keep time with
+/// the song while a film next to it runs on its own.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ClipPlay {
+    pub mode: PlayMode,
+    /// Loop and Slices: how fast it plays (1: as filmed).
+    pub speed: f32,
+    /// Tempo: the whole clip (its parts back to back) lasts this many bars.
+    pub bars: u32,
+    /// Where it can be cut: the clip in this many equal slices (Slices, Jump).
+    pub slices: u32,
+    /// Slices: the track whose notes pick them (None: any track).
+    pub slice_track: Option<u64>,
+    pub reverse: bool,
+    /// Slices: one slice for each part (when it has several), so the notes
+    /// play the parts: C1 the first part, C#1 the second...
+    pub part_slices: bool,
+}
+
+impl Default for ClipPlay {
+    fn default() -> Self {
+        Self { mode: PlayMode::Loop, speed: 1.0, bars: 4, slices: 16, slice_track: None, reverse: false, part_slices: false }
     }
 }
 
 /// A clip in the bank.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(from = "ClipFile")]
 pub struct VideoClip {
     pub path: std::path::PathBuf,
     pub name: String,
     /// Where Slice to Drum Rack cut it (None: in equal slices).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cues: Option<Cues>,
-    /// The part of the film that plays (seconds): from `start` to `end`
-    /// (None: to its end). Loop, Tempo and Slices only know that part.
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub start: f32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub end: Option<f32>,
+    /// The parts of the film that play (seconds, from and to), in order and
+    /// apart; they play back to back, the rest is skipped. None: all of it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<(f32, f32)>,
+    pub play: ClipPlay,
 }
 
-fn is_zero(v: &f32) -> bool {
-    *v == 0.0
+/// A clip as a set's file holds it: older sets kept one part, as `start`
+/// and `end`, and had no `play` of their own.
+#[derive(Deserialize)]
+struct ClipFile {
+    path: std::path::PathBuf,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    cues: Option<Cues>,
+    #[serde(default)]
+    parts: Vec<(f32, f32)>,
+    #[serde(default)]
+    start: f32,
+    #[serde(default)]
+    end: Option<f32>,
+    #[serde(default)]
+    play: Option<ClipPlay>,
+}
+
+impl ClipFile {
+    fn into_clip(self, old: &ClipPlay) -> VideoClip {
+        let mut parts = self.parts;
+        if parts.is_empty() && (self.start > 0.0 || self.end.is_some()) {
+            parts.push((self.start, self.end.unwrap_or(TO_THE_END)));
+        }
+        VideoClip { path: self.path, name: self.name, cues: self.cues, parts, play: self.play.unwrap_or_else(|| old.clone()) }
+    }
+}
+
+impl From<ClipFile> for VideoClip {
+    fn from(f: ClipFile) -> Self {
+        f.into_clip(&ClipPlay::default())
+    }
 }
 
 /// The shortest part of a film that can be kept (seconds).
 pub const MIN_PART: f32 = 0.1;
+/// A part's end that is the film's end, however long the film is.
+pub const TO_THE_END: f32 = 1.0e9;
+
+/// Puts parts in order: each the right way round and not before the
+/// film's start, the ones shorter than [`MIN_PART`] gone, overlapping or
+/// touching ones made one, no more than [`MAX_PARTS`]. (A part may end at
+/// [`TO_THE_END`]: the film's end, whatever its length.)
+pub fn normalize_parts(parts: &mut Vec<(f32, f32)>) {
+    parts.retain(|(a, b)| !a.is_nan() && !b.is_nan());
+    for p in parts.iter_mut() {
+        if p.1 < p.0 {
+            *p = (p.1, p.0);
+        }
+        p.0 = p.0.max(0.0);
+        p.1 = p.1.min(TO_THE_END);
+    }
+    parts.retain(|(a, b)| a.is_finite() && b - a >= MIN_PART - 1e-6);
+    parts.sort_by(|x, y| x.0.total_cmp(&y.0));
+    let mut out: Vec<(f32, f32)> = Vec::with_capacity(parts.len());
+    for &(a, b) in parts.iter() {
+        match out.last_mut() {
+            Some(last) if a <= last.1 + 1e-4 => last.1 = last.1.max(b),
+            _ => out.push((a, b)),
+        }
+    }
+    out.truncate(MAX_PARTS);
+    *parts = out;
+}
 
 impl VideoClip {
     pub fn new(path: std::path::PathBuf) -> Self {
         let name = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-        Self { path, name, cues: None, start: 0.0, end: None }
+        Self { path, name, cues: None, parts: Vec::new(), play: ClipPlay::default() }
     }
 
-    /// The part that plays, in a film `duration` long: (from, to). A film
-    /// cut by Slice to Drum Rack plays whole (its cues are times in it).
-    pub fn part(&self, duration: f32) -> (f32, f32) {
-        if duration <= 0.0 || self.cues.as_ref().is_some_and(|c| !c.is_empty()) {
-            return (0.0, duration.max(0.0));
-        }
-        let min = MIN_PART.min(duration);
-        let from = if self.start.is_finite() { self.start.clamp(0.0, duration - min) } else { 0.0 };
-        let to = self.end.filter(|e| e.is_finite()).unwrap_or(duration).clamp(from + min, duration);
-        (from, to)
+    /// Cut by Slice to Drum Rack: it plays whole, by its cues.
+    pub fn is_cued(&self) -> bool {
+        self.cues.as_ref().is_some_and(|c| !c.is_empty())
     }
 
-    /// Whether only part of it plays.
+    /// Whether only parts of it play.
     pub fn is_cut(&self) -> bool {
-        self.start > 0.0 || self.end.is_some()
+        !self.parts.is_empty() && !self.is_cued()
+    }
+
+    /// The parts that play in a film `duration` long (seconds, in order):
+    /// those inside the film, or all of it when none are (or it is cued).
+    pub fn spans(&self, duration: f32) -> Vec<(f32, f32)> {
+        let d = duration.max(0.0);
+        let mut out: Vec<(f32, f32)> = if self.is_cued() { Vec::new() } else { self.parts.iter().map(|&(a, b)| (a.clamp(0.0, d), b.clamp(0.0, d))).filter(|(a, b)| b - a >= 1e-3).collect() };
+        if out.is_empty() {
+            out.push((0.0, d));
+        }
+        out
+    }
+
+    /// How long its parts last back to back (seconds).
+    pub fn joined_len(&self, duration: f32) -> f32 {
+        joined_len(&self.spans(duration))
+    }
+
+    /// Where in the film it is `t` seconds into its parts played back to
+    /// back (round again after the last).
+    pub fn film_time(&self, t: f64, duration: f32) -> f64 {
+        film_time(&self.spans(duration), t)
+    }
+
+    /// The other way: how far into the parts the film's `t` is (None in a gap).
+    pub fn joined_time(&self, t: f64, duration: f32) -> Option<f64> {
+        joined_time(&self.spans(duration), t)
+    }
+
+    /// The part that holds the film's `t`, if one does.
+    pub fn part_at(&self, t: f32) -> Option<usize> {
+        self.parts.iter().position(|&(a, b)| t >= a && t < b)
+    }
+
+    /// Keeps the part from `a` to `b` too (put in order, joined to any it touches).
+    pub fn add_part(&mut self, a: f32, b: f32) {
+        self.parts.push((a.min(b), a.max(b)));
+        normalize_parts(&mut self.parts);
+    }
+
+    /// Cuts the part that holds `t` in two there. Whether it did.
+    pub fn split_part(&mut self, t: f32) -> bool {
+        let Some(i) = self.part_at(t) else { return false };
+        let (a, b) = self.parts[i];
+        if t - a < MIN_PART || b - t < MIN_PART || self.parts.len() >= MAX_PARTS {
+            return false;
+        }
+        self.parts[i] = (a, t);
+        self.parts.insert(i + 1, (t, b));
+        true
+    }
+
+    /// How many slices it is cut in (by its parts, or equally), with the
+    /// parts as they play now.
+    pub fn slice_count(&self, spans: &[(f32, f32)]) -> u32 {
+        if self.play.part_slices && spans.len() > 1 {
+            spans.len() as u32
+        } else {
+            self.play.slices.max(1)
+        }
+    }
+
+    /// Where slice `k` starts and ends in the parts played back to back.
+    pub fn slice_bounds(&self, spans: &[(f32, f32)], k: usize) -> (f64, f64) {
+        let total = joined_len(spans) as f64;
+        if self.play.part_slices && spans.len() > 1 {
+            let k = k.min(spans.len() - 1);
+            let from: f64 = spans[..k].iter().map(|(a, b)| (b - a) as f64).sum();
+            return (from, from + (spans[k].1 - spans[k].0) as f64);
+        }
+        let n = self.play.slices.max(1) as f64;
+        let len = total / n;
+        (k as f64 * len, (k as f64 + 1.0) * len)
+    }
+}
+
+/// How long `spans` last back to back.
+pub fn joined_len(spans: &[(f32, f32)]) -> f32 {
+    spans.iter().map(|(a, b)| (b - a).max(0.0)).sum()
+}
+
+/// Where in the film it is `t` seconds into `spans` played back to back
+/// (round again after the last).
+pub fn film_time(spans: &[(f32, f32)], t: f64) -> f64 {
+    let total = joined_len(spans) as f64;
+    if total <= 0.0 {
+        return spans.first().map_or(0.0, |s| s.0 as f64);
+    }
+    let mut left = t.rem_euclid(total);
+    for &(a, b) in spans {
+        let len = (b - a) as f64;
+        if left < len {
+            return a as f64 + left;
+        }
+        left -= len;
+    }
+    // Only by rounding: the very end of the last.
+    spans.last().map_or(0.0, |s| s.1 as f64)
+}
+
+/// How far into `spans` played back to back the film's `t` is (None in a gap).
+pub fn joined_time(spans: &[(f32, f32)], t: f64) -> Option<f64> {
+    let mut acc = 0.0;
+    for &(a, b) in spans {
+        if t >= a as f64 && t < b as f64 {
+            return Some(acc + t - a as f64);
+        }
+        acc += (b - a) as f64;
+    }
+    None
+}
+
+/// When a clip clicked in the bank starts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Launch {
+    /// At once.
+    Now,
+    /// On the next beat.
+    Beat,
+    /// On the next bar.
+    Bar,
+}
+
+impl Launch {
+    pub const ALL: [Launch; 3] = [Launch::Now, Launch::Beat, Launch::Bar];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Launch::Now => "Now",
+            Launch::Beat => "Beat",
+            Launch::Bar => "Bar",
+        }
+    }
+
+    pub fn about(self) -> &'static str {
+        match self {
+            Launch::Now => "A clip clicked in the bank plays at once",
+            Launch::Beat => "A clip clicked in the bank waits for the next beat (while the song plays)",
+            Launch::Bar => "A clip clicked in the bank waits for the next bar (while the song plays)",
+        }
+    }
+}
+
+/// Where in the song (beats) a clip asked for at `beat` starts, by
+/// `launch`; None: at once (Now, the song stopped, or just on the beat).
+pub fn launch_beat(launch: Launch, beat: f64, playing: bool, beats_per_bar: u32) -> Option<f64> {
+    let q = match launch {
+        Launch::Now => return None,
+        Launch::Beat => 1.0,
+        Launch::Bar => beats_per_bar.max(1) as f64,
+    };
+    if !playing || !beat.is_finite() {
+        return None;
+    }
+    let start = (beat / q).floor() * q;
+    // A click a little late for the beat still makes it.
+    if beat - start < 0.05 {
+        return None;
+    }
+    Some(start + q)
+}
+
+/// How one clip makes way for the next.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Transition {
+    /// At once.
+    Cut,
+    /// The one fading into the other.
+    Fade,
+    /// Through white.
+    Flash,
+    /// Strips of the next tearing through.
+    Glitch,
+}
+
+impl Transition {
+    pub const ALL: [Transition; 4] = [Transition::Cut, Transition::Fade, Transition::Flash, Transition::Glitch];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Transition::Cut => "Cut",
+            Transition::Fade => "Fade",
+            Transition::Flash => "Flash",
+            Transition::Glitch => "Glitch",
+        }
+    }
+
+    pub fn about(self) -> &'static str {
+        match self {
+            Transition::Cut => "The next clip at once",
+            Transition::Fade => "The clip fades into the next",
+            Transition::Flash => "To white and out of it on the next clip",
+            Transition::Glitch => "Strips of the next clip tear through, more and more",
+        }
+    }
+}
+
+/// Which clip plays, a clip waiting for its beat, and the one it is
+/// changing from. Clips change at once ([`Switch::go`]) or on the beat
+/// ([`Switch::ask`]); a change with a transition keeps the last clip for
+/// its length.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Switch {
+    pub clip: usize,
+    /// A clip waiting for a song position (beats), and where the song was
+    /// when it was asked for.
+    pub pending: Option<(usize, f64, f64)>,
+    pub fade: Option<Fade>,
+}
+
+/// A change going on: from clip `from`, `elapsed` of `len` seconds.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fade {
+    pub from: usize,
+    pub elapsed: f64,
+    pub len: f64,
+}
+
+impl Fade {
+    /// How far it is, 0 (all the last clip) to 1 (all the new one).
+    pub fn mix(&self) -> f32 {
+        if self.len <= 0.0 {
+            1.0
+        } else {
+            (self.elapsed / self.len).clamp(0.0, 1.0) as f32
+        }
+    }
+}
+
+impl Switch {
+    /// Clip `clip` now, changing in `secs` seconds (0: a cut). Whether it changed.
+    pub fn go(&mut self, clip: usize, secs: f64) -> bool {
+        self.pending = None;
+        if clip == self.clip {
+            return false;
+        }
+        self.fade = (secs > 0.0).then_some(Fade { from: self.clip, elapsed: 0.0, len: secs });
+        self.clip = clip;
+        true
+    }
+
+    /// Clip `clip` at song position `at`, asked for at `now` (None: at
+    /// once, see `go`). Whether it changed now.
+    pub fn ask(&mut self, clip: usize, now: f64, at: Option<f64>, secs: f64) -> bool {
+        match at {
+            None => self.go(clip, secs),
+            Some(b) => {
+                self.pending = Some((clip, b, now));
+                false
+            }
+        }
+    }
+
+    /// One frame at song position `beat`: a waiting clip starts when its
+    /// beat comes (or at once when the song stops or jumps back), a change
+    /// moves on. Whether a clip started.
+    pub fn frame(&mut self, beat: f64, playing: bool, dt: f64, secs: f64) -> bool {
+        if let Some(f) = &mut self.fade {
+            f.elapsed += dt.max(0.0);
+            if f.elapsed >= f.len {
+                self.fade = None;
+            }
+        }
+        match self.pending {
+            Some((clip, at, asked)) if !playing || beat >= at - 1e-9 || beat < asked - 1e-6 => self.go(clip, secs),
+            _ => false,
+        }
     }
 }
 
@@ -1022,12 +1433,12 @@ pub fn scene_clip(playing_slots: impl Iterator<Item = i32>, clips: usize) -> Opt
     Some(best.0 as usize % clips)
 }
 
-/// What moves the film this frame, besides the settings.
+//// What moves the film this frame, besides the settings.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PlayInput {
     /// Seconds since the last frame.
     pub dt: f32,
-    /// The clip's length (seconds); 0 for a still picture.
+    /// The film's length (seconds, all of it); 0 for a still picture.
     pub duration: f32,
     /// The song: where it is (beats), whether it plays, its tempo.
     pub beat: f64,
@@ -1042,11 +1453,14 @@ pub struct PlayInput {
     pub stutter: bool,
     /// Slices: the note that just picked one.
     pub note: Option<u8>,
-    /// Which clip of the bank plays (its cues, when it has them).
-    pub clip: usize,
     /// Cues: the notes held now on the track that plays them (a 128-bit
     /// mask), so Gate holds the picture where its note ends.
     pub held: u128,
+    /// Put the film here (seconds into its parts back to back; a cued
+    /// film's own time), as the timeline's playhead is dragged.
+    pub seek: Option<f64>,
+    /// Paused: the film stands where it is (only `seek` moves it).
+    pub hold: bool,
 }
 
 /// A stutter going on: the film from `anchor` repeated, `left` seconds more.
@@ -1058,10 +1472,12 @@ struct Stutter {
     left: f64,
 }
 
-/// Where the film is, frame by frame.
+/// Where the film is, frame by frame. It runs through the clip's parts
+/// played back to back (its `pos` counts in them), and says where that is
+/// in the film.
 #[derive(Clone, Debug, Default)]
 pub struct Playhead {
-    /// Where it runs (seconds), before a stutter or scratch.
+    /// Where it runs (seconds into the parts), before a stutter or scratch.
     pub pos: f64,
     /// Tempo: how far it is from where the song puts it (after a jump).
     offset: f64,
@@ -1083,41 +1499,54 @@ impl Playhead {
         self.stutter = None;
     }
 
-    /// The slice it is in now.
-    pub fn slice_now(&self, duration: f64, slices: u32) -> usize {
-        if duration <= 0.0 {
-            return 0;
-        }
-        ((self.pos / duration * slices.max(1) as f64).floor().max(0.0) as usize).min(slices.max(1) as usize - 1)
+    /// The slice that `pos` (into the parts) is in.
+    fn slice_at(clip: &VideoClip, spans: &[(f32, f32)], pos: f64) -> usize {
+        let n = clip.slice_count(spans) as usize;
+        (0..n).find(|&k| pos < clip.slice_bounds(spans, k).1).unwrap_or(n.saturating_sub(1))
     }
 
-    /// One frame: moves on and returns where to show the film (seconds,
-    /// 0 up to its length).
-    pub fn advance(&mut self, set: &VideoSet, inp: &PlayInput) -> f64 {
-        let dur = inp.duration as f64;
+    /// One frame of `clip`: moves on and returns where to show the film
+    /// (seconds, 0 up to its length).
+    pub fn advance(&mut self, clip: &VideoClip, inp: &PlayInput) -> f64 {
+        if inp.duration <= 0.0 {
+            self.reset();
+            return 0.0;
+        }
+        let play = &clip.play;
+        let cues = clip.cues.as_ref().filter(|c| !c.is_empty() && play.mode == PlayMode::Slices);
+        // Cues are times in the whole film; the rest plays the parts back to back.
+        let spans = clip.spans(inp.duration);
+        let dur = if cues.is_some() { inp.duration as f64 } else { joined_len(&spans) as f64 };
         if dur <= 0.0 {
             self.reset();
             return 0.0;
         }
+        let to_film = |t: f64| if cues.is_some() { t.clamp(0.0, dur) } else { film_time(&spans, t) };
+        if inp.hold {
+            if let Some(t) = inp.seek {
+                self.seek(clip, &spans, cues, t.rem_euclid(dur), inp);
+            }
+            self.stutter = None;
+            return to_film(self.pos.rem_euclid(dur));
+        }
         let dt = inp.dt.clamp(0.0, 0.25) as f64;
-        let dir = if set.reverse { -1.0 } else { 1.0 };
+        let dir = if play.reverse { -1.0 } else { 1.0 };
         let beat_secs = 60.0 / inp.bpm.max(1.0);
-        let slices = set.slices.max(1);
-        let slice_len = dur / slices as f64;
+        let slices = clip.slice_count(&spans).max(1);
+        let bounds = |k: usize| clip.slice_bounds(&spans, k);
         // How much faster the links make it, and how much it stands still.
         let push = (1.0 + 3.0 * inp.speed.clamp(0.0, 1.0) as f64) * (1.0 - inp.freeze.clamp(0.0, 1.0) as f64);
-        let cues = set.clips.get(inp.clip).and_then(|c| c.cues.as_ref()).filter(|c| !c.is_empty() && set.play == PlayMode::Slices);
-        match (set.play, cues) {
-            (PlayMode::Loop, _) => self.pos += dt * set.speed as f64 * push * dir,
+        match (play.mode, cues) {
+            (PlayMode::Loop, _) => self.pos += dt * play.speed as f64 * push * dir,
             (PlayMode::Tempo, _) => {
-                // The whole clip in `bars` bars.
-                let lap = (set.bars.max(1) * inp.beats_per_bar.max(1)) as f64;
+                // The whole clip (its parts back to back) in `bars` bars.
+                let lap = (play.bars.max(1) * inp.beats_per_bar.max(1)) as f64;
                 let rate = dur / (lap * beat_secs);
                 if inp.playing {
                     // Pinned to the song; the links push it off from there.
                     self.offset += dt * rate * (push - 1.0) * dir;
                     let target = (inp.beat / lap).rem_euclid(1.0) * dur;
-                    self.pos = if set.reverse { dur - target } else { target } + self.offset;
+                    self.pos = if play.reverse { dur - target } else { target } + self.offset;
                 } else {
                     self.pos += dt * rate * push * dir;
                 }
@@ -1140,27 +1569,21 @@ impl Playhead {
                     // Waiting for a note: on the first cue.
                     self.pos = c.piece(0, dur).0;
                 }
-                // No further than its piece: the sound has stopped there too.
-                if let Some(k) = self.slice {
-                    let (a, b) = c.piece(k, dur);
-                    self.pos = self.pos.clamp(a, (b - 1e-3).max(a));
-                }
             }
             (PlayMode::Slices, None) => {
                 if let Some(n) = inp.note {
                     let k = slice_for_note(n, slices);
                     self.slice = Some(k);
-                    self.pos = if set.reverse { (k as f64 + 1.0) * slice_len - 1e-6 } else { k as f64 * slice_len };
+                    let (a, b) = bounds(k);
+                    self.pos = if play.reverse { b - 1e-6 } else { a };
                     self.stutter = None;
                 } else {
-                    self.pos += dt * set.speed as f64 * push * dir;
-                }
-                // Round and round in its slice.
-                if let Some(k) = self.slice {
-                    let start = k as f64 * slice_len;
-                    self.pos = start + (self.pos - start).rem_euclid(slice_len);
+                    self.pos += dt * play.speed as f64 * push * dir;
                 }
             }
+        }
+        if let Some(t) = inp.seek {
+            self.seek(clip, &spans, cues, t.rem_euclid(dur), inp);
         }
         if let (true, Some(c)) = (inp.jump, cues) {
             // To the start of another cue.
@@ -1171,17 +1594,32 @@ impl Playhead {
             self.pos = c.piece(k, dur).0;
             self.stutter = None;
         } else if inp.jump {
-            let now = self.slice.unwrap_or_else(|| self.slice_now(dur, slices));
+            let now = self.slice.unwrap_or_else(|| Self::slice_at(clip, &spans, self.pos.rem_euclid(dur)));
             let k = other_slice(&mut self.dice, now, slices);
-            let to = k as f64 * slice_len;
-            if set.play == PlayMode::Slices {
+            let to = bounds(k).0;
+            if play.mode == PlayMode::Slices {
                 self.slice = Some(k);
             }
-            if set.play == PlayMode::Tempo && inp.playing {
+            if play.mode == PlayMode::Tempo && inp.playing {
                 self.offset += to - self.pos;
             }
             self.pos = to;
             self.stutter = None;
+        }
+        match (self.slice, cues) {
+            // No further than its piece: the sound has stopped there too.
+            (Some(k), Some(c)) => {
+                let (a, b) = c.piece(k, dur);
+                self.pos = self.pos.clamp(a, (b - 1e-3).max(a));
+            }
+            // Round and round in its slice.
+            (Some(k), None) if play.mode == PlayMode::Slices => {
+                let (a, b) = bounds(k);
+                if b > a {
+                    self.pos = a + (self.pos - a).rem_euclid(b - a);
+                }
+            }
+            _ => {}
         }
         self.pos = self.pos.rem_euclid(dur);
         self.offset = self.offset.rem_euclid(dur);
@@ -1202,7 +1640,25 @@ impl Playhead {
         }
         // Scratch: pulled back by up to a beat of film.
         show -= inp.scratch.clamp(0.0, 1.0) as f64 * beat_secs * dir;
-        show.rem_euclid(dur)
+        to_film(show.rem_euclid(dur))
+    }
+
+    /// Puts it at `t` (into the parts, or a cued film's own time), in the
+    /// slice or cue there.
+    fn seek(&mut self, clip: &VideoClip, spans: &[(f32, f32)], cues: Option<&Cues>, t: f64, inp: &PlayInput) {
+        if clip.play.mode == PlayMode::Tempo && inp.playing {
+            self.offset += t - self.pos;
+        }
+        self.pos = t;
+        self.stutter = None;
+        match cues {
+            Some(c) => {
+                self.slice = Some(c.at(t));
+                self.pitch = None;
+            }
+            None if clip.play.mode == PlayMode::Slices => self.slice = Some(Self::slice_at(clip, spans, t)),
+            None => {}
+        }
     }
 }
 
@@ -1213,28 +1669,147 @@ mod tests {
     const SR: f32 = 48000.0;
 
     #[test]
-    fn a_clip_plays_the_part_that_is_kept() {
+    fn a_clip_plays_its_parts_back_to_back_and_skips_the_gaps() {
         let mut c = VideoClip::new("a.mp4".into());
-        assert_eq!(c.part(10.0), (0.0, 10.0));
+        // None: the whole film.
+        assert_eq!(c.spans(10.0), vec![(0.0, 10.0)]);
         assert!(!c.is_cut());
-        c.start = 2.0;
-        c.end = Some(6.5);
-        assert_eq!(c.part(10.0), (2.0, 6.5));
+        c.add_part(6.0, 8.0);
+        c.add_part(1.0, 2.0);
+        // In the film's order whatever the order they came in.
+        assert_eq!(c.parts, vec![(1.0, 2.0), (6.0, 8.0)]);
         assert!(c.is_cut());
-        // Past the film's end, or ends the wrong way round: kept in order and inside.
-        c.start = 12.0;
-        c.end = Some(1.0);
-        let (a, b) = c.part(10.0);
-        assert!(a <= 10.0 - MIN_PART && b > a && b <= 10.0, "{a} {b}");
-        // A cut film plays whole, and old sets (no start or end) load.
-        let mut cued = VideoClip::new("b.mp4".into());
-        cued.start = 3.0;
+        assert!((c.joined_len(10.0) - 3.0).abs() < 1e-6);
+        // 0.5 s in: in the first part; 1.5 s in: half a second into the second (the gap skipped).
+        assert!((c.film_time(0.5, 10.0) - 1.5).abs() < 1e-9);
+        assert!((c.film_time(1.0, 10.0) - 6.0).abs() < 1e-9, "the second part starts where the first ends");
+        assert!((c.film_time(1.5, 10.0) - 6.5).abs() < 1e-9);
+        // Round again after the last.
+        assert!((c.film_time(3.25, 10.0) - 1.25).abs() < 1e-9);
+        // And back: a gap is in no part.
+        assert_eq!(c.joined_time(6.5, 10.0), Some(1.5));
+        assert_eq!(c.joined_time(4.0, 10.0), None);
+        assert_eq!((c.part_at(1.5), c.part_at(4.0), c.part_at(7.9)), (Some(0), None, Some(1)));
+        // A part past the film's end is cut there; one wholly past it plays nothing.
+        c.add_part(9.0, 30.0);
+        assert_eq!(c.spans(10.0), vec![(1.0, 2.0), (6.0, 8.0), (9.0, 10.0)]);
+        assert_eq!(c.spans(5.0), vec![(1.0, 2.0)]);
+        // A cued film plays whole, by its cues.
+        let mut cued = c.clone();
         cued.cues = Some(Cues { times: vec![0.0, 1.0], end: 2.0, track: None, gate: false });
-        assert_eq!(cued.part(10.0), (0.0, 10.0));
-        let old: VideoClip = serde_json::from_str(r#"{"path":"c.mp4","name":"c"}"#).unwrap();
-        assert_eq!((old.start, old.end), (0.0, None));
-        let back: VideoClip = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
-        assert_eq!((back.start, back.end), (c.start, c.end));
+        assert_eq!(cued.spans(10.0), vec![(0.0, 10.0)]);
+        assert!(!cued.is_cut());
+    }
+
+    #[test]
+    fn parts_are_put_in_order_joined_where_they_overlap_and_tiny_ones_dropped() {
+        let mut parts = vec![(5.0, 7.0), (6.5, 9.0), (2.0, 1.0), (3.0, 3.05), (-1.0, 0.5), (f32::NAN, 2.0), (9.0, 9.5)];
+        normalize_parts(&mut parts);
+        // Turned the right way, joined where they overlap or touch, a twentieth of a second gone.
+        assert_eq!(parts, vec![(0.0, 0.5), (1.0, 2.0), (5.0, 9.5)]);
+        // A part as short as can be stays; split in two only where both halves can be kept.
+        let mut c = VideoClip::new("a.mp4".into());
+        c.add_part(2.0, 2.0 + MIN_PART);
+        assert_eq!(c.parts.len(), 1);
+        c.parts = vec![(0.0, 4.0)];
+        assert!(!c.split_part(0.05), "too near the start");
+        assert!(!c.split_part(5.0), "in no part");
+        assert!(c.split_part(1.5));
+        assert_eq!(c.parts, vec![(0.0, 1.5), (1.5, 4.0)]);
+        // Tiny parts of a film keep playing (back to back, no time lost).
+        c.parts = vec![(1.0, 1.1), (3.0, 3.1), (5.0, 5.1)];
+        assert!((c.joined_len(10.0) - 0.3).abs() < 1e-5);
+        assert!((c.film_time(0.15, 10.0) - 3.05).abs() < 1e-5);
+        assert!((c.film_time(0.299, 10.0) - 5.099).abs() < 1e-4);
+        // Too many: no more than MAX_PARTS.
+        let mut many: Vec<(f32, f32)> = (0..100).map(|k| (k as f32, k as f32 + 0.5)).collect();
+        normalize_parts(&mut many);
+        assert_eq!(many.len(), MAX_PARTS);
+    }
+
+    #[test]
+    fn older_sets_keep_their_part_and_how_they_played() {
+        // From before parts: start and end make one part; start alone runs to the end.
+        let old: VideoClip = serde_json::from_str(r#"{"path":"c.mp4","name":"c","start":2.0,"end":6.5}"#).unwrap();
+        assert_eq!(old.parts, vec![(2.0, 6.5)]);
+        let open: VideoClip = serde_json::from_str(r#"{"path":"c.mp4","name":"c","start":3.0}"#).unwrap();
+        assert_eq!(open.spans(8.0), vec![(3.0, 8.0)]);
+        let whole: VideoClip = serde_json::from_str(r#"{"path":"c.mp4","name":"c"}"#).unwrap();
+        assert!(whole.parts.is_empty());
+        // From before every clip played its own way: each gets the set's.
+        let set: VideoSet = serde_json::from_str(r#"{"clips":[{"path":"a.mp4","name":"a"},{"path":"b.gif","name":"b","start":1.0,"end":2.0}],"play":"Tempo","bars":8,"speed":2.0,"slices":4,"slice_track":7,"reverse":true}"#).unwrap();
+        for c in &set.clips {
+            assert_eq!(c.play, ClipPlay { mode: PlayMode::Tempo, speed: 2.0, bars: 8, slices: 4, slice_track: Some(7), reverse: true, part_slices: false });
+        }
+        assert_eq!(set.clips[1].parts, vec![(1.0, 2.0)]);
+        // Switching as before: at once, a cut.
+        assert_eq!((set.launch, set.transition), (Launch::Now, Transition::Cut));
+        // Written again, it reads the same, and nothing of the old kind is written.
+        let json = serde_json::to_string(&set).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(v.get("play").is_none() && v.get("bars").is_none() && v["clips"][1].get("start").is_none(), "{json}");
+        let back: VideoSet = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, set);
+        // A clip of its own keeps its own, whatever the set said.
+        let mixed: VideoSet = serde_json::from_str(r#"{"clips":[{"path":"a.mp4","name":"a","play":{"mode":"Slices"}}],"play":"Tempo"}"#).unwrap();
+        assert_eq!((mixed.clips[0].play.mode, mixed.clips[0].play.speed), (PlayMode::Slices, 1.0));
+    }
+
+    #[test]
+    fn a_clicked_clip_waits_for_its_beat_or_bar() {
+        // Now, or the song stopped: at once.
+        assert_eq!(launch_beat(Launch::Now, 5.3, true, 4), None);
+        assert_eq!(launch_beat(Launch::Bar, 5.3, false, 4), None);
+        // The next beat, the next bar (of three beats in 3/4).
+        assert_eq!(launch_beat(Launch::Beat, 5.3, true, 4), Some(6.0));
+        assert_eq!(launch_beat(Launch::Bar, 5.3, true, 4), Some(8.0));
+        assert_eq!(launch_beat(Launch::Bar, 5.3, true, 3), Some(6.0));
+        // Just after the beat (a click a hair late) still makes it.
+        assert_eq!(launch_beat(Launch::Bar, 8.02, true, 4), None);
+        assert_eq!(launch_beat(Launch::Bar, 8.2, true, 4), Some(12.0));
+        // The switch waits, then changes on its beat.
+        let mut sw = Switch::default();
+        assert!(!sw.ask(2, 5.3, launch_beat(Launch::Bar, 5.3, true, 4), 0.0));
+        assert_eq!(sw.clip, 0);
+        assert!(!sw.frame(7.9, true, 0.016, 0.0));
+        assert!(sw.frame(8.01, true, 0.016, 0.0));
+        assert_eq!((sw.clip, sw.pending), (2, None));
+        // Stopping (or jumping back past where it was asked) starts it at once.
+        sw.ask(1, 9.5, Some(12.0), 0.0);
+        assert!(sw.frame(0.0, true, 0.016, 0.0), "the song went back to the start");
+        assert_eq!(sw.clip, 1);
+        sw.ask(3, 1.0, Some(4.0), 0.0);
+        assert!(sw.frame(1.1, false, 0.016, 0.0));
+        // The same clip again is no change.
+        assert!(!sw.go(3, 0.0));
+    }
+
+    #[test]
+    fn a_transition_lasts_its_beats_and_then_is_over() {
+        let set = VideoSet { transition: Transition::Fade, transition_beats: 1.0, ..Default::default() };
+        // A beat at 120 BPM: half a second.
+        let secs = set.transition_secs(120.0);
+        assert!((secs - 0.5).abs() < 1e-9);
+        assert_eq!(VideoSet { transition: Transition::Cut, ..set.clone() }.transition_secs(120.0), 0.0);
+        let mut sw = Switch::default();
+        assert!(sw.go(1, secs));
+        let f = sw.fade.unwrap();
+        assert_eq!((f.from, f.mix()), (0, 0.0));
+        sw.frame(0.0, true, 0.25, secs);
+        assert!((sw.fade.unwrap().mix() - 0.5).abs() < 1e-6);
+        sw.frame(0.0, true, 0.2, secs);
+        assert!((sw.fade.unwrap().mix() - 0.9).abs() < 1e-6);
+        sw.frame(0.0, true, 0.1, secs);
+        assert_eq!(sw.fade, None, "over after its half second");
+        // A cut has none.
+        assert!(sw.go(0, 0.0));
+        assert_eq!(sw.fade, None);
+        // Clicked on the bar: the fade starts on the bar.
+        sw.ask(1, 0.5, Some(4.0), secs);
+        sw.frame(3.0, true, 0.1, secs);
+        assert_eq!(sw.fade, None);
+        sw.frame(4.0, true, 0.1, secs);
+        assert_eq!(sw.fade.map(|f| (f.from, f.mix())), Some((0, 0.0)));
     }
 
     /// Four bars of a four-on-the-floor kick (a falling 55 Hz thump) with a
@@ -1417,15 +1992,23 @@ mod tests {
         PlayInput { dt, duration: 8.0, beat, playing: true, bpm: 120.0, beats_per_bar: 4, ..Default::default() }
     }
 
+    /// A clip of an 8 s film playing `mode`, changed by `f`.
+    fn clip(mode: PlayMode, f: impl FnOnce(&mut ClipPlay)) -> VideoClip {
+        let mut c = VideoClip::new("sea.mp4".into());
+        c.play.mode = mode;
+        f(&mut c.play);
+        c
+    }
+
     #[test]
     fn tempo_mode_pins_the_clip_to_the_song() {
-        let set = VideoSet { play: PlayMode::Tempo, bars: 2, ..Default::default() };
+        let c = clip(PlayMode::Tempo, |p| p.bars = 2);
         let mut ph = Playhead::default();
         // Two bars of 4/4 = 8 beats for 8 seconds of film: a second a beat.
-        assert!((ph.advance(&set, &input(0.016, 3.0)) - 3.0).abs() < 1e-9);
-        assert!((ph.advance(&set, &input(0.016, 9.5)) - 1.5).abs() < 1e-9);
+        assert!((ph.advance(&c, &input(0.016, 3.0)) - 3.0).abs() < 1e-9);
+        assert!((ph.advance(&c, &input(0.016, 9.5)) - 1.5).abs() < 1e-9);
         // Backwards: from the end.
-        let rev = VideoSet { reverse: true, ..set.clone() };
+        let rev = clip(PlayMode::Tempo, |p| (p.bars, p.reverse) = (2, true));
         let mut ph = Playhead::default();
         assert!((ph.advance(&rev, &input(0.016, 2.0)) - 6.0).abs() < 1e-9);
         // Stopped, it runs on at the song's tempo: 8 s of film in 4 s of song.
@@ -1433,48 +2016,120 @@ mod tests {
         let mut i = input(0.1, 0.0);
         i.playing = false;
         for _ in 0..10 {
-            ph.advance(&set, &i);
+            ph.advance(&c, &i);
         }
         assert!((ph.pos - 2.0).abs() < 1e-6);
     }
 
     #[test]
+    fn tempo_fits_the_parts_together_into_its_bars() {
+        // Two parts of 1 s and 3 s: 4 s back to back, in one bar (4 beats at 120: 2 s).
+        let mut c = clip(PlayMode::Tempo, |p| p.bars = 1);
+        c.parts = vec![(1.0, 2.0), (4.0, 7.0)];
+        let mut ph = Playhead::default();
+        // Half a beat in: a quarter of a second of song, half a second of film, in the first part.
+        assert!((ph.advance(&c, &input(0.016, 0.5)) - 1.5).abs() < 1e-9);
+        // A beat in: the first part over, the second starting (the gap skipped).
+        assert!((ph.advance(&c, &input(0.016, 1.0)) - 4.0).abs() < 1e-9);
+        assert!((ph.advance(&c, &input(0.016, 3.0)) - 6.0).abs() < 1e-9);
+        // The next bar: from the first part again.
+        assert!((ph.advance(&c, &input(0.016, 4.5)) - 1.5).abs() < 1e-9);
+    }
+
+    #[test]
     fn loop_mode_wraps_and_reverse_runs_backwards() {
-        let mut set = VideoSet { speed: 2.0, ..Default::default() };
+        let mut c = clip(PlayMode::Loop, |p| p.speed = 2.0);
         let mut ph = Playhead::default();
         for _ in 0..100 {
-            ph.advance(&set, &input(0.1, 0.0));
+            ph.advance(&c, &input(0.1, 0.0));
         }
         // 10 s at double speed = 20 s of film, round an 8 s clip: 4 s.
         assert!((ph.pos - 4.0).abs() < 1e-6);
-        set.reverse = true;
-        let shown = ph.advance(&set, &input(0.25, 0.0));
+        c.play.reverse = true;
+        let shown = ph.advance(&c, &input(0.25, 0.0));
         assert!((shown - 3.5).abs() < 1e-6);
         // Freeze holds it still.
         let mut frozen = input(0.25, 0.0);
         frozen.freeze = 1.0;
-        assert!((ph.advance(&set, &frozen) - 3.5).abs() < 1e-6);
+        assert!((ph.advance(&c, &frozen) - 3.5).abs() < 1e-6);
         // A still picture stays at 0.
         let mut still = input(0.25, 0.0);
         still.duration = 0.0;
-        assert_eq!(ph.advance(&set, &still), 0.0);
+        assert_eq!(ph.advance(&c, &still), 0.0);
+    }
+
+    #[test]
+    fn a_loop_runs_through_its_parts_and_skips_what_is_between() {
+        let mut c = clip(PlayMode::Loop, |_| {});
+        c.parts = vec![(0.5, 1.0), (6.0, 7.0)];
+        let mut ph = Playhead::default();
+        let mut seen = Vec::new();
+        for _ in 0..30 {
+            seen.push(ph.advance(&c, &input(0.1, 0.0)));
+        }
+        // Never in the gap, and both parts shown.
+        assert!(seen.iter().all(|t| (0.5..1.0).contains(t) || (6.0..7.0).contains(t)), "{seen:?}");
+        assert!(seen.iter().any(|t| *t < 1.0) && seen.iter().any(|t| *t > 6.0));
+        // Paused, it stands; dragged, it goes where it is put (into the parts).
+        let mut hold = input(0.1, 0.0);
+        hold.hold = true;
+        let at = ph.advance(&c, &hold);
+        assert_eq!(ph.advance(&c, &hold), at);
+        hold.seek = Some(1.25);
+        assert!((ph.advance(&c, &hold) - 6.75).abs() < 1e-9);
     }
 
     #[test]
     fn slices_mode_plays_the_slice_a_note_picks_and_keeps_to_it() {
-        let set = VideoSet { play: PlayMode::Slices, slices: 8, ..Default::default() };
+        let c = clip(PlayMode::Slices, |p| p.slices = 8);
         let mut ph = Playhead::default();
         let mut i = input(0.016, 0.0);
         i.note = Some(38);
         // Slice 2 of 8 in 8 s: from 2 s.
-        assert!((ph.advance(&set, &i) - 2.0).abs() < 1e-9);
+        assert!((ph.advance(&c, &i) - 2.0).abs() < 1e-9);
         i.note = None;
         i.dt = 0.25;
         for _ in 0..6 {
-            ph.advance(&set, &i);
+            ph.advance(&c, &i);
         }
         // 1.5 s on, round the one-second slice: 2.5 s.
         assert!((ph.pos - 2.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn slices_cut_the_joined_parts_or_one_slice_a_part() {
+        // Parts of 2 s and 2 s (4 s back to back) in four slices: a second each.
+        let mut c = clip(PlayMode::Slices, |p| p.slices = 4);
+        c.parts = vec![(1.0, 3.0), (5.0, 7.0)];
+        let mut ph = Playhead::default();
+        let mut i = input(0.016, 0.0);
+        i.note = Some(38);
+        // The third slice: the start of the second part.
+        assert!((ph.advance(&c, &i) - 5.0).abs() < 1e-9);
+        i.note = Some(37);
+        assert!((ph.advance(&c, &i) - 2.0).abs() < 1e-9);
+        // Parts as slices: C1 the first part, C#1 the second, round again after.
+        let mut by_part = c.clone();
+        by_part.play.part_slices = true;
+        by_part.parts = vec![(1.0, 1.5), (4.0, 7.0)];
+        let spans = by_part.spans(8.0);
+        assert_eq!(by_part.slice_count(&spans), 2);
+        assert_eq!(by_part.slice_bounds(&spans, 1), (0.5, 3.5));
+        let mut ph = Playhead::default();
+        i.note = Some(37);
+        assert!((ph.advance(&by_part, &i) - 4.0).abs() < 1e-9);
+        // It keeps to its part: round and round in the 3 s of it.
+        i.note = None;
+        i.dt = 0.25;
+        for _ in 0..14 {
+            ph.advance(&by_part, &i);
+        }
+        assert!((ph.pos - (0.5 + 3.5 % 3.0)).abs() < 1e-6, "{}", ph.pos);
+        i.note = Some(38);
+        assert!((ph.advance(&by_part, &i) - 1.0).abs() < 1e-9, "E1 is the first part again");
+        // One part only: the slices count again.
+        by_part.parts = vec![(1.0, 5.0)];
+        assert_eq!(by_part.slice_count(&by_part.spans(8.0)), 4);
     }
 
     /// A film of 8 s cut at uneven places (as its sound's hits fell),
@@ -1489,82 +2144,90 @@ mod tests {
     #[test]
     fn a_note_shows_its_cue_and_one_shot_plays_the_piece_to_its_end() {
         let set = cued(false);
-        assert_eq!(set.play, PlayMode::Slices);
+        let c = &set.clips[0];
+        assert_eq!(c.play.mode, PlayMode::Slices);
         let mut ph = Playhead::default();
         // Before any note: on the first cue, standing.
-        assert_eq!(ph.advance(&set, &input(0.1, 0.0)), 0.0);
-        assert_eq!(ph.advance(&set, &input(0.1, 0.0)), 0.0);
+        assert_eq!(ph.advance(c, &input(0.1, 0.0)), 0.0);
+        assert_eq!(ph.advance(c, &input(0.1, 0.0)), 0.0);
         // D1, the third pad: the third cue, exactly (not a third of the film).
         let mut i = input(0.016, 0.0);
         i.note = Some(38);
-        assert_eq!(ph.advance(&set, &i), 1.9);
+        assert_eq!(ph.advance(c, &i), 1.9);
         // On as filmed, whatever the Speed: the sound plays as recorded.
-        let mut fast = set.clone();
-        fast.speed = 3.0;
+        let mut fast = c.clone();
+        fast.play.speed = 3.0;
         let at = ph.advance(&fast, &input(0.25, 0.0));
         assert!((at - 2.15).abs() < 1e-9, "{at}");
         // The note ended long ago (One-Shot does not care): to the piece's end, and it stays there.
         for _ in 0..20 {
-            ph.advance(&set, &input(0.25, 0.0));
+            ph.advance(c, &input(0.25, 0.0));
         }
         assert!((ph.pos - (4.25 - 1e-3)).abs() < 1e-9, "{}", ph.pos);
         // The last piece ends where the cut sound ends; past the pads it goes round (E1 is the first again).
         i.note = Some(39);
-        assert_eq!(ph.advance(&set, &i), 4.25);
+        assert_eq!(ph.advance(c, &i), 4.25);
         for _ in 0..20 {
-            ph.advance(&set, &input(0.25, 0.0));
+            ph.advance(c, &input(0.25, 0.0));
         }
         assert!((ph.pos - (6.0 - 1e-3)).abs() < 1e-9);
         i.note = Some(40);
-        assert_eq!(ph.advance(&set, &i), 0.0);
+        assert_eq!(ph.advance(c, &i), 0.0);
         // A jump goes to the start of another cue.
         let mut j = input(0.016, 0.0);
         j.jump = true;
-        let at = ph.advance(&set, &j);
-        assert!(set.clips[0].cues.as_ref().unwrap().times[1..].contains(&at), "{at}");
+        let at = ph.advance(c, &j);
+        assert!(c.cues.as_ref().unwrap().times[1..].contains(&at), "{at}");
+        // Parts do not change a cued film: it plays whole, by its cues.
+        let mut parted = c.clone();
+        parted.parts = vec![(5.0, 6.0)];
+        i.note = Some(37);
+        assert_eq!(Playhead::default().advance(&parted, &i), 0.7);
     }
 
     #[test]
     fn gate_holds_the_picture_where_its_note_ends() {
         let set = cued(true);
+        let c = &set.clips[0];
         let mut ph = Playhead::default();
         let mut i = input(0.016, 0.0);
         i.note = Some(37);
         i.held = 1 << 37;
-        assert_eq!(ph.advance(&set, &i), 0.7);
+        assert_eq!(ph.advance(c, &i), 0.7);
         // Held: on it runs.
         let mut held = input(0.1, 0.0);
         held.held = 1 << 37;
-        ph.advance(&set, &held);
-        ph.advance(&set, &held);
+        ph.advance(c, &held);
+        ph.advance(c, &held);
         assert!((ph.pos - 0.9).abs() < 1e-6);
         // Let go (another note held does not count): it stands where it was.
         let mut gone = input(0.1, 0.0);
         gone.held = 1 << 40;
-        ph.advance(&set, &gone);
-        ph.advance(&set, &gone);
+        ph.advance(c, &gone);
+        ph.advance(c, &gone);
         assert!((ph.pos - 0.9).abs() < 1e-6);
         // Held past its piece, it stops at the end like the slice.
-        ph.advance(&set, &i);
+        ph.advance(c, &i);
         for _ in 0..30 {
-            ph.advance(&set, &held);
+            ph.advance(c, &held);
         }
         assert!((ph.pos - (1.9 - 1e-3)).abs() < 1e-9);
         // A clip without cues still cuts in equal slices.
-        let mut even = set.clone();
-        even.clips[0].cues = None;
-        even.slices = 8;
+        let mut even = c.clone();
+        even.cues = None;
+        even.play.slices = 8;
         let mut ph = Playhead::default();
         i.note = Some(38);
         assert!((ph.advance(&even, &i) - 2.0).abs() < 1e-9);
-        // And another clip of the bank playing does not use the cues.
-        let mut other = set.clone();
-        other.clips.push(VideoClip::new("sea.mp4".into()));
-        other.slices = 8;
+        // And another clip of the bank does not use the cues: each plays its own way.
+        let other = clip(PlayMode::Slices, |p| p.slices = 8);
         let mut ph = Playhead::default();
-        let mut i2 = i;
-        i2.clip = 1;
-        assert!((ph.advance(&other, &i2) - 2.0).abs() < 1e-9);
+        assert!((ph.advance(&other, &i) - 2.0).abs() < 1e-9);
+        // Not in Slices, a cued clip ignores its cues and loops its film.
+        let mut looping = c.clone();
+        looping.play.mode = PlayMode::Loop;
+        let mut ph = Playhead::default();
+        assert!((ph.advance(&looping, &input(0.25, 0.0)) - 0.25).abs() < 1e-9);
     }
 
     #[test]
@@ -1575,12 +2238,14 @@ mod tests {
         assert_eq!(c.piece(2, 2.5), (2.0, 2.5), "no further than the film");
         assert_eq!((c.for_note(36), c.for_note(38), c.for_note(39)), (0, 2, 0));
         let mut set = cued(false);
-        set.play = PlayMode::Loop;
+        set.clips[0].play.mode = PlayMode::Loop;
         set.clips.insert(0, VideoClip::new("sea.mp4".into()));
         // Cued again (sliced again): the same clip, new cues, playing in Slices.
         assert_eq!(set.cue_film(std::path::Path::new("zoo.mp4"), c.clone()), Some(1));
-        assert_eq!((set.clips.len(), set.current, set.play), (2, 1, PlayMode::Slices));
+        assert_eq!((set.clips.len(), set.current, set.clips[1].play.mode), (2, 1, PlayMode::Slices));
         assert_eq!(set.clips[1].cues.as_ref(), Some(&c));
+        // The other clip plays as it did.
+        assert_eq!(set.clips[0].play.mode, PlayMode::Loop);
         // A full bank has no room for another.
         while set.clips.len() < MAX_CLIPS {
             let n = set.clips.len();
@@ -1593,38 +2258,43 @@ mod tests {
 
     #[test]
     fn a_jump_cuts_to_the_start_of_another_slice_and_tempo_keeps_it() {
-        let set = VideoSet { play: PlayMode::Tempo, bars: 2, slices: 8, ..Default::default() };
+        let c = clip(PlayMode::Tempo, |p| (p.bars, p.slices) = (2, 8));
         let mut ph = Playhead::default();
-        ph.advance(&set, &input(0.016, 0.5));
+        ph.advance(&c, &input(0.016, 0.5));
         let mut j = input(0.016, 0.5);
         j.jump = true;
-        let at = ph.advance(&set, &j);
+        let at = ph.advance(&c, &j);
         assert!((at - at.round()).abs() < 1e-9, "on a slice start: {at}");
         assert!((at - 0.5).abs() > 0.4);
         // Then it runs on from there with the song.
-        let later = ph.advance(&set, &input(0.016, 1.5));
+        let later = ph.advance(&c, &input(0.016, 1.5));
         assert!(((later - at).rem_euclid(8.0) - 1.0).abs() < 1e-9);
+        // Dragged somewhere while the song plays: from there on, with the song.
+        let mut s = input(0.016, 2.0);
+        s.seek = Some(5.0);
+        assert!((ph.advance(&c, &s) - 5.0).abs() < 1e-9);
+        assert!((ph.advance(&c, &input(0.016, 3.0)) - 6.0).abs() < 1e-9);
     }
 
     #[test]
     fn a_stutter_repeats_a_sixteenth_for_a_beat_and_scratch_pulls_back() {
-        let set = VideoSet::default();
+        let c = clip(PlayMode::Loop, |_| {});
         let mut ph = Playhead::default();
         ph.pos = 3.0;
         let mut s = input(0.0, 0.0);
         s.stutter = true;
-        assert!((ph.advance(&set, &s) - 3.0).abs() < 1e-9);
+        assert!((ph.advance(&c, &s) - 3.0).abs() < 1e-9);
         // A sixteenth at 120 BPM is 0.125 s: 0.15 s later it is 0.025 s in again.
-        let shown = ph.advance(&set, &input(0.15, 0.0));
+        let shown = ph.advance(&c, &input(0.15, 0.0));
         assert!((shown - 3.025).abs() < 1e-6, "{shown}");
         // After the beat it is back where the film ran to.
-        ph.advance(&set, &input(0.2, 0.0));
-        let shown = ph.advance(&set, &input(0.2, 0.0));
+        ph.advance(&c, &input(0.2, 0.0));
+        let shown = ph.advance(&c, &input(0.2, 0.0));
         assert!((shown - ph.pos).abs() < 1e-9);
         // Scratch: a beat (0.5 s) back at full.
         let mut sc = input(0.0, 0.0);
         sc.scratch = 1.0;
-        assert!((ph.advance(&set, &sc) - (ph.pos - 0.5)).abs() < 1e-9);
+        assert!((ph.advance(&c, &sc) - (ph.pos - 0.5)).abs() < 1e-9);
     }
 
     #[test]
@@ -1642,9 +2312,10 @@ mod tests {
             assert!(!p.about.is_empty());
         }
         assert!(preset("Nope").is_none());
-        let mut set = VideoSet::default();
+        // Cutup plays the clip that plays in Slices (the others as they were).
+        let mut set = VideoSet { clips: vec![VideoClip::new("a.mp4".into()), VideoClip::new("b.mp4".into())], current: 1, ..Default::default() };
         set.apply_preset(&preset("Cutup").unwrap());
-        assert_eq!(set.play, PlayMode::Slices);
+        assert_eq!((set.clips[0].play.mode, set.clips[1].play.mode), (PlayMode::Loop, PlayMode::Slices));
         // Every effect and source has a name and a place.
         assert_eq!(Effect::ALL.len(), Effect::COUNT);
         for (i, e) in Effect::ALL.iter().enumerate() {
@@ -1657,7 +2328,9 @@ mod tests {
 
     #[test]
     fn the_video_round_trips_and_old_or_odd_files_load() {
-        let mut set = VideoSet { clips: vec![VideoClip::new("C:/films/sea.mp4".into()), VideoClip::new("/home/me/cat.gif".into())], current: 1, play: PlayMode::Tempo, bars: 8, ..Default::default() };
+        let mut set = VideoSet { clips: vec![VideoClip::new("C:/films/sea.mp4".into()), VideoClip::new("/home/me/cat.gif".into())], current: 1, transition: Transition::Glitch, launch: Launch::Bar, clip_notes: Some(3), ..Default::default() };
+        set.clips[0].play = ClipPlay { mode: PlayMode::Tempo, bars: 8, ..Default::default() };
+        set.clips[0].parts = vec![(1.0, 2.0), (4.0, 5.5)];
         set.links[0].from = Some(12);
         let json = serde_json::to_string(&set).unwrap();
         let back: VideoSet = serde_json::from_str(&json).unwrap();
@@ -1665,7 +2338,7 @@ mod tests {
         assert_eq!(back.current_clip().map(|c| c.name.as_str()), Some("cat"));
         // Fields it does not know yet come out as they start.
         let bare: VideoSet = serde_json::from_str(r#"{"clips":[{"path":"a.png","name":"a"}]}"#).unwrap();
-        assert_eq!(bare.speed, 1.0);
+        assert_eq!(bare.clips[0].play, ClipPlay::default());
         assert_eq!(bare.clips[0].cues, None);
         assert!(!json.contains("cues"), "no cues, nothing written");
         // Cues go along, and odd ones are put right.
@@ -1678,10 +2351,12 @@ mod tests {
         assert_eq!((c.times.as_slice(), c.end, c.track, c.gate), (&[0.0, 1.0, 2.0][..], 2.0, None, false));
         assert_eq!(odd_cues.clips[1].cues, None, "no cues at all is no cues");
         assert_eq!(bare.links, VideoSet::default().links);
-        // Out of range is put right.
-        let mut odd: VideoSet = serde_json::from_str(r#"{"current":9,"speed":99.0,"amount":-1.0,"slices":0}"#).unwrap();
+        // Out of range is put right (an old set's way of playing too, on its clip).
+        let mut odd: VideoSet = serde_json::from_str(r#"{"clips":[{"path":"a.png","name":"a","parts":[[3.0,1.0],[2.5,4.0]]}],"current":9,"speed":99.0,"amount":-1.0,"slices":0,"transition_beats":-3.0}"#).unwrap();
         odd.sanitize();
-        assert_eq!((odd.current, odd.speed, odd.amount, odd.slices), (0, 4.0, 0.0, 2));
+        let p = &odd.clips[0].play;
+        assert_eq!((odd.current, p.speed, odd.amount, p.slices, odd.transition_beats), (0, 4.0, 0.0, 2, 0.0625));
+        assert_eq!(odd.clips[0].parts, vec![(1.0, 4.0)]);
         assert!(VideoSet::default().is_empty());
         assert!(!set.is_empty());
     }
