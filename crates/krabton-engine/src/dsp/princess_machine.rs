@@ -784,6 +784,10 @@ pub struct PrincessState {
     tracks: [Track; TRACKS],
     rng: Rng,
     held: u128,
+    /// The tracks it struck since `take_struck` (by their notes, as the
+    /// pads would play them) and the hardest: the Video follows them as notes.
+    struck: u128,
+    struck_vel: f32,
     /// The last step it played (counted from the song's start), the
     /// pattern playing, the step it began on, where the tracks' own lengths
     /// count from, and where in the chain it is.
@@ -877,6 +881,8 @@ impl PrincessState {
             tracks: std::array::from_fn(|_| Track::new()),
             rng: Rng::new(0xA9A1_0915),
             held: 0,
+            struck: 0,
+            struck_vel: 0.0,
             last_k: i64::MIN,
             pat: 0,
             pat_start: 0,
@@ -904,6 +910,15 @@ impl PrincessState {
         self.playing = playing;
     }
 
+    /// The tracks struck since the last call, by their notes (its own
+    /// steps too, which come as no notes), and the hardest.
+    pub fn take_struck(&mut self) -> (u128, f32) {
+        let s = (self.struck, self.struck_vel);
+        self.struck = 0;
+        self.struck_vel = 0.0;
+        s
+    }
+
     /// Plays track `t`: `note` semitones from its pitch (or, with `key`, the
     /// 808 at that MIDI note), `slide` into it if it still rings.
     #[allow(clippy::too_many_arguments)]
@@ -911,6 +926,8 @@ impl PrincessState {
         let get = |i: usize| p.get(i).copied().unwrap_or(SPECS[i].default);
         let kind = (get(tp(t, T_VOICE)).round().max(0.0) as usize).min(VOICES.len() - 1);
         let sr = self.sr;
+        self.struck |= 1u128 << (NOTES[t] & 127);
+        self.struck_vel = self.struck_vel.max(vel.clamp(0.0, 1.0));
         let tune = get(tp(t, T_TUNE));
         let vel = vel.clamp(0.0, 1.0);
         // A hit cuts the other tracks of its choke group.
