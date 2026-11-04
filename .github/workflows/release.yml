@@ -79,7 +79,7 @@ jobs:
       - name: Tarball
         run: |
           mkdir -p "krabton-$VERSION"
-          cp target/release/krabton packaging/linux/krabton.desktop packaging/linux/install.sh LICENSE COPYING "krabton-$VERSION/"
+          cp target/release/krabton packaging/linux/krabton.desktop packaging/linux/install.sh packaging/linux/70-ableton-move.rules LICENSE COPYING "krabton-$VERSION/"
           cp crates/krabton/assets/icon-256.png "krabton-$VERSION/krabton.png"
           chmod +x "krabton-$VERSION/install.sh"
           tar czf "dist/krabton-$VERSION-linux-x86_64.tar.gz" "krabton-$VERSION"
@@ -119,7 +119,7 @@ jobs:
       - name: Tarball
         run: |
           mkdir -p "krabton-$VERSION"
-          cp target/release/krabton packaging/linux/krabton.desktop packaging/linux/install.sh LICENSE COPYING "krabton-$VERSION/"
+          cp target/release/krabton packaging/linux/krabton.desktop packaging/linux/install.sh packaging/linux/70-ableton-move.rules LICENSE COPYING "krabton-$VERSION/"
           cp crates/krabton/assets/icon-256.png "krabton-$VERSION/krabton.png"
           chmod +x "krabton-$VERSION/install.sh"
           tar czf "dist/krabton-$VERSION-linux-aarch64.tar.gz" "krabton-$VERSION"

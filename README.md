@@ -33,7 +33,7 @@ For sound on Linux see [Building](#building) below: Krabton talks to PulseAudio/
 
 **The Ableton Move's lights and pads**: the Move tab sets how bright its lights are (*Lights*) and how hard a pad must be hit (*Pads*: Normal, Light, Firm, Linear), and shows what the last hit sent and played at.
 
-**The Ableton Move's own screen** shows the track or device, its eight knobs as bars, and the one you touch with its value big. It needs Live closed (they cannot share it). On Linux, give your user the USB device: put `SUBSYSTEM=="usb", ATTR{idVendor}=="2982", MODE="0666"` in `/etc/udev/rules.d/70-ableton-move.rules` and plug it in again.
+**The Ableton Move's own screen** shows the track or device, its eight knobs as bars, and the one you touch with its value big. It needs Live closed (they cannot share it). On Linux, give your user the USB device: copy `packaging/linux/70-ableton-move.rules` to `/etc/udev/rules.d/`, run `sudo udevadm control --reload-rules`, and plug it in again (the Arch package does the copying). The Move tab says whether the screen is on, and why not.
 
 **Packs**: the big sounds are not in the download. The Windows installer asks which you want and Krabton fetches them the first time it starts, while you work; on Linux and macOS the *Packs* window opens by itself the first time. The window is always in the *Krabton* menu: the grand piano, the orchestra, the soloists and band, drum kits, SoundFonts, voices, the Princess Sounds, ffmpeg and yt-dlp, with what is here and how big it is, *Download selected*, *Download all* and *Remove*. They arrive in `Documents/Krabton/Library`, one at a time.
 

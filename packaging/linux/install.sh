@@ -20,6 +20,7 @@ install -m 644 "$here/krabton.png" "$icons/krabton.png"
 sed "s|^Exec=krabton|Exec=$bin/krabton|" "$here/krabton.desktop" > "$apps/krabton.desktop"
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$apps" || true
 echo "Krabton is installed: find it in your applications menu, or run $bin/krabton"
+echo "An Ableton Move's screen needs a USB rule: sudo cp \"$here/70-ableton-move.rules\" /etc/udev/rules.d/ && sudo udevadm control --reload-rules"
 case ":$PATH:" in
     *":$bin:"*) ;;
     *) echo "(Add $bin to your PATH to start it as 'krabton' from a terminal.)" ;;

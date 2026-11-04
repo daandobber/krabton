@@ -1,0 +1,2 @@
+# Lets the person at the computer reach the Ableton Move's screen (Krabton draws on it over USB).
+SUBSYSTEM=="usb", ATTR{idVendor}=="2982", TAG+="uaccess"

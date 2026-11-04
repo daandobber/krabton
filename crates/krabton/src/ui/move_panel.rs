@@ -327,6 +327,16 @@ impl App {
                 ui.label(RichText::new(format!("In: {input}")).small().color(PLAY));
                 let out = output.clone().unwrap_or_else(|| "none (no lights)".into());
                 ui.label(RichText::new(format!("Lights: {out}")).small().color(if output.is_some() { PLAY } else { REC }));
+                match self.move_ctl.screen_state() {
+                    Some((true, _)) => {
+                        ui.label(RichText::new("Screen: on").small().color(PLAY));
+                    }
+                    Some((false, why)) => {
+                        ui.label(RichText::new(format!("Screen: off ({why})")).small().color(REC));
+                        ui.label(RichText::new("Live must be closed. On Linux it needs the USB rule: see the README").small().color(TEXT_DIM));
+                    }
+                    None => {}
+                }
                 None
             }
             (None, true) if self.prefs.move_off => Some("Not used (switched off below)."),

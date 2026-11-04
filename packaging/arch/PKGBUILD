@@ -40,6 +40,7 @@ package() {
     install -Dm755 target/release/krabton "$pkgdir/usr/bin/krabton"
     install -Dm644 packaging/linux/krabton.desktop "$pkgdir/usr/share/applications/krabton.desktop"
     install -Dm644 crates/krabton/assets/icon-256.png "$pkgdir/usr/share/icons/hicolor/256x256/apps/krabton.png"
+    install -Dm644 packaging/linux/70-ableton-move.rules "$pkgdir/usr/lib/udev/rules.d/70-ableton-move.rules"
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
     install -Dm644 COPYING "$pkgdir/usr/share/licenses/$pkgname/COPYING"
 }
