@@ -78,8 +78,9 @@ pub fn brightness_message(index: u8) -> Vec<u8> {
 }
 
 /// How hard a pad must be hit: what comes in is raised to this power, so
-/// above 1 a soft hit plays softer and only a hard one plays loud.
-pub const PAD_CURVES: [(&str, f32); 4] = [("Firm", 1.7), ("Linear", 1.0), ("Light", 0.6), ("Hardest", 2.6)];
+/// under 1 a soft hit already plays. The pads send low values (soft playing
+/// on a real Move: mostly under 40 of 127), so Light comes first.
+pub const PAD_CURVES: [(&str, f32); 4] = [("Light", 0.6), ("Linear", 1.0), ("Firm", 1.7), ("Hardest", 2.6)];
 
 pub fn pad_curve(index: u8, vel: f32) -> f32 {
     vel.clamp(0.0, 1.0).powf(PAD_CURVES[(index as usize).min(PAD_CURVES.len() - 1)].1)
@@ -2377,10 +2378,10 @@ mod tests {
     }
 
     #[test]
-    fn a_firm_curve_makes_soft_hits_softer_and_keeps_the_hardest() {
+    fn the_curves_move_soft_hits_and_keep_the_hardest() {
         assert_eq!(pad_curve(1, 0.5), 0.5);
-        assert!(pad_curve(0, 0.5) < 0.35);
-        assert!(pad_curve(2, 0.5) > 0.6);
+        assert!(pad_curve(2, 0.5) < 0.35);
+        assert!(pad_curve(0, 0.5) > 0.6);
         for c in 0..4 {
             assert_eq!(pad_curve(c, 1.0), 1.0);
         }

@@ -247,7 +247,6 @@ mod tests {
         let s = Screen { title: "Munich".into(), sub: "Bass".into(), params: params.clone(), hot: None };
         let b = render(&s);
         // The last bar is full, the first has none.
-        assert!(lit(&b, 114, 30..63) == 0 || lit(&b, 114..126, 30..63) > 300);
         assert!(lit(&b, 3..13, 30..62) == 0, "the first knob is at nothing");
         assert!(lit(&b, 115..125, 30..62) > 300, "the last is full");
         // Touched: its value's bar across the bottom.

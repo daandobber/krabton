@@ -358,7 +358,7 @@ impl App {
             let now = crate::move_ctl::PAD_CURVES[(self.prefs.move_curve as usize).min(3)].0;
             egui::ComboBox::from_id_salt("move_curve").width(90.0).selected_text(now).show_ui(ui, |ui| {
                 for (k, (name, _)) in crate::move_ctl::PAD_CURVES.iter().enumerate() {
-                    if ui.selectable_label(self.prefs.move_curve as usize == k, *name).on_hover_text("How hard a pad must be hit. Firm: only a hard hit plays loud. Light: a soft one does already").clicked() {
+                    if ui.selectable_label(self.prefs.move_curve as usize == k, *name).on_hover_text("How hard a pad must be hit. Light: a soft hit already plays. Firm: only a hard one plays loud").clicked() {
                         self.prefs.move_curve = k as u8;
                         self.prefs.save();
                     }
