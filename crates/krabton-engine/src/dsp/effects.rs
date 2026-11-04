@@ -96,6 +96,8 @@ pub enum EffectKind {
     /// A hosted effect plug-in (`Device::plugin`), not in `ALL`.
     Plugin,
     Fryer,
+    /// Tune: pitch correction, in the song's key.
+    Tune,
 }
 
 const FMODES: &[&str] = &["Lowpass", "Highpass", "Bandpass", "Notch"];
@@ -207,7 +209,7 @@ static UTILITY: &[ParamSpec] = &[
 ];
 
 impl EffectKind {
-    pub const ALL: [EffectKind; 87] = [
+    pub const ALL: [EffectKind; 88] = [
         EffectKind::Eq3,
         EffectKind::AutoFilter,
         EffectKind::VaFilter,
@@ -237,6 +239,7 @@ impl EffectKind {
         EffectKind::AutoWah,
         EffectKind::Resonators,
         EffectKind::Vinyl,
+        EffectKind::Tune,
         EffectKind::Rings,
         EffectKind::Clouds,
         EffectKind::Beads,
@@ -376,6 +379,7 @@ impl EffectKind {
             EffectKind::AutoWah => "EQ & Filters",
             EffectKind::Resonators => "Reverb & Resonance",
             EffectKind::Vinyl => "Distortion",
+            EffectKind::Tune => "Pitch",
             EffectKind::Comb => "Reverb & Resonance",
             EffectKind::Lattice => "Reverb & Resonance",
             EffectKind::Telephone => "Distortion",
@@ -427,6 +431,7 @@ impl EffectKind {
             EffectKind::AutoWah => "Auto Wah",
             EffectKind::Resonators => "Resonators",
             EffectKind::Vinyl => "Vinyl",
+            EffectKind::Tune => "Tune",
             EffectKind::Comb => "Comb",
             EffectKind::Lattice => "Lattice",
             EffectKind::Telephone => "Telephone",
@@ -521,6 +526,7 @@ impl EffectKind {
             EffectKind::AutoWah => "Envelope filter: playing louder opens (or closes) a resonant filter",
             EffectKind::Resonators => "Five tuned resonators on a note and chord: drums and noise ring as chords",
             EffectKind::Vinyl => "An old record: crackle, pops, hiss, rumble, wow and worn-out bandwidth",
+            EffectKind::Tune => "Pitch correction for one voice: it hears the note and moves it to the nearest in the key (the song's or its own). Speed at its lowest jumps from note to note, the hard robot sound; slower, it steers gently",
             EffectKind::Comb => "A delay so short it rings at a pitch: tuned to a note, fed back or turned over, damped, wobbling, wider on the right",
             EffectKind::Lattice => "Eight short delays feeding each other: a room when spaced unevenly, a ringing metal box when even (Shape); all the way up it holds what is in it",
             EffectKind::Telephone => "A voice down the line: a narrow band, squashed and driven, with hiss, crackle and dropouts, in mono",
@@ -614,6 +620,7 @@ impl EffectKind {
             EffectKind::AutoWah => super::fx::auto_wah::SPECS,
             EffectKind::Resonators => super::fx::resonators::SPECS,
             EffectKind::Vinyl => super::fx::vinyl::SPECS,
+            EffectKind::Tune => super::fx::tune::SPECS,
             EffectKind::Comb => super::fx::comb::SPECS,
             EffectKind::Lattice => super::fx::lattice::SPECS,
             EffectKind::Telephone => super::fx::telephone::SPECS,
@@ -687,6 +694,8 @@ pub struct FxCtx {
     /// Song position at the start of the block, in beats.
     pub beat: f64,
     pub playing: bool,
+    /// The song's key.
+    pub scale: crate::scale::Scale,
 }
 
 pub enum EffectState {
@@ -718,6 +727,7 @@ pub enum EffectState {
     AutoWah(Box<super::fx::auto_wah::AutoWah>),
     Resonators(Box<super::fx::resonators::Resonators>),
     Vinyl(Box<super::fx::vinyl::Vinyl>),
+    Tune(Box<super::fx::tune::Tune>),
     Comb(Box<super::fx::comb::Comb>),
     Lattice(Box<super::fx::lattice::Lattice>),
     Telephone(Box<super::fx::telephone::Telephone>),
@@ -816,6 +826,7 @@ impl EffectState {
             EffectKind::AutoWah => EffectState::AutoWah(Box::new(super::fx::auto_wah::AutoWah::new())),
             EffectKind::Resonators => EffectState::Resonators(Box::new(super::fx::resonators::Resonators::new(sr))),
             EffectKind::Vinyl => EffectState::Vinyl(Box::new(super::fx::vinyl::Vinyl::new(sr))),
+            EffectKind::Tune => EffectState::Tune(Box::new(super::fx::tune::Tune::new(sr))),
             EffectKind::Comb => EffectState::Comb(Box::new(super::fx::comb::Comb::new(sr))),
             EffectKind::Lattice => EffectState::Lattice(Box::new(super::fx::lattice::Lattice::new(sr))),
             EffectKind::Telephone => EffectState::Telephone(Box::new(super::fx::telephone::Telephone::new(sr))),
@@ -940,6 +951,7 @@ impl EffectState {
             EffectState::AutoWah(_) => EffectKind::AutoWah,
             EffectState::Resonators(_) => EffectKind::Resonators,
             EffectState::Vinyl(_) => EffectKind::Vinyl,
+            EffectState::Tune(_) => EffectKind::Tune,
             EffectState::Comb(_) => EffectKind::Comb,
             EffectState::Lattice(_) => EffectKind::Lattice,
             EffectState::Telephone(_) => EffectKind::Telephone,
@@ -1197,6 +1209,7 @@ impl EffectState {
             EffectState::AutoWah(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Resonators(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Vinyl(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
+            EffectState::Tune(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Comb(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Lattice(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Telephone(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
@@ -1253,7 +1266,7 @@ mod tests {
 
     #[test]
     fn all_effects_stay_finite() {
-        let ctx = FxCtx { sr: 48000.0, bpm: 120.0, beat: 0.0, playing: false };
+        let ctx = FxCtx { sr: 48000.0, bpm: 120.0, beat: 0.0, playing: false, scale: Default::default() };
         for kind in EffectKind::ALL {
             let p = crate::params::defaults(kind.specs());
             let mut st = EffectState::new(kind, 48000.0);
@@ -1270,7 +1283,7 @@ mod tests {
 
     #[test]
     fn eq3_flat_is_transparent() {
-        let ctx = FxCtx { sr: 48000.0, bpm: 120.0, beat: 0.0, playing: false };
+        let ctx = FxCtx { sr: 48000.0, bpm: 120.0, beat: 0.0, playing: false, scale: Default::default() };
         let p = crate::params::defaults(EffectKind::Eq3.specs());
         let mut st = EffectState::new(EffectKind::Eq3, 48000.0);
         let mut rng = Rng::new(9);

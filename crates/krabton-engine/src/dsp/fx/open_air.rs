@@ -402,7 +402,7 @@ impl OpenAir {
                 self.al[j] = m + s;
                 self.ar[j] = m - s;
             }
-            let ctx_h = FxCtx { sr, bpm: ctx.bpm, beat: ctx.beat, playing: ctx.playing };
+            let ctx_h = FxCtx { sr, bpm: ctx.bpm, beat: ctx.beat, playing: ctx.playing, scale: Default::default() };
             self.hall.process(&self.hall_p, &mut self.tl[..len], &mut self.tr[..len], &ctx_h, None);
             let tail_peak = self.tl[..len].iter().fold(0.0f32, |m, v| m.max(v.abs()));
             self.tail_level = (self.tail_level * 0.95).max(tail_peak * 2.0);
@@ -477,7 +477,7 @@ mod tests {
     const SR: f32 = 48000.0;
 
     fn ctx(playing: bool) -> FxCtx {
-        FxCtx { sr: SR, bpm: 120.0, beat: 0.0, playing }
+        FxCtx { sr: SR, bpm: 120.0, beat: 0.0, playing, scale: Default::default() }
     }
 
     /// A click, then the response for `secs`.

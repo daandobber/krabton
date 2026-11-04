@@ -228,7 +228,7 @@ impl App {
             return;
         }
         let id = self.project.alloc_id();
-        let clip = krabton_engine::Clip { id, name: name.to_string(), color: old.color, length: beats, content: ClipContent::Audio(audio), envelopes: Vec::new(), sound: None, groove: None };
+        let clip = krabton_engine::Clip { id, name: name.to_string(), color: old.color, length: beats, content: ClipContent::Audio(audio), envelopes: Vec::new(), sound: None, groove: None, launch: Default::default() };
         match sel {
             ClipSel::Slot { track, scene } => {
                 // The next free slot below it (a new scene when there is none).

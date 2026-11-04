@@ -91,7 +91,7 @@ mod tests {
 
     #[test]
     fn it_processes_stereo_and_names_its_algorithms() {
-        let ctx = FxCtx { sr: 48000.0, bpm: 120.0, beat: 0.0, playing: false };
+        let ctx = FxCtx { sr: 48000.0, bpm: 120.0, beat: 0.0, playing: false, scale: Default::default() };
         let mut fx = Warps::new(48000.0);
         let p = crate::params::defaults(SPECS);
         let (mut l, mut r): (Vec<f32>, Vec<f32>) = (0..9600).map(|i| ((i as f32 * 0.03).sin() * 0.5, (i as f32 * 0.031).sin() * 0.5)).unzip();

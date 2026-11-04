@@ -366,7 +366,7 @@ impl WindChimesState {
                 hp[hall::FREEZE] = 0.0;
                 hp[hall::WIDTH] = 1.0;
                 hp[hall::MIX] = 0.5 * space;
-                let ctx = FxCtx { sr: self.sr, bpm: 120.0, beat: 0.0, playing: false };
+                let ctx = FxCtx { sr: self.sr, bpm: 120.0, beat: 0.0, playing: false, scale: Default::default() };
                 self.hall.process(&self.hall_p, wl, wr, &ctx, None);
             }
             for j in 0..len {

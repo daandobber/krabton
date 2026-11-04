@@ -231,6 +231,14 @@ pub enum ModTarget {
     Send { track: u64, send: u16 },
 }
 
+/// A knob on a controller that moves a parameter.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MidiMap {
+    pub channel: u8,
+    pub cc: u8,
+    pub target: ModTarget,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ModRoute {
     pub id: u64,
@@ -390,6 +398,22 @@ impl Project {
             ModOwner::Modulator(m) => self.modulators.iter().find(|x| x.id == m).map(|x| x.kind.specs()),
             // (kept while the track is off the map: back on, it moves again)
             ModOwner::Map(t) => self.tracks.iter().any(|tr| tr.id == t).then_some(crate::dsp::fx::stage::PLACE_SPECS),
+        }
+    }
+
+    /// The values of a parameter set, to read or to turn (not the Map's, which
+    /// has no list of its own).
+    pub fn owner_params_mut(&mut self, owner: ModOwner) -> Option<&mut Vec<f32>> {
+        match owner {
+            ModOwner::Instrument(t) => self.tracks.iter_mut().find(|tr| tr.id == t)?.instrument.as_mut().and_then(instrument_params_mut),
+            ModOwner::Device(d) => {
+                let tracks = self.tracks.iter_mut().flat_map(|t| &mut t.devices);
+                let returns = self.returns.iter_mut().flat_map(|r| &mut r.devices);
+                tracks.chain(returns).chain(&mut self.master.devices).find(|x| x.id == d).map(|x| &mut x.params)
+            }
+            ModOwner::MidiDevice(d) => self.tracks.iter_mut().flat_map(|t| &mut t.midi_devices).find(|x| x.id == d).map(|x| &mut x.params),
+            ModOwner::Modulator(m) => self.modulators.iter_mut().find(|x| x.id == m).map(|x| &mut x.params),
+            ModOwner::Map(_) => None,
         }
     }
 

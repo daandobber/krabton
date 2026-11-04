@@ -723,6 +723,20 @@ impl App {
             self.renaming = Some((RenameTarget::Scene(s), name.clone()));
         }
         resp.context_menu(|ui| {
+            let mut tempo = self.project.scenes.get(s).and_then(|sc| sc.tempo);
+            let mut on = tempo.is_some();
+            ui.horizontal(|ui| {
+                if ui.checkbox(&mut on, "Tempo").on_hover_text("The song goes to this tempo when the scene starts").changed() {
+                    tempo = if on { Some(self.project.bpm) } else { None };
+                }
+                if let Some(t) = tempo.as_mut() {
+                    ui.add(egui::DragValue::new(t).range(20.0..=400.0).speed(0.1).suffix(" BPM"));
+                }
+            });
+            if let Some(sc) = self.project.scenes.get_mut(s) {
+                sc.tempo = tempo;
+            }
+            ui.separator();
             if ui.button("Launch Scene     Enter").clicked() {
                 self.cmd(Command::LaunchScene(s));
                 ui.close();

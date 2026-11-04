@@ -83,7 +83,7 @@ mod tests {
         p[DAMP] = 0.0;
         p[WOBBLE] = 0.0;
         p[SPREAD] = 0.0;
-        let ctx = FxCtx { sr, bpm: 120.0, beat: 0.0, playing: false };
+        let ctx = FxCtx { sr, bpm: 120.0, beat: 0.0, playing: false, scale: Default::default() };
         let mut l = vec![0.0; 9600];
         let mut r = vec![0.0; 9600];
         l[0] = 1.0;

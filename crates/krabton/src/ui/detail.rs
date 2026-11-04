@@ -46,7 +46,7 @@ impl App {
                 None => "Ableton Move on screen (plug one in, in Control Live mode)".into(),
             },
         };
-        if self.mod_learn.is_some() {
+        if self.mod_learn.is_some() || self.midi_learn {
             self.mod_banner(ui, tabs);
         } else {
             text(ui.painter(), pos2(x + 8.0, tabs.center().y), Align2::LEFT_CENTER, title, body(), TEXT_DIM);
@@ -297,6 +297,56 @@ impl App {
         }
     }
 
+    /// How a session clip starts and what comes after it.
+    fn launch_controls(&mut self, ui: &mut Ui, sel: ClipSel, clip: &krabton_engine::Clip) {
+        if !matches!(sel, ClipSel::Slot { .. }) {
+            return;
+        }
+        use krabton_engine::project::FollowAction;
+        let mut l = clip.launch;
+        ui.add_space(4.0);
+        ui.label(RichText::new("Launch").small().color(TEXT_DIM));
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut l.toggle, "Toggle").on_hover_text("Launching it while it plays stops it");
+            ui.checkbox(&mut l.legato, "Legato").on_hover_text("It takes over where the clip before it was, instead of from its start");
+        });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Follow after").small());
+            let bars = if l.after_bars <= 0.0 { "never".to_string() } else { format!("{} bars", l.after_bars) };
+            let resp = ui.button(bars).on_hover_text("After this many bars the follow action happens. Click: longer, right-click: shorter");
+            const STEPS: [f32; 9] = [0.0, 1.0, 2.0, 4.0, 8.0, 12.0, 16.0, 32.0, 64.0];
+            let at = STEPS.iter().position(|s| *s >= l.after_bars).unwrap_or(0);
+            if resp.clicked() {
+                l.after_bars = STEPS[(at + 1).min(STEPS.len() - 1)];
+            }
+            if resp.secondary_clicked() {
+                l.after_bars = STEPS[at.saturating_sub(1)];
+            }
+        });
+        if l.after_bars > 0.0 {
+            let pick = |ui: &mut Ui, id: &str, value: &mut FollowAction| {
+                egui::ComboBox::from_id_salt((id, clip.id)).width(92.0).selected_text(value.name()).show_ui(ui, |ui| {
+                    for a in FollowAction::ALL {
+                        ui.selectable_value(value, a, a.name());
+                    }
+                });
+            };
+            ui.horizontal(|ui| {
+                pick(ui, "follow_a", &mut l.action);
+                pick(ui, "follow_b", &mut l.other);
+            });
+            let mut chance = l.chance * 100.0;
+            if ui.add(egui::Slider::new(&mut chance, 0.0..=100.0).suffix("% first").step_by(5.0)).on_hover_text("How often the first action is chosen rather than the second").changed() {
+                l.chance = chance / 100.0;
+            }
+        }
+        if l != clip.launch {
+            if let Some(c) = self.clip_mut(sel) {
+                c.launch = l;
+            }
+        }
+    }
+
     fn clip_sidebar(&mut self, ui: &mut Ui, sel: ClipSel, clip: &krabton_engine::Clip) {
         let bpb = self.project.beats_per_bar_f();
         ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
@@ -393,6 +443,7 @@ impl App {
                     }
                 });
                 self.groove_controls(ui, sel, clip);
+                self.launch_controls(ui, sel, clip);
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Grid").small().color(TEXT_DIM));
                     let grids = [(1.0, "1/4"), (0.5, "1/8"), (0.25, "1/16"), (0.125, "1/32"), (1.0 / 3.0, "1/8T"), (1.0 / 6.0, "1/16T")];

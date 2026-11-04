@@ -484,6 +484,7 @@ impl crate::app::App {
                     }
                     Then::Quit => {}
                 }
+                self.safety.closing = true;
                 self.quit_requested = true;
             }
             Err(e) => self.update.trouble = Some(e),

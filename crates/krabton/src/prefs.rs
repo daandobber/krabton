@@ -108,6 +108,8 @@ pub struct Prefs {
     pub update_check_off: bool,
     /// The version not to tell about any more.
     pub update_skip: Option<String>,
+    /// The set the autosaved copy is a copy of.
+    pub autosave_of: Option<PathBuf>,
     /// The set to open again after an update restarted Krabton.
     pub reopen_after_update: Option<PathBuf>,
 }
@@ -129,6 +131,11 @@ impl Prefs {
             env("XDG_CONFIG_HOME").or_else(|| env("HOME").map(|h| h.join(".config"))).map(|d| d.join("krabton"))
         };
         dir.map(|d| d.join("prefs.json"))
+    }
+
+    /// A file beside the settings.
+    pub fn beside(name: &str) -> Option<PathBuf> {
+        Self::path().map(|p| p.with_file_name(name))
     }
 
     /// Where crashes are written down: beside the settings.

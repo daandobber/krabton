@@ -43,6 +43,7 @@ pub mod warps;
 pub mod vafilter;
 pub mod transient;
 pub mod verb;
+pub mod tune;
 pub mod vinyl;
 
 use std::f32::consts::TAU;
@@ -214,7 +215,7 @@ pub(crate) mod test_util {
     use super::super::effects::FxCtx;
 
     pub fn ctx() -> FxCtx {
-        FxCtx { sr: 48000.0, bpm: 120.0, beat: 0.0, playing: false }
+        FxCtx { sr: 48000.0, bpm: 120.0, beat: 0.0, playing: false, scale: Default::default() }
     }
 
     pub fn tone(freq: f32, secs: f32, amp: f32) -> Vec<f32> {

@@ -52,6 +52,8 @@ impl App {
         self.ui_history(ctx);
         self.ui_band_window(ctx);
         self.ui_settings(ctx);
+        self.ui_safety(ctx);
+        self.ui_palette(ctx);
         self.ui_packs(ctx);
         self.ui_update(ctx);
         self.ui_rack(ctx);

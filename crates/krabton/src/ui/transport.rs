@@ -405,6 +405,24 @@ impl App {
                 self.open_video();
                 ui.close();
             }
+            if ui.selectable_label(self.midi_learn, "MIDI Learn").on_hover_text("Click a knob on screen, then move one on your controller: from then on it turns it. Esc when done").clicked() {
+                self.toggle_midi_learn();
+                ui.close();
+            }
+            if !self.project.midi_maps.is_empty() {
+                ui.menu_button("MIDI Knobs", |ui| {
+                    let mut gone = None;
+                    for (k, m) in self.project.midi_maps.iter().enumerate() {
+                        let (a, b) = self.project.target_label(m.target);
+                        if ui.button(format!("CC {} (ch {}): {a} {b}", m.cc, m.channel + 1)).on_hover_text("Click to take this knob off").clicked() {
+                            gone = Some(k);
+                        }
+                    }
+                    if let Some(k) = gone {
+                        self.project.midi_maps.remove(k);
+                    }
+                });
+            }
             if ui.button("Audio & MIDI Settings...   Ctrl+,").on_hover_text("Which device Krabton plays to and records from, and the MIDI inputs").clicked() {
                 self.show_settings = true;
                 ui.close();

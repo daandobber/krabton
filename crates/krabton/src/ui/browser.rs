@@ -378,6 +378,15 @@ pub(crate) fn device_names() -> Vec<&'static str> {
     devices().iter().map(|d| d.name).collect()
 }
 
+/// Every instrument with its usual preset, for the palette.
+pub(crate) fn first_presets() -> Vec<(&'static str, BrowserItem)> {
+    devices().into_iter().filter_map(|d| {
+        // The first preset that is not the blank one, when there is one.
+        let p = d.presets.iter().copied().find(|p| *p != "Init").or_else(|| d.presets.first().copied())?;
+        Some((d.name, (d.make)(p)))
+    }).collect()
+}
+
 fn devices() -> [Dev; 54] {
     [
         Dev {

@@ -364,7 +364,7 @@ impl OrganState {
             let mut rp = crate::params::defaults(rotary::SPECS);
             rp[rotary::SPEED] = if speed >= 2 { 2.0 } else { 1.0 };
             rp[rotary::DRIVE] = 0.0;
-            let ctx = FxCtx { sr, bpm: 120.0, beat: 0.0, playing: false };
+            let ctx = FxCtx { sr, bpm: 120.0, beat: 0.0, playing: false, scale: Default::default() };
             let (a, b) = (&mut self.mono[..n], &mut self.r[..n]);
             self.rotary.process(&rp, a, b, &ctx);
         }

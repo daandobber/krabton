@@ -628,7 +628,7 @@ impl StreetOrganState {
                 hp[hall::FREEZE] = 0.0;
                 hp[hall::WIDTH] = 1.0;
                 hp[hall::MIX] = 1.0;
-                let ctx = FxCtx { sr, bpm: 120.0, beat: 0.0, playing: false };
+                let ctx = FxCtx { sr, bpm: 120.0, beat: 0.0, playing: false, scale: Default::default() };
                 self.hall.process(&self.hall_p, &mut self.wl[..len], &mut self.wr[..len], &ctx, None);
                 for j in 0..len {
                     self.dl[j] += self.wl[j] * space * 0.5;

@@ -437,6 +437,100 @@ pub struct Clip {
     /// feel, where they are written (see `groove`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub groove: Option<crate::groove::ClipGroove>,
+    /// How it starts, and what comes after it (see `Launch`).
+    #[serde(default, skip_serializing_if = "Launch::is_plain")]
+    pub launch: Launch,
+}
+
+/// What happens when a clip's time is up.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FollowAction {
+    /// Nothing: it goes on.
+    #[default]
+    Nothing,
+    Stop,
+    Again,
+    Previous,
+    Next,
+    First,
+    Last,
+    /// Any clip of the track, this one too.
+    Any,
+    /// Any other clip of the track.
+    Other,
+}
+
+impl FollowAction {
+    pub const ALL: [FollowAction; 9] = [FollowAction::Nothing, FollowAction::Stop, FollowAction::Again, FollowAction::Previous, FollowAction::Next, FollowAction::First, FollowAction::Last, FollowAction::Any, FollowAction::Other];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            FollowAction::Nothing => "Nothing",
+            FollowAction::Stop => "Stop",
+            FollowAction::Again => "Play Again",
+            FollowAction::Previous => "Previous",
+            FollowAction::Next => "Next",
+            FollowAction::First => "First",
+            FollowAction::Last => "Last",
+            FollowAction::Any => "Any",
+            FollowAction::Other => "Other",
+        }
+    }
+
+    /// The slot it leads to, from `at` among `slots` (those with a clip, in
+    /// order); `random` in 0..1. None: nothing plays. Some(at): this one again.
+    pub fn target(self, at: usize, slots: &[usize], random: f32) -> Option<usize> {
+        let k = slots.iter().position(|&s| s == at);
+        let n = slots.len();
+        if n == 0 {
+            return None;
+        }
+        let pick = |count: usize| ((random * count as f32) as usize).min(count - 1);
+        match self {
+            FollowAction::Nothing | FollowAction::Again => Some(at),
+            FollowAction::Stop => None,
+            FollowAction::Previous => Some(slots[(k.unwrap_or(0) + n - 1) % n]),
+            FollowAction::Next => Some(slots[(k.map_or(0, |k| k + 1)) % n]),
+            FollowAction::First => Some(slots[0]),
+            FollowAction::Last => Some(slots[n - 1]),
+            FollowAction::Any => Some(slots[pick(n)]),
+            FollowAction::Other => {
+                if n == 1 {
+                    return Some(at);
+                }
+                let j = pick(n - 1);
+                Some(slots[if k.is_some_and(|k| j >= k) { j + 1 } else { j }])
+            }
+        }
+    }
+}
+
+/// How a clip starts and what comes after it.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Launch {
+    /// Launching it while it plays stops it.
+    pub toggle: bool,
+    /// It takes over where the clip before it was, instead of from its start.
+    pub legato: bool,
+    /// After this many bars its follow action happens (0: never).
+    pub after_bars: f32,
+    pub action: FollowAction,
+    pub other: FollowAction,
+    /// How often `action` is chosen rather than `other` (0..1).
+    pub chance: f32,
+}
+
+impl Default for Launch {
+    fn default() -> Self {
+        Self { toggle: false, legato: false, after_bars: 0.0, action: FollowAction::Next, other: FollowAction::Nothing, chance: 1.0 }
+    }
+}
+
+impl Launch {
+    pub fn is_plain(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// A track's sound: its MIDI effects, its instrument and its audio effects,
@@ -562,7 +656,7 @@ pub fn db_to_fader_pos(db: f32) -> f32 {
 
 impl Clip {
     pub fn new_midi(id: u64, name: impl Into<String>, color: Rgb, length: f64) -> Self {
-        Self { id, name: name.into(), color, length, content: ClipContent::Midi { notes: Vec::new() }, envelopes: Vec::new(), sound: None, groove: None }
+        Self { id, name: name.into(), color, length, content: ClipContent::Midi { notes: Vec::new() }, envelopes: Vec::new(), sound: None, groove: None, launch: Default::default() }
     }
 
     /// Creates an audio clip warped the way Live's auto-warp does it. A loop
@@ -622,7 +716,7 @@ impl Clip {
             }
             _ => audio.sample_beats(),
         };
-        Self { id, name: sample.name.clone(), color, length: length.max(0.25), content: ClipContent::Audio(audio), envelopes: Vec::new(), sound: None, groove: None }
+        Self { id, name: sample.name.clone(), color, length: length.max(0.25), content: ClipContent::Audio(audio), envelopes: Vec::new(), sound: None, groove: None, launch: Default::default() }
     }
 
     /// How long it plays before it repeats or ends, in beats: the loop, or
@@ -1729,6 +1823,9 @@ pub struct MasterTrack {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Scene {
     pub name: String,
+    /// The tempo the song goes to when this scene starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tempo: Option<f64>,
 }
 
 fn default_bpb() -> u32 {
@@ -1769,6 +1866,9 @@ pub struct Project {
     pub modulators: Vec<crate::modulation::Modulator>,
     #[serde(default)]
     pub mod_routes: Vec<crate::modulation::ModRoute>,
+    /// Knobs on a controller, each moving a parameter.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub midi_maps: Vec<crate::modulation::MidiMap>,
     /// The arranger track: song sections over the arrangement.
     #[serde(default)]
     pub sections: Vec<SongSection>,
@@ -1851,7 +1951,7 @@ impl Project {
             tracks: Vec::new(),
             returns: Vec::new(),
             master: MasterTrack { devices: Vec::new(), volume_db: 0.0 },
-            scenes: (1..=8).map(|i| Scene { name: i.to_string() }).collect(),
+            scenes: (1..=8).map(|i| Scene { name: i.to_string(), tempo: None }).collect(),
             launch_quantize: Quantize::Bar,
             metronome: false,
             loop_enabled: false,
@@ -1861,6 +1961,7 @@ impl Project {
             scale_mode: true,
             modulators: Vec::new(),
             mod_routes: Vec::new(),
+            midi_maps: Vec::new(),
             sections: Vec::new(),
             next_id: 1,
             tape: Default::default(),
@@ -2385,7 +2486,7 @@ impl Project {
 
     pub fn add_scene(&mut self, at: usize) {
         let at = at.min(self.scenes.len());
-        self.scenes.insert(at, Scene { name: (self.scenes.len() + 1).to_string() });
+        self.scenes.insert(at, Scene { name: (self.scenes.len() + 1).to_string(), tempo: None });
         for t in &mut self.tracks {
             t.slots.insert(at, None);
         }
@@ -2396,7 +2497,7 @@ impl Project {
             return;
         }
         let name = format!("{} copy", self.scenes[idx].name);
-        self.scenes.insert(idx + 1, Scene { name });
+        self.scenes.insert(idx + 1, Scene { tempo: None, name });
         for ti in 0..self.tracks.len() {
             let copy = self.tracks[ti].slots[idx].clone();
             let copy = copy.map(|c| self.fresh_clip(&c));
@@ -2480,7 +2581,7 @@ impl Project {
     /// Repairs invariants after loading or bulk edits.
     pub fn sanitize(&mut self) {
         if self.scenes.is_empty() {
-            self.scenes.push(Scene { name: "1".into() });
+            self.scenes.push(Scene { name: "1".into(), tempo: None });
         }
         if !(20.0..=999.0).contains(&self.bpm) {
             self.bpm = self.bpm.clamp(20.0, 999.0);

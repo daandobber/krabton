@@ -1253,7 +1253,7 @@ impl DroneState {
             hp[hall::FREEZE] = 0.0;
             hp[hall::WIDTH] = 1.0;
             hp[hall::MIX] = 0.6 * space;
-            let ctx = FxCtx { sr, bpm: 120.0, beat: 0.0, playing: false };
+            let ctx = FxCtx { sr, bpm: 120.0, beat: 0.0, playing: false, scale: Default::default() };
             self.hall.process(&self.hall_p, wl, wr, &ctx, None);
         }
         let gain = db_to_gain(p[VOLUME]);

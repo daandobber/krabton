@@ -14,6 +14,8 @@ pub enum MidiMsg {
     PitchBend { value: f32, channel: u8 },
     /// The mod wheel (CC 1), 0..1.
     ModWheel { value: f32, channel: u8 },
+    /// Any controller, 0..1 (also sent for the wheel and the pedal: a knob can be learned from them).
+    Cc { cc: u8, value: f32, channel: u8 },
 }
 
 pub struct Midi {
@@ -64,6 +66,9 @@ impl Midi {
                         return;
                     }
                     let (status, channel, d1, d2) = (msg[0] & 0xf0, msg[0] & 0x0f, msg[1], msg[2]);
+                    if status == 0xB0 {
+                        let _ = tx.send(MidiMsg::Cc { cc: d1, value: d2 as f32 / 127.0, channel });
+                    }
                     let m = match status {
                         0x90 if d2 > 0 => MidiMsg::NoteOn { pitch: d1, velocity: d2 as f32 / 127.0, channel },
                         0x90 | 0x80 => MidiMsg::NoteOff { pitch: d1 },

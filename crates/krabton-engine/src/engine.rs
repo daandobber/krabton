@@ -20,6 +20,7 @@ use crate::dsp::monk::MonkState;
 use crate::dsp::bassline::BasslineState;
 use crate::dsp::mono101::Mono101State;
 use crate::dsp::munich::MunichState;
+use crate::project::FollowAction;
 use crate::dsp::drone::DroneState;
 use crate::dsp::waves::WavesState;
 use crate::dsp::guitar::GuitarState;
@@ -502,6 +503,10 @@ struct PlayingClip {
     /// Beat at which the clip started: on the session clock, or on the
     /// track's own clock when it has one.
     start: f64,
+    /// Where the session was when it started, for its follow action.
+    began: f64,
+    /// Its follow action has been decided.
+    followed: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -1383,6 +1388,8 @@ impl Drop for DenormalGuard {
 }
 
 pub struct Engine {
+    /// For follow actions.
+    follow_rng: u32,
     sr: f32,
     /// The play key the music is in now (it may wait for a bar to follow the project's).
     key_now: Option<crate::scale::Scale>,
@@ -1462,6 +1469,7 @@ impl Engine {
         status.sample_rate.store(sample_rate);
         status.reel.set_rate(sample_rate);
         let mut e = Engine {
+            follow_rng: 0x2F6E_2B1D,
             sr: sample_rate,
             project,
             cmd_rx,
@@ -1636,6 +1644,12 @@ impl Engine {
             Command::LaunchClip { track, slot } => {
                 if let Some(ti) = self.project.track_index(track) {
                     let immediate = !self.playing;
+                    // A clip that toggles stops when it is launched while it plays.
+                    let toggles = self.project.tracks[ti].slots.get(slot).and_then(|c| c.as_ref()).is_some_and(|c| c.launch.toggle);
+                    if toggles && self.tracks.get(ti).is_some_and(|rt| rt.playing.is_some_and(|p| p.slot == slot)) {
+                        self.launch(ti, None, immediate);
+                        return;
+                    }
                     if immediate && self.slot_has_clip(ti, slot) {
                         self.start_transport();
                     }
@@ -1888,13 +1902,16 @@ impl Engine {
                 self.follow_clip_sound(ti, clip);
             }
         }
+        let legato = slot.is_some_and(|s| self.slot_is_legato(ti, s));
         let Some(rt) = self.tracks.get_mut(ti) else { return };
+        let before = rt.playing.map(|p| p.start);
         if immediate {
             rt.queued = None;
             if rt.playing.is_some() {
                 rt.release(Clock::Session);
             }
-            rt.playing = slot.map(|s| PlayingClip { slot: s, start: now });
+            let began = session_pos;
+            rt.playing = slot.map(|s| PlayingClip { slot: s, start: if legato { before.unwrap_or(now) } else { now }, began, followed: false });
             if slot.is_some() {
                 rt.overridden = true;
                 rt.release(Clock::Arrangement);
@@ -1916,13 +1933,15 @@ impl Engine {
         let pos = self.session_pos;
         for ti in 0..self.tracks.len() {
             let now = self.track_now(ti);
+            let legato = self.tracks[ti].queued.and_then(|q| q.slot).is_some_and(|s| self.slot_is_legato(ti, s));
             let rt = &mut self.tracks[ti];
             let Some(q) = rt.queued else { continue };
             if q.at > pos + 1e-9 {
                 continue;
             }
+            let before = rt.playing.map(|p| p.start);
             rt.release(Clock::Session);
-            rt.playing = q.slot.map(|s| PlayingClip { slot: s, start: now });
+            rt.playing = q.slot.map(|s| PlayingClip { slot: s, start: if legato { before.unwrap_or(now) } else { now }, began: pos, followed: false });
             if q.slot.is_some() {
                 if !rt.overridden {
                     rt.release(Clock::Arrangement);
@@ -1934,6 +1953,56 @@ impl Engine {
             if let Some(clip) = q.slot.and_then(|s| self.slot_clip_id(ti, s)) {
                 self.follow_clip_sound(ti, clip);
             }
+        }
+    }
+
+    fn slot_is_legato(&self, ti: usize, slot: usize) -> bool {
+        self.project.tracks.get(ti).and_then(|t| t.slots.get(slot)).and_then(|c| c.as_ref()).is_some_and(|c| c.launch.legato)
+    }
+
+    /// Clips with a follow action: what comes next goes in the queue, for the
+    /// moment their time is up. Decided once each time a clip starts.
+    fn schedule_follow_actions(&mut self) {
+        let bar = self.project.beats_per_bar_f();
+        for ti in 0..self.tracks.len() {
+            let Some(p) = self.tracks[ti].playing.filter(|p| !p.followed) else { continue };
+            if self.tracks[ti].queued.is_some() {
+                continue;
+            }
+            if let Some(rt) = self.tracks[ti].playing.as_mut() {
+                rt.followed = true;
+            }
+            let Some(track) = self.project.tracks.get(ti) else { continue };
+            let Some(clip) = track.slots.get(p.slot).and_then(|c| c.as_ref()) else { continue };
+            let l = clip.launch;
+            if l.after_bars <= 0.0 {
+                continue;
+            }
+            // A little generator: the audio thread has no time for more.
+            self.follow_rng ^= self.follow_rng << 13;
+            self.follow_rng ^= self.follow_rng >> 17;
+            self.follow_rng ^= self.follow_rng << 5;
+            let r1 = (self.follow_rng >> 8) as f32 / (1u32 << 24) as f32;
+            self.follow_rng ^= self.follow_rng << 13;
+            self.follow_rng ^= self.follow_rng >> 17;
+            self.follow_rng ^= self.follow_rng << 5;
+            let r2 = (self.follow_rng >> 8) as f32 / (1u32 << 24) as f32;
+            let action = if r1 < l.chance { l.action } else { l.other };
+            if action == FollowAction::Nothing {
+                continue;
+            }
+            // The slots with a clip, without allocating (a track has few hundred at most).
+            let mut slots = [0usize; 256];
+            let mut n = 0;
+            for (s, c) in track.slots.iter().enumerate() {
+                if c.is_some() && n < slots.len() {
+                    slots[n] = s;
+                    n += 1;
+                }
+            }
+            let target = action.target(p.slot, &slots[..n], r2);
+            let at = p.began + l.after_bars as f64 * bar;
+            self.tracks[ti].queued = Some(Queued { slot: target, at });
         }
     }
 
@@ -2091,6 +2160,7 @@ impl Engine {
             let spb = self.samples_per_beat();
             if self.playing {
                 self.fire_due_launches();
+                self.schedule_follow_actions();
                 self.follow_arrangement_sounds();
                 if let Some(t) = self.next_launch() {
                     let k = ((t - self.session_pos) * spb).ceil();
@@ -2156,7 +2226,7 @@ impl Engine {
         // Start and Stop go out once, with this segment's clocks.
         let (out_start, out_stop) = (std::mem::take(&mut self.out_start), std::mem::take(&mut self.out_stop));
         // Effects that keep time follow the session clock (it starts from the song position).
-        let ctx = FxCtx { sr, bpm: project.bpm as f32, beat: s0, playing };
+        let ctx = FxCtx { sr, bpm: project.bpm as f32, beat: s0, playing, scale: project.scale };
 
         // Modulators run once per block, from what the tracks did last block.
         self.signals.clear();
@@ -3445,6 +3515,65 @@ mod tests {
         // One bar at the demo tempo is under two seconds.
         run(&mut e, 2.0);
         assert_eq!(h.status.tracks[0].playing_slot.load(RELAXED), 1);
+    }
+
+    #[test]
+    fn a_follow_action_goes_to_the_next_clip_when_its_time_is_up() {
+        let mut p = crate::demo::demo_project();
+        p.launch_quantize = Quantize::None;
+        p.bpm = 120.0;
+        let track = p.tracks[0].id;
+        for s in 0..3 {
+            let id = p.alloc_id();
+            p.tracks[0].slots[s] = Some(Clip::new_midi(id, "x", [1, 2, 3], 4.0));
+        }
+        if let Some(c) = p.tracks[0].slots[0].as_mut() {
+            c.launch.after_bars = 1.0;
+        }
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        run(&mut e, 0.02);
+        h.send(Command::LaunchClip { track, slot: 0 });
+        run(&mut e, 1.0);
+        assert_eq!(h.status.tracks[0].playing_slot.load(RELAXED), 0);
+        assert_eq!(h.status.tracks[0].queued_slot.load(RELAXED), 1, "what follows is shown as queued");
+        // A bar at 120 is two seconds.
+        run(&mut e, 1.2);
+        assert_eq!(h.status.tracks[0].playing_slot.load(RELAXED), 1);
+        // The next has none: it stays.
+        run(&mut e, 3.0);
+        assert_eq!(h.status.tracks[0].playing_slot.load(RELAXED), 1);
+    }
+
+    #[test]
+    fn a_toggling_clip_stops_when_launched_again_and_legato_keeps_the_place() {
+        let mut p = crate::demo::demo_project();
+        p.launch_quantize = Quantize::None;
+        let track = p.tracks[0].id;
+        for s in 0..2 {
+            let id = p.alloc_id();
+            p.tracks[0].slots[s] = Some(Clip::new_midi(id, "x", [1, 2, 3], 4.0));
+        }
+        if let Some(c) = p.tracks[0].slots[0].as_mut() {
+            c.launch.toggle = true;
+        }
+        if let Some(c) = p.tracks[0].slots[1].as_mut() {
+            c.launch.legato = true;
+        }
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        run(&mut e, 0.02);
+        h.send(Command::LaunchClip { track, slot: 0 });
+        run(&mut e, 0.5);
+        let started = e.tracks[0].playing.map(|p| p.start).unwrap();
+        h.send(Command::LaunchClip { track, slot: 1 });
+        run(&mut e, 0.1);
+        assert_eq!(h.status.tracks[0].playing_slot.load(RELAXED), 1);
+        assert_eq!(e.tracks[0].playing.map(|p| p.start), Some(started), "it took over in place");
+        h.send(Command::LaunchClip { track, slot: 0 });
+        run(&mut e, 0.1);
+        assert_eq!(h.status.tracks[0].playing_slot.load(RELAXED), 0);
+        h.send(Command::LaunchClip { track, slot: 0 });
+        run(&mut e, 0.1);
+        assert_eq!(h.status.tracks[0].playing_slot.load(RELAXED), -1, "launched again it stops");
     }
 
     #[test]

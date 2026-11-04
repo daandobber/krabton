@@ -91,7 +91,7 @@ mod tests {
         let mut p = crate::params::defaults(SPECS);
         p[MIX] = 1.0;
         p[FEEDBACK] = 0.9;
-        let ctx = FxCtx { sr, bpm: 120.0, beat: 0.0, playing: false };
+        let ctx = FxCtx { sr, bpm: 120.0, beat: 0.0, playing: false, scale: Default::default() };
         let mut l = vec![0.0; 48000];
         let mut r = vec![0.0; 48000];
         l[0] = 1.0;

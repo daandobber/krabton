@@ -382,7 +382,7 @@ mod tests {
     use super::*;
 
     fn ctx() -> FxCtx {
-        FxCtx { sr: 48000.0, bpm: 120.0, beat: 0.0, playing: false }
+        FxCtx { sr: 48000.0, bpm: 120.0, beat: 0.0, playing: false, scale: Default::default() }
     }
 
     fn sine(f: f32, sr: f32, n: usize, amp: f32) -> Vec<f32> {

@@ -259,7 +259,7 @@ impl App {
                 }
             }
         }
-        if self.project.modulators.is_empty() && automated.is_empty() {
+        if self.project.modulators.is_empty() && automated.is_empty() && !self.midi_learn {
             return None;
         }
         let links = self
@@ -275,6 +275,8 @@ impl App {
             })
             .collect();
         let mapping = self.mod_learn.and_then(|id| self.project.modulators.iter().position(|m| m.id == id).map(|i| (id, mod_color(i))));
+        // MIDI Learn picks parameters the way a modulator is mapped.
+        let mapping = if self.midi_learn { Some((crate::midi_learn::SOURCE, ACCENT)) } else { mapping };
         Some(ModView { owner, links, automated, mapping, edits: Vec::new() })
     }
 
@@ -283,6 +285,10 @@ impl App {
         let Some(mv) = mv else { return };
         for (src, param, amount) in mv.edits {
             let target = ModTarget::Param { owner: mv.owner, param: param as u16 };
+            if src == crate::midi_learn::SOURCE {
+                self.midi_learn_pick(target);
+                continue;
+            }
             let new = !self.project.mod_routes.iter().any(|r| r.source == src && r.target == target);
             self.project.add_route(src, target, amount);
             if new {
@@ -362,6 +368,15 @@ impl App {
 
     /// The "Mapping ..." banner in the detail tab bar.
     pub(crate) fn mod_banner(&mut self, ui: &mut Ui, bar: Rect) {
+        if self.midi_learn {
+            let done = Rect::from_min_size(pos2(bar.right() - 64.0, bar.top() + 3.0), vec2(58.0, bar.height() - 6.0));
+            if button(ui, done, Id::new("midi_learn_done"), "Done", true, ACCENT).clicked() {
+                self.toggle_midi_learn();
+            }
+            let msg = if self.midi_learn_target.is_some() { "MIDI Learn: now move a knob on your controller" } else { "MIDI Learn: click a knob here, then move one on your controller" };
+            text(ui.painter(), pos2(done.left() - 8.0, bar.center().y), Align2::RIGHT_CENTER, msg, small(), ACCENT);
+            return;
+        }
         let Some(id) = self.mod_learn else { return };
         let Some(i) = self.project.modulators.iter().position(|m| m.id == id) else { return };
         let color = mod_color(i);

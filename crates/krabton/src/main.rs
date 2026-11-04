@@ -28,6 +28,8 @@ mod plugins;
 mod prefs;
 mod pulse;
 mod recording;
+mod midi_learn;
+mod safety;
 mod shot;
 mod skin;
 mod tape;

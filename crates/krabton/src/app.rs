@@ -577,6 +577,16 @@ pub struct App {
     pub(crate) frame: u64,
     /// Close the window at the end of this frame (script action `quit`).
     pub(crate) quit_requested: bool,
+    /// The autosave and the questions before losing changes (see `safety`).
+    pub(crate) safety: crate::safety::Safety,
+    /// Ctrl+P (see `ui::palette`).
+    pub(crate) palette: crate::ui::palette::Palette,
+    /// MIDI Learn is on: click a knob, move one on the controller.
+    pub(crate) midi_learn: bool,
+    /// The parameter clicked, waiting for a controller's knob.
+    pub(crate) midi_learn_target: Option<krabton_engine::modulation::ModTarget>,
+    /// A scene's tempo, waiting for the scene to start.
+    pub(crate) scene_tempo: Option<(usize, f64)>,
     /// What can be fetched, and the queue of what is coming (see `packs`).
     pub(crate) packs: crate::packs::Packs,
     /// A new version, and putting it in place (see `update`).
@@ -788,6 +798,11 @@ impl App {
             script_mods: Modifiers::NONE,
             frame: 0,
             quit_requested: false,
+            safety: Default::default(),
+            palette: Default::default(),
+            midi_learn: false,
+            midi_learn_target: None,
+            scene_tempo: None,
             packs: Default::default(),
             update: Default::default(),
             big: crate::big::BigPicture::new(crate::big::start_in_big_picture(start_big)),
@@ -836,6 +851,9 @@ impl App {
     // ------------------------------------------------------------------
 
     pub fn cmd(&mut self, c: Command) {
+        if let Command::LaunchScene(scene) = c {
+            self.scene_tempo = self.project.scenes.get(scene).and_then(|sc| sc.tempo).map(|t| (scene, t));
+        }
         self.pending.push(c);
     }
 
@@ -3035,6 +3053,7 @@ impl App {
     fn poll_midi(&mut self) {
         while let Ok(msg) = self.midi.rx.try_recv() {
             match msg {
+                MidiMsg::Cc { cc, value, channel } => self.midi_cc(channel, cc, value),
                 MidiMsg::NoteOn { pitch, velocity, channel } => {
                     let played = self.note_on_from(Some(channel), pitch, velocity);
                     self.midi_held.insert(pitch, played);
@@ -3321,6 +3340,7 @@ impl App {
                 Key::Y => self.redo(),
                 Key::S => self.save(m.shift),
                 Key::O => self.open(),
+                Key::P => self.toggle_palette(),
                 Key::N => self.new_project(),
                 // The note editor clicked last: Ctrl+D is for its notes.
                 Key::D if self.view == View::Arrangement && !self.arr.picked.is_empty() && !self.notes_focus() => self.arr_duplicate_selection(),
@@ -3359,6 +3379,7 @@ impl App {
         }
         match key {
             Key::Escape if self.mod_learn.is_some() => self.mod_learn = None,
+            Key::Escape if self.midi_learn => self.toggle_midi_learn(),
             Key::Space => self.toggle_play(),
             Key::Tab if m.shift => {
                 self.detail = if self.detail == DetailTab::Clip { DetailTab::Devices } else { DetailTab::Clip };
@@ -3467,12 +3488,18 @@ impl App {
     }
 
     pub fn new_project(&mut self) {
+        if self.ask_first(crate::safety::After::New) {
+            return;
+        }
         self.replace_project(Project::new_default());
         self.file_path = None;
         self.toast("New set");
     }
 
     pub fn load_demo(&mut self) {
+        if self.ask_first(crate::safety::After::Demo) {
+            return;
+        }
         self.replace_project(krabton_engine::demo::demo_project());
         self.file_path = None;
         self.toast("Demo set loaded");
@@ -3480,6 +3507,9 @@ impl App {
 
     /// Munich's set: a galloping octave bass over a straight beat.
     pub fn load_gallop(&mut self) {
+        if self.ask_first(crate::safety::After::Gallop) {
+            return;
+        }
         self.replace_project(krabton_engine::demo::gallop_project());
         self.file_path = None;
         self.toast("Gallop: press Space or launch a scene");
@@ -3487,12 +3517,18 @@ impl App {
 
     /// The new age ambient set: brook, birds, chimes, drone, bowl and pan flute.
     pub fn load_ambient(&mut self) {
+        if self.ask_first(crate::safety::After::Ambient) {
+            return;
+        }
         self.replace_project(krabton_engine::demo::ambient_project());
         self.file_path = None;
         self.toast("Forest Morning: press Space or launch a scene");
     }
 
     pub fn open(&mut self) {
+        if self.ask_first(crate::safety::After::Open) {
+            return;
+        }
         let Some(path) = rfd::FileDialog::new().add_filter("Krabton set", &[FILE_EXTENSION]).pick_file() else { return };
         self.open_path(path);
     }
@@ -3500,6 +3536,9 @@ impl App {
     /// Opens a set from disk (the Open dialog, or a file double-clicked in
     /// the file manager).
     pub fn open_path(&mut self, path: std::path::PathBuf) {
+        if self.ask_first(crate::safety::After::OpenPath(path.clone())) {
+            return;
+        }
         match Project::load(&path) {
             Ok((p, missing)) => {
                 self.replace_project(p);
@@ -3537,6 +3576,7 @@ impl App {
         match self.project.save(&path) {
             Ok(()) => {
                 self.dirty = false;
+                self.safety_saved();
                 self.committed = self.project.clone();
                 self.toast(format!("Saved {}", path.display()));
                 self.file_path = Some(path);
@@ -4687,7 +4727,20 @@ impl App {
                         self.start_slot_take(t, s);
                     }
                 }
-                "quit" => self.quit_requested = true,
+                // As closing the window: asks first when there are changes.
+                "tryquit" => self.quit_requested = true,
+                "palette" => self.toggle_palette(),
+                "midilearn" => self.toggle_midi_learn(),
+                // midicc=channel,cc,value (0 to 127), as if a controller sent it.
+                "midicc" => {
+                    if let [ch, cc, v] = nums[..] {
+                        self.midi_cc(ch as u8, cc as u8, v as f32 / 127.0);
+                    }
+                }
+                "quit" => {
+                    self.safety.closing = true;
+                    self.quit_requested = true;
+                }
                 "packs" => {
                     self.packs.open = true;
                     self.packs.welcome = arg == "welcome";
@@ -4992,6 +5045,8 @@ impl eframe::App for App {
         self.poll_singer_installs();
         self.poll_packs();
         self.poll_update();
+        self.safety_frame(ctx);
+        self.poll_scene_tempo();
         if let Some(dev) = self.seq_full_next.take() {
             self.seq_full = Some(dev);
         }
@@ -5049,9 +5104,6 @@ impl eframe::App for App {
             self.apply_deferred();
             self.sync(ctx);
             self.update_title(ctx);
-            if self.quit_requested {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            }
             ctx.request_repaint();
             return;
         }
@@ -5180,10 +5232,11 @@ impl eframe::App for App {
             self.prefs.ui_zoom = zoom;
             self.prefs.save();
         }
-        if self.quit_requested {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        }
         ctx.request_repaint();
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.safety_exit();
     }
 }
 

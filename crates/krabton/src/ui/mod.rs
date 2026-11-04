@@ -42,6 +42,7 @@ pub mod chip_view;
 pub mod warp_view;
 pub mod orchestra_view;
 pub mod packs_view;
+pub mod palette;
 pub mod filter_view;
 pub mod chipfm_view;
 pub mod v2_view;

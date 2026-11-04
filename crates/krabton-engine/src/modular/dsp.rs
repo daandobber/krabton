@@ -536,7 +536,7 @@ impl State {
                 params[plate::SIZE] = p[0];
                 params[plate::DECAY] = p[1];
                 params[plate::MIX] = p[2];
-                let ctx = FxCtx { sr, bpm: c.bpm, beat: c.beat, playing: c.playing };
+                let ctx = FxCtx { sr, bpm: c.bpm, beat: c.beat, playing: c.playing, scale: Default::default() };
                 let (mut l, mut r) = ([inp[0]], [inp[0]]);
                 plate.process(params, &mut l, &mut r, &ctx);
                 out[0] = l[0];
