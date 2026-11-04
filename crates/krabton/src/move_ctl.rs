@@ -1,12 +1,12 @@
 //! The Ableton Move as a controller. In its Control Live mode the Move is a
 //! plain USB-MIDI device (its "Live Port", channel 1): Krabton opens it as a
 //! controller of its own (its pads are not a note keyboard), reads its pads,
-//! steps, knobs and buttons, and lights them back. Live does write to its
-//! screen in this mode, but how is not known outside Live, so the Move's
-//! screen is drawn on the computer instead (the HUD when a knob is touched,
-//! and the Move tab). Not affiliated with Ableton; the messages are as the
-//! Move's users found them (the extending-move wiki and Schwung), not from a
-//! spec.
+//! steps, knobs and buttons, and lights them back. Its screen is a USB
+//! interface of its own (see `move_screen`); the same screen is also drawn on
+//! the computer (the HUD when a knob is touched, and the Move tab). Not
+//! affiliated with Ableton; the messages are as the Move's users found them
+//! (the extending-move wiki and Schwung) and as Live's script for it sends
+//! them, not from a spec.
 //!
 //! - Pads (4x8, notes 68-99 from the bottom left): Notes (an in-key
 //!   keyboard, rows a fourth apart), Drums (the kit on the left 4x4, sixteen
@@ -982,6 +982,8 @@ pub struct MoveState {
     pub last_raw: f32,
     /// When it was last told to stay awake.
     woken: Option<Instant>,
+    /// Its own screen (while it looks for a Move).
+    screen: Option<crate::move_screen::ScreenLink>,
     /// The velocity pad held in Drums.
     pub vel_pad: Option<usize>,
     copy_from: Option<CopyFrom>,
@@ -1051,6 +1053,7 @@ impl MoveState {
             last_vel: 0.8,
             last_raw: 0.0,
             woken: None,
+            screen: None,
             vel_pad: None,
             copy_from: None,
             acc: [0.0; 8],
@@ -1066,6 +1069,9 @@ impl MoveState {
     }
 
     pub fn set_enabled(&self, on: bool) {
+        if let Some(link) = &self.screen {
+            link.on.store(on, Ordering::Release);
+        }
         if let Some(to) = &self.to {
             let _ = to.send(ToMove::Enable(on));
         }
@@ -1631,6 +1637,11 @@ impl App {
             }
         }
         self.move_keep_awake();
+        if self.frame % 4 == 0 && self.move_ctl.connected.is_some() {
+            if let Some(link) = &self.move_ctl.screen {
+                link.show(crate::move_screen::render(&self.move_screen()));
+            }
+        }
         self.move_ctl.leds = self.move_render();
         self.move_ctl.flush();
     }
@@ -1732,6 +1743,9 @@ impl App {
         let first = self.move_ctl.woken.is_none();
         if first || self.move_ctl.woken.is_some_and(|t| t.elapsed() >= Duration::from_secs(8)) {
             self.move_ctl.woken = Some(Instant::now());
+            if first && self.move_ctl.screen.is_none() {
+                self.move_ctl.screen = Some(crate::move_screen::ScreenLink::start());
+            }
             self.move_ctl.send_raw(wake_message());
             self.move_ctl.send_raw(brightness_message(self.prefs.move_brightness));
             if first {

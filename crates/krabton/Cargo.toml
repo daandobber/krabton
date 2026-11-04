@@ -19,6 +19,8 @@ egui = "0.32"
 cpal = "0.16"
 midir = "0.10"
 rfd = "0.15"
+# The Ableton Move's screen is a USB bulk endpoint of its own.
+nusb = "0.2"
 # Unpacks the voicebanks the Singer downloads (zip archives).
 miniz_oxide = "0.8"
 # Pictures for the Video: PNG and JPEG (the crate eframe already uses for its icons).

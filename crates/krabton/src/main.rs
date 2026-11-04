@@ -15,6 +15,7 @@ mod looper;
 mod midi;
 mod midi_out;
 mod move_ctl;
+mod move_screen;
 mod mp3;
 mod drum_lib;
 mod firmware_lib;
