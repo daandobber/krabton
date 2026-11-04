@@ -602,8 +602,15 @@ impl App {
 
         let mut side_ui = ui.new_child(UiBuilder::new().max_rect(side.shrink(2.0)));
         self.map_side(&mut side_ui);
-        let mut mix_ui = ui.new_child(UiBuilder::new().max_rect(mixer));
+        // The master's strip at the end, always in sight.
+        let master_w = 330.0f32.min(mixer.width() * 0.5);
+        let strips = Rect::from_min_max(mixer.min, pos2(mixer.right() - master_w - 8.0, mixer.bottom()));
+        let master = Rect::from_min_max(pos2(mixer.right() - master_w, mixer.top()), mixer.max);
+        let mut mix_ui = ui.new_child(UiBuilder::new().max_rect(strips));
+        mix_ui.set_clip_rect(strips);
         self.map_mixer(&mut mix_ui, mixer.height());
+        let mut master_ui = ui.new_child(UiBuilder::new().max_rect(master));
+        self.map_master(&mut master_ui, mixer.height());
     }
 
     fn apply_map_edit(&mut self, edit: &MapEdit) {

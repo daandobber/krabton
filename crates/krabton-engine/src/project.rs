@@ -1818,6 +1818,9 @@ pub struct ReturnTrack {
 pub struct MasterTrack {
     pub devices: Vec<Device>,
     pub volume_db: f32,
+    /// How loud the song should end up (the Map's mastering: see its targets).
+    #[serde(default)]
+    pub target: u8,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1950,7 +1953,7 @@ impl Project {
             beats_per_bar: 4,
             tracks: Vec::new(),
             returns: Vec::new(),
-            master: MasterTrack { devices: Vec::new(), volume_db: 0.0 },
+            master: MasterTrack { devices: Vec::new(), volume_db: 0.0, target: 0 },
             scenes: (1..=8).map(|i| Scene { name: i.to_string(), tempo: None }).collect(),
             launch_quantize: Quantize::Bar,
             metronome: false,

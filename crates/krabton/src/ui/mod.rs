@@ -66,6 +66,7 @@ pub mod touch_view;
 pub mod seq_view;
 pub mod session;
 pub mod settings;
+pub(crate) mod map_master;
 pub(crate) mod map_plans;
 pub mod map_view;
 pub mod windows;

@@ -3819,6 +3819,23 @@ mod tests {
     }
 
     #[test]
+    fn a_limiter_on_the_master_tells_how_loud_the_song_comes_out() {
+        use crate::dsp::effects::EffectKind;
+        use crate::dsp::lens_limiter as lim;
+        let mut p = Project::new_default();
+        let dev = p.make_device(EffectKind::LensLimiter);
+        let id = dev.id;
+        p.master.devices.push(dev);
+        let ti = p.tracks.iter().position(|t| matches!(t.instrument, Some(Instrument::Synth { .. }))).expect("a synth track");
+        let track = p.tracks[ti].id;
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        h.send(Command::NoteOn { track, pitch: 57, velocity: 0.9 });
+        run(&mut e, 1.0);
+        let m = h.status.meters.read(id).expect("meters");
+        assert!(m[lim::M_MOMENTARY] > -60.0 && m[lim::M_MOMENTARY] < 0.0, "{}", m[lim::M_MOMENTARY]);
+    }
+
+    #[test]
     fn a_modulator_makes_the_listener_walk_and_a_track_keeps_facing_it() {
         use crate::dsp::fx::stage::{facing_towards, map_params, places, Place};
         use crate::modulation::{ModKind, ModOwner, ModTarget};
