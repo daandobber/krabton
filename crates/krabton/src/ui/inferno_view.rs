@@ -6,8 +6,8 @@
 //! memory (nothing allocated for them as they burn), moving only while it
 //! plays or something still burns; Flames: Calm burns less, Off not at all.
 //!
-//! The same face in the device chain (one row of values at a time) and big
-//! in a window of its own (every row, with its settings beside it). Clicks
+//! The same face in the device chain (one row of values at a time) and
+//! filling the window (every row, with its settings beside it). Clicks
 //! for what has steps (click: the next, right-click: the one before), drags
 //! for what is continuous, dropdowns for long lists.
 
@@ -17,7 +17,6 @@ use crate::theme::*;
 use crate::widgets::*;
 use egui::epaint::Mesh;
 use egui::{pos2, vec2, Align2, Color32, Context, FontId, Id, Painter, Pos2, Rect, RichText, Sense, Shape, Stroke, Ui, UiBuilder};
-use krabton_engine::midi_fx::MidiFxKind;
 use krabton_engine::note_name;
 use krabton_engine::params::ParamSpec;
 use krabton_engine::sequencers::chance::CONDITION_TAGS;
@@ -454,8 +453,6 @@ fn flip(s: &mut Step, f: usize) {
 pub(crate) enum Act {
     /// A new line into a pattern (for a song part: on its chords).
     Ignite { pattern: usize, part: Option<usize> },
-    /// Open it big.
-    Open,
     /// The wob to an instrument knob (or off it).
     PatchWob(Option<u16>),
     /// The instrument its genre pairs with.
@@ -580,10 +577,15 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
     view.page = view.page.min(pages.max(view.page + 1) - 1).min(STEPS / PAGE - 1);
 
     // Its size: the chain's height, a page of sixteen steps.
-    let side = if big { 300.0 } else { 0.0 };
+    let room = ui.available_width();
+    let side = if !big { 0.0 } else if room < 900.0 { 240.0 } else { 300.0 };
     let label_w = if big { 62.0 } else { 46.0 };
-    let width = if big { (ui.available_width() - side - 12.0).max(700.0) } else { 600.0 };
-    let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
+    let width = if big { (room - side - 12.0).max(420.0) } else { 600.0 };
+    // Narrow, its top row takes two.
+    let two_rows = big && width < 780.0;
+    // Filling the window its settings go beside it (the device's frame goes round both).
+    let (whole, _) = ui.allocate_exact_size(vec2(width + side, height), Sense::hover());
+    let rect = Rect::from_min_size(whole.min, vec2(width, height));
     let painter = ui.painter().clone();
     let p = painter.with_clip_rect(rect.expand(2.0));
     // The panel: charcoal, glowing from below with the heat.
@@ -601,12 +603,14 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
     // The top row: the name, the patterns, the pages, the length, and the fire.
     let head_h = if big { 30.0 } else { 22.0 };
     let head = Rect::from_min_size(rect.min + vec2(6.0, 4.0), vec2(rect.width() - 12.0, head_h));
+    // The patterns' row: beside the name, or under it.
+    let row_top = if two_rows { head.bottom() + 3.0 } else { head.top() + 1.0 };
     let flick = (fire.time as f32 * 9.0).sin() * 0.15;
     glow_text(&p, pos2(head.left(), head.center().y), Align2::LEFT_CENTER, "INFERNO", logo_font(if big { 22.0 } else { 16.0 }), heat_color(0.85 + flick * 0.5), 0.7 + heat * 0.3);
-    let mut x = head.left() + if big { 128.0 } else { 92.0 };
-    let bw = if big { 26.0 } else { 19.0 };
+    let mut x = if two_rows { head.left() } else { head.left() + if big { 128.0 } else { 92.0 } };
+    let bw = if two_rows { 22.0 } else if big { 26.0 } else { 19.0 };
     for (i, letter) in inf::LETTERS.iter().enumerate() {
-        let r = Rect::from_min_size(pos2(x, head.top() + 1.0), vec2(bw - 2.0, head_h - 2.0));
+        let r = Rect::from_min_size(pos2(x, row_top), vec2(bw - 2.0, head_h - 2.0));
         let playing_here = state.is_some_and(|s| s.pattern == i);
         let filled = inf::pattern(data, i).iter().any(|s| s.on);
         let resp = fire_button(ui, r, id.with(("pat", i)), letter, i == pat, if playing_here { 1.0 } else { 0.0 });
@@ -662,7 +666,7 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
     }
     x += 8.0;
     for pg in 0..STEPS / PAGE {
-        let r = Rect::from_min_size(pos2(x, head.top() + 1.0), vec2(bw - 2.0, head_h - 2.0));
+        let r = Rect::from_min_size(pos2(x, row_top), vec2(bw - 2.0, head_h - 2.0));
         let inside = pg < pages;
         let resp = ui.interact(r, id.with(("page", pg)), Sense::click());
         let lit = pg == view.page;
@@ -679,7 +683,7 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
         x += bw;
     }
     x += 6.0;
-    let lr = Rect::from_min_size(pos2(x, head.top() + 1.0), vec2(if big { 64.0 } else { 50.0 }, head_h - 2.0));
+    let lr = Rect::from_min_size(pos2(x, row_top), vec2(if big { 64.0 } else { 50.0 }, head_h - 2.0));
     let resp = fire_button(ui, lr, id.with("len"), &format!("Len {len}"), false, 0.0).on_hover_text("How many steps the pattern plays (1 to 64). Click: one more, right-click: one less; with Shift by four");
     if let Some(d) = clicks(&resp) {
         let by = if ui.input(|i| i.modifiers.shift) { 4 } else { 1 };
@@ -687,19 +691,12 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
         changed = true;
     }
     x = lr.right() + 6.0;
-    let fr = Rect::from_min_size(pos2(x, head.top() + 1.0), vec2(if big { 58.0 } else { 44.0 }, head_h - 2.0));
+    let fr = Rect::from_min_size(pos2(x, row_top), vec2(if big { 58.0 } else { 44.0 }, head_h - 2.0));
     if fire_button(ui, fr, id.with("follow"), "Follow", view.follow, 0.0).on_hover_text("The page follows the playhead").clicked() {
         view.follow = !view.follow;
     }
-    // On the right: Burn and Fill (held), and Big.
+    // On the right: Burn and Fill (held).
     let mut rx = head.right();
-    if !big {
-        let r = Rect::from_min_size(pos2(rx - 34.0, head.top() + 1.0), vec2(34.0, head_h - 2.0));
-        if fire_button(ui, r, id.with("big"), "Big", false, 0.0).on_hover_text("Open Inferno big, in a window of its own, with every row and its settings").clicked() {
-            acts.push(Act::Open);
-        }
-        rx -= 38.0;
-    }
     for (pi, label, tip) in [(inf::FILL, "FILL", "Hold for a fill: rolls and rising octaves in the bar's last beat, and the steps with a Fill condition. Right-click: it stays on"), (inf::BURN, "BURN", "Hold to burn: more ratchets, accents and octave jumps while it is down. Right-click: it stays on")] {
         let w = if big { 64.0 } else { 46.0 };
         let r = Rect::from_min_size(pos2(rx - w, head.top() + 1.0), vec2(w, head_h - 2.0));
@@ -723,7 +720,7 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
     let lanes: Vec<Lane> = if big { LANES.to_vec() } else { vec![LANES[view.lane.min(LANES.len() - 1)]] };
     let flags: usize = if big { FLAGS.len() } else { 5 };
     let tools_h = if big { 0.0 } else { 20.0 };
-    let top = head.bottom() + 6.0;
+    let top = head.bottom() + 6.0 + if two_rows { head_h } else { 0.0 };
     let bottom = rect.bottom() - 6.0 - tools_h;
     let avail = (bottom - top).max(60.0);
     // Shares of the height: the steps, notes, octaves, the switches, the values.
@@ -1084,10 +1081,10 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
 
     if big {
         // Its settings beside the grid.
-        let side_rect = Rect::from_min_size(pos2(rect.right() + 8.0, rect.top()), vec2(side - 4.0, height));
-        let mut child = ui.new_child(UiBuilder::new().max_rect(side_rect));
+        let side_rect = Rect::from_min_size(pos2(rect.right() + 8.0, rect.top()), vec2(side - 8.0, height));
+        let mut child = ui.new_child(UiBuilder::new().max_rect(side_rect).layout(egui::Layout::top_down(egui::Align::Min)));
         egui::ScrollArea::vertical().id_salt(id.with("side")).max_height(height).show(&mut child, |ui| {
-            ui.set_width(side - 16.0);
+            ui.set_width(side - 20.0);
             changed |= settings(ui, id, params, data, live, pat, around, &mut acts);
         });
     }
@@ -1455,7 +1452,6 @@ impl App {
         let Some(d) = tr.midi_devices.iter().position(|d| d.id == dev_id) else { return };
         let tid = tr.id;
         match act {
-            Act::Open => self.inferno_window = Some(dev_id),
             Act::BandWindow => self.band.window = true,
             Act::Ignite { pattern, part } => {
                 let dev = &self.project.tracks[track].midi_devices[d];
@@ -1525,45 +1521,6 @@ impl App {
                 self.project.tracks[track].instrument = Some(instrument);
                 self.toast(format!("{inst} · {preset} on the track"));
             }
-        }
-    }
-
-    /// Inferno opened big, in a window of its own.
-    pub(crate) fn ui_inferno_window(&mut self, ctx: &Context) {
-        let Some(dev_id) = self.inferno_window else { return };
-        let Some((track, d)) = self.project.tracks.iter().enumerate().find_map(|(t, tr)| tr.midi_devices.iter().position(|dv| dv.id == dev_id && dv.kind == MidiFxKind::Inferno).map(|d| (t, d))) else {
-            self.inferno_window = None;
-            return;
-        };
-        let tr = &self.project.tracks[track];
-        let name = tr.name.clone();
-        let dev = &tr.midi_devices[d];
-        let (mut params, mut data, enabled) = (dev.params.clone(), dev.data.clone(), dev.enabled);
-        let status = self.status();
-        let vis = if enabled { status.seqs.read(dev_id) } else { None };
-        let kit = tr.instrument.as_ref().map(|i| i.drum_notes()).unwrap_or(0);
-        let live = Live { vis, playing: self.is_playing(), scale: self.project.scale, kit, bpm: self.project.bpm };
-        let around = self.inferno_around(track, &params);
-        let screen = ctx.screen_rect();
-        let size = vec2((screen.width() - 40.0).min(1400.0), (screen.height() - 90.0).min(720.0));
-        let mut out = (false, Vec::new());
-        let _skin = crate::skin::Scope::new(crate::skin::for_midi(MidiFxKind::Inferno));
-        let (open, _) = super::windows::tool_window(ctx, &format!("inferno {dev_id}"), &format!("Inferno - {name}"), size, |ui| {
-            let h = (ui.available_height() - 4.0).max(380.0);
-            out = face(ui, Id::new(("inferno_big", dev_id)), &mut params, &mut data, live, h, true, &around);
-        });
-        let (changed, acts) = out;
-        if changed {
-            if let Some(dev) = self.project.tracks.get_mut(track).and_then(|t| t.midi_devices.get_mut(d)) {
-                dev.params = params;
-                dev.data = data;
-            }
-        }
-        for a in acts {
-            self.inferno_act(track, dev_id, a);
-        }
-        if !open {
-            self.inferno_window = None;
         }
     }
 }
@@ -1671,7 +1628,7 @@ mod tests {
         drive(&mut p, &mut d, true, &frames, Some(live(4)));
         drive(&mut p, &mut d, false, &frames, Some(live(9)));
         // Burn: down while the button is held.
-        let burn_at = pos2(600.0 - 12.0 - 34.0 - 4.0 - 46.0 - 4.0 - 20.0, 14.0);
+        let burn_at = pos2(594.0 - 46.0 - 4.0 - 23.0, 14.0);
         let held = vec![vec![(burn_at, Some((true, egui::PointerButton::Primary)))], vec![(burn_at, None)]];
         drive(&mut p, &mut d, false, &held, None);
         assert_eq!(p[inf::BURN], 1.0, "held down");

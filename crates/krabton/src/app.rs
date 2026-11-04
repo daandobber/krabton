@@ -601,8 +601,8 @@ pub struct App {
     pub(crate) auto_arm: bool,
     /// The Glitch Sequencer shown in a window of its own (by device id).
     pub(crate) glitch_window: Option<u64>,
-    /// The Inferno opened big (its device).
-    pub(crate) inferno_window: Option<u64>,
+    /// The sequencer shown filling the window (its device).
+    pub(crate) seq_full: Option<u64>,
     /// The Map, in a window, and the track chosen on it.
     pub(crate) map_window: bool,
     /// The view the Video's button goes back to, and the Video as it runs
@@ -793,7 +793,7 @@ impl App {
             env_draw: false,
             auto_arm: false,
             glitch_window: None,
-            inferno_window: None,
+            seq_full: None,
             map_window: false,
             video_back: View::Studio,
             video: Default::default(),
@@ -4518,7 +4518,16 @@ impl App {
                 // touchdown=x1,y1,x2,y2...: fingers on a touch screen there (pressing at 60%); touchup: they let go.
                 // midifxmenu=N: opens the menu of sequencers and MIDI effects of track N.
                 "midifxmenu" => self.script_menu = nums.first().copied(),
-                // inferno: the first Inferno opened big; inferno=burn / inferno=cool: Burn held or let go;
+                // seqfull: the selected track's first sequencer fills the window, or goes back (seqfull=KIND: its first of that kind).
+                "seqfull" => {
+                    let kind = arg.trim();
+                    let on = match self.sel_track {
+                        TrackSel::Track(t) => self.project.tracks.get(t).and_then(|tr| tr.midi_devices.iter().find(|d| d.kind.is_sequencer() && (kind.is_empty() || d.kind.name().eq_ignore_ascii_case(kind))).map(|d| d.id)),
+                        _ => None,
+                    };
+                    self.seq_full = if self.seq_full.is_some() { None } else { on };
+                }
+                // inferno: the first Inferno fills the window; inferno=burn / inferno=cool: Burn held or let go;
                 // inferno=preset,N: its preset N.
                 "inferno" => {
                     use krabton_engine::midi_fx::MidiFxKind;
@@ -4538,7 +4547,7 @@ impl App {
                                     dev.preset = pr.name.to_string();
                                 }
                             }
-                            _ => self.inferno_window = Some(dev.id),
+                            _ => self.seq_full = Some(dev.id),
                         }
                     }
                 }
