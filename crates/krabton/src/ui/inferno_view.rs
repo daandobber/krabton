@@ -219,22 +219,16 @@ impl Fire {
     fn draw(&self, p: &Painter, origin: Pos2) {
         let t = self.time as f32;
         for kind in [SMOKE_P, FLAME_P, EMBER_P, SPARK_P] {
+            if kind == FLAME_P {
+                self.draw_flames(p, origin);
+                continue;
+            }
             for q in self.p.iter().filter(|q| q.life > 0.0 && q.kind == kind) {
                 let f = (q.life / q.max).clamp(0.0, 1.0);
                 let at = origin + vec2(q.x, q.y);
                 match kind {
                     SMOKE_P => {
                         p.circle_filled(at, q.size, alpha(SMOKE, 0.16 * f));
-                    }
-                    FLAME_P => {
-                        // Hot and small at its root, cooling and fading as it rises.
-                        let flick = 0.85 + 0.15 * (t * 31.0 + q.seed).sin();
-                        let r = q.size * (0.35 + 0.65 * f) * flick;
-                        let heat = (q.heat * 0.4 + f * 0.75).min(1.0);
-                        p.circle_filled(at, r * 1.6, alpha(heat_color(heat * 0.6), 0.2 * f));
-                        p.circle_filled(at + vec2(0.0, -r * 0.9), r * 0.6, alpha(heat_color(heat * 0.8), 0.5 * f));
-                        p.circle_filled(at, r, alpha(heat_color(heat), 0.7 * f));
-                        p.circle_filled(at + vec2(0.0, r * 0.25), r * 0.5, alpha(heat_color((heat + 0.35).min(1.0)), 0.95 * f));
                     }
                     EMBER_P => {
                         let tw = 0.6 + 0.4 * (t * 17.0 + q.seed).sin();
@@ -247,6 +241,53 @@ impl Fire {
                 }
             }
         }
+    }
+
+    /// The flames, as tongues in one mesh: a wide red one with a yellow one
+    /// inside, hot at the root, wavering, fading at the tip, adding light
+    /// to what is under them.
+    fn draw_flames(&self, p: &Painter, origin: Pos2) {
+        let t = self.time as f32;
+        let mut m = Mesh::default();
+        for q in self.p.iter().filter(|q| q.life > 0.0 && q.kind == FLAME_P) {
+            let f = (q.life / q.max).clamp(0.0, 1.0);
+            let at = origin + vec2(q.x, q.y);
+            let flick = 0.85 + 0.15 * (t * 31.0 + q.seed).sin();
+            let w = q.size * (0.35 + 0.65 * f) * flick;
+            let l = q.size * 3.0 * (0.4 + 0.6 * f) * flick;
+            let sway = (t * 13.0 + q.seed).sin() * w * 0.9;
+            let heat = (q.heat * 0.35 + f * 0.7).min(1.0);
+            tongue(&mut m, at, w, l, sway, heat_color(heat * 0.7), 0.55 * f);
+            tongue(&mut m, at + vec2(0.0, -w * 0.1), w * 0.5, l * 0.6, sway * 0.6, heat_color((heat + 0.25).min(1.0)), 0.9 * f);
+        }
+        if !m.is_empty() {
+            p.add(Shape::mesh(m));
+        }
+    }
+}
+
+/// Fire's colour adding to what is under it (premultiplied, hardly any alpha).
+fn light(c: Color32, a: f32) -> Color32 {
+    let a = a.clamp(0.0, 1.0);
+    let k = |v: u8| (v as f32 * a) as u8;
+    Color32::from_rgba_premultiplied(k(c.r()), k(c.g()), k(c.b()), (a * 60.0) as u8)
+}
+
+/// A tongue of flame on `m`: its root at `at`, `w` wide, `l` tall, its tip
+/// swayed sideways.
+fn tongue(m: &mut Mesh, at: Pos2, w: f32, l: f32, sway: f32, color: Color32, a: f32) {
+    let i = m.vertices.len() as u32;
+    let core = light(color, a);
+    let edge = light(color, a * 0.45);
+    m.colored_vertex(at + vec2(sway * 0.15, -l * 0.25), core);
+    m.colored_vertex(at + vec2(0.0, w * 0.55), edge);
+    m.colored_vertex(at + vec2(w * 0.8, w * 0.1), edge);
+    m.colored_vertex(at + vec2(w * 0.75 + sway * 0.3, -l * 0.35), edge);
+    m.colored_vertex(at + vec2(sway, -l), light(color, 0.0));
+    m.colored_vertex(at + vec2(-w * 0.75 + sway * 0.3, -l * 0.35), edge);
+    m.colored_vertex(at + vec2(-w * 0.8, w * 0.1), edge);
+    for k in 1..=6 {
+        m.add_triangle(i, i + k, i + k % 6 + 1);
     }
 }
 
@@ -1547,6 +1588,17 @@ mod tests {
         }
         assert_eq!(f.alive(), 0);
         assert_eq!(f.p.len(), POOL);
+    }
+
+    #[test]
+    fn a_tongue_of_flame_is_seven_points_and_its_tip_fades() {
+        let mut m = Mesh::default();
+        tongue(&mut m, pos2(10.0, 50.0), 8.0, 30.0, 2.0, GOLD, 1.0);
+        assert_eq!(m.vertices.len(), 7);
+        assert_eq!(m.indices.len(), 18);
+        assert!(m.indices.iter().all(|i| (*i as usize) < 7));
+        assert_eq!(m.vertices[4].color.a(), 0, "its tip");
+        assert!(m.vertices[4].pos.y < 25.0, "it rises");
     }
 
     #[test]
