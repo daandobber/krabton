@@ -78,35 +78,37 @@ fn clipped(s: &str, letters: usize) -> String {
     s.chars().take(letters).collect()
 }
 
-/// The screen's content: the title big when it fits, the line under it; below
-/// that the knob being touched, big, or a little bar for each of the eight.
+/// The biggest size a text fits the screen's width at, up to `most`.
+fn size_for(s: &str, most: i32) -> i32 {
+    let letters = s.chars().count().max(1) as i32;
+    (WIDTH as i32 / (6 * letters)).clamp(1, most)
+}
+
+/// The screen's content. A knob being turned has it all to itself: its name,
+/// its value big, a bar across the bottom. Otherwise the title big when it
+/// fits, the line under it, and a little bar for each of the eight knobs.
 pub fn render(s: &Screen) -> Bitmap {
     let mut b = Bitmap::blank();
+    if let Some((name, value, norm)) = s.hot.and_then(|h| s.params.get(h)) {
+        let size = size_for(name, 2);
+        b.text(0, 0, &clipped(name, WIDTH / 6), size);
+        let big = size_for(value, 3);
+        b.text(0, 18 + (3 - big) * 3, &clipped(value, WIDTH / 6), big);
+        b.outline(0, 52, WIDTH as i32, 12);
+        b.fill(1, 53, (norm.clamp(0.0, 1.0) * (WIDTH as f32 - 2.0)) as i32, 10);
+        return b;
+    }
     if s.title.chars().count() <= WIDTH / 12 {
         b.text(0, 0, &s.title, 2);
     } else {
         b.text(0, 3, &clipped(&s.title, WIDTH / 6), 1);
     }
     b.text(0, 17, &clipped(&s.sub, WIDTH / 6), 1);
-    match s.hot.and_then(|h| s.params.get(h)) {
-        Some((name, value, norm)) => {
-            b.text(0, 28, &clipped(name, WIDTH / 6), 1);
-            if value.chars().count() <= WIDTH / 12 {
-                b.text(0, 38, value, 2);
-            } else {
-                b.text(0, 42, &clipped(value, WIDTH / 6), 1);
-            }
-            b.outline(0, 56, WIDTH as i32, 8);
-            b.fill(1, 57, (norm.clamp(0.0, 1.0) * (WIDTH as f32 - 2.0)) as i32, 6);
-        }
-        None => {
-            for (i, (_, _, norm)) in s.params.iter().take(8).enumerate() {
-                let x = i as i32 * 16;
-                b.outline(x + 1, 28, 14, 36);
-                let h = (norm.clamp(0.0, 1.0) * 34.0).round() as i32;
-                b.fill(x + 2, 63 - h, 12, h);
-            }
-        }
+    for (i, (_, _, norm)) in s.params.iter().take(8).enumerate() {
+        let x = i as i32 * 16;
+        b.outline(x + 1, 28, 14, 36);
+        let h = (norm.clamp(0.0, 1.0) * 34.0).round() as i32;
+        b.fill(x + 2, 63 - h, 12, h);
     }
     b
 }
@@ -268,10 +270,16 @@ mod tests {
         // The last bar is full, the first has none.
         assert!(lit(&b, 3..13, 30..62) == 0, "the first knob is at nothing");
         assert!(lit(&b, 115..125, 30..62) > 300, "the last is full");
-        // Touched: its value's bar across the bottom.
+        // Touched: its value's bar across the bottom, and nothing of the title.
         let s = Screen { title: "Munich".into(), sub: "Bass".into(), params, hot: Some(7) };
         let b = render(&s);
-        assert!(lit(&b, 1..127, 57..63) > 700);
+        assert!(lit(&b, 1..127, 54..62) > 900);
+        let mut name = Bitmap::blank();
+        name.text(0, 0, "P7", 2);
+        assert!(b.0[..128] == name.0[..128], "the knob's name is on top, as big as it fits");
+        assert_eq!(size_for("Cutoff", 3), 3);
+        assert_eq!(size_for("Emphasis", 3), 2);
+        assert_eq!(size_for("A Very Long Parameter Name", 3), 1);
         // A long title goes small and stays on the screen.
         let s = Screen { title: "A Very Long Track Name Indeed".into(), sub: String::new(), params: Vec::new(), hot: None };
         assert!(lit(&render(&s), 0..128, 0..16) > 0);
