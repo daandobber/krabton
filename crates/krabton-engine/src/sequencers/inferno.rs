@@ -778,6 +778,22 @@ pub fn ignite(g: &Ignite) -> ([Step; STEPS], usize) {
     (steps, len)
 }
 
+/// The band's chord on each step of a pattern (`rate` beats a step), from a
+/// progression as the band shares it (see `players::band_part`): for Ignite.
+pub fn chords_on_steps(part: &[u8], rate: f64) -> Option<[(u8, u8); STEPS]> {
+    if part.len() < 2 + 16 {
+        return None;
+    }
+    let beats = [1.0, 2.0, 4.0, 8.0][(part[0] as usize).min(3)];
+    let count = (part[1] as usize).clamp(1, 8);
+    let mut c = [(0u8, 0u8); STEPS];
+    for (i, x) in c.iter_mut().enumerate() {
+        let k = ((i as f64 * rate + 1e-9) / beats).floor() as usize % count;
+        *x = (part[2 + k * 2].min(7), part[3 + k * 2]);
+    }
+    Some(c)
+}
+
 /// The notes of a chord of `quality` (see `classic_seq::QUALITIES`).
 fn chord_tones(quality: u8) -> &'static [(Tone, u8)] {
     use Tone::*;

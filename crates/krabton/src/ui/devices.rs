@@ -1103,6 +1103,8 @@ impl App {
             band_cue = band_cue.or(cue);
             c
         };
+        let mut inferno_acts = Vec::new();
+        let inferno_around = if dev.kind == MidiFxKind::Inferno { self.inferno_around(track, &params) } else { Default::default() };
         let (changed, action) = if dev.kind.is_sequencer() {
             // Every sequencer reports its state.
             let status = self.status();
@@ -1114,7 +1116,14 @@ impl App {
             let info = format!("Sequencer · {}", dev.kind.description());
             device_frame_presets(ui, dev.kind.name(), Some(&info), Some(&mut enabled), Some(menu), true, h, |ui| {
                 ui.horizontal_top(|ui| {
-                    let a = super::seq_view::editor(ui, id.with("editor"), dev.kind, &mut params, &mut data, live, lane, accent, h - 32.0);
+                    let a = if dev.kind == MidiFxKind::Inferno {
+                        // Inferno asks things of the app (Ignite on the band's chords, its wob's cable, big).
+                        let (c, acts) = super::inferno_view::face(ui, id.with("editor"), &mut params, &mut data, live, h - 32.0, false, &inferno_around);
+                        inferno_acts = acts;
+                        c
+                    } else {
+                        super::seq_view::editor(ui, id.with("editor"), dev.kind, &mut params, &mut data, live, lane, accent, h - 32.0)
+                    };
                     let c = band_ui(ui, &mut params, accent, h - 32.0);
                     ui.add_space(6.0);
                     let b = param_grid_mod(ui, id, dev.kind.specs(), &mut params, accent, h - 28.0, mv.as_mut());
@@ -1155,6 +1164,9 @@ impl App {
         }
         if let Some(ChainActionKind::ToClip(bars)) = action {
             self.sequencer_to_clip(track, dev.id, bars);
+        }
+        for a in inferno_acts {
+            self.inferno_act(track, dev.id, a);
         }
         if matches!(action, Some(ChainActionKind::Fold)) {
             self.project.folded.insert(dev.id);
