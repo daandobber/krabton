@@ -450,17 +450,20 @@ pub fn inferno_default() -> Vec<u8> {
     preset_data(0, 0x1F1A, 0.7, 0.45, 0.4)
 }
 
-/// The pitch a step plays: its note above `base` (in the key's degrees or in
-/// semitones), its octave, the octave jump and the fifth.
+/// The pitch a step plays: its note above the key's root at or below `base`
+/// (a bass line's first degree is the song's key note), in the key's degrees
+/// or in semitones, its octave, the octave jump and the fifth.
 pub fn pitch_of(s: &Step, base: i32, chromatic: bool, scale: &Scale) -> i32 {
     let oct = s.octave as i32 + s.jump as i32;
     if chromatic {
-        base + s.note as i32 + if s.fifth { 7 } else { 0 } + 12 * oct
+        let root = scale.root as i32 + (base - scale.root as i32).div_euclid(12) * 12;
+        root + s.note as i32 + if s.fifth { 7 } else { 0 } + 12 * oct
     } else {
         let n = scale.len().max(1) as i32;
         let (d, _) = scale.locate(base);
+        let root = d.div_euclid(n) * n;
         let fifth = if s.fifth { (4 * n + 3) / 7 } else { 0 };
-        scale.pitch_at(d + s.note as i32 + fifth) + 12 * oct
+        scale.pitch_at(root + s.note as i32 + fifth) + 12 * oct
     }
 }
 
@@ -1061,6 +1064,10 @@ pub struct InfernoState {
     wob_level: f32,
     wob_phase: f64,
     wob_out: f32,
+    /// A step has wobbled: the mod wheel is its until the transport stops,
+    /// and once more to bring it back (without a wob the wheel stays yours).
+    wob_used: bool,
+    wob_release: bool,
     /// The bend: how far it starts, where and how long.
     bend_from: f32,
     bend_at: u64,
@@ -1099,6 +1106,8 @@ impl Default for InfernoState {
             wob_level: 0.0,
             wob_phase: 0.0,
             wob_out: 0.0,
+            wob_used: false,
+            wob_release: false,
             bend_from: 0.0,
             bend_at: 0,
             bend_len: 0,
@@ -1125,13 +1134,16 @@ impl InfernoState {
         self.plan = None;
         self.bend_out = 0.0;
         self.bend_len = 0;
+        self.wob_rate = 0.0;
+        self.wob_level = 0.0;
         self.generation = 0;
         self.sounding = None;
     }
 
-    /// What it sends besides notes: the wob (0..1) and the bend (semitones).
-    pub fn outputs(&self) -> (f32, f32) {
-        (self.wob_out, self.bend_out)
+    /// What it sends besides notes: the wob (0..1; None while no step has
+    /// wobbled) and the bend (semitones).
+    pub fn outputs(&self) -> (Option<f32>, f32) {
+        ((self.wob_used || self.wob_release).then_some(self.wob_out), self.bend_out)
     }
 
     fn push(&mut self, e: Ev) -> bool {
@@ -1608,6 +1620,7 @@ impl SeqState {
             st.restart();
             st.last_on = 0;
             st.wob_out = 0.0;
+            st.wob_release = std::mem::take(&mut st.wob_used);
             self.visual = st.visual(false);
             return;
         }
@@ -1652,6 +1665,7 @@ impl SeqState {
                 Q_WOB => {
                     st.wob_rate = e.a as f64;
                     st.wob_level = e.vel;
+                    st.wob_used |= e.vel > 0.0;
                     if e.b > 0.5 {
                         // Its wave starts again where the note does.
                         st.wob_phase = -(e.at.saturating_sub(ctx.now) as f64 / ctx.samples_per_beat.max(1.0)) / st.wob_rate.max(1e-6);
@@ -1698,16 +1712,16 @@ impl InfernoState {
         self.last_hit = step as u64 | (meta as u64) << 8 | (self.sounding.unwrap_or(0) as u64) << 16;
     }
 
-    /// The face's word: (0) the step playing, its pattern, Evolve's goes,
-    /// the heat, what sounds; (1) the last step struck, what it did, the one
-    /// before, how many so far; (2) the wob and the bend.
+    /// The face's word: (0) the step playing, its pattern, the heat, what
+    /// sounds; (1) the last step struck, what it did, the one before, how
+    /// many so far; (2) the wob and the bend; (3) Evolve's goes.
     fn visual(&self, playing: bool) -> [u64; 4] {
         let heat = (self.heat_now.clamp(0.0, 1.0) * 255.0) as u64;
         let sounding = self.sounding.map(|p| p as u64 | 0x80 << 8).unwrap_or(0);
-        let v0 = self.now.0 as u64 | (self.now.1 as u64) << 8 | ((self.generation & 0xff) as u64) << 16 | heat << 24 | sounding << 32 | (playing as u64) << 63;
+        let v0 = self.now.0 as u64 | (self.now.1 as u64) << 8 | heat << 24 | sounding << 32 | (playing as u64) << 63;
         let v1 = (self.last_hit & 0xffff) | (self.prev_hit as u64) << 16 | (self.hits as u64) << 32;
         let v2 = (self.wob_out.clamp(0.0, 1.0) * 1000.0) as u64 | (((self.bend_out.clamp(-48.0, 48.0) + 48.0) * 100.0) as u64) << 16;
-        [v0, v1, v2, 0]
+        [v0, v1, v2, self.generation as u64]
     }
 }
 
@@ -1739,7 +1753,7 @@ impl Live {
             playing: v[0] >> 63 == 1,
             step: b(v[0], 0),
             pattern: b(v[0], 8).min(PATTERNS - 1),
-            generation: b(v[0], 16) as u32,
+            generation: v[3] as u32,
             heat: b(v[0], 24) as f32 / 255.0,
             sounding: (v[0] >> 40 & 0x80 != 0).then(|| b(v[0], 32) as u8),
             hit_step: b(v[1], 0),

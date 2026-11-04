@@ -917,13 +917,13 @@ impl MidiFxState {
     }
 
     /// What an Inferno sends besides notes: the wob for the mod wheel (None
-    /// with its Wob Out off) and a bend (semitones).
+    /// with its Wob Out off, or before a step has wobbled) and a bend (semitones).
     pub fn inferno_out(&self, p: &[f32]) -> Option<(Option<f32>, f32)> {
         match self {
             MidiFxState::Seq(s) => {
                 let (wob, bend) = s.inferno.outputs();
                 let wheel = p.get(sequencers::inferno::WOB_OUT).is_some_and(|v| *v >= 0.5);
-                Some((wheel.then_some(wob), bend))
+                Some((wob.filter(|_| wheel), bend))
             }
             _ => None,
         }

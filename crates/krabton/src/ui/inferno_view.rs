@@ -127,11 +127,13 @@ pub(crate) struct Fire {
     time: f64,
     flare: f32,
     carry: f32,
+    /// How each step still glows from its last hit (0..1).
+    glow: [f32; STEPS],
 }
 
 impl Default for Fire {
     fn default() -> Self {
-        Self { p: [Particle::default(); POOL], next: 0, hits: u32::MAX, rng: 0x5EED_F12E, time: 0.0, flare: 0.0, carry: 0.0 }
+        Self { p: [Particle::default(); POOL], next: 0, hits: u32::MAX, rng: 0x5EED_F12E, time: 0.0, flare: 0.0, carry: 0.0, glow: [0.0; STEPS] }
     }
 }
 
@@ -162,9 +164,9 @@ impl Fire {
         let n = if calm { count.div_ceil(2) } else { count };
         for _ in 0..n {
             let x = at.x + (self.unit() - 0.5) * width;
-            let (vx, vy) = ((self.unit() - 0.5) * 18.0, -40.0 - 70.0 * self.unit() * (0.5 + heat));
-            let life = 0.35 + 0.45 * self.unit();
-            let size = width * (0.22 + 0.2 * self.unit()) * (0.7 + 0.6 * heat);
+            let (vx, vy) = ((self.unit() - 0.5) * 18.0, -70.0 - 110.0 * self.unit() * (0.5 + heat));
+            let life = 0.4 + 0.5 * self.unit();
+            let size = width * (0.2 + 0.2 * self.unit()) * (0.7 + 0.6 * heat);
             self.spawn(FLAME_P, x, at.y, vx, vy, life, size, heat);
         }
         for _ in 0..(n / 3).max(1) {
@@ -193,6 +195,9 @@ impl Fire {
     fn update(&mut self, dt: f32) {
         self.time += dt as f64;
         self.flare = (self.flare - dt * 1.5).max(0.0);
+        for g in self.glow.iter_mut() {
+            *g = (*g - dt * 2.5).max(0.0);
+        }
         let t = self.time as f32;
         for p in self.p.iter_mut().filter(|p| p.life > 0.0) {
             p.life -= dt;
@@ -226,9 +231,10 @@ impl Fire {
                         let flick = 0.85 + 0.15 * (t * 31.0 + q.seed).sin();
                         let r = q.size * (0.35 + 0.65 * f) * flick;
                         let heat = (q.heat * 0.4 + f * 0.75).min(1.0);
-                        p.circle_filled(at, r * 1.6, alpha(heat_color(heat * 0.6), 0.18 * f));
-                        p.circle_filled(at, r, alpha(heat_color(heat), 0.55 * f));
-                        p.circle_filled(at + vec2(0.0, r * 0.25), r * 0.45, alpha(heat_color((heat + 0.3).min(1.0)), 0.8 * f));
+                        p.circle_filled(at, r * 1.6, alpha(heat_color(heat * 0.6), 0.2 * f));
+                        p.circle_filled(at + vec2(0.0, -r * 0.9), r * 0.6, alpha(heat_color(heat * 0.8), 0.5 * f));
+                        p.circle_filled(at, r, alpha(heat_color(heat), 0.7 * f));
+                        p.circle_filled(at + vec2(0.0, r * 0.25), r * 0.5, alpha(heat_color((heat + 0.35).min(1.0)), 0.95 * f));
                     }
                     EMBER_P => {
                         let tw = 0.6 + 0.4 * (t * 17.0 + q.seed).sin();
@@ -284,7 +290,7 @@ impl Lane {
             Lane::Ratchet => "Ratchet",
             Lane::Curve => "Curve",
             Lane::Chance => "Chance",
-            Lane::Condition => "Condition",
+            Lane::Condition => "Cond",
             Lane::Nudge => "Nudge",
             Lane::Wob => "Wob",
             Lane::Mod => "Mod",
@@ -413,6 +419,8 @@ pub(crate) enum Act {
     PatchWob(Option<u16>),
     /// The instrument its genre pairs with.
     LoadPair,
+    /// The Band window.
+    BandWindow,
 }
 
 /// What the face knows of the app around it.
@@ -425,6 +433,8 @@ pub(crate) struct Around {
     pub patched: Option<u16>,
     /// The instrument on the track.
     pub instrument: String,
+    /// The band's chord now (with the part), for the big face's Band section.
+    pub chord: Option<String>,
 }
 
 // ---------------------------------------------------------------- the face
@@ -443,6 +453,10 @@ impl Default for View {
         Self { page: 0, follow: true, lane: 0 }
     }
 }
+
+/// The pattern as Evolve has made it, and what from.
+#[derive(Clone)]
+struct EvolveShown((usize, u32, u32, u32, usize, [Step; STEPS]), [Step; STEPS]);
 
 /// The clipboard for a pattern (copy and paste).
 #[derive(Clone, Default)]
@@ -645,13 +659,20 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
         }
         rx -= 38.0;
     }
-    for (pi, label, tip) in [(inf::FILL, "FILL", "Hold for a fill: rolls and rising octaves in the bar's last beat, and the steps with a Fill condition"), (inf::BURN, "BURN", "Hold to burn: more ratchets, accents and octave jumps while it is down")] {
+    for (pi, label, tip) in [(inf::FILL, "FILL", "Hold for a fill: rolls and rising octaves in the bar's last beat, and the steps with a Fill condition. Right-click: it stays on"), (inf::BURN, "BURN", "Hold to burn: more ratchets, accents and octave jumps while it is down. Right-click: it stays on")] {
         let w = if big { 64.0 } else { 46.0 };
         let r = Rect::from_min_size(pos2(rx - w, head.top() + 1.0), vec2(w, head_h - 2.0));
         let resp = fire_button(ui, r, id.with(label), label, params[pi] >= 0.5, heat).on_hover_text(tip);
-        let down = resp.is_pointer_button_down_on();
-        if (params[pi] >= 0.5) != down {
-            params[pi] = if down { 1.0 } else { 0.0 };
+        // Down while it is held; a right-click leaves it on (or takes it off).
+        let down = resp.is_pointer_button_down_on() && ui.input(|i| i.pointer.primary_down());
+        let held_id = id.with((label, "held"));
+        if down != ui.ctx().data(|d| d.get_temp::<bool>(held_id)).unwrap_or(false) {
+            ui.ctx().data_mut(|d| d.insert_temp(held_id, down));
+            params[pi] = down as u8 as f32;
+            changed = true;
+        }
+        if resp.secondary_clicked() {
+            params[pi] = if params[pi] >= 0.5 { 0.0 } else { 1.0 };
             changed = true;
         }
         rx -= w + 4.0;
@@ -678,11 +699,24 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
     let first = view.page * PAGE;
     // Evolve shows the pattern as it has become while it plays.
     let evolving = state.filter(|s| s.generation > 0 && s.pattern == pat && pick(params, inf::EVOLVE, inf::EVOLVES.len()) > 0);
-    let shown: [Step; STEPS] = match evolving {
-        Some(s) => inf::evolved(data, pat, s.generation, params[inf::EVOLVE_AMOUNT], params[inf::SEED].round().max(0.0) as u32, live.scale.len()),
-        None => inf::pattern(data, pat),
-    };
     let written = inf::pattern(data, pat);
+    let shown: [Step; STEPS] = match evolving {
+        Some(s) => {
+            // Worked out again only when it has changed.
+            let key = (pat, s.generation, params[inf::EVOLVE_AMOUNT].to_bits(), params[inf::SEED].to_bits(), live.scale.len(), written);
+            let cache_id = id.with("evolved");
+            let kept: Option<EvolveShown> = ui.ctx().data(|d| d.get_temp(cache_id));
+            match kept.filter(|k| k.0 == key) {
+                Some(k) => k.1,
+                None => {
+                    let steps = inf::evolved(data, pat, s.generation, params[inf::EVOLVE_AMOUNT], params[inf::SEED].round().max(0.0) as u32, live.scale.len());
+                    ui.ctx().data_mut(|d| d.insert_temp(cache_id, EvolveShown(key, steps)));
+                    steps
+                }
+            }
+        }
+        None => written,
+    };
     let label = |p: &Painter, y: f32, h: f32, s: &str| {
         p.with_clip_rect(Rect::from_min_size(pos2(rect.left() + 4.0, y), vec2(label_w - 4.0, h))).text(pos2(rect.left() + 8.0, y + h * 0.5), Align2::LEFT_CENTER, s, FontId::proportional((h * 0.55).clamp(8.0, 12.0)), hex(0xe0a070));
     };
@@ -706,8 +740,9 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
             rect_fill(&p, r, 4.0, alpha(ASH, 0.35));
         } else if s.on && !s.mute {
             let v = s.velocity as f32 / 127.0;
-            let hot = 0.45 + 0.35 * v + if s.accent { 0.2 } else { 0.0 } + if playing_now { 0.15 } else { 0.0 };
-            gradient(&p, r, heat_color(hot), heat_color(hot * 0.45));
+            // A glowing coal, catching when it plays and cooling after.
+            let hot = 0.2 + 0.22 * v + if s.accent { 0.16 } else { 0.0 } + if playing_now { 0.25 } else { 0.0 } + 0.35 * fire.glow[i];
+            gradient(&p, r, heat_color(hot), heat_color(hot * 0.5));
             if s.tie {
                 // A tie: a bar from the step before.
                 p.rect_filled(Rect::from_min_size(pos2(r.left() - 4.0, r.center().y - 3.0), vec2(8.0, 6.0)), 1.0, heat_color(hot));
@@ -722,7 +757,7 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
         if s.on {
             let pitch = inf::pitch_of(&s, base, chromatic, &live.scale).clamp(0, 127) as u8;
             let name = if s.tie { "~".to_string() } else { note_name(pitch) };
-            let ink = if s.mute { SMOKE } else if s.velocity > 80 || s.accent { SOOT } else { WHITE_HOT };
+            let ink = if s.mute { SMOKE } else if playing_now || fire.glow[i] > 0.6 { SOOT } else { WHITE_HOT };
             p.with_clip_rect(r).text(r.center() + vec2(0.0, r.height() * 0.12), Align2::CENTER_CENTER, name, FontId::proportional((r.height() * 0.3).clamp(9.0, 17.0)), ink);
             if s.lock {
                 let lk = Rect::from_min_size(r.left_top() + vec2(3.0, 3.0), vec2(6.0, 5.0));
@@ -730,7 +765,7 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
                 p.circle_stroke(lk.center_top(), 2.2, Stroke::new(1.0_f32, GOLD));
             }
             if s.ratchet > 1 {
-                p.text(r.right_top() + vec2(-3.0, 3.0), Align2::RIGHT_TOP, format!("x{}", s.ratchet), FontId::proportional(9.0), SOOT);
+                p.text(r.right_top() + vec2(-3.0, 3.0), Align2::RIGHT_TOP, format!("x{}", s.ratchet), FontId::proportional(9.0), GOLD);
             }
         }
         if evolving.is_some() && shown[i] != written[i] {
@@ -932,8 +967,10 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
                 let r = cells[c];
                 let st = shown[s.hit_step.min(STEPS - 1)];
                 let h: f32 = if s.hit_accent { 1.0 } else { 0.6 } + if s.hit_jump { 0.2 } else { 0.0 };
-                let at = r.center_top() - origin.to_vec2() + vec2(0.0, r.height() * 0.15);
-                fire.burst(pos2(at.x, at.y), r.width() * 0.8, h.min(1.0), if s.hit_accent { 12 } else { 7 } + if s.hit_jump { 6 } else { 0 }, calm);
+                // From its foot, up through it and out of the top.
+                let at = r.center_bottom() - origin.to_vec2() - vec2(0.0, r.height() * 0.1);
+                fire.glow[s.hit_step.min(STEPS - 1)] = 1.0;
+                fire.burst(pos2(at.x, at.y), r.width() * 0.9, h.min(1.0), if s.hit_accent { 16 } else { 10 } + if s.hit_jump { 8 } else { 0 }, calm);
                 if st.ratchet > 1 {
                     fire.sparks(pos2(at.x, at.y), (st.ratchet as usize * 3).min(20) / if calm { 2 } else { 1 });
                 }
@@ -968,9 +1005,12 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
                     fire.spawn(EMBER_P, x, yy, vx, -40.0, 0.8, 1.3, 0.8);
                 }
                 if heat > 0.5 || fire.flare > 0.1 {
-                    let x = grid_l - origin.x + fire.unit() * grid.width();
-                    let (life, h) = (0.5 + 0.4 * fire.unit(), heat.max(fire.flare));
-                    fire.spawn(FLAME_P, x, grid.bottom() - origin.y, 0.0, -60.0 - 60.0 * heat, life, cw * 0.35, h);
+                    // The whole panel: flames from anywhere, most from low down.
+                    for _ in 0..if calm { 1 } else { 3 } {
+                        let (ux, uy) = (fire.unit(), fire.unit());
+                        let (life, h) = (0.5 + 0.4 * fire.unit(), heat.max(fire.flare));
+                        fire.spawn(FLAME_P, grid_l - origin.x + ux * grid.width(), grid.bottom() - origin.y - uy * uy * grid.height(), 0.0, -90.0 - 110.0 * heat, life, cw * 0.32, h);
+                    }
                 }
             }
         } else {
@@ -1020,20 +1060,25 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
 fn tools(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, live: Live, pat: usize, at: Pos2, right: f32, h: f32, acts: &mut Vec<Act>) -> bool {
     let mut changed = false;
     let specs = inf::SPECS;
-    let mut x = at.x;
+    let x = at.x;
     let gr = Rect::from_min_size(pos2(x, at.y), vec2(110.0, h));
-    let before = params[inf::GENRE];
     if dropdown(ui, gr, id.with("genre"), &specs[inf::GENRE], &mut params[inf::GENRE]) {
         changed = true;
         apply_feel(params);
-        let _ = before;
     }
-    x = gr.right() + 4.0;
-    let ir = Rect::from_min_size(pos2(x, at.y), vec2(62.0, h));
+    let ir = Rect::from_min_size(pos2(gr.right() + 4.0, at.y), vec2(62.0, h));
     if fire_button(ui, ir, id.with("ignite"), "IGNITE", false, 0.6).on_hover_text("Write a new line in the genre (with its Density, Complexity, Melody; on the band's chords when it is in the band)").clicked() {
         acts.push(Act::Ignite { pattern: pat, part: None });
     }
-    x = ir.right() + 4.0;
+    changed |= pattern_tools(ui, id, params, data, live, pat, pos2(ir.right() + 4.0, at.y), right, h);
+    changed
+}
+
+/// Mutate, Rotate, Reverse, Invert, Humanize and Clear, in a row.
+#[allow(clippy::too_many_arguments)]
+fn pattern_tools(ui: &mut Ui, id: Id, params: &[f32], data: &mut Vec<u8>, live: Live, pat: usize, at: Pos2, right: f32, h: f32) -> bool {
+    let mut changed = false;
+    let mut x = at.x;
     let len = inf::length(data, pat);
     let mut steps = inf::pattern(data, pat);
     let n = live.scale.len();
@@ -1046,8 +1091,11 @@ fn tools(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, live: Live
         ("Hum", "A little looser: velocities and timing"),
         ("Clear", "Every step off"),
     ];
-    let bw = ((right - x) / buttons.len() as f32 - 3.0).clamp(26.0, 52.0);
+    // Mutate and Clear have longer names.
+    let share: [f32; 7] = [2.0, 0.8, 0.8, 1.0, 1.0, 1.0, 1.4];
+    let unit = ((right - x - 3.0 * buttons.len() as f32) / share.iter().sum::<f32>()).clamp(20.0, 34.0);
     for (k, (label, tip)) in buttons.iter().enumerate() {
+        let bw = unit * share[k];
         let r = Rect::from_min_size(pos2(x, at.y), vec2(bw, h));
         if fire_button(ui, r, id.with(("tool", k)), label, false, 0.0).on_hover_text(*tip).clicked() {
             match k {
@@ -1141,9 +1189,7 @@ fn settings(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, live: L
         acts.push(Act::Ignite { pattern: pat, part: None });
     }
     let (r, _) = ui.allocate_exact_size(vec2(w, 22.0), Sense::hover());
-    let mut tmp_acts = Vec::new();
-    changed |= tools(ui, id.with("t2"), params, data, live, pat, r.min, r.right(), 20.0, &mut tmp_acts);
-    acts.extend(tmp_acts);
+    changed |= pattern_tools(ui, id.with("t2"), params, data, live, pat, r.min, r.right(), 20.0);
     let (pr, _) = ui.allocate_exact_size(vec2(w, 22.0), Sense::hover());
     let (inst, preset) = inf::feel(pick(params, inf::GENRE, inf::GENRES.len())).pair;
     ui.painter().text(pr.left_center(), Align2::LEFT_CENTER, format!("Pairs with {inst} · {preset}"), small(), hex(0xe0a070));
@@ -1237,6 +1283,26 @@ fn settings(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, live: L
         changed = true;
     }
 
+    // The band: only its switch while it is not in it.
+    heading(ui, "BAND");
+    let in_band = params[inf::BAND] >= 0.5;
+    let (r, _) = ui.allocate_exact_size(vec2(w, 26.0), Sense::hover());
+    let sw = Rect::from_min_size(r.min, vec2(w * 0.45, 24.0));
+    if fire_button(ui, sw, id.with("band"), if in_band { "In the band" } else { "Band off" }, in_band, 0.0).on_hover_text("In the band: its notes follow the band's chords, and it plays the song's parts as they say (a pattern per part, energy, dynamics, fill, build, break). Off: it plays as written").clicked() {
+        params[inf::BAND] = if in_band { 0.0 } else { 1.0 };
+        changed = true;
+    }
+    if in_band {
+        let pr = Rect::from_min_size(pos2(sw.right() + 6.0, r.top()), vec2(w - sw.width() - 6.0, 24.0));
+        if fire_button(ui, pr, id.with("band_win"), "Parts...", false, 0.0).on_hover_text("The Band window: the song's parts, how the band plays each, the form and who plays where").clicked() {
+            acts.push(Act::BandWindow);
+        }
+        changed |= drops(ui, &[inf::BAND + 1], params);
+        if let Some(chord) = &around.chord {
+            let (r, _) = ui.allocate_exact_size(vec2(w, 18.0), Sense::hover());
+            ui.painter().text(r.left_center(), Align2::LEFT_CENTER, chord, small(), GOLD);
+        }
+    }
     if !around.parts.is_empty() {
         heading(ui, "SONG PARTS");
         for (part, name) in around.parts.iter().enumerate() {
@@ -1288,7 +1354,17 @@ impl App {
             }
         }
         let patched = self.inferno_wob_route(track).map(|(_, p)| p);
-        Around { parts, knobs, patched, instrument: tr.instrument.as_ref().map(|i| i.kind_name().to_string()).unwrap_or_default() }
+        let st = self.band_status();
+        let chord = (in_band && st.on && st.degree > 0).then(|| {
+            let part = self.project.band.parts.get(st.part as usize).filter(|_| st.parts);
+            let key = part.map(|p| p.play.key(self.project.scale)).unwrap_or(self.project.scale);
+            let name = krabton_engine::classic_seq::chord_name(&key, st.degree, st.quality);
+            match part {
+                Some(p) => format!("{} · {name}", p.name),
+                None => format!("Chord {name}"),
+            }
+        });
+        Around { parts, knobs, patched, instrument: tr.instrument.as_ref().map(|i| i.kind_name().to_string()).unwrap_or_default(), chord }
     }
 
     /// The track's Mod Wheel modulator and the instrument knob it is on (the wob's cable).
@@ -1339,6 +1415,7 @@ impl App {
         let tid = tr.id;
         match act {
             Act::Open => self.inferno_window = Some(dev_id),
+            Act::BandWindow => self.band.window = true,
             Act::Ignite { pattern, part } => {
                 let dev = &self.project.tracks[track].midi_devices[d];
                 let params = dev.params.clone();
@@ -1546,8 +1623,15 @@ mod tests {
         let held = vec![vec![(burn_at, Some((true, egui::PointerButton::Primary)))], vec![(burn_at, None)]];
         drive(&mut p, &mut d, false, &held, None);
         assert_eq!(p[inf::BURN], 1.0, "held down");
-        let up = vec![vec![(burn_at, Some((false, egui::PointerButton::Primary)))], vec![(burn_at, None)]];
-        drive(&mut p, &mut d, false, &up, None);
-        assert_eq!(p[inf::BURN], 0.0);
+        let mut p = krabton_engine::params::defaults(inf::SPECS);
+        let released = vec![vec![(burn_at, Some((true, egui::PointerButton::Primary)))], vec![(burn_at, Some((false, egui::PointerButton::Primary)))], vec![(burn_at, None)]];
+        drive(&mut p, &mut d, false, &released, None);
+        assert_eq!(p[inf::BURN], 0.0, "let go");
+        // A right-click leaves it on, and something else can hold it (a script).
+        let right = vec![vec![(burn_at, Some((true, egui::PointerButton::Secondary)))], vec![(burn_at, Some((false, egui::PointerButton::Secondary)))], vec![(burn_at, None)]];
+        drive(&mut p, &mut d, false, &right, None);
+        assert_eq!(p[inf::BURN], 1.0, "latched");
+        drive(&mut p, &mut d, false, &frames, None);
+        assert_eq!(p[inf::BURN], 1.0, "stays");
     }
 }

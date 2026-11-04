@@ -161,8 +161,8 @@ fn slides_overlap_for_a_mono_synth_and_bend_with_bend() {
     let j = r.evs.iter().position(|e| e == on1).unwrap();
     assert!(i < j, "the note-off comes first");
     let bent: Vec<f32> = r.outs.iter().filter(|o| o.0 > on1.0).map(|o| o.2).collect();
-    // C up to E in A minor: from four semitones below, home within the glide.
-    assert!(bent[0] < -0.5 && bent[0] >= -4.0, "{:?}", &bent[..4]);
+    // A up to C in A minor: from three semitones below, home within the glide.
+    assert!(bent[0] < -0.5 && bent[0] >= -3.0, "{:?}", &bent[..4]);
     assert!(bent.windows(2).all(|w| w[1] >= w[0] - 1e-6));
     assert_eq!(*bent.last().unwrap(), 0.0);
     balanced(&r, 2);
@@ -288,6 +288,16 @@ fn a_jump_in_the_song_lets_go_cleanly() {
         }
     }
     balanced(&Run { evs, outs: Vec::new() }, 3);
+}
+
+#[test]
+fn its_first_degree_is_the_key_note_at_or_below_the_base() {
+    let one = Step::note(0);
+    assert_eq!(pitch_of(&one, 36, false, &a_minor()), 33, "A under C");
+    assert_eq!(pitch_of(&one, 36, true, &a_minor()), 33);
+    assert_eq!(pitch_of(&one, 36, false, &Scale::new(0, ScaleKind::Major)), 36);
+    assert_eq!(pitch_of(&Step { fifth: true, ..one }, 36, false, &a_minor()), 40, "its fifth, E");
+    assert_eq!(pitch_of(&Step { jump: true, octave: -1, ..one }, 45, false, &a_minor()), 45);
 }
 
 /// The pitches of a pattern's notes as it would play them (A minor, base C2).
@@ -417,6 +427,11 @@ fn it_follows_the_bands_chords_and_the_key() {
     let d2 = pat(&(0..16).map(|i| (i, Step::note((i % 3) as u8))).collect::<Vec<_>>(), 16);
     let chord = run_full(&p2, &d2, 120.0, 8.0, 256, key, &band, &mut |_, _, _, _| true, &|_| Vec::new()).ons();
     assert!(chord.iter().filter(|o| o.0 >= 96_000).all(|o| [4, 7, 11].contains(&(o.1 % 12))), "{chord:?}");
+    // Bass: the chord's root or fifth, whatever the line plays.
+    p2[BAND + 1] = 2.0;
+    let bass = run_full(&p2, &d2, 120.0, 8.0, 256, key, &band, &mut |_, _, _, _| true, &|_| Vec::new()).ons();
+    assert!(bass.iter().filter(|o| o.0 < 96_000).all(|o| [9, 4].contains(&(o.1 % 12))), "{bass:?}");
+    assert!(bass.iter().filter(|o| o.0 >= 96_000).all(|o| [4, 11].contains(&(o.1 % 12))), "{bass:?}");
     // The link off: as written.
     let off = follow(0.0, false);
     assert!(off.iter().all(|o| o.1 == 45));
@@ -506,6 +521,8 @@ fn the_wob_wobbles_the_mod_wheel_while_its_note_sounds() {
     let mut p = defaults(SPECS);
     p[WOB_OUT] = 0.0;
     assert!(run(&p, &d, 120.0, 1.0).outs.iter().all(|o| o.1.is_none()));
+    // A line without a wob leaves the mod wheel alone.
+    assert!(run(&defaults(SPECS), &all_on(16), 120.0, 1.0).outs.iter().all(|o| o.1.is_none()));
 }
 
 #[test]
@@ -549,9 +566,9 @@ fn old_and_odd_data_play_safely_and_it_renders_to_a_clip() {
     assert!(notes.len() > 8);
     assert!(notes.iter().all(|n| a_minor().contains(n.pitch)));
     // The face's word comes back as it went.
-    let mut st = InfernoState { now: (5, 2), generation: 3, heat_now: 0.5, sounding: Some(40), hits: 9, last_hit: 7 | (TRIG_ACCENT as u64) << 8, prev_hit: 6, wob_out: 0.25, bend_out: -2.0, ..InfernoState::default() };
+    let mut st = InfernoState { now: (5, 2), generation: 300, heat_now: 0.5, sounding: Some(40), hits: 9, last_hit: 7 | (TRIG_ACCENT as u64) << 8, prev_hit: 6, wob_out: 0.25, bend_out: -2.0, ..InfernoState::default() };
     let live = Live::unpack(&st.visual(true));
-    assert_eq!((live.step, live.pattern, live.generation, live.sounding, live.hit_step, live.prev_hit, live.hits), (5, 2, 3, Some(40), 7, Some(6), 9));
+    assert_eq!((live.step, live.pattern, live.generation, live.sounding, live.hit_step, live.prev_hit, live.hits), (5, 2, 300, Some(40), 7, Some(6), 9));
     assert!(live.hit_accent && !live.hit_slide && live.playing);
     assert!((live.wob - 0.25).abs() < 1e-3 && (live.bend + 2.0).abs() < 0.02);
     st.sounding = None;
