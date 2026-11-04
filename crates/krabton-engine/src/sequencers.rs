@@ -17,7 +17,8 @@
 //! after nature (`nature`: Fireflies, Sandpile, Pendulums, Flock, Plants),
 //! after systems (`systems`: Bells, Canon, Row, Gears, Formula, Staircase)
 //! and from around the world (`world`: Gamelan, Raga, Call & Response).
-//! Home Rhythms (`home`) is a home keyboard's rhythm section.
+//! Home Rhythms (`home`) is a home keyboard's rhythm section. Inferno
+//! (`inferno`) is a big bass sequencer for synths.
 
 pub mod ambient;
 pub mod minimal;
@@ -40,6 +41,7 @@ pub mod nature;
 pub mod systems;
 pub mod world;
 pub mod home;
+pub mod inferno;
 
 use crate::dsp::Rng;
 use crate::midi_fx::{MidiCtx, MidiEvent};
@@ -364,6 +366,7 @@ pub struct SeqState {
     pub(crate) systems: Box<systems::SystemsState>,
     pub(crate) world: Box<world::WorldState>,
     pub(crate) home: home::HomeState,
+    pub(crate) inferno: Box<inferno::InfernoState>,
     /// Touch's outputs, for its modulators (see `touch::OUTPUTS`).
     pub(crate) touch_out: [f32; touch::N_OUT],
     pos: i32,
@@ -420,6 +423,7 @@ impl SeqState {
             systems: Box::default(),
             world: Box::default(),
             home: home::HomeState::default(),
+            inferno: Box::default(),
             touch_out: [0.0; touch::N_OUT],
             pos: 0,
             visual: [0; 4],
@@ -445,6 +449,7 @@ impl SeqState {
         *self.systems = systems::SystemsState::default();
         *self.world = world::WorldState::default();
         self.home.restart();
+        self.inferno.restart();
     }
 
     fn unit(&mut self) -> f32 {
@@ -600,7 +605,7 @@ impl SeqState {
         // What came in and passes through is not shaped (only what it plays).
         let passing = out.len();
         // Acid and Guitar Chords move their own notes (a semitone line, chord shapes).
-        self.shift_in_note = !matches!(kind, K::Acid | K::GuitarChords | K::Ukulele | K::Drummer | K::DrumMap | K::Chance | K::Bits | K::Percussion | K::HomeRhythms);
+        self.shift_in_note = !matches!(kind, K::Acid | K::GuitarChords | K::Ukulele | K::Drummer | K::DrumMap | K::Chance | K::Bits | K::Percussion | K::HomeRhythms | K::Inferno);
         if ctx.playing {
             self.flush_pending(ctx, out);
         }
@@ -657,6 +662,7 @@ impl SeqState {
                     K::Percussion => percussion::step_beats(p),
                     K::Drummer => rate_beats(p.get(drummer::RATE).copied().unwrap_or(2.0)),
                     K::HomeRhythms => home::step_beats(p),
+                    K::Inferno => inferno::step_beats(p),
                     K::Chaos | K::Automaton | K::Ant | K::Markov | K::Words | K::Lorenz | K::Tintinnabuli => rate_beats(p[0]),
                     K::Sandpile | K::Plants | K::Bells | K::Canon | K::Row | K::Gears | K::Formula | K::Staircase | K::Gamelan | K::Raga | K::Call => rate_beats(p[0]),
                     K::Glass => rate_beats(p[0]) / minimal::GLASS_TICKS,
@@ -748,12 +754,17 @@ impl SeqState {
                             K::Raga => self.raga(k, p, at, step_frames, out, ctx),
                             K::Call => self.call(k, p, at, step_frames, out, ctx),
                             K::HomeRhythms => self.home(k, p, at, step_frames, out, ctx),
+                            K::Inferno => self.inferno(k, p, data, at, step_frames, out, ctx),
                             _ => {}
                         }
                     }
                     k += 1;
                 }
             }
+        }
+        if kind == K::Inferno {
+            // Its own queue: what is due now, playing or not.
+            self.inferno_flush(p, out, ctx);
         }
         self.flush_offs(ctx, out);
         let from = passing.min(out.len());
