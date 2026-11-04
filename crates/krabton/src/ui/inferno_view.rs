@@ -79,8 +79,13 @@ fn glow_text(p: &Painter, pos: Pos2, anchor: Align2, s: &str, font: FontId, core
     p.text(pos, anchor, s, font, core);
 }
 
+/// Its lettering, in its own look (the logo fonts come with the skins).
 fn logo_font(size: f32) -> FontId {
-    crate::skin::Font::Block.id(size)
+    if crate::skin::current().is_some() {
+        crate::skin::Font::Block.id(size)
+    } else {
+        FontId::proportional(size)
+    }
 }
 
 // ---------------------------------------------------------------- the flames
@@ -165,11 +170,12 @@ impl Fire {
         for _ in 0..(n / 3).max(1) {
             let (vx, vy) = ((self.unit() - 0.5) * 40.0, -50.0 - 60.0 * self.unit());
             let life = 0.9 + 0.9 * self.unit();
-            self.spawn(EMBER_P, at.x + (self.unit() - 0.5) * width, at.y, vx, vy, life, 1.2 + self.unit() * 1.3, heat);
+            let (x, size) = (at.x + (self.unit() - 0.5) * width, 1.2 + self.unit() * 1.3);
+            self.spawn(EMBER_P, x, at.y, vx, vy, life, size, heat);
         }
         if !calm && self.unit() < 0.5 {
-            let life = 1.0 + self.unit();
-            self.spawn(SMOKE_P, at.x, at.y - width * 0.6, (self.unit() - 0.5) * 8.0, -18.0, life, width * 0.25, 0.0);
+            let (life, vx) = (1.0 + self.unit(), (self.unit() - 0.5) * 8.0);
+            self.spawn(SMOKE_P, at.x, at.y - width * 0.6, vx, -18.0, life, width * 0.25, 0.0);
         }
     }
 
@@ -230,7 +236,7 @@ impl Fire {
                     }
                     _ => {
                         let tail = at - vec2(q.vx, q.vy) * 0.03;
-                        p.line_segment([tail, at], Stroke::new(1.2, alpha(heat_color(0.85 + 0.15 * f), f)));
+                        p.line_segment([tail, at], Stroke::new(1.2_f32, alpha(heat_color(0.85 + 0.15 * f), f)));
                     }
                 }
             }
@@ -553,7 +559,7 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
             p.text(r.center_bottom() - vec2(0.0, 3.0), Align2::CENTER_CENTER, ".", small(), ASH);
         }
         if playing_here {
-            p.line_segment([r.left_bottom() + vec2(2.0, 1.0), r.right_bottom() + vec2(-2.0, 1.0)], Stroke::new(2.0, GOLD));
+            p.line_segment([r.left_bottom() + vec2(2.0, 1.0), r.right_bottom() + vec2(-2.0, 1.0)], Stroke::new(2.0_f32, GOLD));
         }
         let resp = resp.on_hover_text(format!("Pattern {letter}: click to play and edit it (right-click: copy, paste, clear, into the chain)"));
         if resp.clicked() && i != pat {
@@ -708,7 +714,7 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
             }
         } else if s.on {
             rect_fill(&p, r, 4.0, ASH);
-            p.line_segment([r.left_top() + vec2(4.0, 4.0), r.right_bottom() - vec2(4.0, 4.0)], Stroke::new(1.0, SMOKE));
+            p.line_segment([r.left_top() + vec2(4.0, 4.0), r.right_bottom() - vec2(4.0, 4.0)], Stroke::new(1.0_f32, SMOKE));
         } else {
             rect_fill(&p, r, 4.0, if beat_mark { hex(0x24140f) } else { hex(0x1c100c) });
         }
@@ -721,7 +727,7 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
             if s.lock {
                 let lk = Rect::from_min_size(r.left_top() + vec2(3.0, 3.0), vec2(6.0, 5.0));
                 p.rect_filled(lk, 1.0, GOLD);
-                p.circle_stroke(lk.center_top(), 2.2, Stroke::new(1.0, GOLD));
+                p.circle_stroke(lk.center_top(), 2.2, Stroke::new(1.0_f32, GOLD));
             }
             if s.ratchet > 1 {
                 p.text(r.right_top() + vec2(-3.0, 3.0), Align2::RIGHT_TOP, format!("x{}", s.ratchet), FontId::proportional(9.0), SOOT);
@@ -733,7 +739,7 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
         if s.slide && s.on && inside {
             // A slide: a curl of fire towards the next.
             let a = r.right_center() + vec2(-3.0, -r.height() * 0.2);
-            p.line_segment([a, a + vec2(6.0, -3.0)], Stroke::new(2.0, GOLD));
+            p.line_segment([a, a + vec2(6.0, -3.0)], Stroke::new(2.0_f32, GOLD));
         }
         let resp = resp.on_hover_text(format!("Step {}: click on or off, right-click to mute it", i + 1));
         if resp.clicked() {
@@ -901,8 +907,8 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
         let x = grid_l + (s.step % PAGE) as f32 * cw + cw * 0.5;
         let col = Rect::from_min_max(pos2(x - cw * 0.5, top), pos2(x + cw * 0.5, grid.bottom()));
         gradient(&p, col, alpha(EMBER, 0.0), alpha(EMBER, 0.18));
-        p.line_segment([pos2(x, steps_row.top()), pos2(x, grid.bottom())], Stroke::new(3.0, alpha(EMBER, 0.45)));
-        p.line_segment([pos2(x, steps_row.top()), pos2(x, grid.bottom())], Stroke::new(1.2, GOLD));
+        p.line_segment([pos2(x, steps_row.top()), pos2(x, grid.bottom())], Stroke::new(3.0_f32, alpha(EMBER, 0.45)));
+        p.line_segment([pos2(x, steps_row.top()), pos2(x, grid.bottom())], Stroke::new(1.2_f32, GOLD));
     }
 
     // The tools under the grid (in the chain; big, they are beside it).
@@ -925,7 +931,7 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
                 let c = s.hit_step % PAGE;
                 let r = cells[c];
                 let st = shown[s.hit_step.min(STEPS - 1)];
-                let h = if s.hit_accent { 1.0 } else { 0.6 } + if s.hit_jump { 0.2 } else { 0.0 };
+                let h: f32 = if s.hit_accent { 1.0 } else { 0.6 } + if s.hit_jump { 0.2 } else { 0.0 };
                 let at = r.center_top() - origin.to_vec2() + vec2(0.0, r.height() * 0.15);
                 fire.burst(pos2(at.x, at.y), r.width() * 0.8, h.min(1.0), if s.hit_accent { 12 } else { 7 } + if s.hit_jump { 6 } else { 0 }, calm);
                 if st.ratchet > 1 {
@@ -958,11 +964,13 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
                 if s.pattern == pat && s.step / PAGE == view.page && fire.unit() < 0.5 {
                     let x = grid_l + (s.step % PAGE) as f32 * cw + cw * 0.5 - origin.x;
                     let yy = top - origin.y + fire.unit() * (grid.height());
-                    fire.spawn(EMBER_P, x, yy, (fire.unit() - 0.5) * 20.0, -40.0, 0.8, 1.3, 0.8);
+                    let vx = (fire.unit() - 0.5) * 20.0;
+                    fire.spawn(EMBER_P, x, yy, vx, -40.0, 0.8, 1.3, 0.8);
                 }
                 if heat > 0.5 || fire.flare > 0.1 {
                     let x = grid_l - origin.x + fire.unit() * grid.width();
-                    fire.spawn(FLAME_P, x, grid.bottom() - origin.y, 0.0, -60.0 - 60.0 * heat, 0.5 + 0.4 * fire.unit(), cw * 0.35, heat.max(fire.flare));
+                    let (life, h) = (0.5 + 0.4 * fire.unit(), heat.max(fire.flare));
+                    fire.spawn(FLAME_P, x, grid.bottom() - origin.y, 0.0, -60.0 - 60.0 * heat, life, cw * 0.35, h);
                 }
             }
         } else {
@@ -983,7 +991,7 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
             for k in 0..3 {
                 let yy = top - 3.0 - k as f32 * 4.0;
                 let pts: Vec<Pos2> = (0..=40).map(|j| pos2(grid_l + j as f32 * grid.width() / 40.0, yy + (t * 6.0 + j as f32 * 0.7 + k as f32).sin() * 1.5)).collect();
-                p.add(Shape::line(pts, Stroke::new(1.0, alpha(FLAME, 0.08 + 0.08 * heat))));
+                p.add(Shape::line(pts, Stroke::new(1.0_f32, alpha(FLAME, 0.08 + 0.08 * heat))));
             }
         }
         fire.draw(&painter.with_clip_rect(rect.shrink(1.0)), origin);
@@ -1079,7 +1087,7 @@ fn settings(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, live: L
         ui.add_space(4.0);
         let (r, _) = ui.allocate_exact_size(vec2(w, 16.0), Sense::hover());
         glow_text(ui.painter(), r.left_center(), Align2::LEFT_CENTER, s, logo_font(12.0), GOLD, 0.5);
-        ui.painter().line_segment([r.left_bottom(), r.right_bottom()], Stroke::new(1.0, CINDER));
+        ui.painter().line_segment([r.left_bottom(), r.right_bottom()], Stroke::new(1.0_f32, CINDER));
     };
     // A row of dropdowns, then a row of faders.
     let drops = |ui: &mut Ui, list: &[usize], params: &mut [f32]| -> bool {
@@ -1311,8 +1319,8 @@ impl App {
                 for n in krabton_engine::midi_fx::render_notes(dev.kind, &dev.params, &dev.data, 4.0, self.project.bpm, self.project.scale, self.project.scale_mode, kit) {
                     add(n.start, n.pitch);
                 }
-            } else if let Some(krabton_engine::project::ClipContent::Midi(m)) = tr.slots.iter().flatten().next().map(|c| &c.content) {
-                for n in &m.notes {
+            } else if let Some(krabton_engine::project::ClipContent::Midi { notes }) = tr.slots.iter().flatten().next().map(|c| &c.content) {
+                for n in notes {
                     add(n.start, n.pitch);
                 }
             }
