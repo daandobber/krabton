@@ -242,6 +242,7 @@ pub fn midi(kind: MidiFxKind) -> &'static [Preset] {
         K::Raga => RAGA,
         K::Call => CALL,
         K::HomeRhythms => HOME_RHYTHMS,
+        K::Inferno => crate::sequencers::inferno::PRESETS,
         _ => crate::sequencers::players::presets(kind),
     }
 }

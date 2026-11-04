@@ -413,7 +413,7 @@ impl App {
     }
 
     /// What the band's chord players share now (the first one's).
-    fn band_first_part(&self) -> Option<Vec<u8>> {
+    pub(crate) fn band_first_part(&self) -> Option<Vec<u8>> {
         self.project.tracks.iter().flat_map(|t| &t.midi_devices).find(|d| band_param(d.kind).and_then(|b| d.params.get(b)).is_some_and(|v| *v >= 0.5)).map(|d| krabton_engine::sequencers::players::band_part(&d.params, &d.data))
     }
 
@@ -817,6 +817,7 @@ impl App {
             p.with_clip_rect(hr).text(pos2(hr.left() + 6.0, hr.center().y), Align2::LEFT_CENTER, format!("{}  {}", LETTERS[i], part.name), small(), if playing { TEXT } else { part_color(i) });
         }
         let mut toggle = None;
+        let mut pattern_pick = None;
         for (m, member) in members.iter().enumerate() {
             let top = r.top() + head + m as f32 * (rh + 4.0);
             let nr = Rect::from_min_size(pos2(r.left(), top), vec2(name_w - 8.0, rh));
@@ -826,8 +827,25 @@ impl App {
             clip.text(pos2(nr.left() + 12.0, nr.center().y), Align2::LEFT_CENTER, member.name, body(), TEXT);
             let w = p.layout_no_wrap(member.name.to_string(), body(), TEXT).size().x;
             clip.text(pos2(nr.left() + 18.0 + w, nr.center().y), Align2::LEFT_CENTER, format!("{} · {}", member.track, member.plays_as()), small(), TEXT_DIM);
+            // An Inferno plays a pattern of its own in each part: a box for it at the cell's right.
+            let inferno = self.project.tracks.iter().flat_map(|t| &t.midi_devices).find(|d| d.id == member.id && d.kind == MidiFxKind::Inferno).map(|d| d.data.clone());
             for (i, part) in self.project.band.parts.iter().enumerate() {
-                let cr = col_rect(i, top, rh);
+                let full = col_rect(i, top, rh);
+                let cr = if inferno.is_some() { Rect::from_min_max(full.min, pos2(full.right() - 28.0, full.bottom())) } else { full };
+                if let Some(data) = &inferno {
+                    let pr = Rect::from_min_max(pos2(cr.right() + 2.0, full.top()), full.max);
+                    let pat = krabton_engine::sequencers::inferno::part_pattern(data, i);
+                    let resp = ui.interact(pr, Id::new(("band_inferno", member.id, i)), Sense::click());
+                    rect_fill(&p, pr, 3.0, if pat.is_some() { shade(super::inferno_view::EMBER, if resp.hovered() { 1.0 } else { 0.8 }) } else if resp.hovered() { PANEL3 } else { PANEL });
+                    text(&p, pr.center(), Align2::CENTER_CENTER, pat.map(|k| krabton_engine::sequencers::inferno::LETTERS[k]).unwrap_or("-"), small(), if pat.is_some() { TEXT_DARK } else { TEXT_DIM });
+                    let resp = resp.on_hover_text(format!("The pattern Inferno plays in {} (-: the one picked on it). Click: the next, right-click: the one before", part.name));
+                    let step = if resp.clicked() { Some(1) } else if resp.secondary_clicked() { Some(-1) } else { None };
+                    if let Some(d) = step {
+                        let n = krabton_engine::sequencers::inferno::PATTERNS as i32 + 1;
+                        let k = (pat.map(|k| k as i32 + 1).unwrap_or(0) + d).rem_euclid(n);
+                        pattern_pick = Some((member.id, i, (k > 0).then(|| k as usize - 1)));
+                    }
+                }
                 let plays = !part.out.contains(&member.id);
                 let resp = ui.interact(cr, Id::new(("band_seat", member.id, i)), Sense::click());
                 let fill = if plays { shade(part_color(i), if resp.hovered() { 1.1 } else { 0.85 }) } else if resp.hovered() { PANEL3 } else { PANEL };
@@ -840,6 +858,11 @@ impl App {
                 if resp.on_hover_text(tip).clicked() {
                     toggle = Some((i, member.id));
                 }
+            }
+        }
+        if let Some((id, part, pat)) = pattern_pick {
+            if let Some(dev) = self.project.tracks.iter_mut().flat_map(|t| t.midi_devices.iter_mut()).find(|d| d.id == id) {
+                krabton_engine::sequencers::inferno::set_part_pattern(&mut dev.data, part, pat);
             }
         }
         if let Some((i, id)) = toggle {

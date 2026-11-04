@@ -42,11 +42,12 @@ pub const FOLLOWS: &[&str] = &["Root", "Chord", "Bass"];
 pub const NONE: u8 = 0xff;
 
 /// The sequencers that can follow the band (they have Band and Follow, last).
-pub const FOLLOWERS: [MidiFxKind; 40] = {
+pub const FOLLOWERS: [MidiFxKind; 41] = {
     use MidiFxKind as K;
     [
         K::Step,
         K::Acid,
+        K::Inferno,
         K::Polymeter,
         K::Euclid,
         K::Turing,
@@ -641,7 +642,13 @@ pub fn part_ctx(role: Option<Role>, ctx: &MidiCtx) -> Option<MidiCtx> {
 /// Whether the shaper thins a member's notes for a low energy itself (the
 /// drums with a knob for how much they play do it with that).
 fn thins(kind: MidiFxKind) -> bool {
-    !matches!(kind, MidiFxKind::Drummer | MidiFxKind::DrumMap | MidiFxKind::Chance | MidiFxKind::Percussion)
+    !matches!(kind, MidiFxKind::Drummer | MidiFxKind::DrumMap | MidiFxKind::Chance | MidiFxKind::Percussion | MidiFxKind::Inferno)
+}
+
+/// Whether the shaper doubles a member's strong notes an octave up for a
+/// high energy (Inferno plays one note at a time and heats up itself).
+fn doubles(kind: MidiFxKind) -> bool {
+    kind != MidiFxKind::Inferno
 }
 
 /// A member's steps in the part's feel: how long a step is against the
@@ -771,7 +778,7 @@ impl Shaper {
             self.sent[i] = to + 1;
             self.sounding |= 1u128 << to;
             // A high energy: the strong notes an octave up as well.
-            if !drums && energy > 0.5 && to <= 115 && strength >= 1.0 - (energy - 0.5) * 1.2 {
+            if !drums && doubles(kind) && energy > 0.5 && to <= 115 && strength >= 1.0 - (energy - 0.5) * 1.2 {
                 out.push(MidiEvent::on(e.offset, to + 12, vel * 0.8));
                 self.doubled |= 1u128 << i;
                 self.sounding |= 1u128 << (to + 12);

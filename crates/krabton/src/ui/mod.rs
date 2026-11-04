@@ -73,6 +73,7 @@ pub mod looper_view;
 pub mod fryer_view;
 pub mod stretch_view;
 pub mod home_view;
+pub mod inferno_view;
 
 use crate::app::{App, ArrClipDrag, BrowserItem, ClipSel, SlotDrag, View};
 use crate::theme::*;

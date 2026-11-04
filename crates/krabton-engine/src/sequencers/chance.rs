@@ -210,7 +210,7 @@ impl ChanceState {
 }
 
 /// Whether a step's condition holds.
-fn condition_holds(condition: u8, round: i64, first: bool, fill: bool, pre: bool, nei: bool) -> bool {
+pub(crate) fn condition_holds(condition: u8, round: i64, first: bool, fill: bool, pre: bool, nei: bool) -> bool {
     let ab = |a: i64, b: i64| round.rem_euclid(b) == a - 1;
     match condition {
         1 => ab(1, 2),

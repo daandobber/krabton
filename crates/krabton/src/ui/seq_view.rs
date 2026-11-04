@@ -108,6 +108,17 @@ pub(crate) fn editor(ui: &mut Ui, id: Id, kind: MidiFxKind, params: &mut [f32], 
         MidiFxKind::HomeRhythms => super::home_view::home(ui, id, params, live, accent, height),
         MidiFxKind::Step => super::classic_view::step(ui, id, params, data, live, lane, accent, height),
         MidiFxKind::Acid => super::classic_view::acid(ui, id, params, data, live, accent, height),
+        MidiFxKind::Inferno => {
+            // Without the app: Ignite on its own (no band, no kick), nothing else asked.
+            let (mut changed, acts) = super::inferno_view::face(ui, id, params, data, live, height, false, &Default::default());
+            for a in acts {
+                if let super::inferno_view::Act::Ignite { pattern, .. } = a {
+                    super::inferno_view::ignite_plain(params, data, pattern, &live.scale);
+                    changed = true;
+                }
+            }
+            changed
+        }
         MidiFxKind::DrumGrid => super::classic_view::drum_grid(ui, id, params, data, live, accent, height),
         MidiFxKind::Progression => super::classic_view::progression(ui, id, params, data, live, accent, height),
         MidiFxKind::PianoPlayer | MidiFxKind::BassPlayer | MidiFxKind::Banjo | MidiFxKind::Section => super::players_view::player(ui, id, kind, params, data, live, accent, height),

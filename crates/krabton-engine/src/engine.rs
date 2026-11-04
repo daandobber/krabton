@@ -2383,6 +2383,9 @@ impl Engine {
             events.sort_unstable_by_key(|e| (e.offset, e.on));
             // MIDI effects transform the events before the instrument hears them.
             let mut touched = false;
+            // The track's first Inferno: its wob on the mod wheel, its glides as a bend.
+            let mut fired = false;
+            let mut seq_bend = 0.0f32;
             if snd.midi_devices.iter().any(|d| d.enabled) {
                 let drum_notes = snd.instrument.map(|i| i.drum_notes()).unwrap_or(0);
                 // A Singer hears what a sequencer sings early (its consonants before the beat).
@@ -2417,6 +2420,15 @@ impl Engine {
                         if let Some(o) = st.touch_out() {
                             signal.touch = o;
                             touched = true;
+                        }
+                    }
+                    if dev.kind == crate::midi_fx::MidiFxKind::Inferno && !fired {
+                        if let Some((wheel, b)) = st.inferno_out(params) {
+                            if let Some(w) = wheel {
+                                signal.modwheel = w;
+                            }
+                            seq_bend = b;
+                            fired = true;
                         }
                     }
                     if let Some(v) = st.visual() {
@@ -2510,7 +2522,7 @@ impl Engine {
 
             if let Some(inst) = snd.instrument {
                 let ov = mods.params(ModOwner::Instrument(track.id)).filter(|_| own_sound);
-                instrument.set_bend(*bend);
+                instrument.set_bend(*bend + seq_bend);
                 // Clocks in a modular patch keep time with the song; wind,
                 // birds and nature play while it plays.
                 match instrument {

@@ -605,6 +605,8 @@ pub struct App {
     pub(crate) auto_arm: bool,
     /// The Glitch Sequencer shown in a window of its own (by device id).
     pub(crate) glitch_window: Option<u64>,
+    /// The sequencer shown filling the window (its device).
+    pub(crate) seq_full: Option<u64>,
     /// The Map, in a window, and the track chosen on it.
     pub(crate) map_window: bool,
     /// The view the Video's button goes back to, and the Video as it runs
@@ -797,6 +799,7 @@ impl App {
             env_draw: false,
             auto_arm: false,
             glitch_window: None,
+            seq_full: None,
             map_window: false,
             video_back: View::Studio,
             video: Default::default(),
@@ -1242,6 +1245,7 @@ impl App {
                             K::Drummer => Instrument::drums("Studio Kit"),
                             K::HomeRhythms => Instrument::drums("Keytone Kit"),
                             K::Acid => Instrument::synth("Acid"),
+                            K::Inferno => Instrument::bassline("Squelch"),
                             K::Progression => Instrument::synth("Soft Pad"),
                             K::PianoPlayer => Instrument::synth("Keys"),
                             K::BassPlayer => Instrument::guitar("Finger Bass"),
@@ -4520,6 +4524,39 @@ impl App {
                 // touchdown=x1,y1,x2,y2...: fingers on a touch screen there (pressing at 60%); touchup: they let go.
                 // midifxmenu=N: opens the menu of sequencers and MIDI effects of track N.
                 "midifxmenu" => self.script_menu = nums.first().copied(),
+                // seqfull: the selected track's first sequencer fills the window, or goes back (seqfull=KIND: its first of that kind).
+                "seqfull" => {
+                    let kind = arg.trim();
+                    let on = match self.sel_track {
+                        TrackSel::Track(t) => self.project.tracks.get(t).and_then(|tr| tr.midi_devices.iter().find(|d| d.kind.is_sequencer() && (kind.is_empty() || d.kind.name().eq_ignore_ascii_case(kind))).map(|d| d.id)),
+                        _ => None,
+                    };
+                    self.seq_full = if self.seq_full.is_some() { None } else { on };
+                }
+                // inferno: the first Inferno fills the window; inferno=burn / inferno=cool: Burn held or let go;
+                // inferno=preset,N: its preset N.
+                "inferno" => {
+                    use krabton_engine::midi_fx::MidiFxKind;
+                    use krabton_engine::sequencers::inferno as inf;
+                    let dev = self.project.tracks.iter_mut().flat_map(|t| t.midi_devices.iter_mut()).find(|d| d.kind == MidiFxKind::Inferno);
+                    if let Some(dev) = dev {
+                        match arg.split(',').next().unwrap_or("").trim() {
+                            "burn" => dev.params[inf::BURN] = 1.0,
+                            "cool" => dev.params[inf::BURN] = 0.0,
+                            "preset" => {
+                                let list = krabton_engine::presets::midi(MidiFxKind::Inferno);
+                                if let Some(pr) = nums.first().and_then(|&i| list.get(i)) {
+                                    dev.params = krabton_engine::presets::apply_to(MidiFxKind::Inferno.specs(), pr, &dev.params);
+                                    if let Some(f) = pr.data {
+                                        dev.data = f();
+                                    }
+                                    dev.preset = pr.name.to_string();
+                                }
+                            }
+                            _ => self.seq_full = Some(dev.id),
+                        }
+                    }
+                }
                 // touchcapture: the Touch view's Capture, on the selected track.
                 "touchcapture" => {
                     if let Some(ti) = self.touch_track() {

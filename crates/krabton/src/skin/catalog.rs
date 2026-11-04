@@ -1225,6 +1225,24 @@ const VA_FILTER: Skin = Skin { heroes: &["Cutoff", "Resonance"], ..ANALOG };
 
 /// A sequencer's or a MIDI effect's look.
 const SEQUENCER: Skin = Skin { accent: hex(0xff4f4f), knob: Knob::Led, cap: hex(0x3a3c41), logo_case: Case::Upper, ..BASE };
+/// Inferno: charcoal and embers, glowing orange to yellow.
+const INFERNO: Skin = Skin {
+    top: hex(0x1d100b),
+    bottom: hex(0x0c0605),
+    surface: Surface::Velvet,
+    stripes: &[hex(0xa3180c), hex(0xff4d12), hex(0xffc94a)],
+    ink: hex(0xffe3c4),
+    dim: hex(0xc98a62),
+    well: hex(0x140906),
+    well_ink: hex(0xffc94a),
+    accent: hex(0xff6a1a),
+    knob: Knob::Led,
+    cap: hex(0x3a1a10),
+    logo: Font::Block,
+    logo_ink: hex(0xffb347),
+    logo_case: Case::Upper,
+    ..BASE
+};
 const MIDI_FX: Skin = Skin { accent: hex(0x8fe388), knob: Knob::Led, cap: hex(0x3a3c41), logo_case: Case::Upper, ..BASE };
 
 /// The look of an instrument, by its name (as its title shows it).
@@ -1335,6 +1353,9 @@ pub fn for_effect(kind: EffectKind) -> Option<Skin> {
 
 /// The look of a MIDI effect or sequencer.
 pub fn for_midi(kind: MidiFxKind) -> Option<Skin> {
+    if kind == MidiFxKind::Inferno {
+        return Some(INFERNO);
+    }
     Some(if kind.is_sequencer() { SEQUENCER } else { MIDI_FX })
 }
 

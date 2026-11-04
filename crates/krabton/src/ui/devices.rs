@@ -398,6 +398,13 @@ fn device_frame_presets<R>(ui: &mut Ui, title: &str, info: Option<&str>, enabled
                     }
                     if to_clip {
                         ui.add_space(6.0);
+                        // A sequencer's editor can fill the window.
+                        let full = ui.ctx().data(|d| d.get_temp::<bool>(full_now_id())).unwrap_or(false);
+                        let tip = if full { "Back to its place in the chain (or Esc)" } else { "Fill the window with this sequencer (the same button or Esc goes back)" };
+                        if ui.selectable_label(full, RichText::new("Full").small()).on_hover_text(tip).clicked() {
+                            action = Some(ChainActionKind::Full);
+                        }
+                        ui.add_space(6.0);
                         ui.menu_button(RichText::new("To Clip").small(), |ui| {
                             ui.label(RichText::new("What it plays, as a clip of").small().color(TEXT_DIM));
                             for bars in [1u32, 2, 4, 8, 16] {
@@ -635,6 +642,45 @@ enum ChainActionKind {
     Duplicate,
     /// A sequencer's To Clip, this many bars.
     ToClip(u32),
+    /// A sequencer fills the window, or goes back.
+    Full,
+}
+
+/// Where the title bar hears that its sequencer fills the window.
+fn full_now_id() -> Id {
+    Id::new("seq_full_now")
+}
+
+/// How much bigger an editor is drawn at most when its sequencer fills the
+/// window (text goes soft beyond that; a taller editor gets the rest).
+const FULL_MOST: f32 = 3.0;
+const FULL_LEAST: f32 = 0.6;
+
+/// Draws an editor into `r`, scaled up to fit it: `draw` lays it out at its
+/// own size for a height it is given, in a layer of its own (clicks and drags
+/// are scaled back). The scale starts high and comes down until it fits, as
+/// a taller editor can be narrower; it stays until `r` changes size.
+fn scaled_editor(ui: &mut Ui, r: Rect, id: Id, draw: impl FnOnce(&mut Ui, f32) -> bool) -> bool {
+    let ctx = ui.ctx().clone();
+    let size = (r.width().round(), r.height().round());
+    let (mut scale, mut wide) = ctx.data(|m| m.get_temp::<((f32, f32), f32, f32)>(id)).filter(|k| k.0 == size).map(|k| (k.1, k.2)).unwrap_or((FULL_MOST, r.width() / FULL_MOST));
+    let room = r.size() / scale;
+    let layer = egui::LayerId::new(ui.layer_id().order, id);
+    ctx.set_sublayer(ui.layer_id(), layer);
+    let mut inner = ui.new_child(UiBuilder::new().layer_id(layer).max_rect(Rect::from_min_size(egui::Pos2::ZERO, room)).layout(egui::Layout::top_down(egui::Align::Min)));
+    // In the middle of its room, when it does not take it all.
+    let off = ((r.width() - wide * scale) * 0.5).max(0.0);
+    ctx.set_transform_layer(layer, egui::emath::TSTransform::new(r.min.to_vec2() + vec2(off, 0.0), scale));
+    inner.set_clip_rect(Rect::from_min_size(egui::Pos2::ZERO, room));
+    let changed = draw(&mut inner, room.y);
+    let used = inner.min_rect().size();
+    wide = used.x;
+    if (used.x > room.x + 1.0 || used.y > room.y + 1.0) && scale > FULL_LEAST {
+        scale = (r.width() / used.x).min(r.height() / used.y).clamp(FULL_LEAST, scale);
+        ctx.request_repaint();
+    }
+    ctx.data_mut(|m| m.insert_temp(id, (size, scale, wide)));
+    changed
 }
 
 impl App {
@@ -763,6 +809,10 @@ impl App {
                         let n = self.project.tracks[i].midi_devices.len();
                         for d in 0..n {
                             let key = self.project.tracks[i].midi_devices[d].id;
+                            // It fills the window just now: it is drawn there.
+                            if self.seq_full == Some(key) {
+                                continue;
+                            }
                             let hd = if resizable { self.rack_height(key, h) } else { h };
                             let wid = Id::new(("chain_piece", key));
                             if self.project.folded.contains(&key) {
@@ -1072,8 +1122,48 @@ impl App {
             ChainActionKind::Left => Some(ChainAction::MoveLeft(d)),
             ChainActionKind::Right => Some(ChainAction::MoveRight(d)),
             ChainActionKind::Duplicate => Some(ChainAction::Duplicate(d)),
-            ChainActionKind::ToClip(_) | ChainActionKind::Fold => None,
+            ChainActionKind::ToClip(_) | ChainActionKind::Fold | ChainActionKind::Full => None,
         })
+    }
+
+    /// The sequencer that fills the window, between the transport and the
+    /// status bar: its editor made big, its Band section and knobs beside it
+    /// (see `midi_fx_panel`). Its Full button or Esc takes it back.
+    pub(crate) fn ui_seq_full(&mut self, ctx: &egui::Context) {
+        let Some(dev_id) = self.seq_full else { return };
+        let Some((track, d)) = self.project.tracks.iter().enumerate().find_map(|(t, tr)| tr.midi_devices.iter().position(|m| m.id == dev_id && m.kind.is_sequencer()).map(|d| (t, d))) else {
+            self.seq_full = None;
+            return;
+        };
+        // All of it under the transport, over the browser too.
+        let (screen, room) = (ctx.screen_rect(), ctx.available_rect());
+        let outer = Rect::from_min_max(pos2(screen.left(), room.top()), pos2(screen.right(), room.bottom())).shrink(2.0);
+        let _accent = AccentScope::new(self.track_accent(TrackSel::Track(track)));
+        ctx.data_mut(|m| m.insert_temp(full_now_id(), true));
+        let mut action = None;
+        let win = egui::Window::new("Sequencer").id(Id::new("seq_full_window")).title_bar(false).collapsible(false).resizable(false).fixed_rect(outer).frame(egui::Frame::new().fill(BG).stroke(Stroke::new(1.0_f32, LINE_SOFT)));
+        win.show(ctx, |ui| {
+            ui.set_min_size(outer.size());
+            action = self.midi_fx_panel(ui, track, d, (outer.height() - 44.0).max(200.0));
+        });
+        ctx.data_mut(|m| m.insert_temp(full_now_id(), false));
+        if let Some(ChainAction::Remove(k)) = action {
+            self.project.tracks[track].midi_devices.remove(k);
+            self.seq_full = None;
+        }
+        if let Some(ChainAction::MoveLeft(k)) = action {
+            if k > 0 {
+                self.project.tracks[track].midi_devices.swap(k, k - 1);
+            }
+        }
+        if let Some(ChainAction::MoveRight(k)) = action {
+            if k + 1 < self.project.tracks[track].midi_devices.len() {
+                self.project.tracks[track].midi_devices.swap(k, k + 1);
+            }
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) && !egui::Popup::is_any_open(ctx) {
+            self.seq_full = None;
+        }
     }
 
     fn midi_fx_panel(&mut self, ui: &mut Ui, track: usize, d: usize, h: f32) -> Option<ChainAction> {
@@ -1103,6 +1193,10 @@ impl App {
             band_cue = band_cue.or(cue);
             c
         };
+        let full = self.seq_full == Some(dev.id);
+        let inferno_big = full && dev.kind == MidiFxKind::Inferno;
+        let mut inferno_acts = Vec::new();
+        let inferno_around = if dev.kind == MidiFxKind::Inferno { self.inferno_around(track, &params) } else { Default::default() };
         let (changed, action) = if dev.kind.is_sequencer() {
             // Every sequencer reports its state.
             let status = self.status();
@@ -1114,7 +1208,53 @@ impl App {
             let info = format!("Sequencer · {}", dev.kind.description());
             device_frame_presets(ui, dev.kind.name(), Some(&info), Some(&mut enabled), Some(menu), true, h, |ui| {
                 ui.horizontal_top(|ui| {
-                    let a = super::seq_view::editor(ui, id.with("editor"), dev.kind, &mut params, &mut data, live, lane, accent, h - 32.0);
+                    let a = if dev.kind == MidiFxKind::Inferno {
+                        // Inferno asks things of the app (Ignite on the band's chords, its wob's cable).
+                        let (c, acts) = super::inferno_view::face(ui, id.with("editor"), &mut params, &mut data, live, h - 32.0, inferno_big, &inferno_around);
+                        inferno_acts = acts;
+                        c
+                    } else if full {
+                        // Filling the window: the editor in all the room its Band section and
+                        // knobs leave: beside it while they are not too wide, else under it.
+                        let knobs_id = id.with("full_knobs");
+                        let room = ui.available_width();
+                        let (knobs, mut under) = ui.ctx().data(|m| m.get_temp::<(f32, f32, bool)>(knobs_id)).filter(|k| k.0 == room).map(|k| (k.1, k.2)).unwrap_or((320.0, false));
+                        let tall = h - 32.0;
+                        let (mut c, mut b) = (false, false);
+                        let used;
+                        if under {
+                            let low = 300.0_f32.min(tall * 0.5);
+                            let inner = ui.vertical(|ui| {
+                                let (r, _) = ui.allocate_exact_size(vec2(room, tall - low - 6.0), Sense::hover());
+                                c = scaled_editor(ui, r, id.with("full_editor"), |ui, height| super::seq_view::editor(ui, id.with("editor"), dev.kind, &mut params, &mut data, live, lane, accent, height));
+                                ui.add_space(6.0);
+                                egui::ScrollArea::horizontal().id_salt(id.with("full_knobs_scroll")).max_height(low).show(ui, |ui| {
+                                    ui.horizontal_top(|ui| {
+                                        c |= band_ui(ui, &mut params, accent, low);
+                                        ui.add_space(6.0);
+                                        b = param_grid_mod(ui, id, dev.kind.specs(), &mut params, accent, low, mv.as_mut());
+                                    });
+                                });
+                            });
+                            used = inner.response.rect.width();
+                        } else {
+                            let (r, _) = ui.allocate_exact_size(vec2((room - knobs - 10.0).max(160.0), tall), Sense::hover());
+                            c = scaled_editor(ui, r, id.with("full_editor"), |ui, height| super::seq_view::editor(ui, id.with("editor"), dev.kind, &mut params, &mut data, live, lane, accent, height));
+                            c |= band_ui(ui, &mut params, accent, tall);
+                            ui.add_space(6.0);
+                            b = param_grid_mod(ui, id, dev.kind.specs(), &mut params, accent, h - 28.0, mv.as_mut());
+                            used = ui.min_rect().right() - r.right();
+                            under = used > room * 0.42;
+                        }
+                        ui.ctx().data_mut(|m| m.insert_temp(knobs_id, (room, used, under)));
+                        return c | b;
+                    } else {
+                        super::seq_view::editor(ui, id.with("editor"), dev.kind, &mut params, &mut data, live, lane, accent, h - 32.0)
+                    };
+                    // Inferno filling the window has them beside its grid.
+                    if inferno_big {
+                        return a;
+                    }
                     let c = band_ui(ui, &mut params, accent, h - 32.0);
                     ui.add_space(6.0);
                     let b = param_grid_mod(ui, id, dev.kind.specs(), &mut params, accent, h - 28.0, mv.as_mut());
@@ -1156,15 +1296,25 @@ impl App {
         if let Some(ChainActionKind::ToClip(bars)) = action {
             self.sequencer_to_clip(track, dev.id, bars);
         }
+        for a in inferno_acts {
+            self.inferno_act(track, dev.id, a);
+        }
+        if matches!(action, Some(ChainActionKind::Full)) {
+            self.seq_full = if full { None } else { Some(dev.id) };
+        }
         if matches!(action, Some(ChainActionKind::Fold)) {
             self.project.folded.insert(dev.id);
+            // Folded, it goes back to the chain.
+            if full {
+                self.seq_full = None;
+            }
         }
         action.and_then(|a| match a {
             ChainActionKind::Remove => Some(ChainAction::Remove(d)),
             ChainActionKind::Left => Some(ChainAction::MoveLeft(d)),
             ChainActionKind::Right => Some(ChainAction::MoveRight(d)),
             ChainActionKind::Duplicate => Some(ChainAction::Duplicate(d)),
-            ChainActionKind::ToClip(_) | ChainActionKind::Fold => None,
+            ChainActionKind::ToClip(_) | ChainActionKind::Fold | ChainActionKind::Full => None,
         })
     }
 
@@ -3626,5 +3776,86 @@ mod tests {
         }
         // Closed, opened by the click, still open, closed by a press elsewhere.
         assert_eq!(states, vec![false, false, true, true, false, false, false]);
+    }
+}
+
+#[cfg(test)]
+mod full_tests {
+    use super::*;
+    use egui::{Event, Modifiers, PointerButton, Pos2, RawInput};
+
+    /// Runs `body` a few frames; `press` is clicked (in points) on the way.
+    fn frames(press: Option<Pos2>, mut body: impl FnMut(&mut Ui)) {
+        let ctx = egui::Context::default();
+        for k in 0..6 {
+            let mut input = RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1280.0, 800.0))), ..Default::default() };
+            if let Some(pos) = press {
+                match k {
+                    3 => input.events.push(Event::PointerMoved(pos)),
+                    4 => input.events.push(Event::PointerButton { pos, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE }),
+                    5 => input.events.push(Event::PointerButton { pos, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE }),
+                    _ => {}
+                }
+            }
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| body(ui));
+            });
+        }
+    }
+
+    #[test]
+    fn a_click_lands_where_the_scaled_editor_shows_it() {
+        let r = Rect::from_min_size(pos2(100.0, 100.0), vec2(900.0, 600.0));
+        // A button at (30, 40) as the editor lays it out: three times as far from its corner on the screen.
+        let on_screen = r.min + vec2(35.0, 45.0) * FULL_MOST;
+        let mut hit = false;
+        frames(Some(on_screen), |ui| {
+            hit |= scaled_editor(ui, r, Id::new("e"), |ui, height| {
+                let (all, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
+                let b = Rect::from_min_size(all.min + vec2(30.0, 40.0), vec2(10.0, 10.0));
+                ui.interact(b, Id::new("b"), Sense::click()).clicked()
+            });
+        });
+        assert!(hit, "the click reaches it");
+        // Where it would be without the scale, it does not.
+        let mut hit = false;
+        frames(Some(r.min + vec2(35.0, 45.0)), |ui| {
+            hit |= scaled_editor(ui, r, Id::new("e"), |ui, height| {
+                let (all, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
+                let b = Rect::from_min_size(all.min + vec2(30.0, 40.0), vec2(10.0, 10.0));
+                ui.interact(b, Id::new("b"), Sense::click()).clicked()
+            });
+        });
+        assert!(!hit);
+    }
+
+    #[test]
+    fn every_sequencers_editor_fits_when_it_fills_the_window() {
+        use krabton_engine::params::defaults;
+        let live = crate::ui::seq_view::Live { vis: None, playing: false, scale: krabton_engine::Scale::default(), kit: 0, bpm: 120.0 };
+        for size in [vec2(900.0, 640.0), vec2(420.0, 420.0)] {
+            let r = Rect::from_min_size(pos2(4.0, 4.0), size);
+            for kind in MidiFxKind::SEQUENCERS {
+                let mut p = defaults(kind.specs());
+                let mut data = kind.default_data();
+                let id = Id::new(("full", kind.name()));
+                let mut seen = 0.0_f32;
+                frames(None, |ui| {
+                    scaled_editor(ui, r, id, |ui, height| crate::ui::seq_view::editor(ui, id.with("editor"), kind, &mut p, &mut data, live, &mut 0, accent_now(), height));
+                    let (_, scale, _) = ui.ctx().data(|m| m.get_temp::<((f32, f32), f32, f32)>(id)).unwrap();
+                    seen = scale;
+                });
+                assert!((FULL_LEAST..=FULL_MOST).contains(&seen), "{kind:?} at {size:?}: {seen}");
+            }
+        }
+    }
+
+    #[test]
+    fn inferno_is_where_the_sequencers_are() {
+        assert!(MidiFxKind::Inferno.is_sequencer());
+        assert_eq!(MidiFxKind::Inferno.group(), "Classic");
+        assert!(MidiFxKind::SEQUENCERS.contains(&MidiFxKind::Inferno));
+        assert!(!MidiFxKind::ALL.contains(&MidiFxKind::Inferno), "not among the MIDI effects");
+        assert!(!crate::ui::browser::device_names().contains(&"Inferno"), "not an instrument");
     }
 }
