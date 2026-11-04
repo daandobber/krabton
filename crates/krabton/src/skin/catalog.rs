@@ -1225,21 +1225,21 @@ const VA_FILTER: Skin = Skin { heroes: &["Cutoff", "Resonance"], ..ANALOG };
 
 /// A sequencer's or a MIDI effect's look.
 const SEQUENCER: Skin = Skin { accent: hex(0xff4f4f), knob: Knob::Led, cap: hex(0x3a3c41), logo_case: Case::Upper, ..BASE };
-/// Inferno: charcoal and embers, glowing orange to yellow.
+/// Inferno: gloss black and a flame job, yellow through red to pink.
 const INFERNO: Skin = Skin {
-    top: hex(0x1d100b),
-    bottom: hex(0x0c0605),
-    surface: Surface::Velvet,
-    stripes: &[hex(0xa3180c), hex(0xff4d12), hex(0xffc94a)],
-    ink: hex(0xffe3c4),
-    dim: hex(0xc98a62),
-    well: hex(0x140906),
-    well_ink: hex(0xffc94a),
-    accent: hex(0xff6a1a),
+    top: hex(0x0b0707),
+    bottom: hex(0x020101),
+    surface: Surface::Flat,
+    stripes: &[hex(0xff2a55), hex(0xeb0d08), hex(0xff5c00), hex(0xffc70d)],
+    ink: hex(0xfff3d8),
+    dim: hex(0xd8926a),
+    well: hex(0x060303),
+    well_ink: hex(0xffc70d),
+    accent: hex(0xff4d00),
     knob: Knob::Led,
-    cap: hex(0x3a1a10),
-    logo: Font::Block,
-    logo_ink: hex(0xffb347),
+    cap: hex(0x1c0a06),
+    logo: Font::Metal,
+    logo_ink: hex(0xffc70d),
     logo_case: Case::Upper,
     ..BASE
 };

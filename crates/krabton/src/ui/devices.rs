@@ -1137,7 +1137,9 @@ impl App {
         };
         // All of it under the transport, over the browser too.
         let (screen, room) = (ctx.screen_rect(), ctx.available_rect());
-        let outer = Rect::from_min_max(pos2(screen.left(), room.top()), pos2(screen.right(), room.bottom())).shrink(2.0);
+        // (Down to the status bar: the panels under the views stay behind it.)
+        let bottom = if self.big.on { screen.bottom() } else { screen.bottom() - 22.0 };
+        let outer = Rect::from_min_max(pos2(screen.left(), room.top()), pos2(screen.right(), bottom)).shrink(2.0);
         let _accent = AccentScope::new(self.track_accent(TrackSel::Track(track)));
         ctx.data_mut(|m| m.insert_temp(full_now_id(), true));
         let mut action = None;
@@ -1258,6 +1260,11 @@ impl App {
                     let c = band_ui(ui, &mut params, accent, h - 32.0);
                     ui.add_space(6.0);
                     let b = param_grid_mod(ui, id, dev.kind.specs(), &mut params, accent, h - 28.0, mv.as_mut());
+                    if dev.kind == MidiFxKind::Inferno {
+                        // How far its fire goes next frame.
+                        let right = ui.min_rect().right();
+                        ui.ctx().data_mut(|m| m.insert_temp(id.with("editor").with("reach"), right));
+                    }
                     a | b | c
                 })
                 .inner
@@ -1300,7 +1307,13 @@ impl App {
             self.inferno_act(track, dev.id, a);
         }
         if matches!(action, Some(ChainActionKind::Full)) {
-            self.seq_full = if full { None } else { Some(dev.id) };
+            // Opening waits for the next frame: a widget may not be in two layers in one
+            // frame (it is drawn in the chain now, and the full window comes later in it).
+            if full {
+                self.seq_full = None;
+            } else {
+                self.seq_full_next = Some(dev.id);
+            }
         }
         if matches!(action, Some(ChainActionKind::Fold)) {
             self.project.folded.insert(dev.id);

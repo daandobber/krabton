@@ -607,6 +607,8 @@ pub struct App {
     pub(crate) glitch_window: Option<u64>,
     /// The sequencer shown filling the window (its device).
     pub(crate) seq_full: Option<u64>,
+    /// To fill the window from the next frame: this one has drawn it in its chain already.
+    pub(crate) seq_full_next: Option<u64>,
     /// The Map, in a window, and the track chosen on it.
     pub(crate) map_window: bool,
     /// The view the Video's button goes back to, and the Video as it runs
@@ -800,6 +802,7 @@ impl App {
             auto_arm: false,
             glitch_window: None,
             seq_full: None,
+            seq_full_next: None,
             map_window: false,
             video_back: View::Studio,
             video: Default::default(),
@@ -4972,6 +4975,9 @@ impl eframe::App for App {
         self.poll_singer_installs();
         self.poll_packs();
         self.poll_update();
+        if let Some(dev) = self.seq_full_next.take() {
+            self.seq_full = Some(dev);
+        }
         self.poll_firmware_unpack();
         self.boot_hypers();
         self.recover_engine();

@@ -1,10 +1,11 @@
-//! Inferno's face: a step grid on fire. Charcoal and embers; a step that
-//! plays bursts into flame (an accent burns brighter, a slide draws a trail
-//! of fire to the next note, ratchets spit sparks, an octave jump flares
-//! high), the playhead is a burning line, and Burn sets the whole panel
-//! alight. The flames are a fixed pool of particles kept in the face's
-//! memory (nothing allocated for them as they burn), moving only while it
-//! plays or something still burns; Flames: Calm burns less, Off not at all.
+//! Inferno's face: a house on fire. The whole panel burns behind the grid
+//! (see `inferno_fire`), a charred wall and black beams in front of the
+//! blaze: a step that is on is a window with the fire behind it, one that is
+//! off is boarded up. A step that plays makes its column erupt (an accent
+//! hotter, ratchets spit sparks, an octave jump flares), and Burn takes the
+//! whole panel. Sparks and embers are a fixed pool of particles kept in the
+//! face's memory (nothing allocated for them as they burn). Flames: Calm
+//! burns low, Off not at all. Without the shader, tongues from that same pool.
 //!
 //! The same face in the device chain (one row of values at a time) and
 //! filling the window (every row, with its settings beside it). Clicks
@@ -38,6 +39,8 @@ const FLAME: Color32 = hex(0xff8a1f);
 pub(crate) const GOLD: Color32 = hex(0xffc94a);
 const WHITE_HOT: Color32 = hex(0xfff1c8);
 const SMOKE: Color32 = hex(0x6b625e);
+/// Plates to read on, burnt red: black over the yellow of the fire turns olive.
+const SCORCH: Color32 = hex(0x2c0500);
 
 fn alpha(c: Color32, a: f32) -> Color32 {
     let a = a.clamp(0.0, 1.0);
@@ -68,23 +71,61 @@ fn gradient(p: &Painter, r: Rect, top: Color32, bottom: Color32) {
     p.add(Shape::mesh(m));
 }
 
-/// Text that glows like an ember.
-fn glow_text(p: &Painter, pos: Pos2, anchor: Align2, s: &str, font: FontId, core: Color32, glow: f32) {
-    if glow > 0.0 {
-        for (dx, dy) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0), (-1.5, -1.5), (1.5, 1.5)] {
-            p.text(pos + vec2(dx, dy), anchor, s, font.clone(), alpha(EMBER, 0.28 * glow));
-        }
-    }
-    p.text(pos, anchor, s, font, core);
-}
 
 /// Its lettering, in its own look (the logo fonts come with the skins).
 fn logo_font(size: f32) -> FontId {
     if crate::skin::current().is_some() {
-        crate::skin::Font::Block.id(size)
+        crate::skin::Font::Metal.id(size)
     } else {
         FontId::proportional(size)
     }
+}
+
+/// What it writes on the fire: square and hard.
+fn hard_font(size: f32) -> FontId {
+    if crate::skin::current().is_some() {
+        crate::skin::Font::Sport.id(size)
+    } else {
+        FontId::proportional(size)
+    }
+}
+
+/// Text that stands out on fire: a black edge all round.
+fn inked(p: &Painter, pos: Pos2, anchor: Align2, s: &str, font: FontId, c: Color32) {
+    for (dx, dy) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0), (-1.0, -1.0), (1.0, 1.0), (1.0, -1.0), (-1.0, 1.0)] {
+        p.text(pos + vec2(dx, dy), anchor, s, font.clone(), Color32::BLACK);
+    }
+    p.text(pos, anchor, s, font, c);
+}
+
+/// The logo: a flame job along the letters, yellow into red into pink, on a
+/// black edge, like the name on a hot rod.
+fn flame_logo(p: &Painter, left_center: Pos2, s: &str, size: f32, flick: f32) {
+    let font = logo_font(size);
+    let galley = p.layout_no_wrap(s.to_string(), font.clone(), Color32::WHITE);
+    let w = galley.size().x.max(1.0);
+    let at = left_center - vec2(0.0, galley.size().y * 0.5);
+    for (dx, dy) in [(-2.0, 0.0), (2.0, 0.0), (0.0, -2.0), (0.0, 2.0), (-1.5, -1.5), (1.5, 1.5), (1.5, -1.5), (-1.5, 1.5)] {
+        p.text(left_center + vec2(dx, dy), Align2::LEFT_CENTER, s, font.clone(), Color32::BLACK);
+    }
+    // Letter by letter, each its colour along the name.
+    let mut x = at.x;
+    for (k, ch) in s.chars().enumerate() {
+        let t = (x - at.x + 3.0) / w;
+        let c = if t < 0.45 { mix(hex(0xfff6b0), hex(0xff7a00), t / 0.45) } else { mix(hex(0xff7a00), hex(0xff1f4a), (t - 0.45) / 0.55) };
+        let c = mix(c, hex(0xffffff), (flick * 0.4 + 0.1 * ((k as f32 * 1.7).sin())).clamp(0.0, 0.35));
+        let one = p.layout_no_wrap(ch.to_string(), font.clone(), c);
+        let advance = one.size().x;
+        p.galley(pos2(x, at.y), one, c);
+        x += advance;
+    }
+}
+
+/// A plate with its corners cut, hard as a blade.
+fn cut_plate(p: &Painter, r: Rect, cut: f32, fill: Color32, line: Stroke) {
+    let c = cut.min(r.width() * 0.3).min(r.height() * 0.3);
+    let pts = vec![pos2(r.left() + c, r.top()), r.right_top(), pos2(r.right(), r.bottom() - c), pos2(r.right() - c, r.bottom()), r.left_bottom(), pos2(r.left(), r.top() + c)];
+    p.add(Shape::convex_polygon(pts, fill, line));
 }
 
 // ---------------------------------------------------------------- the flames
@@ -126,13 +167,14 @@ pub(crate) struct Fire {
     time: f64,
     flare: f32,
     carry: f32,
+    ember_carry: f32,
     /// How each step still glows from its last hit (0..1).
     glow: [f32; STEPS],
 }
 
 impl Default for Fire {
     fn default() -> Self {
-        Self { p: [Particle::default(); POOL], next: 0, hits: u32::MAX, rng: 0x5EED_F12E, time: 0.0, flare: 0.0, carry: 0.0, glow: [0.0; STEPS] }
+        Self { p: [Particle::default(); POOL], next: 0, hits: u32::MAX, rng: 0x5EED_F12E, time: 0.0, flare: 0.0, carry: 0.0, ember_carry: 0.0, glow: [0.0; STEPS] }
     }
 }
 
@@ -154,6 +196,7 @@ impl Fire {
     }
 
     /// How many burn now.
+    #[cfg(test)]
     pub(crate) fn alive(&self) -> usize {
         self.p.iter().filter(|p| p.life > 0.0).count()
     }
@@ -215,11 +258,14 @@ impl Fire {
         }
     }
 
-    fn draw(&self, p: &Painter, origin: Pos2) {
+    /// The shader burns the flames when it can; then only sparks and embers fly here.
+    fn draw(&self, p: &Painter, origin: Pos2, blazing: bool) {
         let t = self.time as f32;
         for kind in [SMOKE_P, FLAME_P, EMBER_P, SPARK_P] {
             if kind == FLAME_P {
-                self.draw_flames(p, origin);
+                if !blazing {
+                    self.draw_flames(p, origin);
+                }
                 continue;
             }
             for q in self.p.iter().filter(|q| q.life > 0.0 && q.kind == kind) {
@@ -524,11 +570,19 @@ fn clicks(resp: &egui::Response) -> Option<i32> {
 fn fire_button(ui: &mut Ui, r: Rect, id: Id, label: &str, on: bool, hot: f32) -> egui::Response {
     let resp = ui.interact(r, id, Sense::click());
     let p = ui.painter();
-    let h = if on { 0.75 + 0.25 * hot } else if resp.hovered() { 0.4 } else { 0.25 };
-    gradient(p, r, heat_color(h), heat_color(h * 0.6));
-    rect_line(p, r, 3.0, 1.0, if on { GOLD } else { CINDER });
-    let ink = if h > 0.7 { SOOT } else { hex(0xffd9b0) };
-    p.with_clip_rect(r).text(r.center(), Align2::CENTER_CENTER, label, FontId::proportional((r.height() * 0.5).clamp(9.0, 14.0)), ink);
+    let cut = (r.height() * 0.28).min(6.0);
+    if on {
+        cut_plate(p, r, cut, heat_color(0.82 + 0.18 * hot), Stroke::new(1.0_f32, WHITE_HOT));
+    } else {
+        cut_plate(p, r, cut, if resp.hovered() { hex(0x3a0a04) } else { hex(0x0a0404) }, Stroke::new(1.0_f32, if resp.hovered() { EMBER } else { hex(0xb3200c) }));
+    }
+    let font = hard_font((r.height() * 0.5).clamp(9.0, 14.0));
+    let clip = p.with_clip_rect(r);
+    if on {
+        clip.text(r.center(), Align2::CENTER_CENTER, label, font, Color32::BLACK);
+    } else {
+        inked(&clip, r.center(), Align2::CENTER_CENTER, label, font, hex(0xffd9a0));
+    }
     resp
 }
 
@@ -579,13 +633,16 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
     // Its size: the chain's height, a page of sixteen steps.
     let room = ui.available_width();
     let side = if !big { 0.0 } else if room < 900.0 { 240.0 } else { 300.0 };
-    let label_w = if big { 62.0 } else { 46.0 };
+    let label_w = if big { 74.0 } else { 46.0 };
     let width = if big { (room - side - 12.0).max(420.0) } else { 600.0 };
     // Narrow, its top row takes two.
     let two_rows = big && width < 780.0;
     // Filling the window its settings go beside it (the device's frame goes round both).
     let (whole, _) = ui.allocate_exact_size(vec2(width + side, height), Sense::hover());
     let rect = Rect::from_min_size(whole.min, vec2(width, height));
+    // In the chain the fire goes on behind the device's other columns too (as wide as they were last frame).
+    let reach: f32 = ui.ctx().data(|d| d.get_temp(id.with("reach"))).unwrap_or(whole.right());
+    let whole = if big { whole } else { Rect::from_min_max(whole.min, pos2(reach.max(whole.right()), whole.bottom())) };
     let painter = ui.painter().clone();
     let p = painter.with_clip_rect(rect.expand(2.0));
     // The panel: charcoal, glowing from below with the heat.
@@ -595,19 +652,41 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
         fire.flare = 1.0;
     }
     let glow = (0.25 + 0.5 * heat + 0.4 * fire.flare).min(1.0);
-    rect_fill(&p, rect, 6.0, SOOT);
-    gradient(&p, rect.shrink(1.0), CHARCOAL, mix(CHARCOAL, BLOOD, 0.35 * glow));
+    // The blaze, under everything: idle it smoulders, playing it roars, Burn takes it all.
+    let first_step = view.page * PAGE;
+    let blazing = flames < 2 && super::inferno_fire::works();
+    let blaze = {
+        let grid_from = (6.0 + label_w) / whole.width().max(1.0);
+        let grid_to = (rect.width() - 6.0) / whole.width().max(1.0);
+        let mut cols = [0.0; super::inferno_fire::COLUMNS];
+        for (c, v) in cols.iter_mut().enumerate() {
+            *v = fire.glow[(first_step + c).min(STEPS - 1)];
+        }
+        let idle = if calm { 0.12 } else { 0.3 };
+        let playing = if state.is_some() { if calm { 0.2 } else { 0.42 } } else { 0.0 };
+        let level = if burn { 1.15 } else { idle + playing + heat * if calm { 0.1 } else { 0.25 } };
+        super::inferno_fire::Blaze { time: fire.time as f32, heat: level, grid: [grid_from, grid_to], cols, frame: ui.ctx().cumulative_pass_nr() }
+    };
+    if blazing {
+        super::inferno_fire::back(&painter.with_clip_rect(whole), whole, blaze);
+    } else {
+        rect_fill(&p, rect, 0.0, SOOT);
+        gradient(&p, rect.shrink(1.0), CHARCOAL, mix(CHARCOAL, BLOOD, 0.35 * glow));
+    }
     gradient(&p, Rect::from_min_max(pos2(rect.left() + 1.0, rect.bottom() - rect.height() * 0.3), rect.right_bottom() - vec2(1.0, 1.0)), alpha(EMBER, 0.0), alpha(EMBER, 0.22 * glow));
-    rect_line(&p, rect, 6.0, 1.0, mix(CINDER, EMBER, glow * 0.6));
+    if !big && whole.right() > rect.right() {
+        rect_fill(&painter.with_clip_rect(whole), Rect::from_min_max(pos2(rect.right() + 2.0, rect.top()), whole.right_bottom()), 0.0, alpha(SCORCH, 0.8));
+    }
+    // A black band to read the top row on.
+    let top_band = Rect::from_min_size(rect.min, vec2(rect.width(), if two_rows { 70.0 } else if big { 40.0 } else { 30.0 }));
+    gradient(&p, top_band, alpha(Color32::BLACK, 0.86), alpha(Color32::BLACK, 0.55));
 
     // The top row: the name, the patterns, the pages, the length, and the fire.
     let head_h = if big { 30.0 } else { 22.0 };
     let head = Rect::from_min_size(rect.min + vec2(6.0, 4.0), vec2(rect.width() - 12.0, head_h));
     // The patterns' row: beside the name, or under it.
     let row_top = if two_rows { head.bottom() + 3.0 } else { head.top() + 1.0 };
-    let flick = (fire.time as f32 * 9.0).sin() * 0.15;
-    glow_text(&p, pos2(head.left(), head.center().y), Align2::LEFT_CENTER, "INFERNO", logo_font(if big { 22.0 } else { 16.0 }), heat_color(0.85 + flick * 0.5), 0.7 + heat * 0.3);
-    let mut x = if two_rows { head.left() } else { head.left() + if big { 128.0 } else { 92.0 } };
+    let mut x = head.left();
     let bw = if two_rows { 22.0 } else if big { 26.0 } else { 19.0 };
     for (i, letter) in inf::LETTERS.iter().enumerate() {
         let r = Rect::from_min_size(pos2(x, row_top), vec2(bw - 2.0, head_h - 2.0));
@@ -670,8 +749,7 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
         let inside = pg < pages;
         let resp = ui.interact(r, id.with(("page", pg)), Sense::click());
         let lit = pg == view.page;
-        rect_fill(&p, r, 3.0, if lit { shade(EMBER, 0.8) } else if inside { CINDER } else { SOOT });
-        rect_line(&p, r, 3.0, 1.0, if inside { EMBER } else { ASH });
+        cut_plate(&p, r, 4.0, if lit { EMBER } else if inside { hex(0x2a0a04) } else { hex(0x060303) }, Stroke::new(1.0_f32, if inside { EMBER } else { ASH }));
         p.text(r.center(), Align2::CENTER_CENTER, format!("{}", pg + 1), small(), if lit { SOOT } else if inside { GOLD } else { ASH });
         if state.is_some_and(|s| s.pattern == pat && s.step / PAGE == pg) {
             p.circle_filled(r.right_top() + vec2(-3.0, 3.0), 2.0, GOLD);
@@ -756,9 +834,11 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
         None => written,
     };
     let label = |p: &Painter, y: f32, h: f32, s: &str| {
-        p.with_clip_rect(Rect::from_min_size(pos2(rect.left() + 4.0, y), vec2(label_w - 4.0, h))).text(pos2(rect.left() + 8.0, y + h * 0.5), Align2::LEFT_CENTER, s, FontId::proportional((h * 0.55).clamp(8.0, 12.0)), hex(0xe0a070));
+        let clip = p.with_clip_rect(Rect::from_min_size(pos2(rect.left() + 4.0, y), vec2(label_w - 4.0, h)));
+        inked(&clip, pos2(rect.left() + 8.0, y + h * 0.5), Align2::LEFT_CENTER, s, hard_font((h * 0.55).clamp(8.0, 12.0)), hex(0xffe9c0));
     };
     let mut y = top;
+    gradient(&p, Rect::from_min_max(pos2(rect.left(), top), pos2(grid_l, bottom + tools_h)), alpha(SCORCH, 0.8), alpha(SCORCH, 0.88));
     // Steps: on or off (click), muted (right-click); flames on what plays.
     let steps_h = unit * weights[0];
     let steps_row = Rect::from_min_size(pos2(grid_l, y), vec2(cw * PAGE as f32, steps_h));
@@ -774,36 +854,50 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
         let resp = ui.interact(r, id.with(("step", i)), Sense::click());
         // Beats marked: every fourth step's cell a little lighter.
         let beat_mark = c % 4 == 0;
+        let frame_c = if playing_now { WHITE_HOT } else if s.on && inside { hex(0xff3a08) } else { hex(0x4a120a) };
         if !inside {
-            rect_fill(&p, r, 4.0, alpha(ASH, 0.35));
+            // Past its end: bricked up.
+            rect_fill(&p, r, 0.0, alpha(Color32::BLACK, 0.93));
         } else if s.on && !s.mute {
             let v = s.velocity as f32 / 127.0;
-            // A glowing coal, catching when it plays and cooling after.
-            let hot = 0.2 + 0.22 * v + if s.accent { 0.16 } else { 0.0 } + if playing_now { 0.25 } else { 0.0 } + 0.35 * fire.glow[i];
-            gradient(&p, r, heat_color(hot), heat_color(hot * 0.5));
+            if blazing {
+                // A window with the fire behind it, blowing out when it plays.
+                let gain = 0.5 + 0.35 * v + if s.accent { 0.2 } else { 0.0 } + if playing_now { 0.5 } else { 0.0 } + 0.6 * fire.glow[i];
+                super::inferno_fire::window(&painter.with_clip_rect(rect), r, whole, gain, blaze);
+            } else {
+                let hot = 0.2 + 0.22 * v + if s.accent { 0.16 } else { 0.0 } + if playing_now { 0.25 } else { 0.0 } + 0.35 * fire.glow[i];
+                gradient(&p, r, heat_color(hot), heat_color(hot * 0.5));
+            }
             if s.tie {
-                // A tie: a bar from the step before.
-                p.rect_filled(Rect::from_min_size(pos2(r.left() - 4.0, r.center().y - 3.0), vec2(8.0, 6.0)), 1.0, heat_color(hot));
+                // A tie: a beam from the window before.
+                p.rect_filled(Rect::from_min_size(pos2(r.left() - 5.0, r.center().y - 4.0), vec2(10.0, 8.0)), 0.0, Color32::BLACK);
             }
         } else if s.on {
-            rect_fill(&p, r, 4.0, ASH);
-            p.line_segment([r.left_top() + vec2(4.0, 4.0), r.right_bottom() - vec2(4.0, 4.0)], Stroke::new(1.0_f32, SMOKE));
+            // Muted: burnt out.
+            rect_fill(&p, r, 0.0, alpha(Color32::BLACK, 0.9));
+            p.line_segment([r.left_top() + vec2(4.0, 4.0), r.right_bottom() - vec2(4.0, 4.0)], Stroke::new(2.0_f32, hex(0xb3200c)));
+            p.line_segment([r.right_top() + vec2(-4.0, 4.0), r.left_bottom() + vec2(4.0, -4.0)], Stroke::new(2.0_f32, hex(0xb3200c)));
         } else {
-            rect_fill(&p, r, 4.0, if beat_mark { hex(0x24140f) } else { hex(0x1c100c) });
+            // Off: boarded up, the fire only just through the cracks.
+            rect_fill(&p, r, 0.0, alpha(Color32::BLACK, if beat_mark { 0.78 } else { 0.86 }));
+            let board = Stroke::new(2.0_f32, hex(0x1e0d09));
+            p.line_segment([pos2(r.left() + 1.0, r.top() + r.height() * 0.3), pos2(r.right() - 1.0, r.top() + r.height() * 0.22)], board);
+            p.line_segment([pos2(r.left() + 1.0, r.top() + r.height() * 0.72), pos2(r.right() - 1.0, r.top() + r.height() * 0.8)], board);
         }
-        rect_line(&p, r, 4.0, if playing_now { 2.0 } else { 1.0 }, if playing_now { GOLD } else if s.on && inside { EMBER } else { CINDER });
+        p.rect_stroke(r, 0.0, Stroke::new(3.0_f32, Color32::BLACK), egui::StrokeKind::Outside);
+        p.rect_stroke(r, 0.0, Stroke::new(if playing_now { 2.0_f32 } else { 1.0 }, frame_c), egui::StrokeKind::Inside);
         if s.on {
             let pitch = inf::pitch_of(&s, base, chromatic, &live.scale).clamp(0, 127) as u8;
             let name = if s.tie { "~".to_string() } else { note_name(pitch) };
-            let ink = if s.mute { SMOKE } else if playing_now || fire.glow[i] > 0.6 { SOOT } else { WHITE_HOT };
-            p.with_clip_rect(r).text(r.center() + vec2(0.0, r.height() * 0.12), Align2::CENTER_CENTER, name, FontId::proportional((r.height() * 0.3).clamp(9.0, 17.0)), ink);
+            let ink = if s.mute { SMOKE } else { hex(0xffffff) };
+            inked(&p.with_clip_rect(r), r.center() + vec2(0.0, r.height() * 0.12), Align2::CENTER_CENTER, &name, hard_font((r.height() * 0.32).clamp(9.0, 19.0)), ink);
             if s.lock {
                 let lk = Rect::from_min_size(r.left_top() + vec2(3.0, 3.0), vec2(6.0, 5.0));
                 p.rect_filled(lk, 1.0, GOLD);
                 p.circle_stroke(lk.center_top(), 2.2, Stroke::new(1.0_f32, GOLD));
             }
             if s.ratchet > 1 {
-                p.text(r.right_top() + vec2(-3.0, 3.0), Align2::RIGHT_TOP, format!("x{}", s.ratchet), FontId::proportional(9.0), GOLD);
+                inked(&p, r.right_top() + vec2(-3.0, 3.0), Align2::RIGHT_TOP, &format!("x{}", s.ratchet), hard_font(10.0), hex(0xffffff));
             }
         }
         if evolving.is_some() && shown[i] != written[i] {
@@ -839,7 +933,7 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
             let i = first + c;
             let s = written[i];
             let r = cell(c, y, h).shrink(1.5);
-            rect_fill(&p, r, 3.0, if s.on { hex(0x2a140c) } else { hex(0x170c09) });
+            rect_fill(&p, r, 0.0, alpha(SCORCH, if s.on { 0.9 } else { 0.72 }));
             let text = if row == 0 {
                 if chromatic { format!("+{}", s.note) } else { format!("{}", s.note + 1) }
             } else {
@@ -848,7 +942,7 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
                     o => format!("{o:+}"),
                 }
             };
-            p.text(r.center(), Align2::CENTER_CENTER, text, FontId::proportional((h * 0.55).clamp(8.0, 13.0)), if s.on { GOLD } else { ASH });
+            inked(&p, r.center(), Align2::CENTER_CENTER, &text, hard_font((h * 0.55).clamp(8.0, 13.0)), if s.on { hex(0xffd23a) } else { SMOKE });
             let resp = ui.interact(r, id.with(("nr", row, i)), Sense::click());
             let tip = if row == 0 { "Its note: a degree of the key above the base note (Chromatic: semitones). Click: up, right-click: down" } else { "Its octave (-2 to +2). Click: up, right-click: down" };
             if let Some(d) = clicks(&resp.on_hover_text(tip)) {
@@ -875,9 +969,10 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
             let r = cell(c, y, fh).shrink2(vec2(2.0, 1.0));
             let lit = flag(&s, f);
             if lit {
-                gradient(&p, r, heat_color(0.85), heat_color(0.55));
+                gradient(&p, r, hex(0xffe14a), hex(0xff2a08));
+                p.rect_stroke(r, 0.0, Stroke::new(1.0_f32, Color32::BLACK), egui::StrokeKind::Outside);
             } else {
-                rect_fill(&p, r, 2.0, hex(0x1a0e0a));
+                rect_fill(&p, r, 0.0, alpha(SCORCH, 0.72));
             }
             let resp = ui.interact(r, id.with(("flag", f, i)), Sense::click());
             if c == 0 {
@@ -902,8 +997,8 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
         } else {
             // In the chain one row at a time: click its name for the next.
             let resp = ui.interact(lab, id.with("lane_pick"), Sense::click());
-            rect_fill(&p, lab.shrink(1.0), 3.0, if resp.hovered() { CINDER } else { hex(0x22120d) });
-            p.with_clip_rect(lab).text(lab.center(), Align2::CENTER_CENTER, lane.name(), FontId::proportional(10.0), GOLD);
+            cut_plate(&p, lab.shrink(1.0), 4.0, if resp.hovered() { hex(0x3a0a04) } else { Color32::BLACK }, Stroke::new(1.0_f32, hex(0xb3200c)));
+            p.with_clip_rect(lab).text(lab.center(), Align2::CENTER_CENTER, lane.name(), hard_font(9.0), hex(0xffd23a));
             if let Some(d) = clicks(&resp.on_hover_text("The row of values shown. Click: the next, right-click: the one before")) {
                 view.lane = ((view.lane as i32 + d).rem_euclid(LANES.len() as i32)) as usize;
             }
@@ -914,7 +1009,7 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
             let i = first + c;
             let s = written[i];
             let r = cell(c, y + 1.0, h - 2.0).shrink2(vec2(2.0, 1.0));
-            rect_fill(&p, r, 2.0, hex(0x170c09));
+            rect_fill(&p, r, 0.0, alpha(SCORCH, 0.8));
             match lane.range() {
                 Some((lo, hi)) => {
                     let v = lane.get(&s);
@@ -927,18 +1022,18 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
                     };
                     let bar = Rect::from_min_max(pos2(r.left() + 2.0, from.min(to)), pos2(r.right() - 2.0, from.max(to)));
                     if s.on {
-                        gradient(&p, bar, heat_color(0.55 + 0.45 * f), heat_color(0.3));
+                        gradient(&p, bar, mix(hex(0xff5c00), hex(0xfff0a0), f), hex(0xc80a10));
                     } else {
-                        rect_fill(&p, bar, 1.0, ASH);
+                        rect_fill(&p, bar, 0.0, alpha(ASH, 0.8));
                     }
                 }
                 None => {
                     let t = lane.shown(&s);
                     let lit = lane.get(&s) > if lane == Lane::Ratchet { 1.0 } else { 0.0 };
                     if lit {
-                        gradient(&p, r, heat_color(0.6), heat_color(0.35));
+                        gradient(&p, r, hex(0xff5c00), hex(0xc80a10));
                     }
-                    p.with_clip_rect(r).text(r.center(), Align2::CENTER_CENTER, t, FontId::proportional((h * 0.4).clamp(8.0, 12.0)), if lit { WHITE_HOT } else { ASH });
+                    inked(&p.with_clip_rect(r), r.center(), Align2::CENTER_CENTER, &t, hard_font((h * 0.4).clamp(8.0, 12.0)), if lit { hex(0xffffff) } else { SMOKE });
                 }
             }
         }
@@ -979,14 +1074,15 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
     if let Some(s) = state.filter(|s| s.pattern == pat && s.step / PAGE == view.page) {
         let x = grid_l + (s.step % PAGE) as f32 * cw + cw * 0.5;
         let col = Rect::from_min_max(pos2(x - cw * 0.5, top), pos2(x + cw * 0.5, grid.bottom()));
-        gradient(&p, col, alpha(EMBER, 0.0), alpha(EMBER, 0.18));
-        p.line_segment([pos2(x, steps_row.top()), pos2(x, grid.bottom())], Stroke::new(3.0_f32, alpha(EMBER, 0.45)));
-        p.line_segment([pos2(x, steps_row.top()), pos2(x, grid.bottom())], Stroke::new(1.2_f32, GOLD));
+        gradient(&p, col, alpha(EMBER, 0.12), alpha(EMBER, 0.4));
+        p.line_segment([pos2(x, steps_row.top()), pos2(x, grid.bottom())], Stroke::new(5.0_f32, alpha(EMBER, 0.55)));
+        p.line_segment([pos2(x, steps_row.top()), pos2(x, grid.bottom())], Stroke::new(2.0_f32, WHITE_HOT));
     }
 
     // The tools under the grid (in the chain; big, they are beside it).
     if !big {
         let ty = rect.bottom() - 6.0 - tools_h + 2.0;
+        rect_fill(&p, Rect::from_min_max(pos2(rect.left(), ty - 2.0), rect.right_bottom()), 0.0, alpha(Color32::BLACK, 0.82));
         changed |= tools(ui, id, params, data, live, pat, pos2(rect.left() + 6.0, ty), rect.right() - 6.0, tools_h - 2.0, &mut acts);
     }
 
@@ -1062,31 +1158,38 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
                 }
             }
         }
-        fire.update(dt);
-        // Heat shimmer over the top of the grid while it plays.
-        if state.is_some() && !calm {
-            let t = fire.time as f32;
-            for k in 0..3 {
-                let yy = top - 3.0 - k as f32 * 4.0;
-                let pts: Vec<Pos2> = (0..=40).map(|j| pos2(grid_l + j as f32 * grid.width() / 40.0, yy + (t * 6.0 + j as f32 * 0.7 + k as f32).sin() * 1.5)).collect();
-                p.add(Shape::line(pts, Stroke::new(1.0_f32, alpha(FLAME, 0.08 + 0.08 * heat))));
+        // Embers and sparks going up from the blaze, always; more the harder it burns.
+        fire.ember_carry += dt * (if calm { 10.0 } else { 26.0 } + 90.0 * blaze.heat * if calm { 0.3 } else { 1.0 });
+        while fire.ember_carry >= 1.0 {
+            fire.ember_carry -= 1.0;
+            let (ux, uy, up) = (fire.unit(), fire.unit(), fire.unit());
+            let (x, y) = (ux * whole.width(), whole.height() - uy * uy * whole.height() * 0.5);
+            let vx = (fire.unit() - 0.5) * 70.0;
+            if up < 0.25 {
+                let boost = fire.unit();
+                fire.spawn(SPARK_P, x, y, vx * 2.0, -170.0 - 260.0 * boost, 0.45 + 0.5 * uy, 1.0, 1.0);
+            } else {
+                fire.spawn(EMBER_P, x, y, vx, -60.0 - 120.0 * up, 0.9 + 1.2 * uy, 1.0 + 1.5 * up, 0.8);
             }
         }
-        fire.draw(&painter.with_clip_rect(rect.shrink(1.0)), origin);
-        if state.is_some() || fire.alive() > 0 || burn {
-            ui.ctx().request_repaint();
-        }
+        fire.update(dt);
+        fire.draw(&painter.with_clip_rect(whole), origin, blazing);
+        ui.ctx().request_repaint();
     }
     put_fire(ui.ctx(), id, fire);
 
     if big {
         // Its settings beside the grid.
         let side_rect = Rect::from_min_size(pos2(rect.right() + 8.0, rect.top()), vec2(side - 8.0, height));
+        rect_fill(&painter, side_rect, 0.0, alpha(SCORCH, 0.84));
         let mut child = ui.new_child(UiBuilder::new().max_rect(side_rect).layout(egui::Layout::top_down(egui::Align::Min)));
         egui::ScrollArea::vertical().id_salt(id.with("side")).max_height(height).show(&mut child, |ui| {
             ui.set_width(side - 20.0);
             changed |= settings(ui, id, params, data, live, pat, around, &mut acts);
         });
+    }
+    if blazing && !calm {
+        super::inferno_fire::front(&ui.painter().with_clip_rect(whole), whole, 0.6, blaze);
     }
     ui.ctx().data_mut(|d| d.insert_temp(view_id, view));
     (changed, acts)
@@ -1172,8 +1275,8 @@ fn settings(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, live: L
     let heading = |ui: &mut Ui, s: &str| {
         ui.add_space(4.0);
         let (r, _) = ui.allocate_exact_size(vec2(w, 16.0), Sense::hover());
-        glow_text(ui.painter(), r.left_center(), Align2::LEFT_CENTER, s, logo_font(12.0), GOLD, 0.5);
-        ui.painter().line_segment([r.left_bottom(), r.right_bottom()], Stroke::new(1.0_f32, CINDER));
+        flame_logo(ui.painter(), r.left_center(), s, 17.0, 0.0);
+        ui.painter().line_segment([r.left_bottom(), r.right_bottom()], Stroke::new(2.0_f32, hex(0xeb0d08)));
     };
     // A row of dropdowns, then a row of faders.
     let drops = |ui: &mut Ui, list: &[usize], params: &mut [f32]| -> bool {

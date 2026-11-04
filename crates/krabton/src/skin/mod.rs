@@ -39,6 +39,8 @@ pub enum Font {
     Lcd,
     /// A script, chrome on old instruments (Yellowtail).
     Script,
+    /// A metal band's logo (Metal Mania).
+    Metal,
     /// A grand serif (Abril Fatface).
     Serif,
     /// Tall condensed capitals (Bebas Neue).
@@ -50,6 +52,7 @@ const FONTS: &[(&str, &[u8])] = &[
     ("k-wide", include_bytes!("../../assets/fonts/Michroma-Regular.ttf")),
     ("k-future", include_bytes!("../../assets/fonts/Audiowide-Regular.ttf")),
     ("k-block", include_bytes!("../../assets/fonts/Bungee-Regular.ttf")),
+    ("k-metal", include_bytes!("../../assets/fonts/MetalMania-Regular.ttf")),
     ("k-neon", include_bytes!("../../assets/fonts/Monoton-Regular.ttf")),
     ("k-space", include_bytes!("../../assets/fonts/Orbitron-Variable.ttf")),
     ("k-pixel", include_bytes!("../../assets/fonts/PressStart2P-Regular.ttf")),
@@ -68,6 +71,7 @@ impl Font {
             Font::Wide => "k-wide",
             Font::Future => "k-future",
             Font::Block => "k-block",
+            Font::Metal => "k-metal",
             Font::Neon => "k-neon",
             Font::Space => "k-space",
             Font::Pixel => "k-pixel",
@@ -91,6 +95,7 @@ impl Font {
             Font::Tall => 1.2,
             Font::Script => 1.15,
             Font::Block => 0.9,
+            Font::Metal => 1.15,
             Font::Space => 0.95,
             _ => 1.0,
         };

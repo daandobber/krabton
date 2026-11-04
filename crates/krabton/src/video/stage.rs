@@ -539,7 +539,7 @@ unsafe fn compile(gl: &glow::Context, kind: u32, src: &str) -> Result<glow::Shad
     Ok(sh)
 }
 
-unsafe fn program(gl: &glow::Context, frag: &str) -> Result<glow::Program, String> {
+pub(crate) unsafe fn program(gl: &glow::Context, frag: &str) -> Result<glow::Program, String> {
     let vs = compile(gl, glow::VERTEX_SHADER, &format!("{}{VERTEX}", header(gl, false)))?;
     let fs = compile(gl, glow::FRAGMENT_SHADER, &format!("{}{frag}", header(gl, true)))?;
     let prog = gl.create_program()?;
