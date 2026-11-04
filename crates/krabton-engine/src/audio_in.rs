@@ -66,6 +66,21 @@ impl InputRing {
         self.written.store(w, Ordering::Release);
     }
 
+    /// Takes all that came in as one channel, for recording away from the
+    /// engine (nothing is skipped, whatever the wait since the last time).
+    pub fn drain_mono(&self, out: &mut Vec<f32>) {
+        let w = self.written.load(Ordering::Acquire);
+        let mut r = self.read.load(Ordering::Relaxed);
+        let ch = self.channels().max(1);
+        while r < w {
+            let base = ((r & self.mask) as usize) * MAX_INPUTS;
+            let sum: f32 = (0..ch).map(|c| f32::from_bits(self.data[base + c].load(Ordering::Relaxed))).sum();
+            out.push(sum / ch as f32);
+            r += 1;
+        }
+        self.read.store(r, Ordering::Release);
+    }
+
     /// Engine: takes `n` frames, channel-major (`out[c * stride + i]`).
     /// Missing frames are silent. Returns the frames that were real input.
     pub fn pop(&self, n: usize, out: &mut [f32], stride: usize) -> usize {
@@ -98,6 +113,20 @@ impl InputRing {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn draining_takes_everything_as_one_channel() {
+        let ring = InputRing::new(8192, 2);
+        let many: Vec<f32> = (0..12000).flat_map(|i| [i as f32 / 12000.0, 0.0]).collect();
+        ring.push(&many[..10000], 2);
+        let mut out = Vec::new();
+        ring.drain_mono(&mut out);
+        assert_eq!(out.len(), 5000, "more than the engine would wait for");
+        assert!((out[1000] - 1000.0 / 12000.0 / 2.0).abs() < 1e-6);
+        out.clear();
+        ring.drain_mono(&mut out);
+        assert!(out.is_empty());
+    }
 
     #[test]
     fn frames_come_out_in_order_per_channel() {

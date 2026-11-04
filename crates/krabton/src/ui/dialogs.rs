@@ -59,6 +59,7 @@ impl App {
         self.ui_rack(ctx);
         self.ui_glitch_window(ctx);
         self.ui_seq_full(ctx);
+        self.ui_hum(ctx);
         self.map_follow_scenes();
         self.ui_map_window(ctx);
         self.ui_video(ctx);

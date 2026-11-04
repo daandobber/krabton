@@ -631,6 +631,8 @@ pub struct App {
     pub(crate) map_selected: Option<u64>,
     /// The listener is what the Map's side shows.
     pub(crate) map_listener_sel: bool,
+    /// Hum a Melody (see `ui::hum`).
+    pub(crate) hum: crate::ui::hum::HumState,
     /// Who the mouse is drawing a path for on the Map.
     pub(crate) map_drawing: Option<krabton_engine::modulation::ModOwner>,
     /// The setup the Map went over to last.
@@ -836,6 +838,7 @@ impl App {
             video: Default::default(),
             map_selected: None,
             map_listener_sel: false,
+            hum: Default::default(),
             map_drawing: None,
             map_setup: None,
             map_scene_seen: 0,
@@ -4023,6 +4026,7 @@ impl App {
                 "devices" => self.detail = DetailTab::Devices,
                 "settings" => self.show_settings = true,
                 "mapwin" => self.map_window = true,
+                "humwin" => self.hum.open = true,
                 // video: its view (video=0 goes back); videoload=PATH: a clip into its bank; videotest=PATH: a
                 // test clip (a GIF made here) written there and loaded; videopreset=NAME;
                 // videomode=N (0 Loop, 1 Tempo, 2 Slices); videoscreen: its screen.

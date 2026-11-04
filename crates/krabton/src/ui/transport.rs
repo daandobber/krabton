@@ -369,6 +369,11 @@ impl App {
                 self.project.add_scene(at);
                 ui.close();
             }
+            ui.separator();
+            if ui.button("Hum a Melody...").on_hover_text("Sing or hum into the microphone: it becomes notes on the selected MIDI track").clicked() {
+                self.hum.open = true;
+                ui.close();
+            }
         });
         ui.menu_button("Options", |ui| {
             if ui.checkbox(&mut self.prefs.big_picture, "Start in Big Picture").on_hover_text("For a Steam Deck, a ClockworkPi or a touch screen. --big-picture or KRABTON_BIG_PICTURE=1 does it once").changed() {
