@@ -72,10 +72,15 @@ pub fn all() -> Vec<Pack> {
     v
 }
 
+/// Only fetched when asked for by name: never by the installer, a whole group or "Download all".
+pub fn by_name_only(kind: Kind) -> bool {
+    matches!(kind, Kind::Drums(i) if real_drums::license_unclear(&real_drums::PACKS[i]))
+}
+
 /// The packs the installer's choice names: group ids by commas.
 pub fn parse_choice(text: &str, packs: &[Pack]) -> Vec<Kind> {
     let groups: Vec<&str> = text.split([',', '\n', '\r']).map(str::trim).filter(|g| !g.is_empty()).collect();
-    packs.iter().filter(|p| groups.contains(&p.group)).map(|p| p.kind).collect()
+    packs.iter().filter(|p| groups.contains(&p.group) && !by_name_only(p.kind)).map(|p| p.kind).collect()
 }
 
 /// A pack's place on this disk, as Krabton keeps it.
@@ -445,6 +450,11 @@ mod tests {
         assert!(!kinds.contains(&Kind::Sf2(0)));
         assert!(parse_choice("", &packs).is_empty());
         assert!(parse_choice("nonsense", &packs).is_empty());
+        // Samples without a stated license come only when asked for by name.
+        let lm2 = real_drums::PACKS.iter().position(real_drums::license_unclear).map(Kind::Drums).unwrap();
+        assert!(by_name_only(lm2) && packs.iter().any(|p| p.kind == lm2));
+        assert!(!parse_choice("drums", &packs).contains(&lm2));
+        assert!(parse_choice("drums", &packs).contains(&Kind::Drums(real_drums::PACKS.len() - 1)));
     }
 
     #[test]

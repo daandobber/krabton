@@ -182,6 +182,42 @@ pub static KIT_707: &[RealPad] = &[
     one("Cowbell", 56, DrumVoice::Cowbell, -9.0, TR707, &[&["CowBell.wav"]]),
 ];
 
+/// The drum machine of the early eighties: its sounds as a kit.
+pub static KIT_LM2: &[RealPad] = &[
+    one("Kick Low", 35, DrumVoice::M808Kick, -1.0, "", &[&["kickme.wav"]]),
+    one("Kick", 36, DrumVoice::M808Kick, 0.0, "", &[&["kick.wav"]]),
+    one("Side Stick", 37, DrumVoice::M808Rim, -6.0, "", &[&["sst.wav"]]),
+    one("Snare", 38, DrumVoice::M808Snare, -1.0, "", &[&["sd.wav"]]),
+    one("Clap", 39, DrumVoice::M808Clap, -3.0, "", &[&["clap.wav"]]),
+    one("Snare High", 40, DrumVoice::M808Snare, -2.0, "", &[&["sdh.wav"]]),
+    one("Snare Low", 41, DrumVoice::M808Snare, -2.0, "", &[&["sdl.wav"]]),
+    RealPad { choke: 1, ..one("Closed Hat", 42, DrumVoice::M808ClosedHat, -7.0, "", &[&["chh.wav"]]) },
+    one("Low Tom", 43, DrumVoice::M808Tom, -3.0, "", &[&["toml.wav"]]),
+    RealPad { choke: 1, ..one("Short Hat", 44, DrumVoice::M808ClosedHat, -7.0, "", &[&["chhs.wav"]]) },
+    RealPad { choke: 1, ..one("Long Hat", 46, DrumVoice::M808OpenHat, -7.0, "", &[&["chhl.wav"]]) },
+    one("Mid Tom", 47, DrumVoice::M808Tom, -3.0, "", &[&["tom.wav"]]),
+    one("Crash", 49, DrumVoice::M808Cymbal, -9.0, "", &[&["crash.wav"]]),
+    one("High Tom", 50, DrumVoice::M808Tom, -3.0, "", &[&["tomh.wav"]]),
+    one("Ride", 51, DrumVoice::M808Cymbal, -10.0, "", &[&["ride.wav"]]),
+    one("Cowbell", 56, DrumVoice::M808Cowbell, -8.0, "", &[&["cowb.wav"]]),
+];
+
+/// The same machine's percussion and its tuned variations.
+pub static KIT_LM2_PERC: &[RealPad] = &[
+    one("Very Low Tom", 41, DrumVoice::M808Tom, -3.0, "", &[&["tomll.wav"]]),
+    one("Very High Tom", 48, DrumVoice::M808Tom, -3.0, "", &[&["tomhh.wav"]]),
+    one("Tambourine", 54, DrumVoice::M808Clap, -6.0, "", &[&["tamb.wav"]]),
+    one("Stick High", 37, DrumVoice::M808Rim, -5.0, "", &[&["ssth.wav"]]),
+    one("Stick Low", 39, DrumVoice::M808Rim, -5.0, "", &[&["sstl.wav"]]),
+    one("Conga Very High", 60, DrumVoice::M808Conga, -5.0, "", &[&["congahh.wav"]]),
+    one("Conga High", 62, DrumVoice::M808Conga, -5.0, "", &[&["congah.wav"]]),
+    one("Conga", 63, DrumVoice::M808Conga, -5.0, "", &[&["conga.wav"]]),
+    one("Conga Low", 64, DrumVoice::M808Conga, -5.0, "", &[&["congal.wav"]]),
+    one("Conga Very Low", 65, DrumVoice::M808Conga, -5.0, "", &[&["congall.wav"]]),
+    one("Conga Lowest", 66, DrumVoice::M808Conga, -5.0, "", &[&["congalll.wav"]]),
+    one("Cabasa", 69, DrumVoice::M808ClosedHat, -6.0, "", &[&["cabasa.wav"]]),
+];
+
 pub static KIT_808: &[RealPad] = &[
     one("Boom", 35, DrumVoice::M808Kick, -1.0, "", &[&["bd8/BD2510.WAV"]]),
     one("Kick", 36, DrumVoice::M808Kick, 0.0, "", &[&["bd8/BD5025.WAV"]]),
@@ -498,7 +534,24 @@ const fn karoryfer(folder: &'static str, base: &'static str, credit: &'static st
     SamplePack { folder, base, credit, mb, kits, normalize: true }
 }
 
+/// A pack whose samples have no stated license: never fetched unless asked
+/// for by name (not by "Download all", nor by a whole group).
+pub const LM2_FOLDER: &str = "LM-2 Samples";
+
+/// Its samples have no stated license (see `LM2_FOLDER`).
+pub fn license_unclear(pack: &SamplePack) -> bool {
+    pack.folder == LM2_FOLDER
+}
+
 pub static PACKS: &[SamplePack] = &[
+    SamplePack {
+        folder: LM2_FOLDER,
+        base: "https://raw.githubusercontent.com/jonasrmichel/rudiments/924ea658b15509c8b4ff9830830a706080dd6473/assets/samples/linndrum/",
+        credit: "Samples of the LinnDrum, as kept in the rudiments project (https://github.com/jonasrmichel/rudiments), which got them as a free pack from drumkito.com, uploaded by majortom@muc.de. No license for the samples is stated anywhere: they are not part of Krabton and not covered by its license, or by the license of rudiments' code. Check before you release anything made with them.",
+        mb: 1,
+        kits: &[("LM-2 Samples", KIT_LM2), ("LM-2 Percussion", KIT_LM2_PERC)],
+        normalize: false,
+    },
     SamplePack { folder: FOLDER, base: BASE_URL, credit: CREDIT, mb: 62, kits: &[("Real Kit", REAL_KIT), ("Real Percussion", REAL_PERC)], normalize: false },
     SamplePack {
         folder: "707 Samples (Francois Dion)",

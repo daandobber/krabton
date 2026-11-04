@@ -1060,7 +1060,7 @@ impl DrumEngine {
             DrumEngine::FmDrums => &["FM Kit", "FM Industrial", "FM Glitch"],
             DrumEngine::Acoustic => &["Studio Kit", "Rock Kit", "Jazz Kit", "Funk Kit", "Vintage Kit", "Brush Kit"],
             DrumEngine::RealDrums => &["Real Kit", "Rusty Kit", "Classic Rock Kit", "Naked Kit", "Metal Kit", "Room Kit", "Garage Kit", "70s Kit", "Jazz Club Kit", "Lounge Kit", "Dry Kit", "Real Percussion", "Body Percussion", "Tabla"],
-            DrumEngine::SampledMachines => &["707 Samples", "808 Samples", "Electro Kit", "Club Kit", "Glitch Kit"],
+            DrumEngine::SampledMachines => &["707 Samples", "808 Samples", "LM-2 Samples", "LM-2 Percussion", "Electro Kit", "Club Kit", "Glitch Kit"],
             DrumEngine::Retro => &["Rhythm Box", "Hexagon", "Digital 80s", "Pocket Rhythm"],
             DrumEngine::Resonant => &["Resonant Kit", "Circuit Kit", "FM Perc Kit"],
             DrumEngine::MacroDrums => &["Macro Kit", "Macro Electro", "Macro Industrial"],

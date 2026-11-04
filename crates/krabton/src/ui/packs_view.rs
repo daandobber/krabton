@@ -66,7 +66,7 @@ impl App {
         // What the two big buttons would bring.
         let picked: Vec<Kind> = list.iter().filter(|p| self.packs.picked.contains(&p.kind)).map(|p| p.kind).collect();
         let picked_mb: u64 = list.iter().filter(|p| self.packs.picked.contains(&p.kind)).map(|p| p.mb as u64).sum();
-        let missing: Vec<&Pack> = list.iter().filter(|p| !self.packs.is_here(p.kind) && !self.pack_on_its_way(p.kind)).collect();
+        let missing: Vec<&Pack> = list.iter().filter(|p| !self.packs.is_here(p.kind) && !self.pack_on_its_way(p.kind) && !packs::by_name_only(p.kind)).collect();
         let all: Vec<Kind> = missing.iter().map(|p| p.kind).collect();
         let all_mb: u64 = missing.iter().map(|p| p.mb as u64).sum();
         ui.horizontal(|ui| {
@@ -99,7 +99,7 @@ impl App {
             self.pack_row(ui, one, Some(title));
             return;
         }
-        let open_kinds: Vec<Kind> = members.iter().filter(|p| !self.packs.is_here(p.kind) && !self.pack_on_its_way(p.kind)).map(|p| p.kind).collect();
+        let open_kinds: Vec<Kind> = members.iter().filter(|p| !self.packs.is_here(p.kind) && !self.pack_on_its_way(p.kind) && !packs::by_name_only(p.kind)).map(|p| p.kind).collect();
         let ticked = open_kinds.iter().filter(|k| self.packs.picked.contains(k)).count();
         let here = members.iter().filter(|p| self.packs.is_here(p.kind)).count();
         let mb: u64 = members.iter().map(|p| p.mb as u64).sum();
