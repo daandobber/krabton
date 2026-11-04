@@ -15,7 +15,10 @@
 //!   output that leans to the highs.
 //! - The 909's bass drum, snare and toms are swept oscillators; its hats,
 //!   ride and crash were 6-bit samples of real cymbals, here a cymbal made
-//!   and played back at 6 bits and a lower rate before its analog VCA.
+//!   and played back at 6 bits and a lower rate before its analog VCA. Their
+//!   pitches, sweeps, partials and lengths are measured from recordings of
+//!   the machine (the bass drum falls from about 280 Hz to 50 Hz, with a time
+//!   constant of 29 ms; no recording is used here).
 //! - The 606's are tighter versions of the 808 circuits; the CR-78's are
 //!   gentler resonators and gated noise; then the bending toms of the first
 //!   electronic kits, and two-operator FM drums.
@@ -277,7 +280,7 @@ impl MachineVoice {
                 self.filt[1].set_q(4000.0, 0.7, sr);
                 // The reverb's own band, a little lower and wider.
                 self.filt[2].set_q(f * 0.85 * tune, 1.2, sr);
-                let tail = if voice == M808Clap { 0.35 } else { 0.5 };
+                let tail = if voice == M808Clap { 0.35 } else { 0.38 };
                 self.coef = [dc(tail * d), 0.0, 0.0, 0.0];
             }
             M808Maracas => {
@@ -318,43 +321,42 @@ impl MachineVoice {
                 self.hp.set(12000.0, sr);
             }
             M909Kick => {
-                self.freq = [52.0 * tune, 0.0];
-                // A fast drop in the first milliseconds, then the long slide to the note.
-                self.bend = 2.0;
-                self.bend_coef = decay_coef(0.06, sr);
-                self.bend2 = 0.45;
-                self.bend2_coef = decay_coef(0.3, sr);
-                self.coef = [dc(0.6 * d), 0.0, dc(0.012), 0.0];
-                self.filt[0].set_q(3500.0, 0.7, sr);
+                self.freq = [50.0 * tune, 0.0];
+                // One long fall: this is the punch.
+                self.bend = 4.6;
+                self.bend_coef = dc(0.133);
+                self.coef = [dc(0.34 * d), 0.0, dc(0.01), 0.0];
+                self.filt[0].set_q(2400.0, 0.7, sr);
                 self.filt[1].set_q(300.0, 0.7, sr);
                 self.hp.set(25.0, sr);
             }
             M909Snare => {
-                self.freq = [180.0 * tune, 330.0 * tune];
-                self.bend = 0.35;
-                self.bend_coef = dc(0.025);
-                self.coef = [dc(0.17 * d.sqrt()), dc(0.11 * d.sqrt()), dc(0.3 * d), dc(0.18 * d)];
-                self.filt[0].set(3000.0 + 9000.0 * self.tone, 0.1, sr);
+                self.freq = [228.0 * tune, 362.0 * tune];
+                self.bend = 0.4;
+                self.bend_coef = dc(0.03);
+                self.coef = [dc(0.2 * d.sqrt()), dc(0.12 * d.sqrt()), dc(0.3 * d), dc(0.18 * d)];
+                self.filt[0].set(5000.0 + 12000.0 * self.tone, 0.1, sr);
                 self.filt[1].set_q(2000.0, 0.7, sr);
             }
             M909Tom => {
-                self.freq = [110.0 * tune, 0.0];
-                self.bend = 0.5;
-                self.bend_coef = dc(0.2);
-                self.coef = [dc(0.6 * d), 0.0, dc(0.07), 0.0];
+                self.freq = [132.0 * tune, 0.0];
+                self.bend = 0.2;
+                self.bend_coef = dc(0.12);
+                self.coef = [dc(0.42 * d), 0.0, dc(0.07), 0.0];
                 self.filt[0].set(2000.0, 0.0, sr);
             }
             M909Rim => {
-                self.freq = [500.0 * tune, 1700.0 * tune];
-                self.q = [ring_q(self.freq[0], 0.025 * d), ring_q(self.freq[1], 0.018 * d)];
-                self.coef = [dc(0.025 * d), 0.0, dc(0.01), 0.0];
-                self.filt[0].set_q(4000.0, 0.7, sr);
+                self.freq = [223.0 * tune, 489.0 * tune];
+                self.q = [ring_q(self.freq[0], 0.055 * d), ring_q(self.freq[1], 0.04 * d)];
+                self.coef = [dc(0.055 * d), 0.0, dc(0.014), 0.0];
+                // Its third partial, near 1.1 kHz, rung by the click.
+                self.filt[0].set_q(1100.0, 1.2, sr);
             }
             M909ClosedHat | M909OpenHat | M909Ride | M909Crash => {
                 // env[0]: the analog VCA; env[1]: the sample's own fade (as recorded).
                 let (vca, rec, hpf, lpf) = match voice {
-                    M909ClosedHat => (0.06 * d, 0.9, 6500.0, 12000.0),
-                    M909OpenHat => (0.55 * d, 0.9, 6500.0, 12000.0),
+                    M909ClosedHat => (0.11 * d, 0.9, 6500.0, 12000.0),
+                    M909OpenHat => (0.95 * d, 1.4, 6500.0, 12000.0),
                     M909Ride => (3.0 * d, 2.8, 900.0, 13000.0),
                     _ => (2.2 * d, 2.0, 1800.0, 13000.0),
                 };
@@ -364,6 +366,8 @@ impl MachineVoice {
                 self.filt[2].set_q(3000.0 * tune, 0.6, sr);
                 self.filt[3].set_q(8000.0 * tune.sqrt(), 1.0, sr);
                 self.coef = [dc(vca), dc(rec), 0.0, 0.0];
+                // After the ROM: its noise has no low end to speak of on the machine.
+                self.hp.set(if matches!(voice, M909ClosedHat | M909OpenHat) { 1300.0 } else { 300.0 }, sr);
             }
             Cr78Kick => {
                 self.freq = [66.0 * tune, 0.0];
@@ -558,7 +562,8 @@ impl MachineVoice {
             self.held = six_bit(x);
         }
         let y = self.held * self.env[0];
-        self.filt[1].process(y, FilterMode::Low)
+        let y = self.filt[1].process(y, FilterMode::Low);
+        self.hp.hp(y)
     }
 
     /// A 909 clap or an 808 clap: quick bursts of noise (each a sawtooth
@@ -566,11 +571,11 @@ impl MachineVoice {
     fn clap(&mut self, ts: f32, m808: bool, rng: &mut Rng) -> f32 {
         let (gap, bursts) = if m808 { (0.0105, 3.0) } else { (0.0085, 4.0) };
         let burst = if ts < bursts * gap { 1.0 - (ts % gap) / gap } else { 0.0 };
-        let tail = if ts >= (bursts - 1.0) * gap { self.env[0] * 0.75 } else { 0.0 };
+        let tail = if ts >= (bursts - 1.0) * gap { self.env[0] * if m808 { 0.75 } else { 0.34 } } else { 0.0 };
         let n = rng.bipolar();
         let band = self.filt[0].process(n, FilterMode::Band);
         let verb = self.filt[2].process(n, FilterMode::Band);
-        let bright = self.filt[1].process(n, FilterMode::High) * (0.1 + 0.4 * self.tone);
+        let bright = self.filt[1].process(n, FilterMode::High) * if m808 { 0.1 + 0.4 * self.tone } else { 0.01 + 0.1 * self.tone };
         (band * 2.4 + bright) * burst * burst + (verb * 2.2 + bright * 0.5) * tail
     }
 
@@ -651,13 +656,16 @@ impl MachineVoice {
                 let p = self.advance(0, self.freq[0] * (1.0 + self.bend + self.bend2));
                 // A triangle bent towards a sine (more of its corners with Tone), driven a little.
                 let t = tri(p);
-                let body = (t * (1.0 + 0.5 * tone) * std::f32::consts::FRAC_PI_2).sin() * self.env[0];
+                // A sine at the middle of Tone; further up its corners come in.
+                let edge = 1.0 + (tone - 0.5).max(0.0);
+                let body = (t * edge * std::f32::consts::FRAC_PI_2).sin() * self.env[0];
                 // The attack: a short burst of noise and the trigger's pulse.
                 let n = self.filt[0].process(rng.bipolar(), FilterMode::Low);
                 let n = self.filt[1].process(n, FilterMode::High) * self.env[2];
                 let pulse = if ts < 0.0008 { 1.0 } else { 0.0 };
-                let attack = (n * 0.9 + pulse * 0.8) * (0.15 + 0.85 * a) * (0.5 + 0.5 * self.vel);
-                self.hp.hp(fast_tanh((body + attack) * 1.4))
+                let attack = (n * 1.3 + pulse * 0.35) * (0.15 + 0.85 * a) * (0.5 + 0.5 * self.vel);
+                // A little driven: the body stays round, the attack catches.
+                self.hp.hp(fast_tanh(body * 1.25 + attack))
             }
             M909Snare => {
                 // Two oscillators bent towards sines, and the noise: through the tone's low-pass, and snappy through a high-pass.
@@ -666,20 +674,24 @@ impl MachineVoice {
                 let n = self.filt[0].process(rng.bipolar(), FilterMode::Low);
                 let body_noise = n * self.env[3] * 0.4;
                 let snappy = self.filt[1].process(n, FilterMode::High) * self.env[2] * (0.2 + 1.2 * a);
-                (s1 * 0.65 + s2 * 0.4) * 0.9 + body_noise + snappy
+                (s1 * 0.6 + s2 * 0.24) * 0.9 + body_noise + snappy
             }
             M909Tom => {
-                let body = tri(self.advance(0, self.freq[0] * bendf));
-                let body = (body * std::f32::consts::FRAC_PI_2).sin() * self.env[0];
-                let noise = self.filt[0].process(rng.bipolar(), FilterMode::Low) * self.env[2] * (0.1 + 0.3 * tone);
+                // Its note, and the two partials above it that the machine's toms have.
+                let f = self.freq[0] * bendf;
+                let s1 = sine(self.advance(0, f));
+                let s2 = sine(self.advance(1, f * 1.85));
+                let s3 = sine(self.advance(2, f * 3.0));
+                let body = (s1 + s2 * 0.38 + s3 * 0.14) * 0.72 * self.env[0];
+                let noise = self.filt[0].process(rng.bipolar(), FilterMode::Low) * self.env[2] * (0.2 + 0.4 * tone);
                 body + noise
             }
             M909Rim => {
                 let p = self.pulse_at(ts, 0.0);
                 let (f1, f2, q1, q2) = (self.freq[0], self.freq[1], self.q[0], self.q[1]);
-                let x = self.ring(0, p * ring_gain(f1), f1, q1) + self.ring(1, p * ring_gain(f2) * 0.8, f2, q2);
-                let click = self.filt[0].process(rng.bipolar(), FilterMode::High) * self.env[2];
-                fast_tanh((x + click * (0.5 + tone)) * 2.5) * 0.8
+                let x = self.ring(0, p * ring_gain(f1), f1, q1) + self.ring(1, p * ring_gain(f2) * 1.0, f2, q2);
+                let click = self.filt[0].process(rng.bipolar(), FilterMode::Band) * self.env[2];
+                fast_tanh((x + click * (0.5 + 1.0 * tone)) * 2.5) * 0.8
             }
             Cr78Kick => {
                 let body = sine(self.advance(0, self.freq[0] * bendf)) * self.env[0];
@@ -758,19 +770,23 @@ impl MachineVoice {
 fn machine_trim(voice: DrumVoice) -> f32 {
     use DrumVoice::*;
     match voice {
-        M909Snare => 0.55,
+        M909Kick => 1.3,
+        M909Tom => 1.2,
+        M909Snare => 0.8,
+        M909Rim => 1.4,
         Cr78Guiro => 0.4,
         Cr78Tambourine => 0.55,
         Cr78Metal => 0.35,
         Cr78Hat => 0.5,
         M808Clap => 0.65,
-        M909Clap => 0.55,
+        M909Clap => 0.95,
         M808Cowbell => 0.55,
         M808Claves => 5.0,
         M808Rim => 1.3,
         M808ClosedHat => 0.8,
         M808OpenHat => 0.75,
-        M909ClosedHat => 1.1,
+        M909ClosedHat => 1.9,
+        M909OpenHat => 1.6,
         M909Ride | M909Crash => 0.6,
         M606ClosedHat => 0.7,
         M606OpenHat => 0.55,
@@ -947,6 +963,25 @@ mod tests {
             let k = v.held * 31.0;
             assert!((k - k.round()).abs() < 1e-3, "6-bit: {}", v.held);
         }
+    }
+
+    /// The frequency of a stretch of a hit, by its crossings.
+    fn hz(x: &[f32], from: f32, to: f32) -> f32 {
+        let s = &x[(from * SR) as usize..(to * SR) as usize];
+        let ups = s.windows(2).filter(|w| w[0] < 0.0 && w[1] >= 0.0).count() as f32;
+        ups / (to - from)
+    }
+
+    #[test]
+    fn the_909_kick_falls_as_the_machine_measures() {
+        let x = run(DrumVoice::M909Kick, 0.5);
+        // About 230 Hz at 7 ms, 170 at 20, down to about 50 in the end.
+        let early = hz(&x, 0.004, 0.016);
+        assert!((165.0..270.0).contains(&early), "{early}");
+        let mid = hz(&x, 0.02, 0.05);
+        assert!((95.0..170.0).contains(&mid), "{mid}");
+        let late = hz(&x, 0.2, 0.34);
+        assert!((43.0..62.0).contains(&late), "{late}");
     }
 
     #[test]

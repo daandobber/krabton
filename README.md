@@ -23,7 +23,7 @@ No programming needed: download the file for your system from the [Releases page
 
 For sound on Linux see [Building](#building) below: Krabton talks to PulseAudio/PipeWire directly, or to ALSA.
 
-**LM-2 Samples** and **LM-2 Percussion** (Drum Rack, *Sampled Machines*) are the sounds of the early-eighties drum machine, fetched on your word from the [rudiments](https://github.com/jonasrmichel/rudiments) project. No license for those samples is stated anywhere, so they are not part of Krabton, *Download all* leaves them out, and you should check before releasing anything made with them.
+**909 Samples** (recordings of the machine, from [tidal-drum-machines](https://github.com/geikha/tidal-drum-machines)), and **LM-2 Samples** and **LM-2 Percussion** (the early-eighties drum machine, from [rudiments](https://github.com/jonasrmichel/rudiments)), in the Drum Rack under *Sampled Machines*, are fetched on your word. No license for those samples is stated, so they are not part of Krabton, *Download all* leaves them out, and you should check before releasing anything made with them.
 
 **Packs**: the big sounds are not in the download. The Windows installer asks which you want and Krabton fetches them the first time it starts, while you work; on Linux and macOS the *Packs* window opens by itself the first time. The window is always in the *Krabton* menu: the grand piano, the orchestra, the soloists and band, drum kits, SoundFonts, voices, the Princess Sounds, ffmpeg and yt-dlp, with what is here and how big it is, *Download selected*, *Download all* and *Remove*. They arrive in `Documents/Krabton/Library`, one at a time.
 

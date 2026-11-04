@@ -968,7 +968,7 @@ static GMUTABLE: [(&str, &[DrumVoice]); 1] = [("Mutable", &DrumVoice::MUTABLE)];
 static GSHAKERS: [(&str, &[DrumVoice]); 1] = [("Shakers", &DrumVoice::SHAKERS)];
 static GACOUSTIC: [(&str, &[DrumVoice]); 2] = [("Acoustic", &DrumVoice::ACOUSTIC), ("Percussion", &DrumVoice::KIT_PERC)];
 static REAL_PERC: [DrumVoice; 8] = [DrumVoice::Tambourine, DrumVoice::Cowbell, DrumVoice::Clap, DrumVoice::Maraca, DrumVoice::Cr78Bongo, DrumVoice::M808Conga, DrumVoice::M808Claves, DrumVoice::M808Tom];
-static GMACHINES: [(&str, &[DrumVoice]); 3] = [("808", &DrumVoice::M808), ("Acoustic", &DrumVoice::ACOUSTIC), ("Percussion", &REAL_PERC)];
+static GMACHINES: [(&str, &[DrumVoice]); 4] = [("808", &DrumVoice::M808), ("909", &DrumVoice::M909), ("Acoustic", &DrumVoice::ACOUSTIC), ("Percussion", &REAL_PERC)];
 static GRETRO: [(&str, &[DrumVoice]); 1] = [("Retro", &DrumVoice::RETRO)];
 static GRESONANT: [(&str, &[DrumVoice]); 1] = [("Resonant", &DrumVoice::RESONANT)];
 static GMACRO: [(&str, &[DrumVoice]); 1] = [("Macro", &DrumVoice::MACRO)];
@@ -1060,7 +1060,7 @@ impl DrumEngine {
             DrumEngine::FmDrums => &["FM Kit", "FM Industrial", "FM Glitch"],
             DrumEngine::Acoustic => &["Studio Kit", "Rock Kit", "Jazz Kit", "Funk Kit", "Vintage Kit", "Brush Kit"],
             DrumEngine::RealDrums => &["Real Kit", "Rusty Kit", "Classic Rock Kit", "Naked Kit", "Metal Kit", "Room Kit", "Garage Kit", "70s Kit", "Jazz Club Kit", "Lounge Kit", "Dry Kit", "Real Percussion", "Body Percussion", "Tabla"],
-            DrumEngine::SampledMachines => &["707 Samples", "808 Samples", "LM-2 Samples", "LM-2 Percussion", "Electro Kit", "Club Kit", "Glitch Kit"],
+            DrumEngine::SampledMachines => &["707 Samples", "808 Samples", "909 Samples", "LM-2 Samples", "LM-2 Percussion", "Electro Kit", "Club Kit", "Glitch Kit"],
             DrumEngine::Retro => &["Rhythm Box", "Hexagon", "Digital 80s", "Pocket Rhythm"],
             DrumEngine::Resonant => &["Resonant Kit", "Circuit Kit", "FM Perc Kit"],
             DrumEngine::MacroDrums => &["Macro Kit", "Macro Electro", "Macro Industrial"],

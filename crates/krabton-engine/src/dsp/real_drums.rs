@@ -182,6 +182,23 @@ pub static KIT_707: &[RealPad] = &[
     one("Cowbell", 56, DrumVoice::Cowbell, -9.0, TR707, &[&["CowBell.wav"]]),
 ];
 
+/// Recordings of the 909 itself.
+pub static KIT_909: &[RealPad] = &[
+    one("Kick Long", 35, DrumVoice::M909Kick, 0.0, "rolandtr909-bd", &[&["Bassdrum-04.wav"]]),
+    one("Kick", 36, DrumVoice::M909Kick, 0.0, "rolandtr909-bd", &[&["Bassdrum-01.wav"]]),
+    one("Rim", 37, DrumVoice::M909Rim, -7.0, "rolandtr909-rim", &[&["Rimhot.wav"]]),
+    one("Snare", 38, DrumVoice::M909Snare, -2.0, "rolandtr909-sd", &[&["naredrum.wav"]]),
+    one("Clap", 39, DrumVoice::M909Clap, -3.0, "rolandtr909-cp", &[&["Clap.wav"]]),
+    one("Snare Tight", 40, DrumVoice::M909Snare, -2.0, "rolandtr909-sd", &[&["sd01.wav"]]),
+    one("Low Tom", 41, DrumVoice::M909Tom, -3.0, "rolandtr909-lt", &[&["Tom L.wav"]]),
+    RealPad { choke: 1, ..one("Closed Hat", 42, DrumVoice::M909ClosedHat, -7.0, "rolandtr909-hh", &[&["hh01.wav"]]) },
+    one("Mid Tom", 45, DrumVoice::M909Tom, -3.0, "rolandtr909-mt", &[&["Tom M.wav"]]),
+    RealPad { choke: 1, ..one("Open Hat", 46, DrumVoice::M909OpenHat, -8.0, "rolandtr909-oh", &[&["Hat Open.wav"]]) },
+    one("High Tom", 48, DrumVoice::M909Tom, -3.0, "rolandtr909-ht", &[&["Tom H.wav"]]),
+    one("Crash", 49, DrumVoice::M909Crash, -9.0, "rolandtr909-cr", &[&["Crash.wav"]]),
+    one("Ride", 51, DrumVoice::M909Ride, -10.0, "rolandtr909-rd", &[&["Ride.wav"]]),
+];
+
 /// The drum machine of the early eighties: its sounds as a kit.
 pub static KIT_LM2: &[RealPad] = &[
     one("Kick Low", 35, DrumVoice::M808Kick, -1.0, "", &[&["kickme.wav"]]),
@@ -538,12 +555,22 @@ const fn karoryfer(folder: &'static str, base: &'static str, credit: &'static st
 /// for by name (not by "Download all", nor by a whole group).
 pub const LM2_FOLDER: &str = "LM-2 Samples";
 
+pub const SAMPLES_909_FOLDER: &str = "909 Samples";
+
 /// Its samples have no stated license (see `LM2_FOLDER`).
 pub fn license_unclear(pack: &SamplePack) -> bool {
-    pack.folder == LM2_FOLDER
+    pack.folder == LM2_FOLDER || pack.folder == SAMPLES_909_FOLDER
 }
 
 pub static PACKS: &[SamplePack] = &[
+    SamplePack {
+        folder: SAMPLES_909_FOLDER,
+        base: "https://raw.githubusercontent.com/geikha/tidal-drum-machines/6577395a4d05031728ced2ec3e5637fa89d8be48/machines/RolandTR909/",
+        credit: "Recordings of the TR-909, as kept in the tidal-drum-machines collection (https://github.com/geikha/tidal-drum-machines). No license for the samples is stated: they are not part of Krabton and not covered by its license. Check before you release anything made with them.",
+        mb: 2,
+        kits: &[("909 Samples", KIT_909)],
+        normalize: false,
+    },
     SamplePack {
         folder: LM2_FOLDER,
         base: "https://raw.githubusercontent.com/jonasrmichel/rudiments/924ea658b15509c8b4ff9830830a706080dd6473/assets/samples/linndrum/",
