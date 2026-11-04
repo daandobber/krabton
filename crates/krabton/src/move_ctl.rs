@@ -2238,7 +2238,7 @@ mod tests {
         let mut f = Frame::dark();
         let first = f.diff(&mut sent, 1000);
         // Everything the Move has goes out once: 48 notes, the buttons, 8 knobs, 16 step lights.
-        assert_eq!(first.len(), 48 + 19 + 8 + 16);
+        assert_eq!(first.len(), 48 + 20 + 8 + 16);
         assert!(f.diff(&mut sent, 1000).is_empty(), "nothing changed: nothing sent");
         f.set_pad(5, 33);
         f.set_button(Button::Play, GREEN);
