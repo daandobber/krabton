@@ -212,6 +212,8 @@ pub struct EngineStatus {
     pub preview_active: AtomicBool,
     /// Output of each modulator (-1..1), by position in `Project::modulators`.
     pub mods: Vec<AtomicF32>,
+    /// Where the listener on the Map is now (modulated): across, depth, turn.
+    pub listener_live: [AtomicF32; 3],
     /// Audio taps of devices with a display.
     pub scopes: crate::scope::ScopeBank,
     /// Numbers those devices publish (gain reduction, loudness, ...).
@@ -308,6 +310,7 @@ impl EngineStatus {
             master: TrackStatus::new(),
             preview_active: AtomicBool::new(false),
             mods: (0..MAX_MODS).map(|_| AtomicF32::new(0.0)).collect(),
+            listener_live: std::array::from_fn(|_| AtomicF32::new(0.0)),
             scopes: crate::scope::ScopeBank::new(),
             meters: crate::scope::MeterBank::new(),
             input_peaks: (0..MAX_INPUTS).map(|_| AtomicF32::new(0.0)).collect(),
@@ -2769,15 +2772,19 @@ impl Engine {
                         st.clear();
                     }
                     // Modulated (a track walking round), and where it is now for the map.
+                    let room = mods.params(ModOwner::Listener).map_or(project.map, |v| project.map.with_listener(v));
+                    for (a, v) in status.listener_live.iter().zip(room.listener_params()) {
+                        a.store(v);
+                    }
                     let aim = place.face_listener;
                     let place = mods.params(ModOwner::Map(track.id)).map(crate::dsp::fx::stage::Place::from_params).unwrap_or(*place);
-                    let place = if aim { place.facing_listener(&project.map) } else { place };
+                    let place = if aim { place.facing_listener(&room) } else { place };
                     if let Some(ts) = status.tracks.get(ti) {
                         for (a, v) in ts.map_live.iter().zip(place.to_params()) {
                             a.store(v);
                         }
                     }
-                    let params = crate::dsp::fx::stage::map_params(&project.map, &place);
+                    let params = crate::dsp::fx::stage::map_params(&room, &place);
                     st.process(&params, &mut l[..seg], &mut r[..seg], &tctx);
                 }
                 None => *placer_idle = true,
@@ -3809,6 +3816,39 @@ mod tests {
         h.send(Command::Stop);
         run(&mut e, 0.05);
         assert_eq!(sounding(&e), 0, "stop left notes on");
+    }
+
+    #[test]
+    fn a_modulator_makes_the_listener_walk_and_a_track_keeps_facing_it() {
+        use crate::dsp::fx::stage::{facing_towards, map_params, places, Place};
+        use crate::modulation::{ModKind, ModOwner, ModTarget};
+        let mut p = Project::new_default();
+        let place = Place { depth: 0.2, face_listener: true, ..Place::default() };
+        p.tracks[0].place = Some(place);
+        let mut lfo = p.make_modulator(ModKind::Lfo);
+        // Not synced, slow, a quarter on: all the way up from the start.
+        (lfo.params[1], lfo.params[3], lfo.params[4]) = (0.0, 0.05, 0.25);
+        let source = lfo.id;
+        p.modulators.push(lfo);
+        p.add_route(source, ModTarget::Param { owner: ModOwner::Listener, param: 0 }, 0.4);
+        let room = p.map;
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        run(&mut e, 0.1);
+        let across = h.status.listener_live[0].load();
+        assert!((across - 0.4).abs() < 0.01, "the listener walked to the right: {across}");
+        assert_eq!(h.status.listener_live[1].load(), room.listener);
+        let walked = room.with_listener(&[across, room.listener, 0.0]);
+        let (from, to) = places(&map_params(&walked, &place));
+        let facing = h.status.tracks[0].map_live[3].load();
+        assert!((facing - facing_towards(from, to)).abs() < 3.0, "{facing}");
+        assert!(facing > 10.0, "it turned along: {facing}");
+    }
+
+    #[test]
+    fn a_new_set_starts_on_a_stage() {
+        let p = Project::new_default();
+        let (w, d, _) = crate::dsp::fx::stage::room(&crate::dsp::fx::stage::map_params(&p.map, &Default::default()));
+        assert!(w > d, "{w} by {d}");
     }
 
     #[test]

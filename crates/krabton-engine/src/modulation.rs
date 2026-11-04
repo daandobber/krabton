@@ -228,6 +228,8 @@ pub enum ModOwner {
     Modulator(u64),
     /// Where a track (by id) stands on the Map.
     Map(u64),
+    /// Where the listener on the Map is and which way it is turned.
+    Listener,
 }
 
 /// Where a route goes.
@@ -407,6 +409,7 @@ impl Project {
             ModOwner::Modulator(m) => self.modulators.iter().find(|x| x.id == m).map(|x| x.kind.specs()),
             // (kept while the track is off the map: back on, it moves again)
             ModOwner::Map(t) => self.tracks.iter().any(|tr| tr.id == t).then_some(crate::dsp::fx::stage::PLACE_SPECS),
+            ModOwner::Listener => Some(crate::dsp::fx::stage::LISTENER_SPECS),
         }
     }
 
@@ -422,7 +425,7 @@ impl Project {
             }
             ModOwner::MidiDevice(d) => self.tracks.iter_mut().flat_map(|t| &mut t.midi_devices).find(|x| x.id == d).map(|x| &mut x.params),
             ModOwner::Modulator(m) => self.modulators.iter_mut().find(|x| x.id == m).map(|x| &mut x.params),
-            ModOwner::Map(_) => None,
+            ModOwner::Map(_) | ModOwner::Listener => None,
         }
     }
 
@@ -459,6 +462,7 @@ impl Project {
                     }
                     ModOwner::Modulator(m) => self.modulators.iter().find(|x| x.id == m).map(|x| x.name.clone()).unwrap_or_default(),
                     ModOwner::Map(t) => format!("{} on the Map", track_name(t).unwrap_or_default()),
+                    ModOwner::Listener => "The listener".to_string(),
                 };
                 (where_, pname)
             }
@@ -561,6 +565,7 @@ enum Path {
     MidiDevice(usize, usize),
     Modulator(usize),
     Map(usize),
+    Listener,
 }
 
 struct Slot {
@@ -815,6 +820,7 @@ impl ModRuntime {
         }
 
         // Parameter sets start from the project values...
+        let listener = p.map.listener_params();
         for slot in self.slots.iter_mut() {
             let place;
             let base: &[f32] = match slot.path {
@@ -822,6 +828,7 @@ impl ModRuntime {
                     place = p.tracks.get(t).and_then(|t| t.place).map(|pl| pl.to_params()).unwrap_or_default();
                     &place
                 }
+                Path::Listener => &listener,
                 Path::Instrument(t) => p.tracks.get(t).and_then(|t| t.instrument.as_ref()).and_then(instrument_params).unwrap_or(&[]),
                 Path::TrackDevice(t, d) => p.tracks.get(t).and_then(|t| t.devices.get(d)).map(|d| &d.params[..]).unwrap_or(&[]),
                 Path::ReturnDevice(r, d) => p.returns.get(r).and_then(|r| r.devices.get(d)).map(|d| &d.params[..]).unwrap_or(&[]),
@@ -953,6 +960,7 @@ fn resolve(p: &Project, owner: ModOwner) -> Option<(Path, &'static [ParamSpec])>
             p.tracks[t].place?;
             Some((Path::Map(t), crate::dsp::fx::stage::PLACE_SPECS))
         }
+        ModOwner::Listener => Some((Path::Listener, crate::dsp::fx::stage::LISTENER_SPECS)),
     }
 }
 

@@ -245,6 +245,7 @@ impl App {
             ModOwner::MidiDevice(id) => t.midi_devices.iter().any(|d| d.id == id),
             ModOwner::Modulator(_) => false,
             ModOwner::Map(id) => t.id == id,
+            ModOwner::Listener => false,
         });
         let mut automated: Vec<(usize, Option<f32>)> = Vec::new();
         if let Some(ti) = track {

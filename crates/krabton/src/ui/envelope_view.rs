@@ -72,6 +72,12 @@ impl App {
                 out.push(EnvTarget { group: d.name().into(), name: s.name.into(), target: ModTarget::Param { owner: ModOwner::Device(d.id), param: k as u16 }, spec: Some(s) });
             }
         }
+        // The listener on the Map (it walks round too, from any clip).
+        if self.project.tracks.iter().any(|t| t.place.is_some()) {
+            for (k, s) in krabton_engine::dsp::fx::stage::LISTENER_SPECS.iter().enumerate() {
+                out.push(EnvTarget { group: "Listener".into(), name: s.name.into(), target: ModTarget::Param { owner: ModOwner::Listener, param: k as u16 }, spec: Some(s) });
+            }
+        }
         // Where it stands on the Map (it walks round).
         if tr.place.is_some() {
             for (k, s) in krabton_engine::dsp::fx::stage::PLACE_SPECS.iter().enumerate() {
@@ -101,6 +107,10 @@ impl App {
                         (d.kind.specs(), &d.params)
                     }
                     ModOwner::Modulator(_) => return None,
+                    ModOwner::Listener => {
+                        let v = self.project.map.listener_params();
+                        return Some(krabton_engine::dsp::fx::stage::LISTENER_SPECS.get(k)?.to_norm(*v.get(k)?));
+                    }
                     ModOwner::Map(_) => {
                         let v = tr.place?.to_params();
                         return Some(krabton_engine::dsp::fx::stage::PLACE_SPECS.get(k)?.to_norm(*v.get(k)?));

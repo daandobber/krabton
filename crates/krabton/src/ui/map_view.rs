@@ -32,6 +32,27 @@ const PLAN_TINTS: [Color32; 5] = [
     Color32::from_rgb(0x8a, 0x9c, 0xc8),
 ];
 
+/// Room shapes to start from: name, width and depth (m).
+const ROOM_SHAPES: [(&str, f32, f32); 7] = [
+    ("Stage", 20.0, 12.0),
+    ("Wide Stage", 30.0, 12.0),
+    ("Long Hall", 16.0, 22.4),
+    ("Square", 14.0, 14.0),
+    ("Small Room", 6.0, 5.0),
+    ("Club", 16.0, 10.0),
+    ("Church", 22.0, 50.0),
+];
+
+/// What the map shows besides the tracks.
+pub(crate) struct MapFocus {
+    /// The selected track.
+    pub track: Option<u64>,
+    /// The listener is selected.
+    pub listener: bool,
+    /// The room with the listener where it is now (a modulator may walk it).
+    pub now: MapRoom,
+}
+
 /// A track on the map.
 #[derive(Clone)]
 pub(crate) struct Dot {
@@ -52,7 +73,10 @@ pub(crate) struct MapEdit {
     pub turned: Option<(u64, f32)>,
     /// The listener moved: across, depth.
     pub listener: Option<(f32, f32)>,
+    /// The listener turned (degrees).
+    pub listener_turn: Option<f32>,
     pub select: Option<u64>,
+    pub select_listener: bool,
     pub face_listener: Option<u64>,
     /// A track set to face the listener always, or no more.
     pub always_face: Option<(u64, bool)>,
@@ -65,10 +89,11 @@ enum Grab {
     Move(u64, egui::Vec2),
     Turn(u64),
     Listener,
+    TurnListener,
 }
 
 /// A Stage's parameters for the room and a place in it.
-fn params(room: &MapRoom, place: &Place) -> [f32; 16] {
+fn params(room: &MapRoom, place: &Place) -> [f32; 18] {
     st::map_params(room, place)
 }
 
@@ -76,7 +101,8 @@ fn params(room: &MapRoom, place: &Place) -> [f32; 16] {
 const HANDLE: f32 = 30.0;
 
 /// The map in `rect`.
-pub(crate) fn map(ui: &mut Ui, rect: Rect, id: Id, room: &MapRoom, dots: &[Dot], selected: Option<u64>) -> MapEdit {
+pub(crate) fn map(ui: &mut Ui, rect: Rect, id: Id, room: &MapRoom, dots: &[Dot], focus: &MapFocus) -> MapEdit {
+    let selected = focus.track;
     let mut edit = MapEdit::default();
     let accent = accent_now();
     let resp = ui.interact(rect, id.with("map"), Sense::click_and_drag());
@@ -133,11 +159,27 @@ pub(crate) fn map(ui: &mut Ui, rect: Rect, id: Id, room: &MapRoom, dots: &[Dot],
     // The listener.
     let ((_, _), (lx, ly)) = st::places(&base);
     let head = to_screen(lx, ly);
-    for (dx, dy) in [(-9.0, 4.0), (9.0, 4.0), (0.0, -6.0)] {
-        painter.circle(head + vec2(dx, dy), 12.0, Color32::from_rgba_premultiplied(0x50, 0x50, 0x56, 0x90), Stroke::new(1.0_f32, Color32::from_gray(190)));
+    // Drawn where it is now and turned that way, a faint ring where it was put.
+    let ((_, _), (nx, ny)) = st::places(&params(&focus.now, &Place::default()));
+    let head_now = to_screen(nx, ny);
+    if head_now.distance(head) > 2.0 {
+        painter.circle_stroke(head, 6.0, Stroke::new(1.0_f32, DOT.gamma_multiply(0.45)));
+        painter.line_segment([head, head_now], Stroke::new(0.8_f32, DOT.gamma_multiply(0.3)));
     }
-    painter.circle_filled(head, 5.0, Color32::from_gray(230));
-    painter.add(Shape::convex_polygon(vec![head + vec2(0.0, -15.0), head + vec2(-4.0, -9.0), head + vec2(4.0, -9.0)], Color32::from_gray(230), Stroke::NONE));
+    let (turn_sin, turn_cos) = focus.now.listener_turn.to_radians().sin_cos();
+    let turned = |dx: f32, dy: f32| vec2(dx * turn_cos - dy * turn_sin, dx * turn_sin + dy * turn_cos);
+    let base_turn = room.listener_turn.to_radians();
+    let turn_handle = head + vec2(base_turn.sin(), -base_turn.cos()) * HANDLE;
+    for (dx, dy) in [(-9.0, 4.0), (9.0, 4.0), (0.0, -6.0)] {
+        painter.circle(head_now + turned(dx, dy), 12.0, Color32::from_rgba_premultiplied(0x50, 0x50, 0x56, 0x90), Stroke::new(1.0_f32, Color32::from_gray(190)));
+    }
+    painter.circle_filled(head_now, 5.0, Color32::from_gray(230));
+    painter.add(Shape::convex_polygon(vec![head_now + turned(0.0, -15.0), head_now + turned(-4.0, -9.0), head_now + turned(4.0, -9.0)], Color32::from_gray(230), Stroke::NONE));
+
+    if focus.listener {
+        painter.line_segment([head, turn_handle], Stroke::new(1.5_f32, accent));
+        painter.circle(turn_handle, 6.0, Color32::from_gray(20), Stroke::new(2.0_f32, accent));
+    }
 
     // Where each one is on the screen (where it was put; it may be walking).
     let tag_font = FontId::proportional(11.5);
@@ -160,6 +202,9 @@ pub(crate) fn map(ui: &mut Ui, rect: Rect, id: Id, room: &MapRoom, dots: &[Dot],
     }).collect();
     // What is under the mouse: the selected one's handle first, then tracks (the selected on top), then the head.
     let hit = |at: Pos2| -> Option<Grab> {
+        if focus.listener && turn_handle.distance(at) < 11.0 {
+            return Some(Grab::TurnListener);
+        }
         if let Some(dt) = dots.iter().find(|d| Some(d.track) == selected) {
             if !dt.place.face_listener && handle_of(spot(&dt.place), dt.place.facing).distance(at) < 11.0 {
                 return Some(Grab::Turn(dt.track));
@@ -182,14 +227,18 @@ pub(crate) fn map(ui: &mut Ui, rect: Rect, id: Id, room: &MapRoom, dots: &[Dot],
     if resp.drag_started() {
         let at = resp.interact_pointer_pos().unwrap_or(rect.center());
         let g = hit(at);
-        if let Some(Grab::Move(t, _) | Grab::Turn(t)) = g {
-            edit.select = Some(t);
+        match g {
+            Some(Grab::Move(t, _) | Grab::Turn(t)) => edit.select = Some(t),
+            Some(Grab::Listener | Grab::TurnListener) => edit.select_listener = true,
+            None => {}
         }
         ui.data_mut(|dd| dd.insert_temp(grab_key, g));
     }
     if resp.clicked() {
-        if let Some(Grab::Move(t, _) | Grab::Turn(t)) = resp.interact_pointer_pos().and_then(hit) {
-            edit.select = Some(t);
+        match resp.interact_pointer_pos().and_then(hit) {
+            Some(Grab::Move(t, _) | Grab::Turn(t)) => edit.select = Some(t),
+            Some(Grab::Listener | Grab::TurnListener) => edit.select_listener = true,
+            None => {}
         }
     }
     let grabbed: Option<Grab> = ui.data(|dd| dd.get_temp::<Option<Grab>>(grab_key).flatten());
@@ -210,6 +259,12 @@ pub(crate) fn map(ui: &mut Ui, rect: Rect, id: Id, room: &MapRoom, dots: &[Dot],
                     }
                 }
             }
+            Grab::TurnListener => {
+                let v = at - head;
+                if v.length() > 4.0 {
+                    edit.listener_turn = Some((v.x.atan2(-v.y).to_degrees() / 5.0).round() * 5.0);
+                }
+            }
             Grab::Listener => {
                 let (x, y) = from_screen(at);
                 let across = (x / (w * 0.5 - 0.4)).clamp(-1.0, 1.0);
@@ -226,7 +281,7 @@ pub(crate) fn map(ui: &mut Ui, rect: Rect, id: Id, room: &MapRoom, dots: &[Dot],
     if resp.secondary_clicked() {
         let t = resp.interact_pointer_pos().and_then(hit).and_then(|g| match g {
             Grab::Move(t, _) | Grab::Turn(t) => Some(t),
-            Grab::Listener => None,
+            Grab::Listener | Grab::TurnListener => None,
         });
         ui.data_mut(|dd| dd.insert_temp(menu_key, t));
         if let Some(t) = t {
@@ -276,7 +331,7 @@ pub(crate) fn map(ui: &mut Ui, rect: Rect, id: Id, room: &MapRoom, dots: &[Dot],
             }
         }
         if pl.face_listener {
-            pl = pl.facing_listener(room);
+            pl = pl.facing_listener(&focus.now);
         }
         let sel = Some(dt.track) == selected;
         let tint = if sel { accent } else { DOT };
@@ -330,7 +385,7 @@ pub(crate) fn map(ui: &mut Ui, rect: Rect, id: Id, room: &MapRoom, dots: &[Dot],
             let p = params(room, &dt.live.unwrap_or(dt.place));
             resp.clone().on_hover_text(format!("{}: {:.1} m from the listener. Drag to move it, the dot on its fan to turn it, right-click for more", dt.name, st::distance(&p)));
         } else if hover.is_some_and(|h| h.distance(head) < 24.0) {
-            resp.clone().on_hover_text("The listener: drag it anywhere in the room");
+            resp.clone().on_hover_text("The listener: drag it anywhere in the room, click it for its knobs and to turn it");
         }
     }
     if grabbed.is_some() || walking || dots.iter().any(|dt| dt.level > 0.01) {
@@ -356,8 +411,34 @@ impl App {
         self.project.mod_routes.iter().any(|r| is(r.target)) || self.project.tracks.get(ti).is_some_and(|t| t.automation.iter().any(|e| is(e.target)) || t.slots.iter().flatten().chain(t.arrangement.iter().map(|a| &a.clip)).any(|c| c.envelopes.iter().any(|e| is(e.target))))
     }
 
+    /// The room with the listener where it is now: modulators or envelopes may walk it.
+    fn map_listener_now(&self) -> MapRoom {
+        let is = |t: ModTarget| matches!(t, ModTarget::Param { owner: ModOwner::Listener, .. });
+        let moved = self.project.mod_routes.iter().any(|r| is(r.target))
+            || self.project.tracks.iter().any(|t| t.automation.iter().any(|e| is(e.target)) || t.slots.iter().flatten().any(|c| c.envelopes.iter().any(|e| is(e.target))));
+        if !moved {
+            return self.project.map;
+        }
+        let status = self.status();
+        self.project.map.with_listener(&[status.listener_live[0].load(), status.listener_live[1].load(), status.listener_live[2].load()])
+    }
+
+    /// The listener's knobs, beside the map.
+    fn map_listener_knobs(&mut self, ui: &mut Ui) {
+        ui.label(RichText::new("Listener").strong().color(TEXT));
+        let mut values = self.project.map.listener_params();
+        let mut mv = self.mod_view(ModOwner::Listener);
+        let changed = super::devices::param_grid_mod(ui, Id::new("map_listener"), st::LISTENER_SPECS, &mut values, accent_now(), 150.0, mv.as_mut());
+        self.apply_mod_view(mv);
+        if changed {
+            self.project.map = self.project.map.with_listener(&values);
+        }
+        ui.label(RichText::new("Drop a modulator (Mod tab) on a knob to make it walk round").small().color(TEXT_DIM));
+    }
+
     fn map_dots(&self) -> Vec<Dot> {
         let status = self.status();
+        let room = self.map_listener_now();
         self.project
             .tracks
             .iter()
@@ -369,8 +450,7 @@ impl App {
                     let v: Vec<f32> = ts.map_live.iter().map(|a| a.load()).collect();
                     Place::from_params(&v)
                 })).flatten();
-                let room = &self.project.map;
-                let aimed = |p: Place| if place.face_listener { Place { face_listener: true, ..p }.facing_listener(room) } else { p };
+                let aimed = |p: Place| if place.face_listener { Place { face_listener: true, ..p }.facing_listener(&room) } else { p };
                 Some(Dot { track: t.id, name: t.name.clone(), place: aimed(place), live: live.map(aimed), level })
             })
             .collect()
@@ -469,8 +549,23 @@ impl App {
             ui.add(egui::Slider::new(&mut room.room, 0.0..=1.0).show_value(false)).on_hover_text("How much of the room you hear: none at first (the tracks are only placed), its walls and its tail as you turn it up");
             ui.label(RichText::new(if room.room <= 0.0 { "off".to_string() } else { format!("{:.0} %", room.room * 100.0) }).small().color(TEXT_DIM));
             ui.separator();
-            ui.label(RichText::new("Size").small().color(TEXT_DIM));
+            let (_, depth_now, _) = st::room(&params(&room, &Place::default()));
+            let shape = ROOM_SHAPES.iter().find(|s| (s.1 - room.size).abs() < 0.5 && (s.2 - depth_now).abs() < 0.5).map_or("Custom", |s| s.0);
+            ui.label(RichText::new("Shape").small().color(TEXT_DIM));
+            egui::ComboBox::from_id_salt("map_shape").width(90.0).selected_text(shape).show_ui(ui, |ui| {
+                for s in ROOM_SHAPES {
+                    if ui.selectable_label(shape == s.0, s.0).clicked() {
+                        (room.size, room.depth) = (s.1, s.2);
+                    }
+                }
+            });
+            ui.label(RichText::new("Width").small().color(TEXT_DIM));
             ui.add(egui::Slider::new(&mut room.size, 4.0..=60.0).suffix(" m").max_decimals(0));
+            ui.label(RichText::new("Depth").small().color(TEXT_DIM));
+            let mut depth = depth_now;
+            if ui.add(egui::Slider::new(&mut depth, 4.0..=60.0).suffix(" m").max_decimals(0)).changed() {
+                room.depth = depth;
+            }
             ui.label(RichText::new("Walls").small().color(TEXT_DIM));
             ui.add(egui::Slider::new(&mut room.walls, 0.0..=1.0).show_value(false)).on_hover_text("Hard (stone) to soft (curtains)");
             ui.label(RichText::new("Reverb").small().color(TEXT_DIM));
@@ -500,8 +595,9 @@ impl App {
         ui.allocate_rect(full, Sense::hover());
 
         let dots = self.map_dots();
-        let selected = self.map_selected.filter(|s| dots.iter().any(|d| d.track == *s));
-        let edit = map(ui, map_rect, Id::new("map_window"), &room, &dots, selected);
+        let selected = self.map_selected.filter(|s| !self.map_listener_sel && dots.iter().any(|d| d.track == *s));
+        let focus = MapFocus { track: selected, listener: self.map_listener_sel, now: self.map_listener_now() };
+        let edit = map(ui, map_rect, Id::new("map_window"), &room, &dots, &focus);
         self.apply_map_edit(&edit);
 
         let mut side_ui = ui.new_child(UiBuilder::new().max_rect(side.shrink(2.0)));
@@ -513,6 +609,13 @@ impl App {
     fn apply_map_edit(&mut self, edit: &MapEdit) {
         if let Some(t) = edit.select {
             self.map_selected = Some(t);
+            self.map_listener_sel = false;
+        }
+        if edit.select_listener {
+            self.map_listener_sel = true;
+        }
+        if let Some(turn) = edit.listener_turn {
+            self.project.map.listener_turn = turn;
         }
         if let Some((x, y)) = edit.listener {
             self.project.map.listener_x = x;
@@ -550,7 +653,7 @@ impl App {
     /// The chosen track's place (knobs that modulators and envelopes can
     /// move), and the tracks to tick onto the map.
     fn map_side(&mut self, ui: &mut Ui) {
-        let sel = self.map_selected.and_then(|id| self.project.tracks.iter().position(|t| t.id == id && t.place.is_some()));
+        let sel = self.map_selected.filter(|_| !self.map_listener_sel).and_then(|id| self.project.tracks.iter().position(|t| t.id == id && t.place.is_some()));
         egui::Frame::new().fill(PANEL2).corner_radius(4.0).inner_margin(8).show(ui, |ui| {
             ui.set_width(ui.available_width());
             match sel {
@@ -588,8 +691,9 @@ impl App {
                         }
                     }
                 }
+                None if self.map_listener_sel => self.map_listener_knobs(ui),
                 None => {
-                    ui.label(RichText::new("Click a track on the map to set its place here").small().color(TEXT_DIM));
+                    ui.label(RichText::new("Click a track or the listener on the map to set its place here").small().color(TEXT_DIM));
                 }
             }
         });
@@ -637,6 +741,7 @@ impl App {
                     self.set_on_map(i, on);
                     if on {
                         self.map_selected = Some(self.project.tracks[i].id);
+                        self.map_listener_sel = false;
                     }
                 }
             }
@@ -695,11 +800,13 @@ impl App {
                     let id = t.id;
                     if pick {
                         self.map_selected = Some(id);
+                        self.map_listener_sel = false;
                     }
                     if let Some(on) = put {
                         self.set_on_map(i, on);
                         if on {
                             self.map_selected = Some(id);
+                            self.map_listener_sel = false;
                         }
                     }
                 }
@@ -715,6 +822,10 @@ mod tests {
 
     /// Frames of pointer moves (and presses) over a map of `dots`; the edits.
     fn drive(dots: &[Dot], selected: Option<u64>, frames: &[(Pos2, Option<bool>)]) -> Vec<MapEdit> {
+        drive_focus(dots, &MapFocus { track: selected, listener: false, now: MapRoom::default() }, frames)
+    }
+
+    fn drive_focus(dots: &[Dot], focus: &MapFocus, frames: &[(Pos2, Option<bool>)]) -> Vec<MapEdit> {
         let ctx = egui::Context::default();
         let room = MapRoom::default();
         let mut edits = Vec::new();
@@ -728,7 +839,7 @@ mod tests {
             }
             let _ = ctx.run(input, |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    edits.push(map(ui, Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, 600.0)), Id::new("t"), &room, dots, selected));
+                    edits.push(map(ui, Rect::from_min_size(pos2(0.0, 0.0), vec2(600.0, 600.0)), Id::new("t"), &room, dots, focus));
                 });
             });
         }
@@ -752,6 +863,20 @@ mod tests {
 
     fn dot(track: u64) -> Dot {
         Dot { track, name: "Bass".into(), place: Place::default(), live: None, level: 0.0 }
+    }
+
+    #[test]
+    fn clicking_the_listener_selects_it_and_its_handle_turns_it() {
+        let room = MapRoom::default();
+        let head = screen_of(&Place::default(), true);
+        let edits = drive(&[dot(1)], None, &[(head, None), (head, Some(true)), (head, Some(false)), (head, None)]);
+        assert!(edits.iter().any(|e| e.select_listener), "clicked");
+        // Selected: a handle in front of it; dragged to its right, it looks to its right.
+        let focus = MapFocus { track: None, listener: true, now: room };
+        let handle = head + vec2(0.0, -HANDLE);
+        let right = head + vec2(50.0, 0.0);
+        let edits = drive_focus(&[dot(1)], &focus, &[(handle, Some(true)), (handle + vec2(6.0, 4.0), None), (right, None), (right, Some(false))]);
+        assert_eq!(edits.iter().filter_map(|e| e.listener_turn).last(), Some(90.0));
     }
 
     #[test]

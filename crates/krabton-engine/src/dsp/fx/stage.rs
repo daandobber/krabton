@@ -36,6 +36,8 @@ pub const FACING: usize = 12;
 pub const BEAM: usize = 13;
 pub const ROOM_AMOUNT: usize = 14;
 pub const LISTENER_X: usize = 15;
+pub const ROOM_DEPTH: usize = 16;
+pub const LISTENER_TURN: usize = 17;
 pub const EARS_NAMES: &[&str] = &["Speakers", "Headphones"];
 
 pub static SPECS: &[ParamSpec] = &[
@@ -55,6 +57,16 @@ pub static SPECS: &[ParamSpec] = &[
     ParamSpec::lin("Beam", "Place", 0.0, 1.0, 0.4, Unit::Percent),
     ParamSpec::lin("Room", "Room", 0.0, 1.0, 0.7, Unit::Percent),
     ParamSpec::lin("Listener X", "Room", -1.0, 1.0, 0.0, Unit::Pan),
+    // 0: as deep as a long hall of that width.
+    ParamSpec::lin("Room Depth", "Room", 0.0, 60.0, 0.0, Unit::None),
+    ParamSpec::lin("Listener Turn", "Room", -180.0, 180.0, 0.0, Unit::None),
+];
+
+/// The listener as parameters (to modulate, automate): it walks and turns.
+pub static LISTENER_SPECS: &[ParamSpec] = &[
+    ParamSpec::lin("Across", "Listener", -1.0, 1.0, 0.0, Unit::Pan),
+    ParamSpec::lin("Depth", "Listener", 0.0, 1.0, 0.6, Unit::Percent),
+    ParamSpec::lin("Turn", "Listener", -180.0, 180.0, 0.0, Unit::None),
 ];
 
 /// A place on the Map as parameters (to modulate, automate).
@@ -81,7 +93,8 @@ const FDN_MS: [f32; LINES] = [29.7, 37.1, 41.1, 43.7, 53.3, 59.9, 67.1, 73.3];
 /// The room's shape: width, depth, height (m).
 pub fn room(p: &[f32]) -> (f32, f32, f32) {
     let w = p[SIZE].clamp(4.0, 60.0);
-    (w, w * 1.4, (w * 0.4).clamp(2.6, 18.0))
+    let d = p.get(ROOM_DEPTH).copied().filter(|&d| d >= 1.0).map_or(w * 1.4, |d| d.clamp(4.0, 60.0));
+    (w, d, ((w * d / 1.4).sqrt() * 0.4).clamp(2.6, 18.0))
 }
 
 /// Where the source stands and where the listener sits (x across, to the
@@ -134,10 +147,15 @@ pub fn facing_towards(from: (f32, f32), to: (f32, f32)) -> f32 {
     (to.0 - from.0).atan2(to.1 - from.1).to_degrees()
 }
 
+/// Which way the listener is turned (radians: + to its right).
+fn turned(p: &[f32]) -> f32 {
+    p.get(LISTENER_TURN).copied().unwrap_or(0.0).to_radians()
+}
+
 /// Where the source is heard from: -1 all the way left to 1 all the way right.
 pub fn direction(p: &[f32]) -> f32 {
     let ((sx, sy), (lx, ly)) = places(p);
-    let az = (sx - lx).atan2(-(sy - ly));
+    let az = (sx - lx).atan2(-(sy - ly)) - turned(p);
     pan_of(az.sin().clamp(-1.0, 1.0).asin())
 }
 
@@ -246,9 +264,10 @@ impl Stage {
         let mut out = [Target::default(); TAPS];
 
         // The direct sound: its middle's direction, its width kept.
+        let turn = turned(p);
         let (vx, vy, vz) = (sx - lx, sy - ly, sz - lz);
         let r = (vx * vx + vy * vy + vz * vz).sqrt().max(0.3);
-        let az = vx.atan2(-vy);
+        let az = vx.atan2(-vy) - turn;
         let lateral = az.sin().clamp(-1.0, 1.0).asin();
         let behind = az.cos() < 0.0;
         let centre = pan_of(lateral);
@@ -298,7 +317,7 @@ impl Stage {
         for (t, &(x, y, z, order, (mx, my))) in out.iter_mut().skip(2).zip(images.iter()) {
             let (vx, vy, vz) = (x - lx, y - ly, z - lz);
             let r = (vx * vx + vy * vy + vz * vz).sqrt().max(0.3);
-            let az = vx.atan2(-vy);
+            let az = vx.atan2(-vy) - turn;
             let lateral = az.sin().clamp(-1.0, 1.0).asin();
             // The way it left the source: towards the wall (the image's way, turned back).
             let (ex, ey) = (if mx { vx } else { -vx }, if my { vy } else { -vy });
@@ -444,11 +463,28 @@ pub struct MapRoom {
     pub headphones: bool,
     /// The floor plan drawn on the map (0: none): only to go by, nothing to hear.
     pub plan: u8,
+    /// How deep the room is (m; 0: as deep as a long hall of its width, `size`).
+    pub depth: f32,
+    /// Which way the listener is turned (degrees: + to its right).
+    pub listener_turn: f32,
+}
+
+impl MapRoom {
+    /// The listener as parameters (see `LISTENER_SPECS`).
+    pub fn listener_params(&self) -> [f32; 3] {
+        [self.listener_x, self.listener, self.listener_turn]
+    }
+
+    /// The same room with the listener there.
+    pub fn with_listener(self, p: &[f32]) -> Self {
+        let g = |i: usize, or: f32| p.get(i).copied().unwrap_or(or);
+        Self { listener_x: g(0, self.listener_x), listener: g(1, self.listener), listener_turn: g(2, self.listener_turn), ..self }
+    }
 }
 
 impl Default for MapRoom {
     fn default() -> Self {
-        Self { room: 0.0, size: 16.0, walls: 0.45, reverb: 0.35, listener: 0.6, listener_x: 0.0, falloff: 0.7, air: 0.5, delay: false, headphones: false, plan: 0 }
+        Self { room: 0.0, size: 16.0, walls: 0.45, reverb: 0.35, listener: 0.6, listener_x: 0.0, falloff: 0.7, air: 0.5, delay: false, headphones: false, plan: 0, depth: 0.0, listener_turn: 0.0 }
     }
 }
 
@@ -492,8 +528,8 @@ impl Place {
 }
 
 /// A Stage's parameters for a track on the Map.
-pub fn map_params(room: &MapRoom, place: &Place) -> [f32; 16] {
-    let mut p = [0.0f32; 16];
+pub fn map_params(room: &MapRoom, place: &Place) -> [f32; 18] {
+    let mut p = [0.0f32; 18];
     for (v, s) in p.iter_mut().zip(SPECS) {
         *v = s.default;
     }
@@ -507,6 +543,8 @@ pub fn map_params(room: &MapRoom, place: &Place) -> [f32; 16] {
     p[TAIL] = room.reverb;
     p[LISTENER] = room.listener;
     p[LISTENER_X] = room.listener_x;
+    p[ROOM_DEPTH] = room.depth;
+    p[LISTENER_TURN] = room.listener_turn;
     p[FALLOFF] = room.falloff;
     p[AIR] = room.air;
     p[FLIGHT] = if room.delay { 1.0 } else { 0.0 };
@@ -545,6 +583,35 @@ mod tests {
     fn on_map(place: Place, room: f32) -> Vec<f32> {
         let room = MapRoom { room, ..MapRoom::default() };
         map_params(&room, &place).to_vec()
+    }
+
+    #[test]
+    fn a_room_can_have_any_shape_and_a_long_hall_stays_as_it_was() {
+        let mut p = map_params(&MapRoom::default(), &Place::default());
+        assert_eq!(room(&p), (16.0, 16.0 * 1.4, 16.0 * 0.4));
+        p[ROOM_DEPTH] = 10.0;
+        p[SIZE] = 24.0;
+        let (w, d, h) = room(&p);
+        assert_eq!((w, d), (24.0, 10.0));
+        assert!(h > 2.6 && h < 18.0, "{h}");
+        // The places go along with the room.
+        let ((_, sy), (_, ly)) = places(&p);
+        assert!(sy < ly && ly < 10.0, "{sy} {ly}");
+    }
+
+    #[test]
+    fn a_listener_turned_away_hears_it_from_the_other_side() {
+        let room = MapRoom::default();
+        let ahead = map_params(&room, &Place::default());
+        assert!(direction(&ahead).abs() < 0.01);
+        // Turned to its left, what was straight ahead is on its right.
+        let left = room.with_listener(&[0.0, 0.6, -90.0]);
+        assert!(direction(&map_params(&left, &Place::default())) > 0.9);
+        let right = room.with_listener(&[0.0, 0.6, 90.0]);
+        assert!(direction(&map_params(&right, &Place::default())) < -0.9);
+        // Walked to the far right, the stage is on its left.
+        let walked = room.with_listener(&[0.9, 0.6, 0.0]);
+        assert!(direction(&map_params(&walked, &Place::default())) < -0.3);
     }
 
     #[test]

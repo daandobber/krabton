@@ -629,6 +629,8 @@ pub struct App {
     pub(crate) video_back: View,
     pub(crate) video: crate::video::VideoRuntime,
     pub(crate) map_selected: Option<u64>,
+    /// The listener is what the Map's side shows.
+    pub(crate) map_listener_sel: bool,
     /// Size of everything asked for by a script (see `run_script`).
     script_zoom: Option<f32>,
     /// How far the device view is scrolled, asked for by a script (devscroll=PX).
@@ -825,6 +827,7 @@ impl App {
             video_back: View::Studio,
             video: Default::default(),
             map_selected: None,
+            map_listener_sel: false,
             script_zoom: None,
             script_dev_scroll: None,
             script_menu: None,

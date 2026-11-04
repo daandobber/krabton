@@ -1965,7 +1965,8 @@ impl Project {
             sections: Vec::new(),
             next_id: 1,
             tape: Default::default(),
-            map: Default::default(),
+            // A new set starts on a stage: wider than deep.
+            map: crate::dsp::fx::stage::MapRoom { size: 20.0, depth: 12.0, ..Default::default() },
             play_key: None,
             play_key_on_bar: false,
             key_seq: Vec::new(),
