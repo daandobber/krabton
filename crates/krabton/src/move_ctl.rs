@@ -66,8 +66,8 @@ pub fn wake_message() -> Vec<u8> {
 }
 
 /// Pressure per pad, instead of for all of them together.
-pub fn pressure_message() -> Vec<u8> {
-    sysex(30, &[1])
+pub fn pressure_message(on: bool) -> Vec<u8> {
+    sysex(30, &[on as u8])
 }
 
 /// How bright its lights are (Live starts it at the middle one).
@@ -81,7 +81,13 @@ pub fn brightness_message(index: u8) -> Vec<u8> {
 /// power). Measured on a real Move: soft playing sends mostly 2 to 40 of 127,
 /// hard playing 20 to 76, and 127 hardly ever, so the top of the range is
 /// never reached without this. Normal is made from those numbers.
-pub const PAD_CURVES: [(&str, f32, f32); 4] = [("Normal", 80.0, 0.55), ("Light", 55.0, 0.5), ("Firm", 110.0, 0.8), ("Linear", 127.0, 1.0)];
+pub const PAD_CURVES: [(&str, f32, f32); 4] = [("Normal", 80.0, 0.8), ("Light", 55.0, 0.6), ("Firm", 110.0, 0.9), ("Linear", 127.0, 1.0)];
+
+/// What pressing a pad harder after the hit does.
+pub const PRESSURES: [&str; 3] = ["Filter", "Mod Wheel", "Off"];
+
+/// The knob pressing opens, by its name: the first that is there.
+const PRESSURE_KNOBS: [&str; 8] = ["Cutoff", "Freq", "Filter", "Brightness", "Tone", "Timbre", "Morph", "Harmonics"];
 
 pub fn pad_curve(index: u8, vel: f32) -> f32 {
     let (_, top, power) = PAD_CURVES[(index as usize).min(PAD_CURVES.len() - 1)];
@@ -332,6 +338,8 @@ pub fn parse(msg: &[u8]) -> Option<MoveIn> {
             }
         }
         0xa0 if (68..=99).contains(&d1) => MoveIn::PadPressure { pad: d1 - PAD0, value: d2 as f32 / 127.0 },
+        // Pressure for all the pads together, when it sends that.
+        0xd0 => MoveIn::PadPressure { pad: 0, value: d1 as f32 / 127.0 },
         0xb0 => match d1 {
             71..=78 => MoveIn::Turn { knob: Knob::Enc(d1 - KNOB_CC0), ticks: rel(d2) },
             VOLUME_CC => MoveIn::Turn { knob: Knob::Volume, ticks: rel(d2) },
@@ -989,6 +997,8 @@ pub struct MoveState {
     pub last_vel: f32,
     /// The last hit as the pad sent it, before its curve.
     pub last_raw: f32,
+    /// How hard a pad is pressed now.
+    pub last_pressure: f32,
     /// When it was last told to stay awake.
     woken: Option<Instant>,
     /// Its own screen (while it looks for a Move).
@@ -1010,6 +1020,11 @@ impl MoveState {
     pub fn screen_state(&self) -> Option<(bool, String)> {
         let s = self.screen.as_ref()?;
         Some((s.live.load(Ordering::Acquire), s.trouble.lock().map(|t| t.clone()).unwrap_or_default()))
+    }
+
+    /// Pressure per pad on or off, at once.
+    pub fn send_pressure(&self, on: bool) {
+        self.send_raw(pressure_message(on));
     }
 
     /// As bright as asked, at once.
@@ -1067,6 +1082,7 @@ impl MoveState {
             last_pitch: None,
             last_vel: 0.8,
             last_raw: 0.0,
+            last_pressure: 0.0,
             woken: None,
             screen: None,
             vel_pad: None,
@@ -1725,11 +1741,14 @@ impl App {
                 self.move_pad(pad, down, pad_curve(self.prefs.move_curve, vel));
             }
             MoveIn::PadPressure { value, .. } => {
+                self.move_ctl.last_pressure = value;
                 if self.move_mode() == PadMode::Touch && !self.move_ctl.pads_held.is_empty() {
                     if let Some(t) = self.move_track() {
                         let track = self.project.tracks[t].id;
                         self.cmd(Command::Touch { track, pressure: value, position: 0.5 });
                     }
+                } else {
+                    self.move_pressure(value);
                 }
             }
             MoveIn::Step { step, down } => {
@@ -1770,11 +1789,47 @@ impl App {
             self.move_ctl.send_raw(wake_message());
             self.move_ctl.send_raw(brightness_message(self.prefs.move_brightness));
             if first {
-                self.move_ctl.send_raw(pressure_message());
+                self.move_ctl.send_raw(pressure_message(self.prefs.move_pressure < 2));
             }
             // Every light once more.
             self.move_ctl.sent = Frame::unknown();
         }
+    }
+
+    /// Pressing harder: through the track's mod wheel, and when it is set to
+    /// the filter, a modulator from that wheel to the instrument's filter is
+    /// made the first time (so it can be seen, changed and taken away).
+    fn move_pressure(&mut self, value: f32) {
+        let choice = self.prefs.move_pressure as usize;
+        if choice >= 2 {
+            return;
+        }
+        let Some(t) = self.move_track() else { return };
+        let track = self.project.tracks[t].id;
+        if choice == 0 && value > 0.0 {
+            self.move_connect_pressure(t);
+        }
+        self.cmd(Command::ModWheel { track, value });
+    }
+
+    fn move_connect_pressure(&mut self, t: usize) {
+        use krabton_engine::modulation::{instrument_specs, ModKind, ModOwner, ModTarget};
+        let track = self.project.tracks[t].id;
+        if self.project.modulators.iter().any(|m| m.kind == ModKind::ModWheel && m.track == Some(track)) {
+            return;
+        }
+        let Some(specs) = self.project.tracks[t].instrument.as_ref().and_then(instrument_specs) else { return };
+        let Some(param) = PRESSURE_KNOBS.iter().find_map(|name| specs.iter().position(|s| s.name == *name)) else { return };
+        let sel = self.sel_track;
+        self.sel_track = TrackSel::Track(t);
+        let source = self.add_modulator(ModKind::ModWheel);
+        self.sel_track = sel;
+        let Some(source) = source else { return };
+        if let Some(m) = self.project.modulators.iter_mut().find(|m| m.id == source) {
+            m.name = "Pressure".to_string();
+        }
+        self.project.add_route(source, ModTarget::Param { owner: ModOwner::Instrument(track), param: param as u16 }, 0.5);
+        self.toast(format!("Pressing a pad now opens {}", specs[param].name));
     }
 
     /// Lets go of the notes the pads hold.
@@ -2052,6 +2107,11 @@ impl App {
         if !down {
             if let Some((p, ids)) = self.move_ctl.pads_held.remove(&pad) {
                 self.note_off(p, &ids);
+            }
+            // Nothing pressed any more: what the pressure moved goes back.
+            if self.move_ctl.pads_held.is_empty() && self.move_ctl.last_pressure > 0.0 {
+                self.move_ctl.last_pressure = 0.0;
+                self.move_pressure(0.0);
             }
             if self.move_mode() == PadMode::Drums && (pad % 8) >= 4 {
                 self.move_ctl.vel_pad = None;
@@ -2392,7 +2452,8 @@ mod tests {
     #[test]
     fn its_own_messages_are_as_lives() {
         assert_eq!(wake_message(), [0xf0, 0x00, 0x21, 0x1d, 0x01, 0x01, 8, 127, 127, 0xf7]);
-        assert_eq!(pressure_message(), [0xf0, 0x00, 0x21, 0x1d, 0x01, 0x01, 30, 1, 0xf7]);
+        assert_eq!(pressure_message(true), [0xf0, 0x00, 0x21, 0x1d, 0x01, 0x01, 30, 1, 0xf7]);
+        assert_eq!(pressure_message(false), [0xf0, 0x00, 0x21, 0x1d, 0x01, 0x01, 30, 0, 0xf7]);
         assert_eq!(brightness_message(0), [0xf0, 0x00, 0x21, 0x1d, 0x01, 0x01, 6, 127, 0xf7]);
         assert_eq!(brightness_message(2), [0xf0, 0x00, 0x21, 0x1d, 0x01, 0x01, 6, 55, 0xf7]);
     }
@@ -2400,10 +2461,10 @@ mod tests {
     #[test]
     fn normal_spreads_what_the_pads_really_send() {
         let played = |raw: f32| pad_curve(0, raw / 127.0);
-        // Soft playing (around 13) is soft but sounds; hard (around 45) is well up; the
-        // hardest measured is full.
-        assert!((0.25..0.45).contains(&played(13.0)), "{}", played(13.0));
-        assert!((0.65..0.85).contains(&played(45.0)), "{}", played(45.0));
+        // Soft playing (around 13) is soft but sounds; hard (around 45) well above it;
+        // the hardest measured is full.
+        assert!((0.15..0.3).contains(&played(13.0)), "{}", played(13.0));
+        assert!((0.55..0.72).contains(&played(45.0)), "{}", played(45.0));
         assert_eq!(played(80.0), 1.0);
         assert_eq!(played(127.0), 1.0);
         assert!(played(30.0) < played(31.0));
@@ -2412,6 +2473,12 @@ mod tests {
         for c in 0..4 {
             assert_eq!(pad_curve(c, 1.0), 1.0);
         }
+    }
+
+    #[test]
+    fn pressure_is_read_per_pad_and_for_all_together() {
+        assert_eq!(parse(&[0xa0, 70, 127]), Some(MoveIn::PadPressure { pad: 2, value: 1.0 }));
+        assert_eq!(parse(&[0xd0, 127]), Some(MoveIn::PadPressure { pad: 0, value: 1.0 }));
     }
 
     #[test]

@@ -116,7 +116,7 @@ pub static SPECS: &[ParamSpec] = &[
     ParamSpec::log("Glide", "Keys", 0.0005, 4.0, 0.0005, Unit::Sec),
     ParamSpec::choice("Priority", "Keys", PRIORITIES, 0),
     ParamSpec::choice("Trigger", "Keys", TRIGGERS, 0),
-    ParamSpec::lin("Velocity", "Keys", 0.0, 1.0, 0.25, Unit::Percent),
+    ParamSpec::lin("Velocity", "Keys", 0.0, 1.0, 0.7, Unit::Percent),
     ParamSpec::lin("Drift", "Keys", 0.0, 1.0, 0.35, Unit::Percent),
     ParamSpec::lin("Mix", "Echo", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::choice("Time", "Echo", ECHO_TIMES, 1),
@@ -506,8 +506,8 @@ impl MunichState {
         let contour = p[CONTOUR].clamp(0.0, 1.0) * 8.0;
         let key_amount = p[KEYBOARD].round().clamp(0.0, 3.0) / 3.0;
         let vel_amount = p[VELOCITY].clamp(0.0, 1.0);
-        let vel_gain = 1.0 - 0.7 * vel_amount * (1.0 - self.velocity);
-        let vel_oct = -2.0 * vel_amount * (1.0 - self.velocity);
+        let vel_gain = 1.0 - 0.85 * vel_amount * (1.0 - self.velocity);
+        let vel_oct = -3.0 * vel_amount * (1.0 - self.velocity);
         let drift_amount = p[DRIFT].clamp(0.0, 1.0);
         let source = p[MOD_SOURCE].round() as i32;
         let rate = p[MOD_RATE].clamp(0.01, 60.0);
@@ -869,6 +869,23 @@ mod tests {
             assert!(energy > 0.3, "{name} is silent: {energy}");
             assert!(top < 3.0, "{name} peaks at {top}");
         }
+    }
+
+    #[test]
+    fn a_soft_note_is_clearly_softer_and_darker_than_a_hard_one() {
+        let p = preset("Init");
+        let render = |vel: f32| {
+            let mut s = MunichState::new(SR);
+            s.note_on(&p, 48, vel);
+            let n = (0.3 * SR) as usize;
+            let (mut l, mut r) = (vec![0.0; n], vec![0.0; n]);
+            for (a, b) in l.chunks_mut(128).zip(r.chunks_mut(128)) {
+                s.render(&p, a, b);
+            }
+            rms(&l)
+        };
+        let db = 20.0 * (render(1.0) / render(0.25)).log10();
+        assert!(db > 4.5, "only {db} dB between hard and soft");
     }
 
     #[test]
