@@ -1,10 +1,10 @@
 ; Krabton's Windows installer (Inno Setup 6).
 ; Build the app first (cargo build --release -p krabton), then:
-;   iscc /DMyAppVersion=0.107.0 packaging\windows\krabton.iss
+;   iscc /DMyAppVersion=0.108.0 packaging\windows\krabton.iss
 ; The installer lands in dist\.
 
 #ifndef MyAppVersion
-  #define MyAppVersion "0.107.0"
+  #define MyAppVersion "0.108.0"
 #endif
 
 [Setup]
