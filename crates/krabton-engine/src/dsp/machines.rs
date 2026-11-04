@@ -325,7 +325,7 @@ impl MachineVoice {
                 // One long fall: this is the punch.
                 self.bend = 4.6;
                 self.bend_coef = dc(0.133);
-                self.coef = [dc(0.34 * d), 0.0, dc(0.01), 0.0];
+                self.coef = [dc(0.17 * d), 0.0, dc(0.016), 0.0];
                 self.filt[0].set_q(2400.0, 0.7, sr);
                 self.filt[1].set_q(300.0, 0.7, sr);
                 self.hp.set(25.0, sr);
@@ -350,7 +350,7 @@ impl MachineVoice {
                 self.q = [ring_q(self.freq[0], 0.055 * d), ring_q(self.freq[1], 0.04 * d)];
                 self.coef = [dc(0.055 * d), 0.0, dc(0.014), 0.0];
                 // Its third partial, near 1.1 kHz, rung by the click.
-                self.filt[0].set_q(1100.0, 1.2, sr);
+                self.filt[0].set_q(1800.0, 0.6, sr);
             }
             M909ClosedHat | M909OpenHat | M909Ride | M909Crash => {
                 // env[0]: the analog VCA; env[1]: the sample's own fade (as recorded).
@@ -663,17 +663,19 @@ impl MachineVoice {
                 let n = self.filt[0].process(rng.bipolar(), FilterMode::Low);
                 let n = self.filt[1].process(n, FilterMode::High) * self.env[2];
                 let pulse = if ts < 0.0008 { 1.0 } else { 0.0 };
-                let attack = (n * 1.3 + pulse * 0.35) * (0.15 + 0.85 * a) * (0.5 + 0.5 * self.vel);
-                // A little driven: the body stays round, the attack catches.
-                self.hp.hp(fast_tanh(body * 1.25 + attack))
+                let attack = (n * 1.9 + pulse * 0.35) * (0.15 + 0.85 * a) * (0.5 + 0.5 * self.vel);
+                // Driven hard enough to have overtones: without them it is a sub, not a kick.
+                self.hp.hp(fast_tanh(body * 2.6 + attack) * 0.85)
             }
             M909Snare => {
                 // Two oscillators bent towards sines, and the noise: through the tone's low-pass, and snappy through a high-pass.
                 let s1 = (tri(self.advance(0, self.freq[0] * bendf)) * std::f32::consts::FRAC_PI_2).sin() * self.env[0];
                 let s2 = (tri(self.advance(1, self.freq[1] * bendf)) * std::f32::consts::FRAC_PI_2).sin() * self.env[1];
                 let n = self.filt[0].process(rng.bipolar(), FilterMode::Low);
-                let body_noise = n * self.env[3] * 0.4;
-                let snappy = self.filt[1].process(n, FilterMode::High) * self.env[2] * (0.2 + 1.2 * a);
+                // The noise comes up just after the drum: the first moments are the tone.
+                let rise = (ts / 0.008).min(1.0);
+                let body_noise = n * self.env[3] * 0.4 * rise;
+                let snappy = self.filt[1].process(n, FilterMode::High) * self.env[2] * (0.2 + 1.2 * a) * rise;
                 (s1 * 0.6 + s2 * 0.24) * 0.9 + body_noise + snappy
             }
             M909Tom => {
@@ -691,7 +693,9 @@ impl MachineVoice {
                 let (f1, f2, q1, q2) = (self.freq[0], self.freq[1], self.q[0], self.q[1]);
                 let x = self.ring(0, p * ring_gain(f1), f1, q1) + self.ring(1, p * ring_gain(f2) * 1.0, f2, q2);
                 let click = self.filt[0].process(rng.bipolar(), FilterMode::Band) * self.env[2];
-                fast_tanh((x + click * (0.5 + 1.0 * tone)) * 2.5) * 0.8
+                // Its high partial: the tick of the rim, on top of what the saturation leaves.
+                let tick = sine(self.advance(2, 1720.0)) * self.env[2];
+                fast_tanh((x + click * (1.6 + 1.6 * tone)) * 2.5) * 0.6 + tick * (0.2 + 0.2 * tone)
             }
             Cr78Kick => {
                 let body = sine(self.advance(0, self.freq[0] * bendf)) * self.env[0];
