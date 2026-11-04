@@ -218,7 +218,8 @@ impl App {
             match self.pack_progress(kind) {
                 Progress::Busy(..) => return,
                 Progress::Done => {
-                    self.packs.survey.entry(kind).or_default().0 = true;
+                    let bytes = place(kind).iter().map(|d| disk_size(d)).sum();
+                    self.packs.survey.insert(kind, (true, bytes));
                     self.packs.failed.remove(&kind);
                 }
                 Progress::Failed(e) => {
