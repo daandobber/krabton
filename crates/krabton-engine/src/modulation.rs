@@ -31,6 +31,7 @@ pub enum ModKind {
     ModWheel,
     Joystick,
     Touch,
+    Pressure,
 }
 
 pub const LFO_SHAPES: &[&str] = &["Sine", "Triangle", "Saw Up", "Saw Down", "Square", "S&H", "Smooth Random"];
@@ -104,8 +105,12 @@ pub static TIDES: &[ParamSpec] = &[
     ParamSpec::lin("Depth", "Outputs", 0.0, 1.0, 1.0, Unit::Percent),
 ];
 
-pub static MOD_WHEEL: &[ParamSpec] = &[
-    ParamSpec::log("Smooth", "Wheel", 0.001, 1.0, 0.02, Unit::Sec),
+pub static PRESSURE: &[ParamSpec] = &[
+    ParamSpec::log("Smooth", "Pressure", 0.001, 1.0, 0.02, Unit::Sec),
+    ParamSpec::lin("Depth", "Pressure", 0.0, 1.0, 1.0, Unit::Percent),
+];
+
+pub static MOD_WHEEL: &[ParamSpec] = &[    ParamSpec::log("Smooth", "Wheel", 0.001, 1.0, 0.02, Unit::Sec),
     ParamSpec::lin("Depth", "Wheel", 0.0, 1.0, 1.0, Unit::Percent),
 ];
 
@@ -122,8 +127,8 @@ pub static JOYSTICK: &[ParamSpec] = &[
 ];
 
 impl ModKind {
-    pub const ALL: [ModKind; 12] =
-        [ModKind::Lfo, ModKind::Envelope, ModKind::Follower, ModKind::Steps, ModKind::Macro, ModKind::Notes, ModKind::Math, ModKind::Shaper, ModKind::Tides, ModKind::ModWheel, ModKind::Joystick, ModKind::Touch];
+    pub const ALL: [ModKind; 13] =
+        [ModKind::Lfo, ModKind::Envelope, ModKind::Follower, ModKind::Steps, ModKind::Macro, ModKind::Notes, ModKind::Math, ModKind::Shaper, ModKind::Tides, ModKind::ModWheel, ModKind::Joystick, ModKind::Touch, ModKind::Pressure];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -139,6 +144,7 @@ impl ModKind {
             ModKind::ModWheel => "Mod Wheel",
             ModKind::Joystick => "Joystick",
             ModKind::Touch => "Touch",
+            ModKind::Pressure => "Pressure",
         }
     }
 
@@ -154,6 +160,7 @@ impl ModKind {
             ModKind::Shaper => "Reshapes its input: gain, offset, curve, quantize, slew, rectify",
             ModKind::Tides => "A tidal modulator after Mutable Instruments Tides: a slope looping with the tempo, or rising and falling on the notes of a track (AD, AR), its curve, peak and smoothness set by Shape, Slope and Smoothness; four outputs in phase, amplitude or frequency relations (Shift)",
             ModKind::ModWheel => "The mod wheel of a track: a MIDI keyboard's (CC 1), or a controller's triggers in Big Picture",
+            ModKind::Pressure => "How hard a pad of an Ableton Move is pressed after the hit, apart from the track's mod wheel",
             ModKind::Joystick => "One way (X or Y) of a track's joystick: the right stick in Big Picture's XY play mode, -1 to 1 around the knob",
             ModKind::Touch => "One output of a track's Touch: how hard its plates are pressed, the pulse, the steps' values, a stepped or a drifting random, where along the plates the hand is, its LFO, its drawn shape, its XY pad's X or Y, its envelope, or the value of the plate pressed (the Touch view patches them with cables)",
         }
@@ -173,12 +180,13 @@ impl ModKind {
             ModKind::ModWheel => MOD_WHEEL,
             ModKind::Joystick => JOYSTICK,
             ModKind::Touch => TOUCH,
+            ModKind::Pressure => PRESSURE,
         }
     }
 
     /// Modulators that listen to a track (notes or audio).
     pub fn uses_track(self) -> bool {
-        matches!(self, ModKind::Envelope | ModKind::Follower | ModKind::Notes | ModKind::Tides | ModKind::ModWheel | ModKind::Joystick | ModKind::Touch)
+        matches!(self, ModKind::Envelope | ModKind::Follower | ModKind::Notes | ModKind::Tides | ModKind::ModWheel | ModKind::Joystick | ModKind::Touch | ModKind::Pressure)
     }
 
     /// True when the output goes from -1 to 1 (otherwise 0 to 1).
@@ -510,6 +518,8 @@ pub struct TrackSignal {
     pub level: f32,
     /// The mod wheel (0..1): a MIDI keyboard's, or a controller's triggers.
     pub modwheel: f32,
+    /// How hard a pad is pressed after the hit (0..1).
+    pub pressure: f32,
     /// A joystick (x, y; -1..1): a controller's stick in Big Picture.
     pub joy: [f32; 2],
     /// The Touch view: how hard, where along the plates, the XY pad, the plate's value (0..1 each).
@@ -1141,6 +1151,10 @@ fn step(m: &Modulator, p: &[f32], st: &mut ModState, sig: TrackSignal, clock: Mo
             st.value = slew(st.value, sig.modwheel, get(0), dt);
             st.value * get(1)
         }
+        ModKind::Pressure => {
+            st.value = slew(st.value, sig.pressure, get(0), dt);
+            st.value * get(1)
+        }
         ModKind::Joystick => {
             let axis = (get(0).round() as usize).min(1);
             st.value = slew(st.value, sig.joy[axis], get(1), dt);
@@ -1269,6 +1283,31 @@ mod tests {
             rt.tick(&p, &down, clock(0.0), true, &[]);
         }
         assert!(rt.outputs[0] < 0.01, "down {}", rt.outputs[0]);
+    }
+
+    #[test]
+    fn pressure_and_the_mod_wheel_do_not_hear_each_other() {
+        let mut p = Project::new_default();
+        let mut wheel = p.make_modulator(ModKind::ModWheel);
+        wheel.track = Some(p.tracks[0].id);
+        p.modulators.push(wheel);
+        let mut press = p.make_modulator(ModKind::Pressure);
+        press.track = Some(p.tracks[0].id);
+        p.modulators.push(press);
+        let mut rt = ModRuntime::new();
+        rt.rebuild(&p);
+        let pressed = [TrackSignal { pressure: 0.8, ..Default::default() }];
+        for _ in 0..200 {
+            rt.tick(&p, &pressed, clock(0.0), true, &[]);
+        }
+        assert!(rt.outputs[0] < 0.01, "the wheel stays down: {}", rt.outputs[0]);
+        assert!((rt.outputs[1] - 0.8).abs() < 0.01, "pressure {}", rt.outputs[1]);
+        let turned = [TrackSignal { modwheel: 0.8, ..Default::default() }];
+        for _ in 0..200 {
+            rt.tick(&p, &turned, clock(0.0), true, &[]);
+        }
+        assert!((rt.outputs[0] - 0.8).abs() < 0.01, "wheel {}", rt.outputs[0]);
+        assert!(rt.outputs[1] < 0.01, "pressure goes back: {}", rt.outputs[1]);
     }
 
     #[test]

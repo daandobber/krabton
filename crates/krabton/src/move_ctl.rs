@@ -84,10 +84,34 @@ pub fn brightness_message(index: u8) -> Vec<u8> {
 pub const PAD_CURVES: [(&str, f32, f32); 4] = [("Normal", 80.0, 0.8), ("Light", 55.0, 0.6), ("Firm", 110.0, 0.9), ("Linear", 127.0, 1.0)];
 
 /// What pressing a pad harder after the hit does.
-pub const PRESSURES: [&str; 3] = ["Filter", "Mod Wheel", "Off"];
+pub const PRESSURES: [&str; 3] = ["Sound", "Mod Wheel", "Off"];
 
 /// The knob pressing opens, by its name: the first that is there.
-const PRESSURE_KNOBS: [&str; 8] = ["Cutoff", "Freq", "Filter", "Brightness", "Tone", "Timbre", "Morph", "Harmonics"];
+const PRESSURE_KNOBS: [&str; 8] = ["Cutoff", "Freq", "Brightness", "Tone", "Timbre", "Morph", "Harmonics", "Filter"];
+
+/// How far pressing as hard as it goes moves that knob.
+const PRESSURE_DEPTH: f32 = 0.35;
+
+/// Knobs pressing stays away from, by a part of their name: playing with them
+/// moves the tuning, or something that is no part of the note.
+const PRESSURE_NEVER: [&str; 7] = ["tune", "pitch", "vib", "bend", "drift", "harmonicity", "rhythm"];
+
+/// The knob pressing moves and how far: the filter or the brightness, never
+/// the tuning. A knob that is already nearly open closes instead, or pressing
+/// would do nothing.
+pub fn pressure_route(inst: &Instrument) -> Option<(usize, f32)> {
+    use krabton_engine::modulation::{instrument_params, instrument_specs};
+    let specs = instrument_specs(inst)?;
+    let fits = |s: &ParamSpec| {
+        let name = s.name.to_lowercase();
+        matches!(s.kind, ParamKind::Linear | ParamKind::Log) && !matches!(s.unit, Unit::Semi | Unit::Cents | Unit::Ratio) && !PRESSURE_NEVER.iter().any(|w| name.contains(w))
+    };
+    let named = PRESSURE_KNOBS.iter().find_map(|name| specs.iter().position(|s| s.name == *name && fits(s)));
+    let [x, y] = crate::big::play::telling_params(inst);
+    let param = named.or(x.filter(|&i| fits(&specs[i]))).or(y.filter(|&i| fits(&specs[i])))?;
+    let now = instrument_params(inst).and_then(|p| p.get(param)).map_or(0.0, |v| specs[param].to_norm(*v));
+    Some((param, if now > 0.7 { -PRESSURE_DEPTH } else { PRESSURE_DEPTH }))
+}
 
 pub fn pad_curve(index: u8, vel: f32) -> f32 {
     let (_, top, power) = PAD_CURVES[(index as usize).min(PAD_CURVES.len() - 1)];
@@ -999,6 +1023,10 @@ pub struct MoveState {
     pub last_raw: f32,
     /// How hard a pad is pressed now.
     pub last_pressure: f32,
+    /// How hard each pad is pressed: the hardest one counts.
+    pub pad_pressure: [f32; 32],
+    /// The track that pressing is moving now.
+    pub pressure_track: Option<u64>,
     /// When it was last told to stay awake.
     woken: Option<Instant>,
     /// Its own screen (while it looks for a Move).
@@ -1083,6 +1111,8 @@ impl MoveState {
             last_vel: 0.8,
             last_raw: 0.0,
             last_pressure: 0.0,
+            pad_pressure: [0.0; 32],
+            pressure_track: None,
             woken: None,
             screen: None,
             vel_pad: None,
@@ -1740,7 +1770,11 @@ impl App {
                 }
                 self.move_pad(pad, down, pad_curve(self.prefs.move_curve, vel));
             }
-            MoveIn::PadPressure { value, .. } => {
+            MoveIn::PadPressure { pad, value } => {
+                if let Some(p) = self.move_ctl.pad_pressure.get_mut(pad as usize) {
+                    *p = value;
+                }
+                let value = self.move_ctl.pad_pressure.iter().cloned().fold(0.0, f32::max);
                 self.move_ctl.last_pressure = value;
                 if self.move_mode() == PadMode::Touch && !self.move_ctl.pads_held.is_empty() {
                     if let Some(t) = self.move_track() {
@@ -1796,9 +1830,9 @@ impl App {
         }
     }
 
-    /// Pressing harder: through the track's mod wheel, and when it is set to
-    /// the filter, a modulator from that wheel to the instrument's filter is
-    /// made the first time (so it can be seen, changed and taken away).
+    /// Pressing harder. Set to the sound it reaches only the track's Pressure
+    /// modulator, which is made the first time (so it can be seen, changed and
+    /// taken away); it stays off the mod wheel, which can be on the pitch.
     fn move_pressure(&mut self, value: f32) {
         let choice = self.prefs.move_pressure as usize;
         if choice >= 2 {
@@ -1806,30 +1840,70 @@ impl App {
         }
         let Some(t) = self.move_track() else { return };
         let track = self.project.tracks[t].id;
-        if choice == 0 && value > 0.0 {
-            self.move_connect_pressure(t);
+        // Moved on to another track while pressing: that one goes back.
+        if let Some(old) = self.move_ctl.pressure_track.filter(|&old| old != track) {
+            self.move_pressure_stop(old);
         }
-        self.cmd(Command::ModWheel { track, value });
+        self.move_ctl.pressure_track = Some(track);
+        if choice == 0 {
+            if value > 0.0 {
+                self.move_connect_pressure(t);
+            }
+            self.cmd(Command::Pressure { track, value });
+        } else {
+            self.cmd(Command::ModWheel { track, value });
+        }
+    }
+
+    /// The knob the selected track's Pressure modulator moves, for the Move tab.
+    pub(crate) fn move_pressure_knob(&self) -> Option<String> {
+        use krabton_engine::modulation::ModKind;
+        let track = self.project.tracks.get(self.move_track()?)?.id;
+        let source = self.project.modulators.iter().find(|m| m.kind == ModKind::Pressure && m.track == Some(track))?.id;
+        let route = self.project.mod_routes.iter().find(|r| r.source == source)?;
+        Some(self.project.target_label(route.target).1)
+    }
+
+    /// Lets go of all that pressing moved on a track.
+    fn move_pressure_stop(&mut self, track: u64) {
+        self.cmd(Command::Pressure { track, value: 0.0 });
+        self.cmd(Command::ModWheel { track, value: 0.0 });
+    }
+
+    /// The Pressure setting changed: nothing stays where the old one left it.
+    pub(crate) fn move_pressure_changed(&mut self) {
+        if let Some(track) = self.move_ctl.pressure_track.take() {
+            self.move_pressure_stop(track);
+        }
     }
 
     fn move_connect_pressure(&mut self, t: usize) {
         use krabton_engine::modulation::{instrument_specs, ModKind, ModOwner, ModTarget};
         let track = self.project.tracks[t].id;
-        if self.project.modulators.iter().any(|m| m.kind == ModKind::ModWheel && m.track == Some(track)) {
+        let Some(inst) = self.project.tracks[t].instrument.as_ref() else { return };
+        let (Some(specs), route) = (instrument_specs(inst), pressure_route(inst)) else { return };
+        // One of an earlier version hangs on the mod wheel: it comes off, and starts over.
+        let old = self.project.modulators.iter_mut().find(|m| m.kind == ModKind::ModWheel && m.track == Some(track) && m.name == "Pressure");
+        let old = old.map(|m| {
+            m.kind = ModKind::Pressure;
+            m.id
+        });
+        if let Some(old) = old {
+            self.project.mod_routes.retain(|r| r.source != old);
+        } else if self.project.modulators.iter().any(|m| m.kind == ModKind::Pressure && m.track == Some(track)) {
             return;
         }
-        let Some(specs) = self.project.tracks[t].instrument.as_ref().and_then(instrument_specs) else { return };
-        let Some(param) = PRESSURE_KNOBS.iter().find_map(|name| specs.iter().position(|s| s.name == *name)) else { return };
-        let sel = self.sel_track;
-        self.sel_track = TrackSel::Track(t);
-        let source = self.add_modulator(ModKind::ModWheel);
-        self.sel_track = sel;
+        let Some((param, amount)) = route else { return };
+        let source = old.or_else(|| {
+            let sel = self.sel_track;
+            self.sel_track = TrackSel::Track(t);
+            let source = self.add_modulator(ModKind::Pressure);
+            self.sel_track = sel;
+            source
+        });
         let Some(source) = source else { return };
-        if let Some(m) = self.project.modulators.iter_mut().find(|m| m.id == source) {
-            m.name = "Pressure".to_string();
-        }
-        self.project.add_route(source, ModTarget::Param { owner: ModOwner::Instrument(track), param: param as u16 }, 0.5);
-        self.toast(format!("Pressing a pad now opens {}", specs[param].name));
+        self.project.add_route(source, ModTarget::Param { owner: ModOwner::Instrument(track), param: param as u16 }, amount);
+        self.toast(format!("Pressing a pad now moves {}", specs[param].name));
     }
 
     /// Lets go of the notes the pads hold.
@@ -2108,8 +2182,12 @@ impl App {
             if let Some((p, ids)) = self.move_ctl.pads_held.remove(&pad) {
                 self.note_off(p, &ids);
             }
+            if let Some(p) = self.move_ctl.pad_pressure.get_mut(pad as usize) {
+                *p = 0.0;
+            }
             // Nothing pressed any more: what the pressure moved goes back.
             if self.move_ctl.pads_held.is_empty() && self.move_ctl.last_pressure > 0.0 {
+                self.move_ctl.pad_pressure = [0.0; 32];
                 self.move_ctl.last_pressure = 0.0;
                 self.move_pressure(0.0);
             }
@@ -2479,6 +2557,32 @@ mod tests {
     fn pressure_is_read_per_pad_and_for_all_together() {
         assert_eq!(parse(&[0xa0, 70, 127]), Some(MoveIn::PadPressure { pad: 2, value: 1.0 }));
         assert_eq!(parse(&[0xd0, 127]), Some(MoveIn::PadPressure { pad: 0, value: 1.0 }));
+    }
+
+    #[test]
+    fn pressing_moves_the_sound_and_never_the_tuning() {
+        let name = |i: &Instrument| {
+            let (param, _) = pressure_route(i).expect("a knob");
+            krabton_engine::modulation::instrument_specs(i).unwrap()[param].name
+        };
+        assert_eq!(name(&Instrument::analog("Init")), "Cutoff");
+        assert_eq!(name(&Instrument::munich("Init")), "Cutoff");
+        assert_eq!(name(&Instrument::mono101("Init")), "Freq");
+        assert_eq!(name(&Instrument::macro_osc("Init")), "Timbre");
+        assert_eq!(name(&Instrument::elements("Init")), "Brightness");
+        // A filter that is wide open closes when pressed, or nothing would happen.
+        let (_, amount) = pressure_route(&Instrument::sampler(None)).unwrap();
+        assert!(amount < 0.0, "{amount}");
+        assert!(pressure_route(&Instrument::analog("Init")).unwrap().1 > 0.0);
+        // The ones whose most telling knob is their tuning or vibrato.
+        for i in [Instrument::calculator("Init"), Instrument::console("Init"), Instrument::harmonica("Init"), Instrument::birds("Init"), Instrument::oidos("Init")] {
+            if let Some((param, _)) = pressure_route(&i) {
+                let s = &krabton_engine::modulation::instrument_specs(&i).unwrap()[param];
+                let n = s.name.to_lowercase();
+                assert!(!PRESSURE_NEVER.iter().any(|w| n.contains(w)), "{}", s.name);
+                assert!(matches!(s.kind, ParamKind::Linear | ParamKind::Log), "{}: no dropdown", s.name);
+            }
+        }
     }
 
     #[test]

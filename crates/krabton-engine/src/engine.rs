@@ -361,6 +361,8 @@ pub enum Command {
     PitchBend { track: u64, semis: f32 },
     /// The mod wheel of a track (0..1), for its Mod Wheel modulators.
     ModWheel { track: u64, value: f32 },
+    /// How hard a pad is pressed after the hit, for the track's Pressure modulators.
+    Pressure { track: u64, value: f32 },
     /// Puts the tape at a place (seconds).
     TapeLocate(f64),
     /// The track being played, which the tape records from by default.
@@ -1786,6 +1788,11 @@ impl Engine {
             Command::ModWheel { track, value } => {
                 if let Some(rt) = self.project.track_index(track).and_then(|ti| self.tracks.get_mut(ti)) {
                     rt.signal.modwheel = value.clamp(0.0, 1.0);
+                }
+            }
+            Command::Pressure { track, value } => {
+                if let Some(rt) = self.project.track_index(track).and_then(|ti| self.tracks.get_mut(ti)) {
+                    rt.signal.pressure = value.clamp(0.0, 1.0);
                 }
             }
             Command::Touch { track, pressure, position } => {
@@ -3800,6 +3807,40 @@ mod tests {
         h.send(Command::Stop);
         run(&mut e, 0.05);
         assert_eq!(sounding(&e), 0, "stop left notes on");
+    }
+
+    #[test]
+    fn pressing_a_pad_leaves_the_tuning_alone() {
+        // A sound whose matrix has the mod wheel on the pitch, as a vibrato or bend would.
+        let mut inst = Instrument::silicon("Init");
+        if let Instrument::Silicon { params, .. } = &mut inst {
+            use crate::dsp::silicon::MOD_SRC;
+            (params[MOD_SRC], params[MOD_SRC + 1], params[MOD_SRC + 2]) = (9.0, 1.0, 1.0);
+        }
+        let mut p = Project::new_default();
+        let ti = p.tracks.iter().position(|t| matches!(t.instrument, Some(Instrument::Synth { .. }))).expect("a synth track");
+        p.tracks[ti].instrument = Some(inst);
+        p.tracks[ti].midi_devices.clear();
+        let id = p.tracks[ti].id;
+        let pitch = |x: &[f32]| {
+            let m: Vec<f32> = x.chunks(2).map(|c| c[0] + c[1]).collect();
+            let m = &m[m.len() - 9600..];
+            let c: Vec<f32> = (0..1400).map(|l| m[..4800].iter().zip(&m[l..]).map(|(a, b)| a * b).sum()).collect();
+            let top = c[24..].iter().cloned().fold(0.0f32, f32::max);
+            let l = (25..1399).find(|&l| c[l] > 0.85 * top && c[l] >= c[l - 1] && c[l] >= c[l + 1]).expect("a period");
+            48000.0 / (l as f32 + (c[l - 1] - c[l + 1]) / (2.0 * (c[l - 1] - 2.0 * c[l] + c[l + 1])))
+        };
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        h.send(Command::NoteOn { track: id, pitch: 57, velocity: 0.9 });
+        let plain = pitch(&run(&mut e, 0.5));
+        h.send(Command::Pressure { track: id, value: 1.0 });
+        let pressed = pitch(&run(&mut e, 0.5));
+        let cents = |f: f32| (1200.0 * (f / plain).log2()).abs();
+        assert!(cents(pressed) < 5.0, "pressing detunes: {plain} to {pressed}");
+        h.send(Command::Pressure { track: id, value: 0.0 });
+        h.send(Command::ModWheel { track: id, value: 1.0 });
+        let wheel = pitch(&run(&mut e, 0.5));
+        assert!(cents(wheel) > 50.0, "the wheel itself does move it here: {plain} to {wheel}");
     }
 
     #[test]

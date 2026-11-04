@@ -380,9 +380,10 @@ impl App {
             let now = crate::move_ctl::PRESSURES[(self.prefs.move_pressure as usize).min(2)];
             egui::ComboBox::from_id_salt("move_pressure").width(90.0).selected_text(now).show_ui(ui, |ui| {
                 for (k, name) in crate::move_ctl::PRESSURES.iter().enumerate() {
-                    if ui.selectable_label(self.prefs.move_pressure as usize == k, *name).on_hover_text("Pressing a pad harder after the hit. Filter: opens the instrument's filter (a Pressure modulator appears, which you can change or take away). Mod Wheel: only the track's mod wheel").clicked() {
+                    if ui.selectable_label(self.prefs.move_pressure as usize == k, *name).on_hover_text("Pressing a pad harder after the hit. Sound: moves the instrument's filter or brightness and leaves the tuning alone (a Pressure modulator appears, which you can change or take away). Mod Wheel: moves all that hangs on the track's mod wheel, the tuning too if it is on that").clicked() {
                         self.prefs.move_pressure = k as u8;
                         self.prefs.save();
+                        self.move_pressure_changed();
                         self.move_ctl.send_pressure(k < 2);
                     }
                 }
@@ -391,6 +392,11 @@ impl App {
             let (bar, _) = ui.allocate_exact_size(egui::vec2(70.0, 8.0), egui::Sense::hover());
             rect_fill(ui.painter(), bar, 2.0, LINE_SOFT);
             rect_fill(ui.painter(), Rect::from_min_size(bar.min, egui::vec2(bar.width() * press.clamp(0.0, 1.0), bar.height())), 2.0, ACCENT);
+            if self.prefs.move_pressure == 0 {
+                if let Some(knob) = self.move_pressure_knob() {
+                    ui.label(RichText::new(knob).small().color(TEXT_DIM));
+                }
+            }
         });
         if self.move_ctl.last_raw > 0.0 {
             let raw = self.move_ctl.last_raw;
