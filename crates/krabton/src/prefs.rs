@@ -100,6 +100,16 @@ pub struct Prefs {
     /// The Move's MIDI input and output picked by hand (None: found by name).
     pub move_in: Option<String>,
     pub move_out: Option<String>,
+    /// The first start's question about packs was asked.
+    pub packs_asked: bool,
+    /// When the installer's choice of packs was written, once it was followed.
+    pub packs_choice_seen: u64,
+    /// No looking for a new version when Krabton starts.
+    pub update_check_off: bool,
+    /// The version not to tell about any more.
+    pub update_skip: Option<String>,
+    /// The set to open again after an update restarted Krabton.
+    pub reopen_after_update: Option<PathBuf>,
 }
 
 impl Prefs {

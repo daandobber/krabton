@@ -23,6 +23,7 @@ mod princess_lib;
 mod sf2_lib;
 mod singer_lib;
 mod orchestra_lib;
+mod packs;
 mod plugins;
 mod prefs;
 mod pulse;
@@ -32,6 +33,7 @@ mod skin;
 mod tape;
 mod theme;
 mod ui;
+mod update;
 mod video;
 mod widgets;
 

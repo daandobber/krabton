@@ -291,6 +291,23 @@ impl App {
                 self.export.open = true;
                 ui.close();
             }
+            ui.separator();
+            if ui.button("Packs...").on_hover_text("The grand piano, the orchestra, drum kits, voices and more: fetch them, see what is here, remove them").clicked() {
+                self.packs.open = true;
+                ui.close();
+            }
+            let update_label = match self.update.found() {
+                Some(r) => format!("Update to {}...", r.version),
+                None => "Check for Updates...".to_string(),
+            };
+            if ui.button(update_label).clicked() {
+                if self.update.found().is_none() {
+                    self.update.check_now();
+                }
+                self.update.open = true;
+                ui.close();
+            }
+            ui.separator();
             if ui.button("Load Demo Set").clicked() {
                 self.load_demo();
                 ui.close();
@@ -429,6 +446,7 @@ impl App {
         ui.horizontal_centered(|ui| {
             // Minimized windows wait here.
             super::windows::dock(ui);
+            self.ui_status_pills(ui);
             if let Some((msg, at)) = &self.message {
                 let age = at.elapsed().as_secs_f32();
                 if age < 8.0 {

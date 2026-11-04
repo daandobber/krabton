@@ -245,6 +245,19 @@ fn grab(url: &str, state: &Arc<Mutex<Grab>>) -> Result<PathBuf, String> {
     }
 }
 
+/// Starts fetching yt-dlp in the background; the result arrives in what this returns.
+pub fn start_tool() -> Arc<Mutex<Option<Result<PathBuf, String>>>> {
+    let out = Arc::new(Mutex::new(None));
+    let o = out.clone();
+    std::thread::spawn(move || {
+        let result = fetch_tool();
+        if let Ok(mut o) = o.lock() {
+            *o = Some(result);
+        }
+    });
+    out
+}
+
 /// Fetches yt-dlp into Krabton's Library (a single program).
 fn fetch_tool() -> Result<PathBuf, String> {
     let url = download().ok_or("there is no yt-dlp to fetch for this computer; install it yourself (pip install yt-dlp)")?;

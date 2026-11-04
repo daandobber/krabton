@@ -574,6 +574,10 @@ pub struct App {
     pub(crate) frame: u64,
     /// Close the window at the end of this frame (script action `quit`).
     pub(crate) quit_requested: bool,
+    /// What can be fetched, and the queue of what is coming (see `packs`).
+    pub(crate) packs: crate::packs::Packs,
+    /// A new version, and putting it in place (see `update`).
+    pub(crate) update: crate::update::Updater,
     /// Big Picture: the controller and touch view.
     pub big: crate::big::BigPicture,
     /// What was lifted off the tape, to drop elsewhere.
@@ -777,6 +781,8 @@ impl App {
             script_mods: Modifiers::NONE,
             frame: 0,
             quit_requested: false,
+            packs: Default::default(),
+            update: Default::default(),
             big: crate::big::BigPicture::new(crate::big::start_in_big_picture(start_big)),
             tape_clip: None,
             band: Default::default(),
@@ -4625,6 +4631,37 @@ impl App {
                     }
                 }
                 "quit" => self.quit_requested = true,
+                "packs" => {
+                    self.packs.open = true;
+                    self.packs.welcome = arg == "welcome";
+                }
+                // packsget=group ids by commas.
+                "packsget" => {
+                    let list = crate::packs::all();
+                    self.queue_packs(crate::packs::parse_choice(arg, &list));
+                }
+                "packspick" => {
+                    let list = crate::packs::all();
+                    self.packs.picked.extend(crate::packs::parse_choice(arg, &list));
+                }
+                "updatecheck" => {
+                    self.update.open = true;
+                    self.update.check_now();
+                }
+                "updateget" => {
+                    if let Some(a) = self.update.found().and_then(|r| crate::update::asset_for(&r, &self.update.how).cloned()) {
+                        self.update.fetch = Some(crate::update::start_fetch(a));
+                    } else {
+                        self.toast("Update: nothing to fetch");
+                    }
+                }
+                "updateapply" => {
+                    let ready = self.update.fetch.as_ref().and_then(|f| f.lock().ok().map(|f| f.clone()));
+                    match ready {
+                        Some(crate::update::Fetch::Ready(file)) => self.restart_into_update(&file),
+                        other => self.toast(format!("Update: not ready ({other:?})")),
+                    }
+                }
                 "shot" => self.shot = Some((arg.to_string(), false)),
                 "fxparam" => {
                     // fxparam=device,param,value sets a parameter of a device in the selected chain.
@@ -4896,6 +4933,8 @@ impl eframe::App for App {
         self.poll_drum_install();
         self.poll_sf2_installs();
         self.poll_singer_installs();
+        self.poll_packs();
+        self.poll_update();
         self.poll_firmware_unpack();
         self.boot_hypers();
         self.recover_engine();

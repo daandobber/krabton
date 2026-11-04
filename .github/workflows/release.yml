@@ -172,6 +172,10 @@ jobs:
     needs: [windows, linux, macos, linux-arm64]
     runs-on: ubuntu-latest
     steps:
+      # The whole history, for what changed since the last version.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -180,7 +184,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          notes="Download the file for your system:
+          # Krabton's Update window shows what stands above "## Download" (see update.rs).
+          previous=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)
+          changes=$(git log ${previous:+"$previous..$GITHUB_REF_NAME"} --no-merges --pretty='- %s' | grep -v '^- Version ' | head -80 || true)
+          notes="## What's new
+
+          $changes
+
+          ## Download
+
+          Download the file for your system:
 
           - **Windows**: Krabton-Setup-….exe (installer), or the portable zip
           - **Linux**: Krabton-….AppImage (make it executable and double-click it), or the tar.gz with install.sh (also on a Steam Deck, in Desktop Mode)

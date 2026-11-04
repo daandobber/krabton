@@ -57,3 +57,50 @@ Root: HKA; Subkey: "Software\Classes\Krabton.Set\shell\open\command"; ValueType:
 
 [Run]
 Filename: "{app}\krabton.exe"; Description: "{cm:LaunchProgram,Krabton}"; Flags: nowait postinstall skipifsilent
+; An update from inside Krabton runs without questions: it starts Krabton again itself.
+Filename: "{app}\krabton.exe"; Flags: nowait skipifnotsilent runasoriginaluser
+
+[UninstallDelete]
+Type: files; Name: "{app}\packs-choice.txt"
+
+[Code]
+var
+  PacksPage: TInputOptionWizardPage;
+  PackIds: TStringList;
+
+procedure AddPack(Id, Title: String);
+begin
+  PackIds.Add(Id);
+  PacksPage.Add(Title);
+end;
+
+procedure InitializeWizard();
+begin
+  PackIds := TStringList.Create;
+  PacksPage := CreateInputOptionPage(wpSelectTasks, 'Sound packs', 'Which sounds should Krabton fetch?',
+    'Krabton plays without these. What you tick downloads the first time it starts, while you work. The Packs window in the Krabton menu fetches or removes them any time.',
+    False, False);
+  AddPack('piano', 'Grand piano (750 MB)');
+  AddPack('orchestra', 'Orchestra: strings, winds, brass, percussion, organ (2.3 GB)');
+  AddPack('soloists', 'Soloists and band: cello, bass, saxes, guitars, world, electric pianos (1.2 GB)');
+  AddPack('drums', 'Drum kits (440 MB)');
+  AddPack('soundfonts', 'SoundFonts: General MIDI sets (360 MB)');
+  AddPack('voices', 'Voices for the Singer (470 MB)');
+  AddPack('tools', 'Princess Sounds, ffmpeg and yt-dlp for films and MP3s (135 MB)');
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  I: Integer;
+  Choice: String;
+begin
+  // An update from inside Krabton is silent and changes nothing about the packs.
+  if (CurStep = ssPostInstall) and (not WizardSilent) then
+  begin
+    Choice := '';
+    for I := 0 to PackIds.Count - 1 do
+      if PacksPage.Values[I] then
+        Choice := Choice + PackIds.Strings[I] + ',';
+    SaveStringToFile(ExpandConstant('{app}\packs-choice.txt'), Choice, False);
+  end;
+end;
