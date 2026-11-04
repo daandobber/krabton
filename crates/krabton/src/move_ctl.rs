@@ -1006,6 +1006,12 @@ pub struct MoveState {
 }
 
 impl MoveState {
+    /// How its screen is doing, for the Move tab: (working, why not).
+    pub fn screen_state(&self) -> Option<(bool, String)> {
+        let s = self.screen.as_ref()?;
+        Some((s.live.load(Ordering::Acquire), s.trouble.lock().map(|t| t.clone()).unwrap_or_default()))
+    }
+
     /// As bright as asked, at once.
     pub fn send_brightness(&self, index: u8) {
         self.send_raw(brightness_message(index));
@@ -1753,7 +1759,10 @@ impl App {
             return;
         }
         let first = self.move_ctl.woken.is_none();
-        if first || self.move_ctl.woken.is_some_and(|t| t.elapsed() >= Duration::from_secs(8)) {
+        // Pictures on its screen seem to keep it awake; without them it has to be told often.
+        let live = self.move_ctl.screen.as_ref().is_some_and(|s| s.live.load(Ordering::Acquire));
+        let every = Duration::from_secs(if live { 8 } else { 1 });
+        if first || self.move_ctl.woken.is_some_and(|t| t.elapsed() >= every) {
             self.move_ctl.woken = Some(Instant::now());
             if first && self.move_ctl.screen.is_none() {
                 self.move_ctl.screen = Some(crate::move_screen::ScreenLink::start());

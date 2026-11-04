@@ -117,6 +117,10 @@ pub struct ScreenLink {
     picture: Arc<Mutex<Bitmap>>,
     stop: Arc<AtomicBool>,
     pub on: Arc<AtomicBool>,
+    /// Pictures are arriving on the Move right now.
+    pub live: Arc<AtomicBool>,
+    /// Why not, when they are not.
+    pub trouble: Arc<Mutex<String>>,
 }
 
 impl ScreenLink {
@@ -124,9 +128,11 @@ impl ScreenLink {
         let picture = Arc::new(Mutex::new(Bitmap::blank()));
         let stop = Arc::new(AtomicBool::new(false));
         let on = Arc::new(AtomicBool::new(true));
-        let (p, s, o) = (picture.clone(), stop.clone(), on.clone());
-        std::thread::Builder::new().name("move-screen".into()).spawn(move || run(p, s, o)).ok();
-        Self { picture, stop, on }
+        let live = Arc::new(AtomicBool::new(false));
+        let trouble = Arc::new(Mutex::new(String::new()));
+        let (p, s, o, l, t) = (picture.clone(), stop.clone(), on.clone(), live.clone(), trouble.clone());
+        std::thread::Builder::new().name("move-screen".into()).spawn(move || run(p, s, o, l, t)).ok();
+        Self { picture, stop, on, live, trouble }
     }
 
     pub fn show(&self, b: Bitmap) {
@@ -142,11 +148,11 @@ impl Drop for ScreenLink {
     }
 }
 
-fn open() -> Option<nusb::Endpoint<Bulk, Out>> {
-    let info = nusb::list_devices().wait().ok()?.find(|d| d.vendor_id() == VENDOR && d.product_id() == PRODUCT)?;
-    let device = info.open().wait().ok()?;
-    let interface = device.claim_interface(INTERFACE).wait().ok()?;
-    interface.endpoint::<Bulk, Out>(ENDPOINT).ok()
+fn open() -> Result<nusb::Endpoint<Bulk, Out>, String> {
+    let info = nusb::list_devices().wait().map_err(|e| e.to_string())?.find(|d| d.vendor_id() == VENDOR && d.product_id() == PRODUCT).ok_or("the Move's screen is not on USB")?;
+    let device = info.open().wait().map_err(|e| format!("could not open it: {e}"))?;
+    let interface = device.claim_interface(INTERFACE).wait().map_err(|e| format!("could not take it: {e}"))?;
+    interface.endpoint::<Bulk, Out>(ENDPOINT).map_err(|e| e.to_string())
 }
 
 fn send(ep: &mut nusb::Endpoint<Bulk, Out>, data: Vec<u8>) -> bool {
@@ -154,25 +160,38 @@ fn send(ep: &mut nusb::Endpoint<Bulk, Out>, data: Vec<u8>) -> bool {
     ep.wait_next_complete(Duration::from_millis(500)).is_some_and(|c| c.status.is_ok())
 }
 
-fn run(picture: Arc<Mutex<Bitmap>>, stop: Arc<AtomicBool>, on: Arc<AtomicBool>) {
+fn run(picture: Arc<Mutex<Bitmap>>, stop: Arc<AtomicBool>, on: Arc<AtomicBool>, live: Arc<AtomicBool>, trouble: Arc<Mutex<String>>) {
+    let say = |s: String| {
+        if let Ok(mut t) = trouble.lock() {
+            *t = s;
+        }
+    };
     while !stop.load(Ordering::Acquire) {
+        live.store(false, Ordering::Release);
         if !on.load(Ordering::Acquire) {
             std::thread::sleep(Duration::from_millis(300));
             continue;
         }
-        let Some(mut ep) = open() else {
-            // Not there, or Live has it: look again in a while.
-            std::thread::sleep(Duration::from_secs(2));
-            continue;
+        let mut ep = match open() {
+            Ok(ep) => ep,
+            Err(e) => {
+                // Not there, no rights, or Live has it: look again in a while.
+                say(e);
+                std::thread::sleep(Duration::from_secs(2));
+                continue;
+            }
         };
         while !stop.load(Ordering::Acquire) && on.load(Ordering::Acquire) {
             let frame = picture.lock().map(|p| p.0.to_vec()).unwrap_or_default();
             if frame.len() != BYTES || !send(&mut ep, HEADER.to_vec()) || !send(&mut ep, frame) {
+                say("it stopped taking pictures".to_string());
                 break;
             }
+            live.store(true, Ordering::Release);
             std::thread::sleep(Duration::from_millis(50));
         }
     }
+    live.store(false, Ordering::Release);
 }
 
 /// Five columns a letter, lowest bit on top: ASCII from the space to the tilde,
