@@ -77,13 +77,21 @@ pub fn brightness_message(index: u8) -> Vec<u8> {
     sysex(6, &[BRIGHTNESS[(index as usize).min(BRIGHTNESS.len() - 1)].1])
 }
 
-/// How hard a pad must be hit: what comes in is raised to this power, so
-/// under 1 a soft hit already plays. The pads send low values (soft playing
-/// on a real Move: mostly under 40 of 127), so Light comes first.
-pub const PAD_CURVES: [(&str, f32); 4] = [("Light", 0.6), ("Linear", 1.0), ("Firm", 1.7), ("Hardest", 2.6)];
+/// How hard a pad must be hit: (name, the value that already plays at full,
+/// power). Measured on a real Move: soft playing sends mostly 2 to 40 of 127,
+/// hard playing 20 to 76, and 127 hardly ever, so the top of the range is
+/// never reached without this. Normal is made from those numbers.
+pub const PAD_CURVES: [(&str, f32, f32); 4] = [("Normal", 80.0, 0.55), ("Light", 55.0, 0.5), ("Firm", 110.0, 0.8), ("Linear", 127.0, 1.0)];
 
 pub fn pad_curve(index: u8, vel: f32) -> f32 {
-    vel.clamp(0.0, 1.0).powf(PAD_CURVES[(index as usize).min(PAD_CURVES.len() - 1)].1)
+    let (_, top, power) = PAD_CURVES[(index as usize).min(PAD_CURVES.len() - 1)];
+    (vel.clamp(0.0, 1.0) * 127.0 / top).min(1.0).powf(power)
+}
+
+/// A pad next to the one hit shakes along and sends the lowest value there is:
+/// about one in five messages on a real Move. Those are not notes.
+pub fn is_ghost(vel: f32) -> bool {
+    vel > 0.0 && vel * 127.0 < 1.5
 }
 
 /// The same colour at full strength, however dark the track's colour is: a
@@ -1702,6 +1710,9 @@ impl App {
             MoveIn::Other(raw) => self.move_ctl.note_unknown(raw),
             MoveIn::Button { button, down } => self.move_button(button, down),
             MoveIn::Pad { pad, down, vel } => {
+                if down && is_ghost(vel) {
+                    return;
+                }
                 if down {
                     self.move_ctl.last_raw = vel;
                 }
@@ -2378,13 +2389,27 @@ mod tests {
     }
 
     #[test]
-    fn the_curves_move_soft_hits_and_keep_the_hardest() {
-        assert_eq!(pad_curve(1, 0.5), 0.5);
-        assert!(pad_curve(2, 0.5) < 0.35);
-        assert!(pad_curve(0, 0.5) > 0.6);
+    fn normal_spreads_what_the_pads_really_send() {
+        let played = |raw: f32| pad_curve(0, raw / 127.0);
+        // Soft playing (around 13) is soft but sounds; hard (around 45) is well up; the
+        // hardest measured is full.
+        assert!((0.25..0.45).contains(&played(13.0)), "{}", played(13.0));
+        assert!((0.65..0.85).contains(&played(45.0)), "{}", played(45.0));
+        assert_eq!(played(80.0), 1.0);
+        assert_eq!(played(127.0), 1.0);
+        assert!(played(30.0) < played(31.0));
+        // Linear leaves it alone, and every curve ends at full.
+        assert_eq!(pad_curve(3, 0.5), 0.5);
         for c in 0..4 {
             assert_eq!(pad_curve(c, 1.0), 1.0);
         }
+    }
+
+    #[test]
+    fn a_pad_shaking_along_is_no_note() {
+        assert!(is_ghost(1.0 / 127.0));
+        assert!(!is_ghost(2.0 / 127.0));
+        assert!(!is_ghost(0.0), "a note off stays a note off");
     }
 
     #[test]

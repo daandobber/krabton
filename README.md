@@ -31,7 +31,7 @@ For sound on Linux see [Building](#building) below: Krabton talks to PulseAudio/
 
 **MIDI Learn** (Options): click a knob on screen, move one on your controller, and it turns it from then on. The mappings are saved with the set; *MIDI Knobs* in the same menu lists them.
 
-**The Ableton Move's lights and pads**: the Move tab sets how bright its lights are (*Lights*) and how hard a pad must be hit (*Pads*: Light, Linear, Firm, Hardest), and shows what the last hit sent and played at.
+**The Ableton Move's lights and pads**: the Move tab sets how bright its lights are (*Lights*) and how hard a pad must be hit (*Pads*: Normal, Light, Firm, Linear), and shows what the last hit sent and played at.
 
 **The Ableton Move's own screen** shows the track or device, its eight knobs as bars, and the one you touch with its value big. It needs Live closed (they cannot share it). On Linux, give your user the USB device: put `SUBSYSTEM=="usb", ATTR{idVendor}=="2982", MODE="0666"` in `/etc/udev/rules.d/70-ableton-move.rules` and plug it in again.
 
