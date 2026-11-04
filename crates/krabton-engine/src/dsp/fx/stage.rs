@@ -442,11 +442,13 @@ pub struct MapRoom {
     pub air: f32,
     pub delay: bool,
     pub headphones: bool,
+    /// The floor plan drawn on the map (0: none): only to go by, nothing to hear.
+    pub plan: u8,
 }
 
 impl Default for MapRoom {
     fn default() -> Self {
-        Self { room: 0.0, size: 16.0, walls: 0.45, reverb: 0.35, listener: 0.6, listener_x: 0.0, falloff: 0.7, air: 0.5, delay: false, headphones: false }
+        Self { room: 0.0, size: 16.0, walls: 0.45, reverb: 0.35, listener: 0.6, listener_x: 0.0, falloff: 0.7, air: 0.5, delay: false, headphones: false, plan: 0 }
     }
 }
 
@@ -460,11 +462,13 @@ pub struct Place {
     pub width: f32,
     pub facing: f32,
     pub beam: f32,
+    /// Always faces the listener, wherever it walks and whatever `facing` says.
+    pub face_listener: bool,
 }
 
 impl Default for Place {
     fn default() -> Self {
-        Self { across: 0.0, depth: 0.3, width: 1.0, facing: 0.0, beam: 0.4 }
+        Self { across: 0.0, depth: 0.3, width: 1.0, facing: 0.0, beam: 0.4, face_listener: false }
     }
 }
 
@@ -474,10 +478,16 @@ impl Place {
         [self.across, self.depth, self.width, self.facing, self.beam]
     }
 
+    /// With `facing` turned to the listener.
+    pub fn facing_listener(self, room: &MapRoom) -> Self {
+        let (source, listener) = places(&map_params(room, &self));
+        Self { facing: facing_towards(source, listener), ..self }
+    }
+
     pub fn from_params(p: &[f32]) -> Self {
         let g = |i: usize, or: f32| p.get(i).copied().unwrap_or(or);
         let d = Self::default();
-        Self { across: g(0, d.across), depth: g(1, d.depth), width: g(2, d.width), facing: g(3, d.facing), beam: g(4, d.beam) }
+        Self { across: g(0, d.across), depth: g(1, d.depth), width: g(2, d.width), facing: g(3, d.facing), beam: g(4, d.beam), ..d }
     }
 }
 

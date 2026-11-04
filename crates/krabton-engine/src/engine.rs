@@ -2769,7 +2769,9 @@ impl Engine {
                         st.clear();
                     }
                     // Modulated (a track walking round), and where it is now for the map.
+                    let aim = place.face_listener;
                     let place = mods.params(ModOwner::Map(track.id)).map(crate::dsp::fx::stage::Place::from_params).unwrap_or(*place);
+                    let place = if aim { place.facing_listener(&project.map) } else { place };
                     if let Some(ts) = status.tracks.get(ti) {
                         for (a, v) in ts.map_live.iter().zip(place.to_params()) {
                             a.store(v);
@@ -3807,6 +3809,21 @@ mod tests {
         h.send(Command::Stop);
         run(&mut e, 0.05);
         assert_eq!(sounding(&e), 0, "stop left notes on");
+    }
+
+    #[test]
+    fn a_track_set_to_face_the_listener_does_so_wherever_it_stands() {
+        use crate::dsp::fx::stage::{facing_towards, map_params, places, Place};
+        let mut p = Project::new_default();
+        let place = Place { across: 0.6, depth: 0.2, facing: 123.0, face_listener: true, ..Place::default() };
+        p.tracks[0].place = Some(place);
+        let (source, listener) = places(&map_params(&p.map, &place));
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        run(&mut e, 0.05);
+        let facing = h.status.tracks[0].map_live[3].load();
+        let want = facing_towards(source, listener);
+        assert!((facing - want).abs() < 0.01, "{facing}, not {want}");
+        assert!(want.abs() > 1.0, "it stands off to the side");
     }
 
     #[test]

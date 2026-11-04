@@ -7,6 +7,7 @@
 //! Above it the room: none at first (only where they stand), as much of it
 //! as you like.
 
+use super::map_plans;
 use super::windows::tool_window;
 use crate::app::App;
 use crate::theme::*;
@@ -22,6 +23,14 @@ const FLOOR_LINE: Color32 = Color32::from_rgba_premultiplied(0x10, 0x10, 0x12, 0
 const CHALK: Color32 = Color32::from_rgba_premultiplied(0x9a, 0x9a, 0xa2, 0x60);
 const DOT: Color32 = Color32::from_rgb(0xc4, 0xc4, 0xca);
 const TAG: Color32 = Color32::from_rgb(0x26, 0x26, 0x2b);
+/// The families of a floor plan.
+const PLAN_TINTS: [Color32; 5] = [
+    Color32::from_rgb(0xd0, 0x8a, 0x5a),
+    Color32::from_rgb(0x7f, 0xb0, 0x7a),
+    Color32::from_rgb(0xd8, 0xbc, 0x5c),
+    Color32::from_rgb(0xc4, 0x6c, 0x6c),
+    Color32::from_rgb(0x8a, 0x9c, 0xc8),
+];
 
 /// A track on the map.
 #[derive(Clone)]
@@ -45,6 +54,8 @@ pub(crate) struct MapEdit {
     pub listener: Option<(f32, f32)>,
     pub select: Option<u64>,
     pub face_listener: Option<u64>,
+    /// A track set to face the listener always, or no more.
+    pub always_face: Option<(u64, bool)>,
     pub remove: Option<u64>,
 }
 
@@ -96,13 +107,28 @@ pub(crate) fn map(ui: &mut Ui, rect: Rect, id: Id, room: &MapRoom, dots: &[Dot],
     }
     // The stage's arcs, opening towards the listener.
     let front = to_screen(0.0, 0.3);
-    for k in 1..=3 {
+    for k in 1..=(if map_plans::plan(room.plan).is_some() { 0 } else { 3 }) {
         let radius = k as f32 * 0.15 * d * scale;
         let pts: Vec<Pos2> = (0..=40).map(|i| {
             let a = (-80.0 + 160.0 * i as f32 / 40.0).to_radians();
             pos2(front.x + radius * a.sin(), front.y + radius * a.cos())
         }).collect();
         on_floor.add(Shape::line(pts, Stroke::new(1.0_f32, CHALK)));
+    }
+    // The floor plan: where everything usually stands.
+    if let Some(plan) = map_plans::plan(room.plan) {
+        for z in plan.zones {
+            let mut p = base;
+            p[st::ACROSS] = z.across;
+            p[st::DEPTH] = z.depth;
+            let ((zx, zy), _) = st::places(&p);
+            let c = to_screen(zx, zy);
+            let radius = vec2(z.half_w * (w * 0.5 - 0.4), z.half_h * (d - 0.6)) * scale;
+            let tint = PLAN_TINTS[z.family];
+            on_floor.add(Shape::ellipse_filled(c, radius, tint.gamma_multiply(0.16)));
+            on_floor.add(Shape::ellipse_stroke(c, radius, Stroke::new(1.0_f32, tint.gamma_multiply(0.55))));
+            on_floor.text(c, Align2::CENTER_CENTER, z.name, FontId::proportional(10.5), Color32::from_gray(190));
+        }
     }
     // The listener.
     let ((_, _), (lx, ly)) = st::places(&base);
@@ -135,7 +161,7 @@ pub(crate) fn map(ui: &mut Ui, rect: Rect, id: Id, room: &MapRoom, dots: &[Dot],
     // What is under the mouse: the selected one's handle first, then tracks (the selected on top), then the head.
     let hit = |at: Pos2| -> Option<Grab> {
         if let Some(dt) = dots.iter().find(|d| Some(d.track) == selected) {
-            if handle_of(spot(&dt.place), dt.place.facing).distance(at) < 11.0 {
+            if !dt.place.face_listener && handle_of(spot(&dt.place), dt.place.facing).distance(at) < 11.0 {
                 return Some(Grab::Turn(dt.track));
             }
         }
@@ -210,8 +236,13 @@ pub(crate) fn map(ui: &mut Ui, rect: Rect, id: Id, room: &MapRoom, dots: &[Dot],
     let menu_track: Option<u64> = ui.data(|dd| dd.get_temp::<Option<u64>>(menu_key).flatten());
     resp.context_menu(|ui| match menu_track {
         Some(t) => {
-            if ui.button("Face the listener").clicked() {
+            let mut always = dots.iter().any(|d| d.track == t && d.place.face_listener);
+            if !always && ui.button("Face the listener").clicked() {
                 edit.face_listener = Some(t);
+                ui.close();
+            }
+            if ui.checkbox(&mut always, "Always face the listener").clicked() {
+                edit.always_face = Some((t, always));
                 ui.close();
             }
             if ui.button("Take it off the map").clicked() {
@@ -244,6 +275,9 @@ pub(crate) fn map(ui: &mut Ui, rect: Rect, id: Id, room: &MapRoom, dots: &[Dot],
                 pl.facing = f;
             }
         }
+        if pl.face_listener {
+            pl = pl.facing_listener(room);
+        }
         let sel = Some(dt.track) == selected;
         let tint = if sel { accent } else { DOT };
         let q_base = spot(&pl);
@@ -272,7 +306,7 @@ pub(crate) fn map(ui: &mut Ui, rect: Rect, id: Id, room: &MapRoom, dots: &[Dot],
             painter.circle_filled(q, 8.0 + 10.0 * dt.level.min(1.0), Color32::WHITE.gamma_multiply(0.12 * dt.level.min(1.0)));
         }
         painter.circle(q, if sel { 8.0 } else { 6.5 }, tint, Stroke::new(1.5_f32, Color32::from_gray(20)));
-        if sel {
+        if sel && !pl.face_listener {
             let h = handle_of(q_base, pl.facing);
             painter.line_segment([q_base, h], Stroke::new(1.5_f32, accent));
             painter.circle(h, 6.0, Color32::from_gray(20), Stroke::new(2.0_f32, accent));
@@ -287,7 +321,8 @@ pub(crate) fn map(ui: &mut Ui, rect: Rect, id: Id, room: &MapRoom, dots: &[Dot],
         }
     }
     if dots.is_empty() {
-        text(&painter, floor.center(), Align2::CENTER_CENTER, "Tick a track (on the right) to put it on the map", small(), TEXT);
+        let hint = if map_plans::plan(room.plan).is_some() { pos2(floor.center().x, floor.bottom() - 24.0) } else { floor.center() };
+        text(&painter, hint, Align2::CENTER_CENTER, "Tick a track (on the right) to put it on the map", small(), TEXT);
     }
     if grabbed.is_none() {
         if let Some(i) = hovered {
@@ -334,7 +369,9 @@ impl App {
                     let v: Vec<f32> = ts.map_live.iter().map(|a| a.load()).collect();
                     Place::from_params(&v)
                 })).flatten();
-                Some(Dot { track: t.id, name: t.name.clone(), place, live, level })
+                let room = &self.project.map;
+                let aimed = |p: Place| if place.face_listener { Place { face_listener: true, ..p }.facing_listener(room) } else { p };
+                Some(Dot { track: t.id, name: t.name.clone(), place: aimed(place), live: live.map(aimed), level })
             })
             .collect()
     }
@@ -389,6 +426,29 @@ impl App {
             pl.facing = (st::facing_towards((sx, sy), listener) / 5.0).round() * 5.0;
             self.project.tracks[i].place = Some(pl);
         }
+    }
+
+    /// The tracks on the floor plan by what they are called, facing the listener.
+    pub(crate) fn place_on_plan(&mut self) {
+        let room = self.project.map;
+        let Some(plan) = map_plans::plan(room.plan) else { return };
+        let mut used = vec![0usize; plan.zones.len()];
+        let mut placed = 0;
+        for i in 0..self.project.tracks.len() {
+            let t = &self.project.tracks[i];
+            let what = t.instrument.as_ref().map(|inst| inst.display_name()).unwrap_or_default();
+            let Some(z) = plan.zone_for(&format!("{} {what}", t.name).to_lowercase()) else { continue };
+            self.set_on_map(i, true);
+            let (across, depth) = plan.zones[z].spot(used[z]);
+            used[z] += 1;
+            let mut pl = self.project.tracks[i].place.unwrap_or_default();
+            (pl.across, pl.depth) = (across, depth);
+            let (source, listener) = st::places(&params(&room, &pl));
+            pl.facing = (st::facing_towards(source, listener) / 5.0).round() * 5.0;
+            self.project.tracks[i].place = Some(pl);
+            placed += 1;
+        }
+        self.toast(format!("{placed} of {} tracks placed on the {} plan", self.project.tracks.len(), plan.name));
     }
 
     pub(crate) fn ui_map_window(&mut self, ctx: &Context) {
@@ -476,6 +536,9 @@ impl App {
                 let ((sx, sy), _) = st::places(&params(&self.project.map, pl));
                 pl.facing = (st::facing_towards((sx, sy), listener) / 5.0).round() * 5.0;
             }
+            if let Some((_, on)) = edit.always_face.filter(|e| e.0 == t.id) {
+                pl.face_listener = on;
+            }
         }
         if let Some(t) = edit.remove {
             if let Some(i) = self.project.tracks.iter().position(|x| x.id == t) {
@@ -505,8 +568,10 @@ impl App {
                     let changed = super::devices::param_grid_mod(ui, Id::new(("map_place", id)), PLACE_SPECS, &mut values, accent_now(), 150.0, mv.as_mut());
                     self.apply_mod_view(mv);
                     let mut pl = Place::from_params(&values);
+                    pl.face_listener = place.face_listener;
+                    ui.checkbox(&mut pl.face_listener, "Always face the listener").on_hover_text("Also while it walks round or the listener moves. Its Facing knob rests in the meantime");
                     ui.horizontal(|ui| {
-                        if ui.small_button("Face the listener").clicked() {
+                        if !pl.face_listener && ui.small_button("Face the listener").clicked() {
                             let ((sx, sy), l) = st::places(&params(&self.project.map, &pl));
                             pl.facing = (st::facing_towards((sx, sy), l) / 5.0).round() * 5.0;
                         }
@@ -529,6 +594,23 @@ impl App {
             }
         });
         ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Floor plan").small().color(TEXT_DIM));
+            let now = map_plans::plan(self.project.map.plan).map_or("None", |p| p.name);
+            let mut choice = self.project.map.plan;
+            egui::ComboBox::from_id_salt("map_plan").width(100.0).selected_text(now).show_ui(ui, |ui| {
+                ui.selectable_value(&mut choice, 0, "None");
+                for (k, p) in map_plans::PLANS.iter().enumerate() {
+                    ui.selectable_value(&mut choice, k as u8 + 1, p.name);
+                }
+            });
+            if choice != self.project.map.plan {
+                self.project.map.plan = choice;
+            }
+            if choice > 0 && ui.small_button("Place tracks").on_hover_text("Puts the tracks on the plan by their names and instruments (Violins, Drum Rack, Fat Bass); the ones it does not recognise stay where they are").clicked() {
+                self.place_on_plan();
+            }
+        });
         ui.horizontal(|ui| {
             ui.label(RichText::new("On the map").small().color(TEXT_DIM));
             if ui.small_button("All").clicked() {

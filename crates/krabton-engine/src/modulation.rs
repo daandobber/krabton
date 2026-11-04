@@ -48,6 +48,7 @@ pub static LFO: &[ParamSpec] = &[
     ParamSpec::log("Rate", "LFO", 0.02, 20.0, 1.0, Unit::Hz),
     ParamSpec::lin("Phase", "Output", 0.0, 1.0, 0.0, Unit::Percent),
     ParamSpec::lin("Depth", "Output", 0.0, 1.0, 1.0, Unit::Percent),
+    ParamSpec::toggle("Invert", "Output", false),
 ];
 pub static ENVELOPE: &[ParamSpec] = &[
     ParamSpec::log("Attack", "Envelope", 0.001, 4.0, 0.005, Unit::Sec),
@@ -1015,6 +1016,7 @@ fn step(m: &Modulator, p: &[f32], st: &mut ModState, sig: TrackSignal, clock: Mo
                     st.value
                 }
             };
+            let v = if get(6) >= 0.5 { -v } else { v };
             v * get(5)
         }
         ModKind::Envelope => {
@@ -1283,6 +1285,27 @@ mod tests {
             rt.tick(&p, &down, clock(0.0), true, &[]);
         }
         assert!(rt.outputs[0] < 0.01, "down {}", rt.outputs[0]);
+    }
+
+    #[test]
+    fn an_lfo_can_start_elsewhere_and_go_the_other_way() {
+        let at = |phase: f32, invert: f32, beat: f64| {
+            let mut p = Project::new_default();
+            let mut m = p.make_modulator(ModKind::Lfo);
+            m.params[4] = phase;
+            m.params[6] = invert;
+            p.modulators.push(m);
+            let mut rt = ModRuntime::new();
+            rt.rebuild(&p);
+            rt.tick(&p, &[], clock(beat), true, &[]);
+            rt.outputs[0]
+        };
+        // A quarter of a note's cycle into the sine: all the way up.
+        assert!((at(0.0, 0.0, 0.25) - 1.0).abs() < 0.01);
+        assert!((at(0.0, 1.0, 0.25) + 1.0).abs() < 0.01, "inverted: all the way down");
+        // Started a quarter further on, it is there at once.
+        assert!((at(0.25, 0.0, 0.0) - 1.0).abs() < 0.01);
+        assert!(at(0.0, 0.0, 0.0).abs() < 0.01);
     }
 
     #[test]
