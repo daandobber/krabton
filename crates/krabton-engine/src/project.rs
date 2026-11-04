@@ -1082,6 +1082,9 @@ pub enum Instrument {
         #[serde(default)]
         flip: crate::dsp::princess_flip::Flip,
     },
+    /// Munich: a big mono for bass and leads, three free-running oscillators
+    /// into a ladder whose every stage saturates, and a stereo tape echo.
+    Munich { preset: String, params: Vec<f32> },
 }
 
 impl Instrument {
@@ -1160,6 +1163,10 @@ impl Instrument {
 
     pub fn bassline(preset: &str) -> Self {
         Instrument::Bassline { preset: preset.to_string(), params: crate::dsp::bassline::preset(preset) }
+    }
+
+    pub fn munich(preset: &str) -> Self {
+        Instrument::Munich { preset: preset.to_string(), params: crate::dsp::munich::preset(preset) }
     }
 
     pub fn mono101(preset: &str) -> Self {
@@ -1360,6 +1367,7 @@ impl Instrument {
             Instrument::Piano { .. } => "Grand Piano",
             Instrument::Bassline { .. } => "Bassline",
             Instrument::Mono101 { .. } => "Mono",
+            Instrument::Munich { .. } => "Munich",
             Instrument::Drone { .. } => "Drone",
             Instrument::Waves { .. } => "Waves",
             Instrument::Guitar { .. } => "Guitar",
@@ -1427,7 +1435,7 @@ impl Instrument {
             Instrument::Grit { preset, .. } => preset.clone(),
             Instrument::Flip { sample: Some(s), .. } => s.name.clone(),
             Instrument::Flip { preset, .. } => preset.clone(),
-            Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Modular { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } | Instrument::Monk { preset, .. } | Instrument::Piano { preset, .. } | Instrument::Bassline { preset, .. } | Instrument::Mono101 { preset, .. } | Instrument::Drone { preset, .. } | Instrument::Waves { preset, .. } | Instrument::Guitar { preset, .. } | Instrument::WindChimes { preset, .. } | Instrument::Birds { preset, .. } | Instrument::Nature { preset, .. } | Instrument::PanFlute { preset, .. } | Instrument::Melodica { preset, .. } | Instrument::Harmonica { preset, .. } | Instrument::Calculator { preset, .. } | Instrument::Console { preset, .. } | Instrument::Handheld { preset, .. } | Instrument::Micro { preset, .. } | Instrument::Warp { preset, .. } | Instrument::Hybrid { preset, .. } | Instrument::Quartet { preset, .. } | Instrument::ChipFm { preset, .. } | Instrument::V2 { preset, .. } | Instrument::Oidos { preset, .. } | Instrument::Orchestra { preset, .. } | Instrument::Facet { preset, .. } | Instrument::BeadsSynth { preset, .. } | Instrument::StreetOrgan { preset, .. } => preset.clone(),
+            Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Modular { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } | Instrument::Monk { preset, .. } | Instrument::Piano { preset, .. } | Instrument::Bassline { preset, .. } | Instrument::Mono101 { preset, .. } | Instrument::Munich { preset, .. } | Instrument::Drone { preset, .. } | Instrument::Waves { preset, .. } | Instrument::Guitar { preset, .. } | Instrument::WindChimes { preset, .. } | Instrument::Birds { preset, .. } | Instrument::Nature { preset, .. } | Instrument::PanFlute { preset, .. } | Instrument::Melodica { preset, .. } | Instrument::Harmonica { preset, .. } | Instrument::Calculator { preset, .. } | Instrument::Console { preset, .. } | Instrument::Handheld { preset, .. } | Instrument::Micro { preset, .. } | Instrument::Warp { preset, .. } | Instrument::Hybrid { preset, .. } | Instrument::Quartet { preset, .. } | Instrument::ChipFm { preset, .. } | Instrument::V2 { preset, .. } | Instrument::Oidos { preset, .. } | Instrument::Orchestra { preset, .. } | Instrument::Facet { preset, .. } | Instrument::BeadsSynth { preset, .. } | Instrument::StreetOrgan { preset, .. } => preset.clone(),
         }
     }
 
@@ -2550,6 +2558,7 @@ impl Project {
                     Some(Instrument::Piano { params, .. }) => params::fix_len(params, crate::piano::SPECS),
                     Some(Instrument::Bassline { params, .. }) => params::fix_len(params, crate::dsp::bassline::SPECS),
                     Some(Instrument::Mono101 { params, .. }) => params::fix_len(params, crate::dsp::mono101::SPECS),
+                    Some(Instrument::Munich { params, .. }) => params::fix_len(params, crate::dsp::munich::SPECS),
                     Some(Instrument::Drone { params, .. }) => params::fix_len(params, crate::dsp::drone::SPECS),
                     Some(Instrument::Waves { params, .. }) => params::fix_len(params, crate::dsp::waves::SPECS),
                     Some(Instrument::Guitar { params, .. }) => params::fix_len(params, crate::dsp::guitar::SPECS),

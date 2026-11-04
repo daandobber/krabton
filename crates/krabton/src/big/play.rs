@@ -340,6 +340,7 @@ pub fn telling_params(inst: &Instrument) -> [Option<usize>; 2] {
         Instrument::Elements { .. } => Some(("Brightness", "Position")),
         Instrument::Rings { .. } => Some(("Brightness", "Structure")),
         Instrument::Mono101 { .. } => Some(("Freq", "Res")),
+        Instrument::Munich { .. } => Some(("Cutoff", "Emphasis")),
         Instrument::Shakers { .. } => Some(("Brightness", "Ring")),
         Instrument::Voice { .. } => Some(("Morph", "Formant")),
         Instrument::Mallets { .. } | Instrument::Strings { .. } | Instrument::Winds { .. } => Some(("Control 1", "Control 2")),

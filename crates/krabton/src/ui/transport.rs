@@ -312,6 +312,10 @@ impl App {
                 self.load_demo();
                 ui.close();
             }
+            if ui.button("Load Gallop Set").on_hover_text("Munich at work: a galloping octave bass over a straight disco beat").clicked() {
+                self.load_gallop();
+                ui.close();
+            }
             if ui.button("Load Ambient Set").on_hover_text("Forest Morning: a brook, birds, wind chimes, a drone, a glass bowl and a pan flute").clicked() {
                 self.load_ambient();
                 ui.close();

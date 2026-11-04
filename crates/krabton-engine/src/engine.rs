@@ -19,6 +19,7 @@ use crate::dsp::organ::OrganState;
 use crate::dsp::monk::MonkState;
 use crate::dsp::bassline::BasslineState;
 use crate::dsp::mono101::Mono101State;
+use crate::dsp::munich::MunichState;
 use crate::dsp::drone::DroneState;
 use crate::dsp::waves::WavesState;
 use crate::dsp::guitar::GuitarState;
@@ -531,6 +532,7 @@ enum InstState {
     Piano(Box<PianoState>),
     Bassline(Box<BasslineState>),
     Mono101(Box<Mono101State>),
+    Munich(Box<MunichState>),
     Drone(Box<DroneState>),
     Waves(Box<WavesState>),
     Guitar(Box<GuitarState>),
@@ -579,6 +581,7 @@ impl InstState {
             InstState::Analog(s) => s.pitch_bend = semis,
             InstState::Waves(s) => s.pitch_bend = semis,
             InstState::Mono101(s) => s.pitch_bend = semis,
+            InstState::Munich(s) => s.pitch_bend = semis,
             InstState::Bassline(s) => s.pitch_bend = semis,
             InstState::Macro(s) => s.pitch_bend = semis,
             InstState::Braids(s) => s.pitch_bend = semis,
@@ -645,6 +648,7 @@ impl InstState {
             Some(Instrument::Piano { .. }) => InstState::Piano(Box::new(PianoState::new(sr))),
             Some(Instrument::Bassline { .. }) => InstState::Bassline(Box::new(BasslineState::new(sr))),
             Some(Instrument::Mono101 { .. }) => InstState::Mono101(Box::new(Mono101State::new(sr))),
+            Some(Instrument::Munich { .. }) => InstState::Munich(Box::new(MunichState::new(sr))),
             Some(Instrument::Drone { .. }) => InstState::Drone(Box::new(DroneState::new(sr))),
             Some(Instrument::Waves { .. }) => InstState::Waves(Box::new(WavesState::new(sr))),
             Some(Instrument::Guitar { .. }) => InstState::Guitar(Box::new(GuitarState::new(sr))),
@@ -724,6 +728,7 @@ impl InstState {
                 | (InstState::Piano(_), Some(Instrument::Piano { .. }))
                 | (InstState::Bassline(_), Some(Instrument::Bassline { .. }))
                 | (InstState::Mono101(_), Some(Instrument::Mono101 { .. }))
+                | (InstState::Munich(_), Some(Instrument::Munich { .. }))
                 | (InstState::Drone(_), Some(Instrument::Drone { .. }))
                 | (InstState::Waves(_), Some(Instrument::Waves { .. }))
                 | (InstState::Guitar(_), Some(Instrument::Guitar { .. }))
@@ -794,6 +799,7 @@ impl InstState {
             (InstState::Piano(s), Instrument::Piano { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Bassline(s), Instrument::Bassline { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Mono101(s), Instrument::Mono101 { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Munich(s), Instrument::Munich { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Drone(s), Instrument::Drone { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Waves(s), Instrument::Waves { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Guitar(s), Instrument::Guitar { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
@@ -858,6 +864,7 @@ impl InstState {
             (InstState::Piano(s), Instrument::Piano { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Bassline(s), Instrument::Bassline { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Mono101(s), Instrument::Mono101 { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Munich(s), Instrument::Munich { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Drone(s), Instrument::Drone { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Waves(s), Instrument::Waves { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Guitar(s), Instrument::Guitar { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
@@ -922,6 +929,7 @@ impl InstState {
             InstState::Piano(s) => s.all_off(),
             InstState::Bassline(s) => s.all_off(),
             InstState::Mono101(s) => s.all_off(),
+            InstState::Munich(s) => s.all_off(),
             InstState::Drone(s) => s.all_off(),
             InstState::Waves(s) => s.all_off(),
             InstState::Guitar(s) => s.all_off(),
@@ -972,6 +980,7 @@ impl InstState {
             InstState::Piano(s) => s.visual(out),
             InstState::Bassline(s) => s.visual(out),
             InstState::Mono101(s) => s.visual(out),
+            InstState::Munich(s) => s.visual(out),
             InstState::Drone(s) => s.visual(out),
             InstState::Waves(s) => s.visual(out),
             InstState::Guitar(s) => s.visual(out),
@@ -1039,6 +1048,7 @@ impl InstState {
             (InstState::Piano(s), Instrument::Piano { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Bassline(s), Instrument::Bassline { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Mono101(s), Instrument::Mono101 { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Munich(s), Instrument::Munich { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Drone(s), Instrument::Drone { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Waves(s), Instrument::Waves { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Guitar(s), Instrument::Guitar { params, .. }) => s.render(ov.unwrap_or(params), l, r),
@@ -2529,6 +2539,7 @@ impl Engine {
                     InstState::Modular(m) => m.set_transport(ctx.bpm, ctx.beat, ctx.playing),
                     // Hat rolls keep the song's time.
                     InstState::Drums(s) => s.bpm = ctx.bpm,
+                    InstState::Munich(s) => s.bpm = ctx.bpm,
                     InstState::WindChimes(s) => s.playing = ctx.playing,
                     InstState::BeadsSynth(s) => {
                         s.playing = ctx.playing;

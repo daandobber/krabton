@@ -1931,6 +1931,21 @@ impl App {
                         });
                         super::mono101_view::mono101_panel(ui, Id::new(("mono101", track_id)), params, &live, h - 48.0, mv.as_mut());
                     }
+                    Instrument::Munich { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
+                            egui::ComboBox::from_id_salt(("munich_preset", track_id)).width(150.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in krabton_engine::dsp::munich::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = krabton_engine::dsp::munich::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("three oscillators that run free, a ladder whose every stage saturates; Drive and Feedback fatten it, Echo gallops").small().color(crate::skin::ink_dim()));
+                        });
+                        super::munich_view::munich_panel(ui, Id::new(("munich", track_id)), params, &live, h - 48.0, mv.as_mut());
+                    }
                     Instrument::Drone { preset, params } => {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));

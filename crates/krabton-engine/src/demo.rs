@@ -304,3 +304,79 @@ pub fn ambient_project() -> Project {
     p.loop_end = 32.0;
     p
 }
+
+/// Munich at work: the galloping octave bass of late seventies disco over a
+/// straight beat, in C and on B flat.
+pub fn gallop_project() -> Project {
+    let mut p = Project::blank();
+    p.name = "Gallop".into();
+    p.bpm = 127.0;
+    p.scale = crate::scale::Scale::new(0, crate::scale::ScaleKind::Minor);
+    for (i, name) in ["Pulse", "Beat", "Lift", "Down"].iter().enumerate() {
+        p.scenes[i].name = name.to_string();
+    }
+    // Two Cs, a G and a B flat in eighths, the repeat falling on the sixteenths between.
+    let line = |root: u8| {
+        every(0.5, 4.0, move |t| {
+            let offset = [0u8, 12, 7, 10][((t * 2.0).round() as usize) % 4];
+            Some(n(root + offset, t, 0.22, if offset == 0 { 1.0 } else { 0.85 }))
+        })
+    };
+    let bass = p.add_midi_track(Some(Instrument::munich("Gallop")));
+    p.tracks[bass].name = "Bass".into();
+    p.tracks[bass].color = PALETTE[0];
+    p.tracks[bass].mixer.volume_db = -3.0;
+    for scene in 0..3 {
+        set_clip(&mut p, bass, scene, "C", 4.0, line(48));
+    }
+    set_clip(&mut p, bass, 3, "B flat", 4.0, line(46));
+
+    let drums = p.add_midi_track(Some(Instrument::drums("Classic 909")));
+    p.tracks[drums].name = "Drums".into();
+    p.tracks[drums].color = PALETTE[1];
+    p.tracks[drums].mixer.volume_db = -5.0;
+    let kick = every(1.0, 4.0, |t| Some(n(KICK, t, 0.25, 1.0)));
+    set_clip(&mut p, drums, 0, "Kick", 4.0, kick.clone());
+    let mut beat = kick;
+    beat.extend(every(0.5, 4.0, |t| if t.fract() == 0.0 { None } else { Some(n(OHAT, t, 0.2, 0.55)) }));
+    beat.extend([n(CLAP, 1.0, 0.25, 0.85), n(CLAP, 3.0, 0.25, 0.85)]);
+    let mut lift = beat.clone();
+    lift.extend(every(0.25, 4.0, |t| if t.fract() == 0.25 || t.fract() == 0.75 { Some(n(CHAT, t, 0.1, 0.4)) } else { None }));
+    set_clip(&mut p, drums, 1, "Beat", 4.0, beat.clone());
+    set_clip(&mut p, drums, 2, "Lift", 4.0, lift.clone());
+    set_clip(&mut p, drums, 3, "Lift", 4.0, lift);
+
+    // High up, the same machine on sixteenths.
+    let high = p.add_midi_track(Some(Instrument::munich("Reedy Pulse")));
+    p.tracks[high].name = "High".into();
+    p.tracks[high].color = PALETTE[5];
+    p.tracks[high].mixer.volume_db = -14.0;
+    p.tracks[high].mixer.sends = vec![0.25, 0.0];
+    let arp = |root: u8| {
+        every(0.25, 4.0, move |t| {
+            let offset = [0u8, 7, 12, 15, 19, 15, 12, 7][((t * 4.0).round() as usize) % 8];
+            Some(n(root + offset, t, 0.18, 0.7))
+        })
+    };
+    set_clip(&mut p, high, 2, "Up", 4.0, arp(60));
+    set_clip(&mut p, high, 3, "Down", 4.0, arp(58));
+    p
+}
+
+#[cfg(test)]
+mod gallop_tests {
+    use super::*;
+
+    #[test]
+    fn the_gallop_set_plays_two_cs_a_g_and_a_b_flat_on_munich() {
+        let p = gallop_project();
+        assert!(matches!(p.tracks[0].instrument, Some(Instrument::Munich { .. })));
+        let Some(clip) = &p.tracks[0].slots[0] else { panic!("no clip") };
+        let crate::project::ClipContent::Midi { notes } = &clip.content else { panic!("not notes") };
+        let pitches: Vec<u8> = notes.iter().take(4).map(|n| n.pitch).collect();
+        assert_eq!(pitches, [48, 60, 55, 58]);
+        assert_eq!(notes.len(), 8);
+        // Every scene has its bass.
+        assert!((0..4).all(|s| p.tracks[0].slots[s].is_some()));
+    }
+}

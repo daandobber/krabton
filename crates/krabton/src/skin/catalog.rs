@@ -381,6 +381,28 @@ const PIANO: Skin = Skin {
 
 const BASSLINE: Skin = Skin { accent: hex(0xe8541c), knob: Knob::Euro, cap: hex(0x1c1c1d), heroes: &["Cutoff", "Resonance"], surface: Surface::Brushed, ..SILVER };
 
+/// Munich: a black panel between walnut cheeks, cream letters, ivory-pointed knobs.
+const MUNICH: Skin = Skin {
+    top: hex(0x17171a),
+    bottom: hex(0x0d0d0f),
+    surface: Surface::Flat,
+    cheeks: Some(hex(0x5a3419)),
+    screws: true,
+    accent: hex(0xf2a23a),
+    stripes: &[],
+    ink: hex(0xf0e8d8),
+    dim: hex(0xb7ae9c),
+    well: hex(0x050506),
+    well_ink: hex(0xf0e8d8),
+    cap: hex(0x101012),
+    knob: Knob::Cap,
+    logo: Font::Retro,
+    logo_size: 22.0,
+    logo_ink: hex(0xf0e8d8),
+    heroes: &["Cutoff", "Emphasis"],
+    ..BASE
+};
+
 const MONO: Skin = Skin {
     top: hex(0x2d2f33),
     bottom: hex(0x1d1e21),
@@ -1272,6 +1294,7 @@ pub fn for_instrument(name: &str) -> Option<Skin> {
         "Grand Piano" => PIANO,
         "Bassline" => BASSLINE,
         "Mono" => MONO,
+        "Munich" => MUNICH,
         "Drone" => DRONE,
         "Waves" => WAVES,
         "Guitar" => GUITAR,

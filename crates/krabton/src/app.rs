@@ -141,6 +141,8 @@ pub enum BrowserItem {
     Bassline(&'static str),
     /// A Mono preset.
     Mono101(&'static str),
+    /// A Munich preset.
+    Munich(&'static str),
     /// A Drone preset.
     Drone(&'static str),
     /// A Waves preset.
@@ -229,6 +231,7 @@ impl BrowserItem {
             BrowserItem::Monk(p) => format!("Monk: {p}"),
             BrowserItem::Bassline(p) => format!("Bassline: {p}"),
             BrowserItem::Mono101(p) => format!("Mono: {p}"),
+            BrowserItem::Munich(p) => format!("Munich: {p}"),
             BrowserItem::Drone(p) => format!("Drone: {p}"),
             BrowserItem::Waves(p) => format!("Waves: {p}"),
             BrowserItem::Guitar(p) => format!("Guitar: {p}"),
@@ -1340,7 +1343,7 @@ impl App {
                 }
                 self.toast(format!("Loading {} ...", info.name));
             }
-            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::StreetOrgan(_) | BrowserItem::Harmonica(_) | BrowserItem::Calculator(_) | BrowserItem::Console(_) | BrowserItem::Handheld(_) | BrowserItem::Micro(_) | BrowserItem::Warp(_) | BrowserItem::Hybrid(_) | BrowserItem::Quartet(_) | BrowserItem::ChipFm(_) | BrowserItem::V2(_) | BrowserItem::Oidos(_) | BrowserItem::Orchestra(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) | BrowserItem::Coast(_) | BrowserItem::Crimson(_) | BrowserItem::Silicon(_) | BrowserItem::Theremin(_) | BrowserItem::Granulator(_) | BrowserItem::Keytone(_) | BrowserItem::Princess(_) | BrowserItem::Turntable(_) | BrowserItem::Grit(_) | BrowserItem::Stretch(_) | BrowserItem::Flip(_) => {
+            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Munich(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::StreetOrgan(_) | BrowserItem::Harmonica(_) | BrowserItem::Calculator(_) | BrowserItem::Console(_) | BrowserItem::Handheld(_) | BrowserItem::Micro(_) | BrowserItem::Warp(_) | BrowserItem::Hybrid(_) | BrowserItem::Quartet(_) | BrowserItem::ChipFm(_) | BrowserItem::V2(_) | BrowserItem::Oidos(_) | BrowserItem::Orchestra(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) | BrowserItem::Coast(_) | BrowserItem::Crimson(_) | BrowserItem::Silicon(_) | BrowserItem::Theremin(_) | BrowserItem::Granulator(_) | BrowserItem::Keytone(_) | BrowserItem::Princess(_) | BrowserItem::Turntable(_) | BrowserItem::Grit(_) | BrowserItem::Stretch(_) | BrowserItem::Flip(_) => {
                 let inst = match item {
                     BrowserItem::Synth(p) => Instrument::synth(p),
                     BrowserItem::Macro(p) => Instrument::macro_osc(p),
@@ -1359,6 +1362,7 @@ impl App {
                     BrowserItem::Piano(p) => Instrument::piano(p),
                     BrowserItem::Bassline(p) => Instrument::bassline(p),
                     BrowserItem::Mono101(p) => Instrument::mono101(p),
+                    BrowserItem::Munich(p) => Instrument::munich(p),
                     BrowserItem::Drone(p) => Instrument::drone(p),
                     BrowserItem::Waves(p) => Instrument::waves(p),
                     BrowserItem::Guitar(p) => Instrument::guitar(p),
@@ -3474,6 +3478,13 @@ impl App {
         self.toast("Demo set loaded");
     }
 
+    /// Munich's set: a galloping octave bass over a straight beat.
+    pub fn load_gallop(&mut self) {
+        self.replace_project(krabton_engine::demo::gallop_project());
+        self.file_path = None;
+        self.toast("Gallop: press Space or launch a scene");
+    }
+
     /// The new age ambient set: brook, birds, chimes, drone, bowl and pan flute.
     pub fn load_ambient(&mut self) {
         self.replace_project(krabton_engine::demo::ambient_project());
@@ -4126,6 +4137,12 @@ impl App {
                     let kit = arg.to_string();
                     self.start_drum_install(if kit.is_empty() { "Real Kit" } else { &kit });
                 }
+                "munich" => {
+                    let names = krabton_engine::dsp::munich::preset_names();
+                    let p = names.iter().find(|n| n.eq_ignore_ascii_case(arg.trim())).copied().unwrap_or(names[1]);
+                    self.apply_item(&BrowserItem::Munich(p), DropTarget::NewTrack);
+                }
+                "gallop" => self.load_gallop(),
                 "mono101" | "mono" => {
                     let names = krabton_engine::dsp::mono101::preset_names();
                     let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];

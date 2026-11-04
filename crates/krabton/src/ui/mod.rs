@@ -27,6 +27,7 @@ pub mod grid_panel;
 pub mod move_panel;
 pub mod modulation;
 pub mod mono101_view;
+pub mod munich_view;
 pub mod composers_view;
 pub mod convert;
 pub mod masters_view;

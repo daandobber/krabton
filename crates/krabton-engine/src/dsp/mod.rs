@@ -25,6 +25,7 @@ pub mod guitar;
 pub mod macro_osc;
 pub mod monk;
 pub mod mono101;
+pub mod munich;
 pub mod effects;
 pub mod organ;
 pub mod reverb;
