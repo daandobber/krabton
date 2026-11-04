@@ -52,6 +52,49 @@ pub const JOG_PRESS_CC: u8 = 3;
 /// The small lights under the steps (CCs 16-31).
 pub const STEP_LED_CC0: u8 = 16;
 
+/// The Move's own messages, as Live's script for it sends them.
+fn sysex(command: u8, args: &[u8]) -> Vec<u8> {
+    let mut m = vec![0xf0, 0x00, 0x21, 0x1d, 0x01, 0x01, command];
+    m.extend_from_slice(args);
+    m.push(0xf7);
+    m
+}
+
+/// Wakes it: left alone it dims and puts its lights out.
+pub fn wake_message() -> Vec<u8> {
+    sysex(8, &[127, 127])
+}
+
+/// Pressure per pad, instead of for all of them together.
+pub fn pressure_message() -> Vec<u8> {
+    sysex(30, &[1])
+}
+
+/// How bright its lights are (Live starts it at the middle one).
+pub const BRIGHTNESS: [(&str, u8); 4] = [("Maximum", 127), ("High", 126), ("Middle", 55), ("Low", 25)];
+
+pub fn brightness_message(index: u8) -> Vec<u8> {
+    sysex(6, &[BRIGHTNESS[(index as usize).min(BRIGHTNESS.len() - 1)].1])
+}
+
+/// How hard a pad must be hit: what comes in is raised to this power, so
+/// above 1 a soft hit plays softer and only a hard one plays loud.
+pub const PAD_CURVES: [(&str, f32); 4] = [("Firm", 1.7), ("Linear", 1.0), ("Light", 0.6), ("Hardest", 2.6)];
+
+pub fn pad_curve(index: u8, vel: f32) -> f32 {
+    vel.clamp(0.0, 1.0).powf(PAD_CURVES[(index as usize).min(PAD_CURVES.len() - 1)].1)
+}
+
+/// The same colour at full strength, however dark the track's colour is: a
+/// light has to be seen.
+pub fn vivid(c: [u8; 3]) -> [u8; 3] {
+    let top = c.iter().copied().max().unwrap_or(0);
+    if top == 0 {
+        return [0xff, 0xff, 0xff];
+    }
+    c.map(|v| (v as u32 * 255 / top as u32) as u8)
+}
+
 /// The LED colour palette: the colour each index (the velocity of a pad's
 /// Note On) lights, as the Move's users measured it (the table in Schwung by
 /// Charles Vestal and in Cycling '74's rnbo.move.control, both MIT). The
@@ -78,6 +121,8 @@ pub const PALETTE: [[u8; 3]; 128] = [
 
 /// Palette indices used by name.
 pub const WHITE: u8 = 120;
+/// A pad in the key: a white a little under full.
+pub const IN_KEY: u8 = 122;
 pub const GREEN: u8 = 126;
 pub const RED: u8 = 127;
 /// Brightness of the white button lights: off, dim (there to press), on.
@@ -666,12 +711,13 @@ pub fn render(l: &Look) -> Frame {
                 let scale = l.project.sounding_key();
                 for i in 0..32u8 {
                     let p = l.pitches[i as usize];
+                    // As on the Move itself: pads in the key white, the roots in colour.
                     let c = if l.held.contains(&p) {
-                        WHITE
+                        GREEN
                     } else if scale.is_root(p) {
-                        nearest(tcol)
+                        nearest(vivid(tcol))
                     } else {
-                        nearest(dim([0xff, 0xff, 0xff], 0.16))
+                        IN_KEY
                     };
                     f.set_pad(i, c);
                 }
@@ -874,6 +920,8 @@ enum ToMove {
     Enable(bool),
     Ports(Option<String>, Option<String>),
     Leds(Vec<[u8; 3]>),
+    /// A message of its own, as is.
+    Raw(Vec<u8>),
     Rescan,
     Quit(Sender<()>),
 }
@@ -930,6 +978,10 @@ pub struct MoveState {
     pads_held: HashMap<u8, (u8, Vec<u64>)>,
     pub last_pitch: Option<u8>,
     pub last_vel: f32,
+    /// The last hit as the pad sent it, before its curve.
+    pub last_raw: f32,
+    /// When it was last told to stay awake.
+    woken: Option<Instant>,
     /// The velocity pad held in Drums.
     pub vel_pad: Option<usize>,
     copy_from: Option<CopyFrom>,
@@ -943,6 +995,17 @@ pub struct MoveState {
 }
 
 impl MoveState {
+    /// As bright as asked, at once.
+    pub fn send_brightness(&self, index: u8) {
+        self.send_raw(brightness_message(index));
+    }
+
+    fn send_raw(&self, m: Vec<u8>) {
+        if let Some(to) = &self.to {
+            let _ = to.send(ToMove::Raw(m));
+        }
+    }
+
     /// Starts looking for a Move (not in test windows, unless KRABTON_MOVE=1).
     pub fn new(prefs: &crate::prefs::Prefs) -> Self {
         let (in_tx, rx) = unbounded();
@@ -986,6 +1049,8 @@ impl MoveState {
             pads_held: HashMap::new(),
             last_pitch: None,
             last_vel: 0.8,
+            last_raw: 0.0,
+            woken: None,
             vel_pad: None,
             copy_from: None,
             acc: [0.0; 8],
@@ -1116,6 +1181,13 @@ fn run(rx: Receiver<ToMove>, events: Sender<MoveEvent>, input_tx: Sender<MoveIn>
     loop {
         let mut close = false;
         match rx.recv_timeout(Duration::from_millis(250)) {
+            Ok(ToMove::Raw(m)) => {
+                if let Some((_, c)) = conn_out.as_mut() {
+                    if c.send(&m).is_err() {
+                        close = true;
+                    }
+                }
+            }
             Ok(ToMove::Leds(msgs)) => {
                 if let Some((_, c)) = conn_out.as_mut() {
                     if msgs.iter().any(|m| c.send(m).is_err()) {
@@ -1529,6 +1601,7 @@ impl App {
                     self.toast(if output.is_some() { "Ableton Move connected".to_string() } else { "Ableton Move connected (its lights would not open)".to_string() });
                     self.move_ctl.connected = Some((input, output));
                     self.move_ctl.sent = Frame::unknown();
+                    self.move_ctl.woken = None;
                 }
                 MoveEvent::Gone(name) => {
                     if self.move_ctl.connected.as_ref().is_some_and(|c| c.0 == name) {
@@ -1557,6 +1630,7 @@ impl App {
                 *o = t - 7;
             }
         }
+        self.move_keep_awake();
         self.move_ctl.leds = self.move_render();
         self.move_ctl.flush();
     }
@@ -1615,7 +1689,12 @@ impl App {
         match m {
             MoveIn::Other(raw) => self.move_ctl.note_unknown(raw),
             MoveIn::Button { button, down } => self.move_button(button, down),
-            MoveIn::Pad { pad, down, vel } => self.move_pad(pad, down, vel),
+            MoveIn::Pad { pad, down, vel } => {
+                if down {
+                    self.move_ctl.last_raw = vel;
+                }
+                self.move_pad(pad, down, pad_curve(self.prefs.move_curve, vel));
+            }
             MoveIn::PadPressure { value, .. } => {
                 if self.move_mode() == PadMode::Touch && !self.move_ctl.pads_held.is_empty() {
                     if let Some(t) = self.move_track() {
@@ -1640,6 +1719,26 @@ impl App {
                 self.move_ctl.hud_at = Some(Instant::now());
             }
             MoveIn::Turn { knob, ticks } => self.move_turn(knob, ticks),
+        }
+    }
+
+    /// As Live does on connecting: awake, as bright as asked, pressure per pad.
+    /// And then again and again: it dims and puts its lights out when left
+    /// alone, and a light that does not change would otherwise never come back.
+    fn move_keep_awake(&mut self) {
+        if self.move_ctl.connected.is_none() {
+            return;
+        }
+        let first = self.move_ctl.woken.is_none();
+        if first || self.move_ctl.woken.is_some_and(|t| t.elapsed() >= Duration::from_secs(8)) {
+            self.move_ctl.woken = Some(Instant::now());
+            self.move_ctl.send_raw(wake_message());
+            self.move_ctl.send_raw(brightness_message(self.prefs.move_brightness));
+            if first {
+                self.move_ctl.send_raw(pressure_message());
+            }
+            // Every light once more.
+            self.move_ctl.sent = Frame::unknown();
         }
     }
 
@@ -2256,6 +2355,30 @@ mod tests {
     }
 
     #[test]
+    fn its_own_messages_are_as_lives() {
+        assert_eq!(wake_message(), [0xf0, 0x00, 0x21, 0x1d, 0x01, 0x01, 8, 127, 127, 0xf7]);
+        assert_eq!(pressure_message(), [0xf0, 0x00, 0x21, 0x1d, 0x01, 0x01, 30, 1, 0xf7]);
+        assert_eq!(brightness_message(0), [0xf0, 0x00, 0x21, 0x1d, 0x01, 0x01, 6, 127, 0xf7]);
+        assert_eq!(brightness_message(2), [0xf0, 0x00, 0x21, 0x1d, 0x01, 0x01, 6, 55, 0xf7]);
+    }
+
+    #[test]
+    fn a_firm_curve_makes_soft_hits_softer_and_keeps_the_hardest() {
+        assert_eq!(pad_curve(1, 0.5), 0.5);
+        assert!(pad_curve(0, 0.5) < 0.35);
+        assert!(pad_curve(2, 0.5) > 0.6);
+        for c in 0..4 {
+            assert_eq!(pad_curve(c, 1.0), 1.0);
+        }
+    }
+
+    #[test]
+    fn a_dark_colour_lights_at_full_strength() {
+        assert_eq!(vivid([0x40, 0x20, 0x00]), [0xff, 0x7f, 0x00]);
+        assert_eq!(vivid([0, 0, 0]), [0xff, 0xff, 0xff]);
+    }
+
+    #[test]
     fn the_palette_is_found_nearest() {
         assert_eq!(nearest([0, 0, 0]), 0);
         assert_eq!(PALETTE[nearest([0xff, 0xff, 0xff]) as usize], [0xff, 0xff, 0xff]);
@@ -2378,13 +2501,13 @@ mod tests {
         let mut p = Project::new_default();
         p.scale = Scale::new(0, ScaleKind::Major);
         p.tracks[1].color = [0xff, 0x00, 0x00];
-        // Notes: roots in the track's colour, the rest dim, held notes white.
+        // Notes: roots in the track's colour, the rest white, held notes green.
         let mut l = look(&p, PadMode::Notes, Some(1));
         l.held = vec![50];
         let f = render(&l);
         assert_eq!(f.pad(0), nearest([0xff, 0, 0]), "C: a root");
-        assert_eq!(f.pad(1), WHITE, "D: held");
-        assert_eq!(f.pad(2), nearest(dim([0xff, 0xff, 0xff], 0.16)), "E: in the key");
+        assert_eq!(f.pad(1), GREEN, "D: held");
+        assert_eq!(f.pad(2), IN_KEY, "E: in the key");
         assert_eq!(f.pad(7), nearest([0xff, 0, 0]), "the next C");
         assert_eq!(f.button(Button::Play), nearest(dim([0x20, 0xff, 0x40], 0.2)), "stopped: Play dim");
         assert_eq!(f.button(Button::Left), OFF);

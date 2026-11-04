@@ -31,6 +31,8 @@ For sound on Linux see [Building](#building) below: Krabton talks to PulseAudio/
 
 **MIDI Learn** (Options): click a knob on screen, move one on your controller, and it turns it from then on. The mappings are saved with the set; *MIDI Knobs* in the same menu lists them.
 
+**The Ableton Move's lights and pads**: the Move tab sets how bright its lights are (*Lights*) and how hard a pad must be hit (*Pads*: Firm, Linear, Light, Hardest), and shows what the last hit sent and played at.
+
 **Packs**: the big sounds are not in the download. The Windows installer asks which you want and Krabton fetches them the first time it starts, while you work; on Linux and macOS the *Packs* window opens by itself the first time. The window is always in the *Krabton* menu: the grand piano, the orchestra, the soloists and band, drum kits, SoundFonts, voices, the Princess Sounds, ffmpeg and yt-dlp, with what is here and how big it is, *Download selected*, *Download all* and *Remove*. They arrive in `Documents/Krabton/Library`, one at a time.
 
 **Updates**: when Krabton starts it asks GitHub which version is the newest (turn that off in the *Update* window). A new one shows as an *Update* button in the status bar with what is new; *Download* fetches it while you work and *Restart now* puts it in place and brings your saved set back. The installer, the portable zip, the AppImage, the `tar.gz` and the macOS app each replace themselves; a copy from a package manager, or in a folder Krabton may not write to, gets the download page instead.

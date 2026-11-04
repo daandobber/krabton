@@ -100,6 +100,10 @@ pub struct Prefs {
     /// The Move's MIDI input and output picked by hand (None: found by name).
     pub move_in: Option<String>,
     pub move_out: Option<String>,
+    /// How bright its lights are (see `move_ctl::BRIGHTNESS`).
+    pub move_brightness: u8,
+    /// How hard its pads must be hit (see `move_ctl::PAD_CURVES`).
+    pub move_curve: u8,
     /// The first start's question about packs was asked.
     pub packs_asked: bool,
     /// When the installer's choice of packs was written, once it was followed.

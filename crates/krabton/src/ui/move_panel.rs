@@ -342,6 +342,34 @@ impl App {
             self.prefs.save();
             self.move_ctl.set_enabled(on);
         }
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Lights").small().color(TEXT_DIM));
+            let now = crate::move_ctl::BRIGHTNESS[(self.prefs.move_brightness as usize).min(3)].0;
+            egui::ComboBox::from_id_salt("move_brightness").width(90.0).selected_text(now).show_ui(ui, |ui| {
+                for (k, (name, _)) in crate::move_ctl::BRIGHTNESS.iter().enumerate() {
+                    if ui.selectable_label(self.prefs.move_brightness as usize == k, *name).clicked() {
+                        self.prefs.move_brightness = k as u8;
+                        self.prefs.save();
+                        self.move_ctl.send_brightness(k as u8);
+                    }
+                }
+            });
+            ui.label(RichText::new("Pads").small().color(TEXT_DIM));
+            let now = crate::move_ctl::PAD_CURVES[(self.prefs.move_curve as usize).min(3)].0;
+            egui::ComboBox::from_id_salt("move_curve").width(90.0).selected_text(now).show_ui(ui, |ui| {
+                for (k, (name, _)) in crate::move_ctl::PAD_CURVES.iter().enumerate() {
+                    if ui.selectable_label(self.prefs.move_curve as usize == k, *name).on_hover_text("How hard a pad must be hit. Firm: only a hard hit plays loud. Light: a soft one does already").clicked() {
+                        self.prefs.move_curve = k as u8;
+                        self.prefs.save();
+                    }
+                }
+            });
+        });
+        if self.move_ctl.last_raw > 0.0 {
+            let raw = self.move_ctl.last_raw;
+            let played = crate::move_ctl::pad_curve(self.prefs.move_curve, raw);
+            ui.label(RichText::new(format!("Last hit: {} from the pad, plays at {}", (raw * 127.0).round(), (played * 127.0).round())).small().color(TEXT_DIM));
+        }
         let mut pick = (self.prefs.move_in.clone(), self.prefs.move_out.clone());
         let ins = self.move_ctl.inputs.clone();
         let outs = self.move_ctl.outputs.clone();
