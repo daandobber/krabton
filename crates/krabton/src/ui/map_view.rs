@@ -13,7 +13,7 @@ use crate::app::App;
 use crate::theme::*;
 use crate::widgets::*;
 use egui::{pos2, vec2, Align2, Color32, Context, FontId, Id, Pos2, Rect, RichText, Sense, Shape, Stroke, Ui, UiBuilder};
-use krabton_engine::dsp::fx::stage::{self as st, MapRoom, Place, PLACE_SPECS};
+use krabton_engine::dsp::fx::stage::{self as st, MapPath, MapRoom, MapSetup, Place, PLACE_SPECS};
 use krabton_engine::modulation::{ModOwner, ModTarget};
 
 const WALL: Color32 = Color32::from_rgb(0x1e, 0x1e, 0x22);
@@ -43,6 +43,13 @@ const ROOM_SHAPES: [(&str, f32, f32); 7] = [
     ("Church", 22.0, 50.0),
 ];
 
+/// How long a round of a path takes (bars), and going over to a setup (0: at once).
+const PATH_BARS: [f32; 7] = [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0];
+const GLIDE_BARS: [f32; 7] = [0.0, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0];
+/// So many points at most to a path, and no closer together than this.
+const PATH_POINTS: usize = 512;
+const PATH_STEP: f32 = 0.012;
+
 /// What the map shows besides the tracks.
 pub(crate) struct MapFocus {
     /// The selected track.
@@ -51,6 +58,12 @@ pub(crate) struct MapFocus {
     pub listener: bool,
     /// The room with the listener where it is now (a modulator may walk it).
     pub now: MapRoom,
+    /// The ways that are walked.
+    pub paths: Vec<MapPath>,
+    /// The path of `paths` to show brightly: who is selected.
+    pub who: Option<ModOwner>,
+    /// The mouse draws a path now, instead of moving things.
+    pub drawing: bool,
 }
 
 /// A track on the map.
@@ -77,6 +90,8 @@ pub(crate) struct MapEdit {
     pub listener_turn: Option<f32>,
     pub select: Option<u64>,
     pub select_listener: bool,
+    /// A path just drawn: across, depth.
+    pub drawn: Option<Vec<(f32, f32)>>,
     pub face_listener: Option<u64>,
     /// A track set to face the listener always, or no more.
     pub always_face: Option<(u64, bool)>,
@@ -190,6 +205,44 @@ pub(crate) fn map(ui: &mut Ui, rect: Rect, id: Id, room: &MapRoom, dots: &[Dot],
         let ((sx, sy), _) = st::places(&p);
         to_screen(sx, sy)
     };
+    // The ways that are walked.
+    let on_screen = |a: f32, b: f32| {
+        let mut p = base;
+        p[st::ACROSS] = a;
+        p[st::DEPTH] = b;
+        let ((sx, sy), _) = st::places(&p);
+        to_screen(sx, sy)
+    };
+    for path in &focus.paths {
+        let mut pts: Vec<Pos2> = path.points.iter().map(|&(a, b)| on_screen(a, b)).collect();
+        if path.mode == st::PATH_LOOP && pts.len() > 1 {
+            pts.push(pts[0]);
+        }
+        let bright = Some(path.who) == focus.who;
+        let colour = if bright { accent } else { DOT.gamma_multiply(0.5) };
+        let colour = if path.on { colour } else { colour.gamma_multiply(0.4) };
+        painter.extend(Shape::dashed_line(&pts, Stroke::new(if bright { 1.6_f32 } else { 1.0 }, colour), 6.0, 4.0));
+    }
+    // Drawing one: the mouse goes down the way it should go.
+    if focus.drawing {
+        let key = id.with("drawn");
+        let mut pts: Vec<(f32, f32)> = ui.data(|dd| dd.get_temp(key)).unwrap_or_default();
+        if let (true, Some(at)) = (resp.dragged(), resp.interact_pointer_pos()) {
+            let (x, y) = from_screen(at);
+            let p = ((x / (w * 0.5 - 0.4)).clamp(-1.0, 1.0), ((y - 0.3) / (d - 0.6)).clamp(0.0, 1.0));
+            let far = pts.last().is_none_or(|l| (l.0 - p.0).hypot(l.1 - p.1) > PATH_STEP);
+            if far && pts.len() < PATH_POINTS {
+                pts.push(p);
+            }
+        }
+        if resp.drag_stopped() && pts.len() > 1 {
+            edit.drawn = Some(std::mem::take(&mut pts));
+        }
+        let line: Vec<Pos2> = pts.iter().map(|&(a, b)| on_screen(a, b)).collect();
+        painter.add(Shape::line(line, Stroke::new(2.0_f32, accent)));
+        ui.data_mut(|dd| dd.insert_temp(key, pts));
+        text(&painter, pos2(floor.center().x, floor.top() + 16.0), Align2::CENTER_CENTER, "Drag to draw the way", small(), accent);
+    }
     let handle_of = |q: Pos2, facing: f32| {
         // Facing 0 points at the back (down the screen); 90 to the right.
         let (fx, fy) = st::facing_vector(facing);
@@ -226,7 +279,7 @@ pub(crate) fn map(ui: &mut Ui, rect: Rect, id: Id, room: &MapRoom, dots: &[Dot],
     let grab_key = id.with("grab");
     if resp.drag_started() {
         let at = resp.interact_pointer_pos().unwrap_or(rect.center());
-        let g = hit(at);
+        let g = if focus.drawing { None } else { hit(at) };
         match g {
             Some(Grab::Move(t, _) | Grab::Turn(t)) => edit.select = Some(t),
             Some(Grab::Listener | Grab::TurnListener) => edit.select_listener = true,
@@ -408,19 +461,159 @@ impl App {
     fn map_moved_by_something(&self, ti: usize, id: u64) -> bool {
         let owner = ModOwner::Map(id);
         let is = |t: ModTarget| matches!(t, ModTarget::Param { owner: o, .. } if o == owner);
-        self.project.mod_routes.iter().any(|r| is(r.target)) || self.project.tracks.get(ti).is_some_and(|t| t.automation.iter().any(|e| is(e.target)) || t.slots.iter().flatten().chain(t.arrangement.iter().map(|a| &a.clip)).any(|c| c.envelopes.iter().any(|e| is(e.target))))
+        !self.project.map_setups.is_empty() || self.project.map_paths.iter().any(|p| p.on && p.who == owner) || self.project.mod_routes.iter().any(|r| is(r.target)) || self.project.tracks.get(ti).is_some_and(|t| t.automation.iter().any(|e| is(e.target)) || t.slots.iter().flatten().chain(t.arrangement.iter().map(|a| &a.clip)).any(|c| c.envelopes.iter().any(|e| is(e.target))))
     }
 
     /// The room with the listener where it is now: modulators or envelopes may walk it.
     fn map_listener_now(&self) -> MapRoom {
         let is = |t: ModTarget| matches!(t, ModTarget::Param { owner: ModOwner::Listener, .. });
-        let moved = self.project.mod_routes.iter().any(|r| is(r.target))
+        let moved = self.project.map_paths.iter().any(|p| p.on && p.who == ModOwner::Listener)
+            || !self.project.map_setups.is_empty()
+            || self.project.mod_routes.iter().any(|r| is(r.target))
             || self.project.tracks.iter().any(|t| t.automation.iter().any(|e| is(e.target)) || t.slots.iter().flatten().any(|c| c.envelopes.iter().any(|e| is(e.target))));
         if !moved {
             return self.project.map;
         }
         let status = self.status();
         self.project.map.with_listener(&[status.listener_live[0].load(), status.listener_live[1].load(), status.listener_live[2].load()])
+    }
+
+    /// A path for `who`: to draw, and how it is walked.
+    fn map_path_row(&mut self, ui: &mut Ui, who: ModOwner) {
+        let at = self.project.map_paths.iter().position(|p| p.who == who);
+        ui.horizontal(|ui| {
+            let drawing = self.map_drawing == Some(who);
+            let label = if at.is_some() { "Draw again" } else { "Draw a path" };
+            if ui.selectable_label(drawing, label).on_hover_text("Drag on the map: it walks that way while the song plays").clicked() {
+                self.map_drawing = if drawing { None } else { Some(who) };
+            }
+            if let Some(k) = at {
+                ui.checkbox(&mut self.project.map_paths[k].on, "Walk");
+                if ui.small_button("Clear").clicked() {
+                    self.project.map_paths.remove(k);
+                }
+            }
+        });
+        let Some(k) = at.filter(|&k| k < self.project.map_paths.len()) else { return };
+        ui.horizontal(|ui| {
+            let path = &mut self.project.map_paths[k];
+            egui::ComboBox::from_id_salt("map_path_bars").width(70.0).selected_text(format!("{} bars", path.bars)).show_ui(ui, |ui| {
+                for b in PATH_BARS {
+                    ui.selectable_value(&mut path.bars, b, format!("{b} bars"));
+                }
+            });
+            let modes = ["Round", "There and back"];
+            egui::ComboBox::from_id_salt("map_path_mode").width(100.0).selected_text(modes[(path.mode as usize).min(1)]).show_ui(ui, |ui| {
+                for (j, name) in modes.iter().enumerate() {
+                    ui.selectable_value(&mut path.mode, j as u8, *name);
+                }
+            });
+        });
+    }
+
+    /// Stores the room with everybody in it as it is now.
+    pub(crate) fn map_setup_now(&self, name: String, scene: Option<u32>) -> MapSetup {
+        let places = self.project.tracks.iter().filter_map(|t| Some((t.id, t.place?))).collect();
+        MapSetup { name, room: self.project.map, places, paths: self.project.map_paths.clone(), scene }
+    }
+
+    /// Goes over to a setup, in the time the Map is set to.
+    pub(crate) fn map_recall(&mut self, k: usize) {
+        let Some(s) = self.project.map_setups.get(k).cloned() else { return };
+        let bars = self.project.map.glide_bars;
+        self.project.map = MapRoom { glide_bars: bars, ..s.room };
+        for t in self.project.tracks.iter_mut() {
+            if let Some((_, pl)) = s.places.iter().find(|p| p.0 == t.id) {
+                if t.place.is_some() {
+                    t.place = Some(*pl);
+                }
+            }
+        }
+        self.project.map_paths = s.paths;
+        self.map_setup = Some(k);
+        let seconds = bars * self.project.beats_per_bar.max(1) as f32 * 60.0 / self.project.bpm.max(1.0) as f32;
+        self.cmd(krabton_engine::Command::MapGlide { seconds });
+    }
+
+    /// A Session scene that started brings its setup along.
+    pub(crate) fn map_follow_scenes(&mut self) {
+        let status = self.status();
+        let launches = status.scene_launches.load(std::sync::atomic::Ordering::Relaxed);
+        if launches == self.map_scene_seen {
+            return;
+        }
+        self.map_scene_seen = launches;
+        let scene = status.last_scene.load(std::sync::atomic::Ordering::Relaxed);
+        if let Some(k) = self.project.map_setups.iter().position(|s| s.scene.is_some_and(|n| n as i32 == scene)) {
+            self.map_recall(k);
+        }
+    }
+
+    /// The setups: rooms with everybody in it, to go over to.
+    fn map_setups_row(&mut self, ui: &mut Ui) {
+        let now = self.map_setup.filter(|&k| k < self.project.map_setups.len());
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Setup").small().color(TEXT_DIM));
+            let name = now.map_or("None".to_string(), |k| self.project.map_setups[k].name.clone());
+            let mut go = None;
+            egui::ComboBox::from_id_salt("map_setup").width(100.0).selected_text(name).show_ui(ui, |ui| {
+                for (k, s) in self.project.map_setups.iter().enumerate() {
+                    if ui.selectable_label(now == Some(k), s.name.as_str()).clicked() {
+                        go = Some(k);
+                    }
+                }
+            });
+            if let Some(k) = go {
+                self.map_recall(k);
+            }
+            if ui.small_button("Save new").on_hover_text("Stores the room with everybody in it as it is now").clicked() {
+                let n = self.project.map_setups.len() + 1;
+                let setup = self.map_setup_now(format!("Setup {n}"), None);
+                self.project.map_setups.push(setup);
+                self.map_setup = Some(n - 1);
+            }
+        });
+        let Some(k) = now else { return };
+        ui.horizontal(|ui| {
+            if ui.small_button("Update").on_hover_text("This setup becomes the room as it is now").clicked() {
+                let (name, scene) = (self.project.map_setups[k].name.clone(), self.project.map_setups[k].scene);
+                self.project.map_setups[k] = self.map_setup_now(name, scene);
+            }
+            if ui.small_button("Delete").clicked() {
+                self.project.map_setups.remove(k);
+                self.map_setup = None;
+            }
+        });
+        let Some(setup) = self.project.map_setups.get(k) else { return };
+        let on_scene = setup.scene;
+        let names: Vec<String> = self.project.scenes.iter().map(|s| s.name.clone()).collect();
+        let mut scene = on_scene;
+        let mut bars = self.project.map.glide_bars;
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("With scene").small().color(TEXT_DIM));
+            let shown = on_scene.and_then(|n| names.get(n as usize)).map_or("None", |s| s.as_str());
+            egui::ComboBox::from_id_salt("map_setup_scene").width(80.0).selected_text(shown).show_ui(ui, |ui| {
+                ui.selectable_value(&mut scene, None, "None");
+                for (n, name) in names.iter().enumerate() {
+                    ui.selectable_value(&mut scene, Some(n as u32), name.as_str());
+                }
+            });
+        });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Going over").small().color(TEXT_DIM));
+            let text_of = |b: f32| if b <= 0.0 { "At once".to_string() } else { format!("{b} bars") };
+            egui::ComboBox::from_id_salt("map_setup_glide").width(80.0).selected_text(text_of(bars)).show_ui(ui, |ui| {
+                for b in GLIDE_BARS {
+                    ui.selectable_value(&mut bars, b, text_of(b));
+                }
+            });
+        });
+        if scene != on_scene {
+            self.project.map_setups[k].scene = scene;
+        }
+        if bars != self.project.map.glide_bars {
+            self.project.map.glide_bars = bars;
+        }
     }
 
     /// The listener's knobs, beside the map.
@@ -433,7 +626,8 @@ impl App {
         if changed {
             self.project.map = self.project.map.with_listener(&values);
         }
-        ui.label(RichText::new("Drop a modulator (Mod tab) on a knob to make it walk round").small().color(TEXT_DIM));
+        self.map_path_row(ui, ModOwner::Listener);
+        ui.label(RichText::new("Or drop a modulator (Mod tab) on a knob").small().color(TEXT_DIM));
     }
 
     fn map_dots(&self) -> Vec<Dot> {
@@ -596,7 +790,8 @@ impl App {
 
         let dots = self.map_dots();
         let selected = self.map_selected.filter(|s| !self.map_listener_sel && dots.iter().any(|d| d.track == *s));
-        let focus = MapFocus { track: selected, listener: self.map_listener_sel, now: self.map_listener_now() };
+        let who = if self.map_listener_sel { Some(ModOwner::Listener) } else { selected.map(ModOwner::Map) };
+        let focus = MapFocus { track: selected, listener: self.map_listener_sel, now: self.map_listener_now(), paths: self.project.map_paths.clone(), who, drawing: self.map_drawing.is_some() };
         let edit = map(ui, map_rect, Id::new("map_window"), &room, &dots, &focus);
         self.apply_map_edit(&edit);
 
@@ -620,6 +815,12 @@ impl App {
         }
         if edit.select_listener {
             self.map_listener_sel = true;
+        }
+        let drawn = edit.drawn.clone().and_then(|points| Some((points, self.map_drawing.take()?)));
+        if let Some((points, who)) = drawn {
+            let (bars, mode) = self.project.map_paths.iter().find(|p| p.who == who).map_or((4.0, st::PATH_LOOP), |p| (p.bars, p.mode));
+            self.project.map_paths.retain(|p| p.who != who);
+            self.project.map_paths.push(MapPath { who, points, bars, mode, on: true });
         }
         if let Some(turn) = edit.listener_turn {
             self.project.map.listener_turn = turn;
@@ -689,7 +890,8 @@ impl App {
                             self.set_on_map(i, false);
                         }
                     });
-                    ui.label(RichText::new("Drop a modulator (Mod tab) on a knob to make it walk round").small().color(TEXT_DIM));
+                    self.map_path_row(ui, ModOwner::Map(id));
+                    ui.label(RichText::new("Or drop a modulator (Mod tab) on a knob").small().color(TEXT_DIM));
                     if changed || pl != place {
                         if let Some(t) = self.project.tracks.get_mut(i) {
                             if t.place.is_some() {
@@ -705,6 +907,7 @@ impl App {
             }
         });
         ui.add_space(6.0);
+        self.map_setups_row(ui);
         ui.horizontal(|ui| {
             ui.label(RichText::new("Floor plan").small().color(TEXT_DIM));
             let now = map_plans::plan(self.project.map.plan).map_or("None", |p| p.name);
@@ -829,7 +1032,7 @@ mod tests {
 
     /// Frames of pointer moves (and presses) over a map of `dots`; the edits.
     fn drive(dots: &[Dot], selected: Option<u64>, frames: &[(Pos2, Option<bool>)]) -> Vec<MapEdit> {
-        drive_focus(dots, &MapFocus { track: selected, listener: false, now: MapRoom::default() }, frames)
+        drive_focus(dots, &MapFocus { track: selected, listener: false, now: MapRoom::default(), paths: Vec::new(), who: None, drawing: false }, frames)
     }
 
     fn drive_focus(dots: &[Dot], focus: &MapFocus, frames: &[(Pos2, Option<bool>)]) -> Vec<MapEdit> {
@@ -879,11 +1082,26 @@ mod tests {
         let edits = drive(&[dot(1)], None, &[(head, None), (head, Some(true)), (head, Some(false)), (head, None)]);
         assert!(edits.iter().any(|e| e.select_listener), "clicked");
         // Selected: a handle in front of it; dragged to its right, it looks to its right.
-        let focus = MapFocus { track: None, listener: true, now: room };
+        let focus = MapFocus { track: None, listener: true, now: room, paths: Vec::new(), who: None, drawing: false };
         let handle = head + vec2(0.0, -HANDLE);
         let right = head + vec2(50.0, 0.0);
         let edits = drive_focus(&[dot(1)], &focus, &[(handle, Some(true)), (handle + vec2(6.0, 4.0), None), (right, None), (right, Some(false))]);
         assert_eq!(edits.iter().filter_map(|e| e.listener_turn).last(), Some(90.0));
+    }
+
+    #[test]
+    fn dragging_draws_a_path_instead_of_moving_things() {
+        let q = screen_of(&Place::default(), false);
+        let focus = MapFocus { track: None, listener: false, now: MapRoom::default(), paths: Vec::new(), who: None, drawing: true };
+        let frames: Vec<(Pos2, Option<bool>)> = std::iter::once((q, Some(true)))
+            .chain((1..=20).map(|k| (q + vec2(k as f32 * 6.0, k as f32 * 3.0), None)))
+            .chain(std::iter::once((q + vec2(120.0, 60.0), Some(false))))
+            .collect();
+        let edits = drive_focus(&[dot(1)], &focus, &frames);
+        assert!(edits.iter().all(|e| e.moved.is_none()), "the track under the mouse stays where it is");
+        let drawn = edits.iter().find_map(|e| e.drawn.clone()).expect("a path");
+        assert!(drawn.len() > 5, "{}", drawn.len());
+        assert!(drawn.last().unwrap().0 > drawn[0].0 && drawn.last().unwrap().1 > drawn[0].1, "{drawn:?}");
     }
 
     #[test]

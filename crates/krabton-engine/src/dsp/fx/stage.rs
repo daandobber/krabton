@@ -467,12 +467,36 @@ pub struct MapRoom {
     pub depth: f32,
     /// Which way the listener is turned (degrees: + to its right).
     pub listener_turn: f32,
+    /// How long going over to a setup takes (bars; 0: at once).
+    pub glide_bars: f32,
 }
 
 impl MapRoom {
     /// The listener as parameters (see `LISTENER_SPECS`).
     pub fn listener_params(&self) -> [f32; 3] {
         [self.listener_x, self.listener, self.listener_turn]
+    }
+
+    /// `k` of the way from this room to `to` (the settings that do not slide go at once).
+    pub fn towards(self, to: &MapRoom, k: f32) -> Self {
+        if k >= 1.0 {
+            return *to;
+        }
+        let mix = |a: f32, b: f32| a + (b - a) * k;
+        let deep = |r: &MapRoom| if r.depth >= 1.0 { r.depth } else { r.size * 1.4 };
+        Self {
+            room: mix(self.room, to.room),
+            size: mix(self.size, to.size),
+            walls: mix(self.walls, to.walls),
+            reverb: mix(self.reverb, to.reverb),
+            listener: mix(self.listener, to.listener),
+            listener_x: mix(self.listener_x, to.listener_x),
+            falloff: mix(self.falloff, to.falloff),
+            air: mix(self.air, to.air),
+            depth: mix(deep(&self), deep(to)),
+            listener_turn: self.listener_turn + turn_between(self.listener_turn, to.listener_turn) * k,
+            ..*to
+        }
     }
 
     /// The same room with the listener there.
@@ -484,8 +508,74 @@ impl MapRoom {
 
 impl Default for MapRoom {
     fn default() -> Self {
-        Self { room: 0.0, size: 16.0, walls: 0.45, reverb: 0.35, listener: 0.6, listener_x: 0.0, falloff: 0.7, air: 0.5, delay: false, headphones: false, plan: 0, depth: 0.0, listener_turn: 0.0 }
+        Self { room: 0.0, size: 16.0, walls: 0.45, reverb: 0.35, listener: 0.6, listener_x: 0.0, falloff: 0.7, air: 0.5, delay: false, headphones: false, plan: 0, depth: 0.0, listener_turn: 0.0, glide_bars: 4.0 }
     }
+}
+
+/// The shortest way round from one direction to another (degrees).
+fn turn_between(from: f32, to: f32) -> f32 {
+    (to - from + 180.0).rem_euclid(360.0) - 180.0
+}
+
+/// How a path is walked.
+pub const PATH_LOOP: u8 = 0;
+pub const PATH_THERE_AND_BACK: u8 = 1;
+
+/// A way a track or the listener walks on the Map, in time with the song.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MapPath {
+    /// Who walks it: `ModOwner::Map` of a track, or `ModOwner::Listener`.
+    pub who: crate::modulation::ModOwner,
+    /// Where it goes: across, depth.
+    pub points: Vec<(f32, f32)>,
+    /// How many bars one round takes.
+    pub bars: f32,
+    pub mode: u8,
+    pub on: bool,
+}
+
+impl MapPath {
+    /// Where on the path it is at `beat`: at the same speed all the way.
+    pub fn at(&self, beat: f64, beats_per_bar: f64) -> Option<(f32, f32)> {
+        let first = *self.points.first()?;
+        if self.points.len() < 2 {
+            return Some(first);
+        }
+        let closed = self.mode == PATH_LOOP;
+        let last = if closed { first } else { self.points[self.points.len() - 1] };
+        let leg = |a: (f32, f32), b: (f32, f32)| ((a.0 - b.0).powi(2) * 0.25 + (a.1 - b.1).powi(2)).sqrt();
+        let open: f32 = self.points.windows(2).map(|w| leg(w[0], w[1])).sum();
+        let total = open + if closed { leg(self.points[self.points.len() - 1], last) } else { 0.0 };
+        if total <= 0.0 {
+            return Some(first);
+        }
+        let period = (self.bars.max(0.25) as f64 * beats_per_bar).max(1e-3);
+        let t = (beat / period).rem_euclid(1.0) as f32;
+        let t = if closed { t } else { 1.0 - (2.0 * t - 1.0).abs() };
+        let mut left = t * total;
+        let closing = closed.then_some([self.points[self.points.len() - 1], last]);
+        for w in self.points.windows(2).chain(closing.iter().map(|c| &c[..])) {
+            let n = leg(w[0], w[1]);
+            if left <= n && n > 0.0 {
+                let f = left / n;
+                return Some((w[0].0 + (w[1].0 - w[0].0) * f, w[0].1 + (w[1].1 - w[0].1) * f));
+            }
+            left -= n;
+        }
+        Some(last)
+    }
+}
+
+/// A room with everybody in it, to go back to.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MapSetup {
+    pub name: String,
+    pub room: MapRoom,
+    /// Where the tracks stand (by track id).
+    pub places: Vec<(u64, Place)>,
+    pub paths: Vec<MapPath>,
+    /// The Session scene that goes over to it when it starts.
+    pub scene: Option<u32>,
 }
 
 /// Where a track stands on the Map, how wide it is and which way it faces
@@ -512,6 +602,22 @@ impl Place {
     /// As parameters (see `PLACE_SPECS`).
     pub fn to_params(&self) -> [f32; 5] {
         [self.across, self.depth, self.width, self.facing, self.beam]
+    }
+
+    /// `k` of the way from this place to `to`.
+    pub fn towards(self, to: &Place, k: f32) -> Self {
+        if k >= 1.0 {
+            return *to;
+        }
+        let mix = |a: f32, b: f32| a + (b - a) * k;
+        Self {
+            across: mix(self.across, to.across),
+            depth: mix(self.depth, to.depth),
+            width: mix(self.width, to.width),
+            facing: self.facing + turn_between(self.facing, to.facing) * k,
+            beam: mix(self.beam, to.beam),
+            face_listener: to.face_listener,
+        }
     }
 
     /// With `facing` turned to the listener.
@@ -597,6 +703,48 @@ mod tests {
         // The places go along with the room.
         let ((_, sy), (_, ly)) = places(&p);
         assert!(sy < ly && ly < 10.0, "{sy} {ly}");
+    }
+
+    #[test]
+    fn a_path_is_walked_at_one_speed_in_time_with_the_song() {
+        use crate::modulation::ModOwner;
+        let mut path = MapPath { who: ModOwner::Listener, points: vec![(-1.0, 0.0), (1.0, 0.0)], bars: 2.0, mode: PATH_THERE_AND_BACK, on: true };
+        let at = |p: &MapPath, beat: f64| p.at(beat, 4.0).unwrap();
+        // Two bars of four: there and back in eight beats.
+        assert_eq!(at(&path, 0.0), (-1.0, 0.0));
+        assert!((at(&path, 2.0).0 - 0.0).abs() < 1e-4);
+        assert!((at(&path, 4.0).0 - 1.0).abs() < 1e-4);
+        assert!((at(&path, 6.0).0 - 0.0).abs() < 1e-4);
+        assert!((at(&path, 8.0).0 + 1.0).abs() < 1e-4, "round again");
+        // A loop comes back to where it started, along a square at one speed.
+        path.mode = PATH_LOOP;
+        path.points = vec![(-1.0, 0.0), (1.0, 0.0), (1.0, 1.0), (-1.0, 1.0)];
+        assert_eq!(at(&path, 0.0), (-1.0, 0.0));
+        let corner = at(&path, 2.0);
+        assert!((corner.0 - 1.0).abs() < 1e-4 && corner.1.abs() < 1e-4, "{corner:?}");
+        let last_leg = at(&path, 7.0);
+        assert!((last_leg.0 + 1.0).abs() < 1e-4 && (last_leg.1 - 0.5).abs() < 1e-4, "{last_leg:?}");
+        // Nothing drawn, or a single point.
+        path.points.clear();
+        assert_eq!(path.at(1.0, 4.0), None);
+        path.points.push((0.3, 0.4));
+        assert_eq!(path.at(1.0, 4.0), Some((0.3, 0.4)));
+    }
+
+    #[test]
+    fn going_over_slides_and_takes_the_short_way_round() {
+        let a = Place { across: -1.0, facing: 170.0, ..Place::default() };
+        let b = Place { across: 1.0, facing: -170.0, ..Place::default() };
+        let half = a.towards(&b, 0.5);
+        assert!(half.across.abs() < 1e-5);
+        assert!((half.facing.rem_euclid(360.0) - 180.0).abs() < 1e-3, "{}", half.facing);
+        assert_eq!(a.towards(&b, 1.0), b);
+        let long = MapRoom::default();
+        let stage = MapRoom { size: 20.0, depth: 12.0, plan: 3, ..MapRoom::default() };
+        let mid = long.towards(&stage, 0.5);
+        assert_eq!(mid.size, 18.0);
+        assert!((mid.depth - (16.0 * 1.4 + 12.0) / 2.0).abs() < 1e-4, "{}", mid.depth);
+        assert_eq!(mid.plan, 3, "a drawing does not slide");
     }
 
     #[test]

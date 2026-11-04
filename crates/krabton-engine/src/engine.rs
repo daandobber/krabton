@@ -214,6 +214,9 @@ pub struct EngineStatus {
     pub mods: Vec<AtomicF32>,
     /// Where the listener on the Map is now (modulated): across, depth, turn.
     pub listener_live: [AtomicF32; 3],
+    /// The Session scene launched last, and how many have been.
+    pub last_scene: AtomicI32,
+    pub scene_launches: AtomicU32,
     /// Audio taps of devices with a display.
     pub scopes: crate::scope::ScopeBank,
     /// Numbers those devices publish (gain reduction, loudness, ...).
@@ -311,6 +314,8 @@ impl EngineStatus {
             preview_active: AtomicBool::new(false),
             mods: (0..MAX_MODS).map(|_| AtomicF32::new(0.0)).collect(),
             listener_live: std::array::from_fn(|_| AtomicF32::new(0.0)),
+            last_scene: AtomicI32::new(-1),
+            scene_launches: AtomicU32::new(0),
             scopes: crate::scope::ScopeBank::new(),
             meters: crate::scope::MeterBank::new(),
             input_peaks: (0..MAX_INPUTS).map(|_| AtomicF32::new(0.0)).collect(),
@@ -364,6 +369,8 @@ pub enum Command {
     PitchBend { track: u64, semis: f32 },
     /// The mod wheel of a track (0..1), for its Mod Wheel modulators.
     ModWheel { track: u64, value: f32 },
+    /// The Map slides to where the project now has it, over this long.
+    MapGlide { seconds: f32 },
     /// How hard a pad is pressed after the hit, for the track's Pressure modulators.
     Pressure { track: u64, value: f32 },
     /// Puts the tape at a place (seconds).
@@ -1111,6 +1118,8 @@ struct TrackRt {
     placer: Option<Box<crate::dsp::fx::stage::Stage>>,
     /// It was off the Map: start afresh when it comes back.
     placer_idle: bool,
+    /// Where it stands on the Map now, while that slides.
+    place_now: Option<crate::dsp::fx::stage::Place>,
     playing: Option<PlayingClip>,
     queued: Option<Queued>,
     overridden: bool,
@@ -1183,6 +1192,7 @@ impl TrackRt {
             devices: Vec::new(),
             placer: None,
             placer_idle: false,
+            place_now: None,
             playing: None,
             queued: None,
             overridden: false,
@@ -1420,6 +1430,9 @@ pub struct Engine {
     /// Frames rendered since the engine started (drives MIDI effect timing).
     clock: u64,
     mods: ModRuntime,
+    /// The room as it is now (it slides over to a setup), and how long that still takes (s).
+    map_now: crate::dsp::fx::stage::MapRoom,
+    map_glide: f32,
     /// Clip envelope values this block (target, 0..1).
     envs: Vec<(crate::modulation::ModTarget, f32)>,
     /// Per-track signals handed to the modulators each control block.
@@ -1496,6 +1509,8 @@ impl Engine {
             parked: Vec::with_capacity(16),
             clock: 0,
             mods: ModRuntime::new(),
+            map_now: Default::default(),
+            map_glide: 0.0,
             envs: Vec::with_capacity(256),
             signals: Vec::with_capacity(MAX_TRACKS),
             order: Vec::with_capacity(MAX_TRACKS),
@@ -1666,7 +1681,10 @@ impl Engine {
                     self.launch(ti, None, !self.playing);
                 }
             }
+            Command::MapGlide { seconds } => self.map_glide = seconds.max(0.0),
             Command::LaunchScene(scene) => {
+                self.status.last_scene.store(scene as i32, RELAXED);
+                self.status.scene_launches.fetch_add(1, RELAXED);
                 let immediate = !self.playing;
                 if immediate {
                     let any = (0..self.tracks.len()).any(|ti| self.slot_has_clip(ti, scene));
@@ -2280,6 +2298,22 @@ impl Engine {
         self.mods.tick(&project, &self.signals, ModClock { frames: seg, sr, samples_per_beat: spb, beat: s0 }, playing, &self.envs);
         let mods = &self.mods;
 
+        // The Map: the listener where its modulators and its path have it, on
+        // its way when the room slides over to a setup.
+        let beats_per_bar = project.beats_per_bar.max(1) as f64;
+        let walk = |who: ModOwner| project.map_paths.iter().find(|p| p.on && p.who == who).and_then(|p| p.at(s0, beats_per_bar));
+        let glide = if self.map_glide > 0.0 { (seg as f32 / sr / self.map_glide).min(1.0) } else { 1.0 };
+        self.map_glide = (self.map_glide - seg as f32 / sr).max(0.0);
+        let mut room = mods.params(ModOwner::Listener).map_or(project.map, |v| project.map.with_listener(v));
+        if let Some((across, depth)) = walk(ModOwner::Listener) {
+            (room.listener_x, room.listener) = (across, depth);
+        }
+        let room = self.map_now.towards(&room, glide);
+        self.map_now = room;
+        for (a, v) in status.listener_live.iter().zip(room.listener_params()) {
+            a.store(v);
+        }
+
         for b in self.returns.iter_mut() {
             b.l[..seg].fill(0.0);
             b.r[..seg].fill(0.0);
@@ -2366,7 +2400,7 @@ impl Engine {
             let own_sound = rt.sound_from.is_none();
             // A Singer hears its clip notes early, so its consonants can start before the beat.
             let lead = if matches!(snd.instrument, Some(Instrument::Singer { .. })) { crate::singer::LEAD_SECS * sr as f64 / tspb } else { 0.0 };
-            let TrackRt { instrument, devices, placer, placer_idle, playing: pc, overridden, stretch, offs, events, fx_buf, live, midi_fx, fx_sig, sounding, shifted, signal, bend, l, r, gain_l, gain_r, sends, pre_l, pre_r, post_l, post_r, out_l, out_r, to_master, midi_out, lead_until, .. } = &mut **rt;
+            let TrackRt { instrument, devices, placer, placer_idle, place_now, playing: pc, overridden, stretch, offs, events, fx_buf, live, midi_fx, fx_sig, sounding, shifted, signal, bend, l, r, gain_l, gain_r, sends, pre_l, pre_r, post_l, post_r, out_l, out_r, to_master, midi_out, lead_until, .. } = &mut **rt;
             if !playing {
                 *lead_until = f64::NAN;
             }
@@ -2772,13 +2806,14 @@ impl Engine {
                         st.clear();
                     }
                     // Modulated (a track walking round), and where it is now for the map.
-                    let room = mods.params(ModOwner::Listener).map_or(project.map, |v| project.map.with_listener(v));
-                    for (a, v) in status.listener_live.iter().zip(room.listener_params()) {
-                        a.store(v);
-                    }
                     let aim = place.face_listener;
-                    let place = mods.params(ModOwner::Map(track.id)).map(crate::dsp::fx::stage::Place::from_params).unwrap_or(*place);
+                    let mut place = mods.params(ModOwner::Map(track.id)).map(crate::dsp::fx::stage::Place::from_params).unwrap_or(*place);
+                    if let Some((across, depth)) = walk(ModOwner::Map(track.id)) {
+                        (place.across, place.depth) = (across, depth);
+                    }
                     let place = if aim { place.facing_listener(&room) } else { place };
+                    let place = place_now.map_or(place, |now| now.towards(&place, glide));
+                    *place_now = Some(place);
                     if let Some(ts) = status.tracks.get(ti) {
                         for (a, v) in ts.map_live.iter().zip(place.to_params()) {
                             a.store(v);
@@ -3816,6 +3851,50 @@ mod tests {
         h.send(Command::Stop);
         run(&mut e, 0.05);
         assert_eq!(sounding(&e), 0, "stop left notes on");
+    }
+
+    #[test]
+    fn a_track_walks_its_path_while_the_song_plays() {
+        use crate::dsp::fx::stage::{MapPath, Place, PATH_THERE_AND_BACK};
+        use crate::modulation::ModOwner;
+        let mut p = Project::new_default();
+        p.tracks[0].place = Some(Place::default());
+        let who = ModOwner::Map(p.tracks[0].id);
+        p.map_paths.push(MapPath { who, points: vec![(-0.5, 0.1), (0.5, 0.1)], bars: 1.0, mode: PATH_THERE_AND_BACK, on: true });
+        p.map_paths.push(MapPath { who: ModOwner::Listener, points: vec![(0.0, 0.6), (0.0, 0.2)], bars: 1.0, mode: PATH_THERE_AND_BACK, on: true });
+        let bpm = p.bpm;
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        h.send(Command::Play);
+        // A quarter of a second on: an eighth of the way through at this tempo or so.
+        run(&mut e, 0.05);
+        let start = h.status.tracks[0].map_live[0].load();
+        assert!(start < -0.4, "at the start of its way: {start}");
+        run(&mut e, 60.0 / bpm as f32);
+        let later = h.status.tracks[0].map_live[0].load();
+        assert!(later > start + 0.3, "a beat on it has walked: {start} to {later}");
+        assert_eq!(h.status.tracks[0].map_live[1].load(), 0.1);
+        assert!(h.status.listener_live[1].load() < 0.5, "the listener walks too");
+    }
+
+    #[test]
+    fn the_map_slides_over_to_a_setup_and_arrives() {
+        use crate::dsp::fx::stage::Place;
+        let mut p = Project::new_default();
+        p.tracks[0].place = Some(Place { across: -1.0, ..Place::default() });
+        let mut there = p.clone();
+        there.tracks[0].place = Some(Place { across: 1.0, ..Place::default() });
+        there.map.listener_x = 0.5;
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        run(&mut e, 0.05);
+        assert_eq!(h.status.tracks[0].map_live[0].load(), -1.0);
+        h.send(Command::SetProject(Arc::new(there)));
+        h.send(Command::MapGlide { seconds: 1.0 });
+        run(&mut e, 0.5);
+        let half = h.status.tracks[0].map_live[0].load();
+        assert!(half.abs() < 0.1, "halfway: {half}");
+        assert!((h.status.listener_live[0].load() - 0.25).abs() < 0.05, "the listener too");
+        run(&mut e, 0.6);
+        assert_eq!(h.status.tracks[0].map_live[0].load(), 1.0, "and there it stays");
     }
 
     #[test]

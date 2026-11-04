@@ -1882,6 +1882,12 @@ pub struct Project {
     /// The Map's room (the tracks on it stand there).
     #[serde(default)]
     pub map: crate::dsp::fx::stage::MapRoom,
+    /// The ways tracks and the listener walk on the Map.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub map_paths: Vec<crate::dsp::fx::stage::MapPath>,
+    /// Rooms with everybody in it, to go over to.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub map_setups: Vec<crate::dsp::fx::stage::MapSetup>,
     /// The key everything melodic plays in right now (the Key drawer), when
     /// it is not the project's own: every note is moved degree by degree
     /// from `scale` into it, live. Drums stay.
@@ -1970,6 +1976,8 @@ impl Project {
             tape: Default::default(),
             // A new set starts on a stage: wider than deep.
             map: crate::dsp::fx::stage::MapRoom { size: 20.0, depth: 12.0, ..Default::default() },
+            map_paths: Vec::new(),
+            map_setups: Vec::new(),
             play_key: None,
             play_key_on_bar: false,
             key_seq: Vec::new(),

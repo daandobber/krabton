@@ -631,6 +631,12 @@ pub struct App {
     pub(crate) map_selected: Option<u64>,
     /// The listener is what the Map's side shows.
     pub(crate) map_listener_sel: bool,
+    /// Who the mouse is drawing a path for on the Map.
+    pub(crate) map_drawing: Option<krabton_engine::modulation::ModOwner>,
+    /// The setup the Map went over to last.
+    pub(crate) map_setup: Option<usize>,
+    /// How many Session scenes had been launched when the Map last looked.
+    pub(crate) map_scene_seen: u32,
     /// The master's devices that are on, while listening to the song without them.
     pub(crate) master_before: Vec<u64>,
     /// Size of everything asked for by a script (see `run_script`).
@@ -830,6 +836,9 @@ impl App {
             video: Default::default(),
             map_selected: None,
             map_listener_sel: false,
+            map_drawing: None,
+            map_setup: None,
+            map_scene_seen: 0,
             master_before: Vec::new(),
             script_zoom: None,
             script_dev_scroll: None,
@@ -894,6 +903,8 @@ impl App {
             self.project.fix_clip_sound_ids();
             // Connections to deleted tracks, devices or modulators go away.
             self.project.prune_mod_routes();
+            let tracks: Vec<u64> = self.project.tracks.iter().map(|t| t.id).collect();
+            self.project.map_paths.retain(|p| !matches!(p.who, krabton_engine::modulation::ModOwner::Map(id) if !tracks.contains(&id)));
             // What the warp modes need (transients, reversed audio), found once.
             self.project.prepare_audio();
             let snap = Arc::new(self.project.clone());
