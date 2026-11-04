@@ -118,45 +118,131 @@ struct Layout {
     buttons: Vec<(Button, Rect)>,
 }
 
+/// Where everything is, measured from a photo of the Move: screen, jog wheel,
+/// Back and Menu, Play and Record down the left; the four track buttons; the
+/// 32 pads (wider than tall) under the eight knobs; the steps under them; the
+/// two columns of buttons and the arrows with + and - on the right.
 fn layout(area: Rect) -> (Rect, Layout) {
-    let c = (area.width() / 12.9).min(area.height() / 6.5).clamp(14.0, 72.0);
-    let size = vec2(12.6 * c, 6.15 * c);
+    let c = (area.width() / 12.1).min(area.height() / 5.85).clamp(14.0, 96.0);
+    let size = vec2(11.86 * c, 5.58 * c);
     let o = area.center() - size * 0.5;
-    let dev = Rect::from_min_size(o, size).expand(c * 0.25);
-    let bw = 0.78 * c;
-    let gap = 0.12 * c;
-    let row_x = o.x + 2.58 * c + 0.25 * c;
-    let x0 = row_x + 0.45 * c + 0.15 * c;
-    let y0 = o.y + 1.3 * c;
-    let screen = Rect::from_min_size(pos2(o.x, o.y + 0.1 * c), vec2(2.58 * c, 0.95 * c));
-    let jog = (pos2(row_x + 0.22 * c, o.y + 0.58 * c), 0.42 * c);
-    let knobs = std::array::from_fn(|i| (pos2(x0 + (i as f32 + 0.5) * c, o.y + 0.58 * c), 0.34 * c));
-    let volume = (pos2(x0 + 8.0 * c + 0.7 * c, o.y + 0.58 * c), 0.4 * c);
+    let dev = Rect::from_min_size(o, size);
+    let at = |x: f32, y: f32| o + vec2(x * c, y * c);
+    let round = |x: f32, y: f32, r: f32| Rect::from_center_size(at(x, y), vec2(2.0 * r * c, 2.0 * r * c));
+    let screen = Rect::from_min_size(at(0.25, 0.33), vec2(1.22 * c, 0.68 * c));
+    let jog = (at(0.84, 2.04), 0.49 * c);
+    let knobs = std::array::from_fn(|i| (at(2.62 + i as f32 * 1.012, 0.54), 0.25 * c));
+    let volume = (at(11.37, 0.59), 0.28 * c);
+    // Pad 0 is the bottom left.
     let pads = std::array::from_fn(|i| {
         let (col, row) = ((i % 8) as f32, (i / 8) as f32);
-        Rect::from_min_size(pos2(x0 + col * c, y0 + (3.0 - row) * c), vec2(c, c)).shrink(c * 0.07)
+        Rect::from_min_size(at(2.2 + col * 1.012, 1.33 + (3.0 - row) * 0.77), vec2(0.91 * c, 0.66 * c))
     });
-    let sy = y0 + 4.0 * c + 0.2 * c;
-    let steps = std::array::from_fn(|i| Rect::from_min_size(pos2(x0 + i as f32 * 0.5 * c, sy), vec2(0.5 * c, 0.62 * c)).shrink(c * 0.05));
-    let grid: [[Button; 3]; 5] = [
-        [Button::Shift, Button::Menu, Button::Capture],
-        [Button::Mute, Button::Up, Button::Copy],
-        [Button::Left, Button::Down, Button::Right],
-        [Button::Delete, Button::Undo, Button::Loop],
-        [Button::Play, Button::Record, Button::RecordAudio],
+    let steps = std::array::from_fn(|i| round(2.41 + i as f32 * 0.503, 4.85, 0.17));
+    let mut buttons = vec![
+        (Button::Back, round(0.52, 3.2, 0.27)),
+        (Button::Menu, round(1.2, 3.2, 0.27)),
+        (Button::Play, round(0.52, 4.85, 0.27)),
+        (Button::Record, round(1.21, 4.85, 0.27)),
+        (Button::Capture, round(10.63, 1.67, 0.27)),
+        (Button::RecordAudio, round(11.3, 1.67, 0.27)),
+        (Button::Loop, round(10.63, 2.42, 0.27)),
+        (Button::Mute, round(11.3, 2.42, 0.27)),
+        (Button::Delete, round(10.63, 3.17, 0.27)),
+        (Button::Copy, round(11.3, 3.17, 0.27)),
+        (Button::Undo, round(10.63, 3.94, 0.27)),
+        (Button::Shift, round(11.3, 3.94, 0.27)),
+        (Button::Left, round(10.54, 4.86, 0.16)),
+        (Button::Right, round(11.4, 4.86, 0.16)),
+        (Button::Up, round(10.97, 4.63, 0.16)),
+        (Button::Down, round(10.97, 5.1, 0.16)),
     ];
-    let mut buttons = Vec::new();
-    for (r, row) in grid.iter().enumerate() {
-        let y = if r < 4 { y0 + r as f32 * c + 0.15 * c } else { sy };
-        let h = if r < 4 { 0.7 * c } else { 0.62 * c - 0.1 * c };
-        for (k, b) in row.iter().enumerate() {
-            buttons.push((*b, Rect::from_min_size(pos2(o.x + k as f32 * (bw + gap), y), vec2(bw, h))));
-        }
-    }
+    // The track buttons, top to bottom, beside the pad rows.
     for k in 0..4u8 {
-        buttons.push((Button::Row(k), Rect::from_min_size(pos2(row_x, y0 + k as f32 * c), vec2(0.45 * c, c)).shrink(c * 0.1)));
+        let y = 1.66 + k as f32 * 0.77;
+        buttons.push((Button::Row(k), Rect::from_center_size(at(1.8, y), vec2(0.28 * c, 0.68 * c))));
     }
     (dev, Layout { c, screen, jog, knobs, volume, pads, steps, buttons })
+}
+
+/// A button's mark, as printed on the Move.
+fn icon(p: &egui::Painter, b: Button, r: Rect, col: Color32) {
+    let (m, u) = (r.center(), r.width() * 0.2);
+    let line = egui::Stroke::new((u * 0.28).max(1.0), col);
+    let seg = |a: (f32, f32), z: (f32, f32)| p.line_segment([m + vec2(a.0 * u, a.1 * u), m + vec2(z.0 * u, z.1 * u)], line);
+    match b {
+        Button::Back | Button::Left => {
+            seg((0.45, -0.8), (-0.45, 0.0));
+            seg((-0.45, 0.0), (0.45, 0.8));
+        }
+        Button::Right => {
+            seg((-0.45, -0.8), (0.45, 0.0));
+            seg((0.45, 0.0), (-0.45, 0.8));
+        }
+        Button::Menu => {
+            for y in [-0.6, 0.0, 0.6] {
+                seg((-0.9, y), (0.9, y));
+            }
+        }
+        Button::Play => {
+            seg((-0.6, -0.95), (0.9, 0.0));
+            seg((0.9, 0.0), (-0.6, 0.95));
+            seg((-0.6, 0.95), (-0.6, -0.95));
+        }
+        Button::Record => {
+            p.circle_stroke(m, u * 0.95, line);
+        }
+        Button::RecordAudio => {
+            p.circle_filled(m, u * 0.7, col);
+        }
+        Button::Capture => {
+            for (x, y) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+                seg((x, y), (x * 0.4, y));
+                seg((x, y), (x, y * 0.4));
+            }
+        }
+        Button::Loop => {
+            seg((-0.9, -0.5), (0.9, -0.5));
+            seg((0.9, -0.5), (0.9, 0.5));
+            seg((0.9, 0.5), (-0.5, 0.5));
+            seg((-0.5, 0.5), (-0.1, 0.95));
+            seg((-0.5, 0.5), (-0.1, 0.05));
+        }
+        Button::Mute => {
+            seg((-0.8, 0.8), (-0.8, -0.8));
+            seg((-0.8, -0.8), (0.0, 0.3));
+            seg((0.0, 0.3), (0.8, -0.8));
+            seg((0.8, -0.8), (0.8, 0.8));
+        }
+        Button::Delete => {
+            seg((-0.75, -0.75), (0.75, 0.75));
+            seg((0.75, -0.75), (-0.75, 0.75));
+        }
+        Button::Copy => {
+            p.rect_stroke(Rect::from_min_size(m + vec2(-0.9 * u, -0.25 * u), vec2(1.15 * u, 1.15 * u)), 0.0, line, egui::StrokeKind::Middle);
+            seg((-0.25, -0.9), (0.9, -0.9));
+            seg((0.9, -0.9), (0.9, 0.25));
+        }
+        Button::Undo => {
+            seg((-0.9, -0.3), (0.9, -0.3));
+            seg((0.9, -0.3), (0.9, 0.8));
+            seg((-0.9, -0.3), (-0.35, -0.85));
+            seg((-0.9, -0.3), (-0.35, 0.25));
+        }
+        Button::Shift => {
+            for x in [-0.8, 0.0, 0.8] {
+                p.circle_filled(m + vec2(x * u, 0.0), u * 0.2, col);
+            }
+        }
+        Button::Up => {
+            seg((-0.7, 0.0), (0.7, 0.0));
+            seg((0.0, -0.7), (0.0, 0.7));
+        }
+        Button::Down => {
+            seg((-0.7, 0.0), (0.7, 0.0));
+        }
+        Button::Row(_) | Button::Jog => {}
+    }
 }
 
 /// What a press on the on-screen Move landed on.
@@ -364,7 +450,12 @@ impl App {
             }
         }
         for (i, r) in lay.steps.iter().enumerate() {
-            rect_fill(&p, *r, 2.0, lit(leds.step(i as u8)));
+            let lamp = leds.step(i as u8);
+            // Never darker than the button itself.
+            p.circle_filled(r.center(), r.width() * 0.5, Color32::from_rgb(0x20, 0x20, 0x23));
+            if lamp != 0 {
+                p.circle_filled(r.center(), r.width() * 0.5, mix(Color32::from_rgb(0x20, 0x20, 0x23), lit(lamp), 0.85));
+            }
             let led = leds.step_led(i as u8);
             if led > 0 {
                 let d = Rect::from_center_size(pos2(r.center().x, r.bottom() + c * 0.06), vec2(r.width() * 0.5, 2.0));
@@ -375,15 +466,24 @@ impl App {
             let v = leds.button(*b);
             let col = button_light(*b, v);
             let down = self.move_ctl.holds(*b);
-            rect_fill(&p, *r, 3.0, if v == 0 { Color32::from_rgb(0x26, 0x26, 0x29) } else { mix(Color32::from_rgb(0x26, 0x26, 0x29), col, 0.85) });
-            if down {
-                rect_line(&p, *r, 3.0, 1.5, Color32::WHITE);
+            let idle = Color32::from_rgb(0x26, 0x26, 0x29);
+            let shade = if v == 0 { idle } else if b.coloured() { col } else { mix(idle, col, (v as f32 / 127.0).clamp(0.25, 1.0)) };
+            if matches!(b, Button::Row(_)) {
+                rect_fill(&p, *r, r.width() * 0.45, shade);
+                if down {
+                    rect_line(&p, *r, r.width() * 0.45, 1.5, Color32::WHITE);
+                }
+            } else {
+                p.circle_filled(r.center(), r.width() * 0.5, shade);
+                p.circle_stroke(r.center(), r.width() * 0.5, egui::Stroke::new(1.0_f32, if down { Color32::WHITE } else { Color32::from_rgb(0x3a, 0x3a, 0x3f) }));
+                let mark = if b.coloured() && v > 0 { text_on(col) } else { Color32::from_rgb(0xd8, 0xd8, 0xdc) };
+                icon(&p, *b, *r, mark);
             }
-            if small_ok && !matches!(b, Button::Row(_)) {
-                let name = b.name();
-                let f = fit(&p, name, r.width() - 2.0);
-                let tc = if v > 60 || (b.coloured() && v > 0) { text_on(col) } else { TEXT };
-                text(&p, r.center(), Align2::CENTER_CENTER, name, f, tc);
+        }
+        // What a button is, on the mark's own terms.
+        if let Some(pt) = ui.ctx().pointer_hover_pos() {
+            if let Some((b, _)) = lay.buttons.iter().find(|(_, r)| r.contains(pt)) {
+                egui::Tooltip::always_open(ui.ctx().clone(), ui.layer_id(), Id::new("move_button_tip"), egui::PopupAnchor::Pointer).show(|ui| ui.label(b.name()));
             }
         }
         let mode = if self.move_ctl.test_page.is_some() { "Colour test".to_string() } else { format!("{} mode", self.move_mode().name()) };
