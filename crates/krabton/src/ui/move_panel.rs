@@ -375,6 +375,19 @@ impl App {
                 }
             });
         });
+        let (banks, on) = self.move_bank_names();
+        if banks.len() > 1 {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Knobs").small().color(TEXT_DIM));
+                egui::ComboBox::from_id_salt("move_bank").width(120.0).selected_text(banks[on].as_str()).show_ui(ui, |ui| {
+                    for (k, name) in banks.iter().enumerate() {
+                        if ui.selectable_label(on == k, name.as_str()).clicked() {
+                            self.move_set_bank(k);
+                        }
+                    }
+                });
+            });
+        }
         ui.horizontal(|ui| {
             ui.label(RichText::new("Pressure").small().color(TEXT_DIM));
             let now = crate::move_ctl::PRESSURES[(self.prefs.move_pressure as usize).min(2)];
@@ -447,7 +460,8 @@ impl App {
                 "Row buttons: tracks of the bank of four (Session: scenes)",
                 "Mute+row: mute it · Sample+row: arm it",
                 "Hold a row + knobs: its mixer · + Volume: its volume",
-                "Knobs: the device (Left/Right: device, mixer last; Shift+Left/Right: next eight) · Shift: fine",
+                "Knobs: the device (Left/Right: device, mixer last) · Shift: fine",
+                "Shift+Left/Right: the knobs' sets: Main (what matters most), then all parameters by group",
                 "Volume: master · Shift: the selected track",
                 "Jog: track · Shift+jog: scene",
                 "Steps: the clip's sixteenths · Shift+step: bars long · Shift+Up/Down: page",

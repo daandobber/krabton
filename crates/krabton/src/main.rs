@@ -7,6 +7,7 @@ mod clip_tools;
 mod audio;
 mod band;
 mod big;
+mod move_knobs;
 mod editing;
 mod grid;
 mod history;

@@ -1553,10 +1553,34 @@ impl App {
             let macros = self.move_drum(t).map(|d| d.voice.macros()).unwrap_or([None, None]);
             return (0..8).filter(|&k| !(5..7).contains(&k) || macros[k - 5].is_some()).collect();
         }
-        let shown: Vec<usize> = (0..self.page_specs(t, page).len()).filter(|&i| self.page_specs(t, page)[i].shown()).collect();
-        let banks = shown.len().div_ceil(8).max(1);
-        let b = self.move_ctl.bank.min(banks - 1);
-        shown.into_iter().skip(b * 8).take(8).collect()
+        let mut banks = self.move_banks(t, page);
+        let b = self.move_ctl.bank.min(banks.len().saturating_sub(1));
+        banks.swap_remove(b).knobs
+    }
+
+    /// The sets of knobs of a page: the instrument's own first set, then all its
+    /// parameters by group.
+    fn move_banks(&self, t: usize, page: Page) -> Vec<crate::move_knobs::Bank> {
+        let list = match (page, self.project.tracks[t].instrument.as_ref()) {
+            (Page::Instrument, Some(inst)) => crate::move_knobs::main_names(inst),
+            _ => &[],
+        };
+        crate::move_knobs::banks(self.page_specs(t, page), list)
+    }
+
+    /// The sets of the knobs now and which one is on, for the Move tab.
+    pub(crate) fn move_bank_names(&self) -> (Vec<String>, usize) {
+        let Some((t, page)) = self.move_knob_target().filter(|&(_, page)| page != Page::Drum) else { return (Vec::new(), 0) };
+        let banks = self.move_banks(t, page);
+        let on = self.move_ctl.bank.min(banks.len().saturating_sub(1));
+        (banks.into_iter().map(|b| b.name).collect(), on)
+    }
+
+    /// Puts the knobs on a set, and shows it on the Move's screen.
+    pub(crate) fn move_set_bank(&mut self, bank: usize) {
+        self.move_ctl.bank = bank;
+        self.move_ctl.hud_knob = None;
+        self.move_ctl.hud_at = Some(Instant::now());
     }
 
     /// A track's mixer as eight knobs: volume, pan and the sends.
@@ -1637,10 +1661,9 @@ impl App {
                 (name.to_string(), specs[i].format(v), specs[i].to_norm(v))
             })
             .collect();
-        let shown = specs.iter().filter(|s| s.shown()).count();
-        let banks = shown.div_ceil(8).max(1);
-        let bank = self.move_ctl.bank.min(banks - 1);
-        let sub = if banks > 1 { format!("{tname} · {}/{banks}", bank + 1) } else { tname };
+        let banks = if page == Page::Drum { Vec::new() } else { self.move_banks(t, page) };
+        let bank = self.move_ctl.bank.min(banks.len().saturating_sub(1));
+        let sub = if banks.len() > 1 { format!("{}/{} {}", bank + 1, banks.len(), banks[bank].name) } else { tname };
         Screen { title: self.page_name(t, page), sub, params, hot }
     }
 
@@ -1723,6 +1746,7 @@ impl App {
             None => 0,
         };
         let pages = self.move_pages().len();
+        let banks = self.move_bank_names().0.len();
         let ns = self.project.scenes.len();
         let session = mode == PadMode::Session;
         let st = &self.move_ctl;
@@ -1750,8 +1774,8 @@ impl App {
             touched,
             can_up: if session { st.scene_offset > 0 } else { true },
             can_down: if session { st.scene_offset + 4 < ns } else { true },
-            can_left: st.page > 0,
-            can_right: st.page + 1 < pages,
+            can_left: if st.holds(Button::Shift) { st.bank > 0 } else { st.page > 0 },
+            can_right: if st.holds(Button::Shift) { st.bank + 1 < banks } else { st.page + 1 < pages },
         };
         render(&look)
     }
@@ -2094,10 +2118,8 @@ impl App {
                 }
                 let pages = self.move_pages().len();
                 self.move_ctl.page = self.move_ctl.page.min(pages.saturating_sub(1));
-                if let Some((t, page)) = self.move_knob_target() {
-                    let banks = self.page_specs(t, page).iter().filter(|s| s.shown()).count().div_ceil(8).max(1);
-                    self.move_ctl.bank = self.move_ctl.bank.min(banks - 1);
-                }
+                let banks = self.move_bank_names().0.len();
+                self.move_ctl.bank = self.move_ctl.bank.min(banks.saturating_sub(1));
                 self.move_ctl.hud_knob = None;
                 self.move_ctl.hud_at = Some(Instant::now());
             }
