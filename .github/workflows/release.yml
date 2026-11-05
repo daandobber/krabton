@@ -185,7 +185,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           # Krabton's Update window shows what stands above "## Download" (see update.rs).
-          previous=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)
+          # Since the last version that came out: one that failed to build has no release to tell it.
+          previous=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName 2>/dev/null || git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)
           changes=$(git log ${previous:+"$previous..$GITHUB_REF_NAME"} --no-merges --pretty='- %s' | grep -v '^- Version ' | head -80 || true)
           notes="## What's new
 

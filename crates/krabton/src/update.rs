@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 const LATEST: &str = "https://api.github.com/repos/daandobber/krabton/releases/latest";
+/// The releases, newest first: for what is new in all those since this copy.
+const LIST: &str = "https://api.github.com/repos/daandobber/krabton/releases?per_page=100";
 const PAGES: &str = "https://github.com/daandobber/krabton/";
 const FILES: &str = "https://github.com/daandobber/krabton/releases/download/";
 /// Everything past this in a release's text is about downloading by hand.
@@ -44,6 +46,8 @@ pub struct Release {
     pub version: String,
     /// What is new, as far as it says.
     pub notes: String,
+    /// What is new in every version since this copy's, newest first: (version, notes).
+    pub changes: Vec<(String, String)>,
     pub page: String,
     pub assets: Vec<Asset>,
 }
@@ -67,7 +71,36 @@ pub fn parse_release(json: &str) -> Result<Release, String> {
                 .collect()
         })
         .unwrap_or_default();
-    Ok(Release { version, notes, page, assets })
+    let changes = if notes.is_empty() { Vec::new() } else { vec![(version.clone(), notes.clone())] };
+    Ok(Release { version, notes, changes, page, assets })
+}
+
+/// What is new in the versions after `since`, from GitHub's list of releases:
+/// newest first, leaving out those that say nothing.
+pub fn changes_since(json: &str, since: &str) -> Result<Vec<(String, String)>, String> {
+    let v: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("GitHub's answer: {e}"))?;
+    let list = v.as_array().ok_or("GitHub's answer is no list")?;
+    let mut out: Vec<(String, String)> = list
+        .iter()
+        .filter(|r| !r.get("prerelease").and_then(|p| p.as_bool()).unwrap_or(false))
+        .filter_map(|r| parse_release(&r.to_string()).ok())
+        .filter(|r| newer(&r.version, since) && !r.notes.is_empty())
+        .map(|r| (r.version, r.notes))
+        .collect();
+    out.sort_by(|a, b| if newer(&a.0, &b.0) { std::cmp::Ordering::Less } else if newer(&b.0, &a.0) { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Equal });
+    Ok(out)
+}
+
+/// What is new since this copy, added to the release found. Without an answer
+/// the release's own notes stay.
+fn add_changes(release: &mut Release) {
+    let out = crate::piano_lib::curl().args(["-sSfL", "--proto", "=https", "--max-time", "20", "-H", "Accept: application/vnd.github+json", "-A", "Krabton", LIST]).output();
+    let Ok(out) = out.map_err(|_| ()).and_then(|o| if o.status.success() { Ok(o) } else { Err(()) }) else { return };
+    if let Ok(changes) = changes_since(&String::from_utf8_lossy(&out.stdout), &current()) {
+        if !changes.is_empty() {
+            release.changes = changes;
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -100,7 +133,10 @@ fn ask() -> Check {
         Err(e) => return Check::Failed(format!("curl could not run ({e})")),
     };
     match parse_release(&String::from_utf8_lossy(&out.stdout)) {
-        Ok(r) if newer(&r.version, &current()) => Check::Found(r),
+        Ok(mut r) if newer(&r.version, &current()) => {
+            add_changes(&mut r);
+            Check::Found(r)
+        }
         Ok(_) => Check::UpToDate,
         Err(e) => Check::Failed(e),
     }
@@ -517,6 +553,30 @@ mod tests {
         assert!(!newer("0.94.0", "0.95.0"));
         assert!(!newer("nonsense", "0.95.0"));
         assert!(!newer("0.96.0-rc1", "0.95.0"));
+    }
+
+    #[test]
+    fn the_changes_of_every_version_since_this_one_are_gathered_newest_first() {
+        let list = r###"[
+            {"tag_name": "v0.116.0", "body": "## What's new\n\n- DJ\n\n## Download\n\nDownload the file"},
+            {"tag_name": "v0.113.0", "body": "## What's new\n\n- Paths\n- Setups\n\n## Download\nx"},
+            {"tag_name": "v0.115.0", "body": "## What's new\n\n- 909\n\n## Download\nx"},
+            {"tag_name": "v0.114.0", "body": "Download the file for your system"},
+            {"tag_name": "v0.112.0", "body": "## What's new\n\n- Mastering\n\n## Download\nx"},
+            {"tag_name": "v0.120.0", "prerelease": true, "body": "## What's new\n\n- Not yet\n\n## Download\nx"}
+        ]"###;
+        let changes = changes_since(list, "0.112.0").unwrap();
+        let versions: Vec<&str> = changes.iter().map(|c| c.0.as_str()).collect();
+        assert_eq!(versions, ["0.116.0", "0.115.0", "0.113.0"], "this copy's own and older are left out, and a release without notes");
+        assert_eq!(changes[2].1, "- Paths\n- Setups");
+        assert!(changes_since(list, "0.116.0").unwrap().is_empty());
+        assert!(changes_since("{}", "0.1.0").is_err());
+    }
+
+    #[test]
+    fn a_release_alone_has_its_own_notes_as_its_changes() {
+        let r = parse_release(ANSWER).unwrap();
+        assert_eq!(r.changes, vec![("1.2.3".to_string(), "- Fire\n- Packs".to_string())]);
     }
 
     #[test]

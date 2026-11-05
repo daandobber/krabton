@@ -264,9 +264,19 @@ impl App {
 
     fn update_found(&mut self, ui: &mut Ui, r: &update::Release) {
         ui.label(RichText::new(format!("Krabton {} is out", r.version)).strong().color(ACCENT));
-        if !r.notes.is_empty() {
+        if r.changes.len() > 1 {
+            ui.label(RichText::new(format!("What is new in the {} versions since yours (you get the newest, with all of them in it):", r.changes.len())).small().color(TEXT_DIM));
+        }
+        if !r.changes.is_empty() {
             egui::ScrollArea::vertical().max_height((ui.available_height() - 110.0).max(60.0)).auto_shrink([false, true]).show(ui, |ui| {
-                ui.label(RichText::new(r.notes.as_str()).small());
+                let several = r.changes.len() > 1;
+                for (version, notes) in &r.changes {
+                    if several {
+                        ui.add_space(4.0);
+                        ui.label(RichText::new(version.as_str()).small().strong());
+                    }
+                    ui.label(RichText::new(notes.as_str()).small());
+                }
             });
         }
         ui.add_space(6.0);
