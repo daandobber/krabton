@@ -24,6 +24,8 @@ rustysynth = { package = "krabton-sf2", path = "../krabton-sf2" }
 encoding_rs = "0.8"
 # Hyper: the Virus emulation of gearmulator (GPL-3.0), compiled in.
 krabton-virus = { path = "../krabton-virus" }
+# The programs of the little rack reverbs (GPL-3.0, as the emulator they come from).
+krabton-rackverb = { path = "../krabton-rackverb" }
 krabton-braids = { path = "../krabton-braids" }
 krabton-elements = { path = "../krabton-elements" }
 krabton-airwindows = { path = "../krabton-airwindows" }

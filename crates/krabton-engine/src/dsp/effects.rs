@@ -98,6 +98,8 @@ pub enum EffectKind {
     Fryer,
     /// Tune: pitch correction, in the song's key.
     Tune,
+    /// Rackverb: the little rack reverbs of the late eighties.
+    Rackverb,
 }
 
 const FMODES: &[&str] = &["Lowpass", "Highpass", "Bandpass", "Notch"];
@@ -209,7 +211,7 @@ static UTILITY: &[ParamSpec] = &[
 ];
 
 impl EffectKind {
-    pub const ALL: [EffectKind; 88] = [
+    pub const ALL: [EffectKind; 89] = [
         EffectKind::Eq3,
         EffectKind::AutoFilter,
         EffectKind::VaFilter,
@@ -240,6 +242,7 @@ impl EffectKind {
         EffectKind::Resonators,
         EffectKind::Vinyl,
         EffectKind::Tune,
+        EffectKind::Rackverb,
         EffectKind::Rings,
         EffectKind::Clouds,
         EffectKind::Beads,
@@ -380,6 +383,7 @@ impl EffectKind {
             EffectKind::Resonators => "Reverb & Resonance",
             EffectKind::Vinyl => "Distortion",
             EffectKind::Tune => "Pitch",
+            EffectKind::Rackverb => "Reverb & Resonance",
             EffectKind::Comb => "Reverb & Resonance",
             EffectKind::Lattice => "Reverb & Resonance",
             EffectKind::Telephone => "Distortion",
@@ -399,7 +403,7 @@ impl EffectKind {
 
     /// Devices with their own display (they send audio and meters to the UI).
     pub fn has_display(self) -> bool {
-        matches!(self, EffectKind::Scope | EffectKind::LensEq | EffectKind::LensComp | EffectKind::LensLimiter | EffectKind::Grains | EffectKind::Glitch)
+        matches!(self, EffectKind::Scope | EffectKind::LensEq | EffectKind::LensComp | EffectKind::LensLimiter | EffectKind::Grains | EffectKind::Glitch | EffectKind::Rackverb)
     }
 
     pub fn name(self) -> &'static str {
@@ -432,6 +436,7 @@ impl EffectKind {
             EffectKind::Resonators => "Resonators",
             EffectKind::Vinyl => "Vinyl",
             EffectKind::Tune => "Tune",
+            EffectKind::Rackverb => "Rackverb",
             EffectKind::Comb => "Comb",
             EffectKind::Lattice => "Lattice",
             EffectKind::Telephone => "Telephone",
@@ -527,6 +532,7 @@ impl EffectKind {
             EffectKind::Resonators => "Five tuned resonators on a note and chord: drums and noise ring as chords",
             EffectKind::Vinyl => "An old record: crackle, pops, hiss, rumble, wow and worn-out bandwidth",
             EffectKind::Tune => "Pitch correction for one voice: it hears the note and moves it to the nearest in the key (the song's or its own). Speed at its lowest jumps from note to note, the hard robot sound; slower, it steers gently",
+            EffectKind::Rackverb => "The little rack reverbs of the late eighties: 228 programs of rooms, gates, reverses, flanges and delays, dark and grainy at their own low rate",
             EffectKind::Comb => "A delay so short it rings at a pitch: tuned to a note, fed back or turned over, damped, wobbling, wider on the right",
             EffectKind::Lattice => "Eight short delays feeding each other: a room when spaced unevenly, a ringing metal box when even (Shape); all the way up it holds what is in it",
             EffectKind::Telephone => "A voice down the line: a narrow band, squashed and driven, with hiss, crackle and dropouts, in mono",
@@ -621,6 +627,7 @@ impl EffectKind {
             EffectKind::Resonators => super::fx::resonators::SPECS,
             EffectKind::Vinyl => super::fx::vinyl::SPECS,
             EffectKind::Tune => super::fx::tune::SPECS,
+            EffectKind::Rackverb => super::fx::rackverb::SPECS,
             EffectKind::Comb => super::fx::comb::SPECS,
             EffectKind::Lattice => super::fx::lattice::SPECS,
             EffectKind::Telephone => super::fx::telephone::SPECS,
@@ -728,6 +735,7 @@ pub enum EffectState {
     Resonators(Box<super::fx::resonators::Resonators>),
     Vinyl(Box<super::fx::vinyl::Vinyl>),
     Tune(Box<super::fx::tune::Tune>),
+    Rackverb(Box<super::fx::rackverb::Rackverb>),
     Comb(Box<super::fx::comb::Comb>),
     Lattice(Box<super::fx::lattice::Lattice>),
     Telephone(Box<super::fx::telephone::Telephone>),
@@ -827,6 +835,7 @@ impl EffectState {
             EffectKind::Resonators => EffectState::Resonators(Box::new(super::fx::resonators::Resonators::new(sr))),
             EffectKind::Vinyl => EffectState::Vinyl(Box::new(super::fx::vinyl::Vinyl::new(sr))),
             EffectKind::Tune => EffectState::Tune(Box::new(super::fx::tune::Tune::new(sr))),
+            EffectKind::Rackverb => EffectState::Rackverb(Box::new(super::fx::rackverb::Rackverb::new(sr))),
             EffectKind::Comb => EffectState::Comb(Box::new(super::fx::comb::Comb::new(sr))),
             EffectKind::Lattice => EffectState::Lattice(Box::new(super::fx::lattice::Lattice::new(sr))),
             EffectKind::Telephone => EffectState::Telephone(Box::new(super::fx::telephone::Telephone::new(sr))),
@@ -914,6 +923,7 @@ impl EffectState {
             EffectState::LensEq(s) => Some(&mut s.taps),
             EffectState::LensComp(s) => Some(&mut s.taps),
             EffectState::LensLimiter(s) => Some(&mut s.taps),
+            EffectState::Rackverb(s) => Some(&mut s.taps),
             EffectState::Grains(s) => Some(&mut s.taps),
             EffectState::Glitch(s) => Some(&mut s.taps),
             EffectState::OpenAir(s) => Some(&mut s.taps),
@@ -952,6 +962,7 @@ impl EffectState {
             EffectState::Resonators(_) => EffectKind::Resonators,
             EffectState::Vinyl(_) => EffectKind::Vinyl,
             EffectState::Tune(_) => EffectKind::Tune,
+            EffectState::Rackverb(_) => EffectKind::Rackverb,
             EffectState::Comb(_) => EffectKind::Comb,
             EffectState::Lattice(_) => EffectKind::Lattice,
             EffectState::Telephone(_) => EffectKind::Telephone,
@@ -1210,6 +1221,7 @@ impl EffectState {
             EffectState::Resonators(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Vinyl(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Tune(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
+            EffectState::Rackverb(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Comb(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Lattice(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Telephone(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),

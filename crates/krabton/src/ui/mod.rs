@@ -67,6 +67,7 @@ pub mod seq_view;
 pub mod session;
 pub mod settings;
 pub mod dj_view;
+pub mod rackverb_view;
 pub mod hum;
 pub(crate) mod map_master;
 pub(crate) mod map_plans;

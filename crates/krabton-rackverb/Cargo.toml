@@ -1,0 +1,11 @@
+[package]
+name = "krabton-rackverb"
+description = "Rackverb's programs: the DSP programs of the little rack reverbs of the late eighties, after midiverb_emulator"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license = "GPL-3.0-only"
+authors = ["thement (midiverb_emulator)", "Krabton contributors"]
+
+[lib]
+path = "src/lib.rs"

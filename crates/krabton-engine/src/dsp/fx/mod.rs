@@ -44,6 +44,7 @@ pub mod vafilter;
 pub mod transient;
 pub mod verb;
 pub mod tune;
+pub mod rackverb;
 pub mod vinyl;
 
 use std::f32::consts::TAU;

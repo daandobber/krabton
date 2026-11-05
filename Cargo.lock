@@ -1667,6 +1667,7 @@ dependencies = [
  "krabton-clap",
  "krabton-engine",
  "krabton-monome",
+ "krabton-rackverb",
  "libloading",
  "midir",
  "miniz_oxide 0.8.9",
@@ -1723,6 +1724,7 @@ dependencies = [
  "krabton-braids",
  "krabton-clouds",
  "krabton-elements",
+ "krabton-rackverb",
  "krabton-rings",
  "krabton-sf2",
  "krabton-stk",
@@ -1740,6 +1742,10 @@ version = "0.116.0"
 dependencies = [
  "serialport",
 ]
+
+[[package]]
+name = "krabton-rackverb"
+version = "0.116.0"
 
 [[package]]
 name = "krabton-rings"

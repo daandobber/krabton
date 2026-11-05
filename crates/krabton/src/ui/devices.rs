@@ -1041,6 +1041,8 @@ impl App {
             } else if kind == EffectKind::OpenAir {
                 crate::ui::open_air_view::open_air_panel(ui, id, dev_id, &mut params, accent, h, mv.as_mut(), &status, &mut width)
 
+            } else if kind == EffectKind::Rackverb {
+                crate::ui::rackverb_view::rackverb_panel(ui, id, dev_id, &mut params, h, mv.as_mut(), &status)
             } else if kind == EffectKind::LensEq {
                 crate::ui::lens::eq_panel(ui, id, dev_id, &mut params, accent, h, mv.as_mut(), &status, &mut width)
             } else if kind == EffectKind::LensComp {
