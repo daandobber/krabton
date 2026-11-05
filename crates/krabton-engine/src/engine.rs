@@ -214,6 +214,8 @@ pub struct EngineStatus {
     pub mods: Vec<AtomicF32>,
     /// Where the listener on the Map is now (modulated): across, depth, turn.
     pub listener_live: [AtomicF32; 3],
+    /// How loud the DJ mixer's channels are: deck A, deck B, the set.
+    pub dj_levels: [AtomicF32; 3],
     /// The Session scene launched last, and how many have been.
     pub last_scene: AtomicI32,
     pub scene_launches: AtomicU32,
@@ -314,6 +316,7 @@ impl EngineStatus {
             preview_active: AtomicBool::new(false),
             mods: (0..MAX_MODS).map(|_| AtomicF32::new(0.0)).collect(),
             listener_live: std::array::from_fn(|_| AtomicF32::new(0.0)),
+            dj_levels: std::array::from_fn(|_| AtomicF32::new(0.0)),
             last_scene: AtomicI32::new(-1),
             scene_launches: AtomicU32::new(0),
             scopes: crate::scope::ScopeBank::new(),
@@ -1430,6 +1433,10 @@ pub struct Engine {
     /// Frames rendered since the engine started (drives MIDI effect timing).
     clock: u64,
     mods: ModRuntime,
+    /// The DJ mixer: its channels, the decks on their way to it, the headphones.
+    dj_strips: [crate::dsp::dj::Strip; 3],
+    dj_bus: Vec<f32>,
+    dj_cue: Vec<f32>,
     /// The room as it is now (it slides over to a setup), and how long that still takes (s).
     map_now: crate::dsp::fx::stage::MapRoom,
     map_glide: f32,
@@ -1509,6 +1516,9 @@ impl Engine {
             parked: Vec::with_capacity(16),
             clock: 0,
             mods: ModRuntime::new(),
+            dj_strips: Default::default(),
+            dj_bus: vec![0.0; 4 * MAX_BLOCK],
+            dj_cue: vec![0.0; 2 * MAX_BLOCK],
             map_now: Default::default(),
             map_glide: 0.0,
             envs: Vec::with_capacity(256),
@@ -2318,6 +2328,10 @@ impl Engine {
             b.l[..seg].fill(0.0);
             b.r[..seg].fill(0.0);
         }
+        if project.dj.on {
+            self.dj_bus[..4 * MAX_BLOCK].fill(0.0);
+            self.dj_cue[..2 * MAX_BLOCK].fill(0.0);
+        }
         self.master.l[..seg].fill(0.0);
         self.master.r[..seg].fill(0.0);
 
@@ -2849,9 +2863,21 @@ impl Engine {
             }
             // A track sent to another track reaches the master through it.
             if *to_master {
-                for i in 0..seg {
-                    self.master.l[i] += l[i];
-                    self.master.r[i] += r[i];
+                // A deck goes to its channel on the DJ mixer instead.
+                match project.dj.deck_of(track.id) {
+                    Some(d) => {
+                        let (bl, br) = self.dj_bus[2 * d * MAX_BLOCK..(2 * d + 2) * MAX_BLOCK].split_at_mut(MAX_BLOCK);
+                        for i in 0..seg {
+                            bl[i] += l[i];
+                            br[i] += r[i];
+                        }
+                    }
+                    None => {
+                        for i in 0..seg {
+                            self.master.l[i] += l[i];
+                            self.master.r[i] += r[i];
+                        }
+                    }
                 }
             }
             for (j, ret) in self.returns.iter_mut().enumerate().take(MAX_RETURNS) {
@@ -2910,6 +2936,29 @@ impl Engine {
             }
         }
 
+        // The DJ mixer: what is on the master so far is the set; the decks join it.
+        if project.dj.on {
+            let dj = &project.dj;
+            let (cue_l, cue_r) = self.dj_cue.split_at_mut(MAX_BLOCK);
+            let m = &mut self.master;
+            let [strip_a, strip_b, strip_set] = &mut self.dj_strips;
+            let ch = &dj.channels;
+            let set_cue = ch[2].cue.then_some((&mut cue_l[..seg], &mut cue_r[..seg]));
+            let peak = strip_set.process(&ch[2], dj.crossfader, &mut m.l[..seg], &mut m.r[..seg], sr, set_cue);
+            status.dj_levels[2].store(peak);
+            let (bus_a, bus_b) = self.dj_bus.split_at_mut(2 * MAX_BLOCK);
+            for (d, (strip, bus)) in [(strip_a, bus_a), (strip_b, bus_b)].into_iter().enumerate() {
+                let (bl, br) = bus.split_at_mut(MAX_BLOCK);
+                let deck_cue = ch[d].cue.then_some((&mut cue_l[..seg], &mut cue_r[..seg]));
+                let peak = strip.process(&ch[d], dj.crossfader, &mut bl[..seg], &mut br[..seg], sr, deck_cue);
+                status.dj_levels[d].store(peak);
+                for i in 0..seg {
+                    m.l[i] += bl[i];
+                    m.r[i] += br[i];
+                }
+            }
+        }
+
         {
             let m = &mut self.master;
             for (dev, (_, st)) in project.master.devices.iter().zip(m.devices.iter_mut()) {
@@ -2929,6 +2978,11 @@ impl Engine {
             }
             if status.recording.load(RELAXED) {
                 status.record_master.write(&m.l[..seg], &m.r[..seg]);
+            }
+            // Recorded as the music it is; one stereo output carries the cue as well.
+            if project.dj.on && project.dj.split_cue {
+                let (cue_l, cue_r) = self.dj_cue.split_at(MAX_BLOCK);
+                crate::dsp::dj::split_for_headphones(&mut m.l[..seg], &mut m.r[..seg], &cue_l[..seg], &cue_r[..seg]);
             }
         }
 
@@ -3851,6 +3905,53 @@ mod tests {
         h.send(Command::Stop);
         run(&mut e, 0.05);
         assert_eq!(sounding(&e), 0, "stop left notes on");
+    }
+
+    #[test]
+    fn the_dj_mixer_takes_the_decks_and_the_set_over_the_crossfader() {
+        use crate::dsp::dj::DjMix;
+        let mut p = Project::new_default();
+        let ti = p.tracks.iter().position(|t| matches!(t.instrument, Some(Instrument::Synth { .. }))).expect("a synth track");
+        let t = p.insert_midi_track(p.tracks.len(), "Deck A", Some(Instrument::synth("Init")));
+        let (deck, set) = (p.tracks[t].id, p.tracks[ti].id);
+        p.dj = DjMix { on: true, decks: [Some(deck), None], ..DjMix::default() };
+        let hear = |p: &Project, who: u64| {
+            let (mut e, h) = Engine::new(48000.0, Arc::new(p.clone()));
+            h.send(Command::NoteOn { track: who, pitch: 57, velocity: 0.9 });
+            let out = run(&mut e, 0.3);
+            (peak(&out[4800..]), h.status.dj_levels[0].load(), h.status.dj_levels[2].load())
+        };
+        // In the middle the deck is heard, on its channel.
+        let (open, level, _) = hear(&p, deck);
+        assert!(open > 0.01 && level > 0.01, "{open} {level}");
+        // All to B: side A is gone; the set, Thru, is not.
+        p.dj.crossfader = 1.0;
+        let (gone, level, _) = hear(&p, deck);
+        assert!(gone < open * 0.01, "{gone} of {open}");
+        assert!(level < 1e-3);
+        let (set_heard, _, set_level) = hear(&p, set);
+        assert!(set_heard > 0.01 && set_level > 0.01, "{set_heard} {set_level}");
+        // With the mixer off the deck is an ordinary track again.
+        p.dj.on = false;
+        let (back, _, _) = hear(&p, deck);
+        assert!(back > 0.01);
+    }
+
+    #[test]
+    fn the_cue_goes_to_the_right_ear_and_the_recording_stays_the_music() {
+        use crate::dsp::dj::DjMix;
+        let mut p = Project::new_default();
+        let t = p.insert_midi_track(p.tracks.len(), "Deck A", Some(Instrument::synth("Init")));
+        let deck = p.tracks[t].id;
+        p.dj = DjMix { on: true, decks: [Some(deck), None], split_cue: true, ..DjMix::default() };
+        p.dj.channels[0].cue = true;
+        p.dj.channels[0].fader_db = -80.0;
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        h.send(Command::NoteOn { track: deck, pitch: 57, velocity: 0.9 });
+        let out = run(&mut e, 0.3);
+        let side = |c: usize| out[9600..].chunks(2).map(|f| f[c].abs()).fold(0.0f32, f32::max);
+        assert!(side(1) > 0.01, "the cue, fader down, in the right ear: {}", side(1));
+        assert!(side(0) < 1e-3, "nothing of it in the left: {}", side(0));
     }
 
     #[test]

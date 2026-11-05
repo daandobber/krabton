@@ -104,6 +104,8 @@ pub struct Prefs {
     pub move_brightness: u8,
     /// How hard its pads must be hit (see `move_ctl::PAD_CURVES`).
     pub move_curve: u8,
+    /// The folder of the DJ view's records.
+    pub dj_folder: Option<std::path::PathBuf>,
     /// What pressing a pad does (see `move_ctl::PRESSURES`).
     pub move_pressure: u8,
     /// The first start's question about packs was asked.

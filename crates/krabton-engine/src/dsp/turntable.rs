@@ -155,6 +155,9 @@ pub struct Record {
     /// The hot cues, in seconds into the record.
     #[serde(default)]
     pub cues: [Option<f64>; CUES],
+    /// Its key, if it has been looked for: root (0: C) and whether it is minor.
+    #[serde(default)]
+    pub key: Option<(u8, bool)>,
 }
 
 /// Listens to a record put on the deck: its tempo and first downbeat, and
@@ -1288,7 +1291,7 @@ mod tests {
     #[test]
     fn a_loop_roll_comes_back_where_the_record_would_be() {
         let s = sine(440.0, 30.0);
-        let rec = Record { bpm: 120.0, beat: 0.0, heard: true, cues: [None; CUES] };
+        let rec = Record { bpm: 120.0, beat: 0.0, heard: true, cues: [None; CUES], key: None };
         let mut p = plain();
         p[LOOP] = 2.0;
         let mut st = TurntableState::new(SR);
@@ -1308,7 +1311,7 @@ mod tests {
     #[test]
     fn nothing_blows_up() {
         let s = sine(300.0, 4.0);
-        let rec = Record { bpm: 97.0, beat: 0.1, heard: true, cues: [Some(0.5); CUES] };
+        let rec = Record { bpm: 97.0, beat: 0.1, heard: true, cues: [Some(0.5); CUES], key: None };
         let mut rng = Rng::new(9);
         for round in 0..12 {
             let mut p: Vec<f32> = SPECS.iter().map(|s| s.from_norm(rng.unipolar())).collect();

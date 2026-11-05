@@ -18,6 +18,7 @@ pub mod crimson;
 pub mod silicon;
 pub mod drone;
 pub mod dx7;
+pub mod dj;
 pub mod fft;
 pub mod fm;
 pub mod fx;

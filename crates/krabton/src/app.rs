@@ -29,6 +29,8 @@ pub enum View {
     Studio,
     /// The four-track tape.
     Tape,
+    /// DJ: two decks and your set on one mixer.
+    Dj,
     /// Touch: the selected track played with plates, a pulser, steps and cables.
     Touch,
     /// The Video: its clips and Looks along the top, the picture and its
@@ -631,6 +633,8 @@ pub struct App {
     pub(crate) map_selected: Option<u64>,
     /// The listener is what the Map's side shows.
     pub(crate) map_listener_sel: bool,
+    /// The DJ view (see `ui::dj_view`).
+    pub(crate) dj: crate::ui::dj_view::DjState,
     /// Hum a Melody (see `ui::hum`).
     pub(crate) hum: crate::ui::hum::HumState,
     /// Who the mouse is drawing a path for on the Map.
@@ -838,6 +842,7 @@ impl App {
             video: Default::default(),
             map_selected: None,
             map_listener_sel: false,
+            dj: Default::default(),
             hum: Default::default(),
             map_drawing: None,
             map_setup: None,
@@ -3716,7 +3721,7 @@ impl App {
     /// Whether the detail panel (clip editor, devices) is out: the Rack has
     /// its own setting.
     pub(crate) fn detail_shown(&self) -> bool {
-        if self.view == View::Video {
+        if self.view == View::Video || self.view == View::Dj {
             // The Video has the whole window (it has its own side).
             false
         } else if self.view == View::Studio {
@@ -4027,6 +4032,19 @@ impl App {
                 "settings" => self.show_settings = true,
                 "mapwin" => self.map_window = true,
                 "humwin" => self.hum.open = true,
+                "dj" => self.view = View::Dj,
+                "djload" => {
+                    if let Some((d, path)) = arg.split_once(',') {
+                        self.dj_enter();
+                        self.dj_load(d.trim().parse().unwrap_or(0), std::path::Path::new(path.trim()));
+                    }
+                }
+                "djplay" => {
+                    let d: usize = arg.trim().parse().unwrap_or(0);
+                    if let Some(id) = self.project.dj.decks.get(d).copied().flatten() {
+                        self.cmd(Command::Deck { track: id, act: krabton_engine::dsp::turntable::DeckAct::StartStop });
+                    }
+                }
                 // video: its view (video=0 goes back); videoload=PATH: a clip into its bank; videotest=PATH: a
                 // test clip (a GIF made here) written there and loaded; videopreset=NAME;
                 // videomode=N (0 Loop, 1 Tempo, 2 Slices); videoscreen: its screen.
@@ -5151,7 +5169,7 @@ impl eframe::App for App {
         // The browser runs from top to bottom, next to the detail view, as in Live.
         let fg = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("panel_grips")));
         // The Video has the whole window: no browser, no detail view.
-        let whole = self.view == View::Video;
+        let whole = self.view == View::Video || self.view == View::Dj;
         if !whole && self.browser.visible {
             let r = egui::SidePanel::left("browser")
                 .resizable(true)
@@ -5232,6 +5250,7 @@ impl eframe::App for App {
                 View::Touch => self.ui_touch(ui),
                 View::Tape => self.ui_tape(ui),
                 View::Video => self.ui_video_view(ui),
+                View::Dj => self.ui_dj(ui),
             }
         });
         self.move_hud(ctx);
