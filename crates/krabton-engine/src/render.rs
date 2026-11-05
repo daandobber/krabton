@@ -28,6 +28,7 @@ impl RenderProgress {
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum RenderSource {
     /// Render the arrangement between two beat positions.
     Arrangement { start: f64, end: f64 },

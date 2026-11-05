@@ -353,6 +353,8 @@ pub struct ExportDialog {
     pub scene: usize,
     pub bars: u32,
     pub sample_rate: u32,
+    /// Each track on its own, into a folder.
+    pub stems: bool,
 }
 
 type ExportResult = (Result<String, String>, Vec<Box<dyn krabton_engine::plugin::AudioProcessor>>);
@@ -362,6 +364,46 @@ pub struct ExportJob {
     pub handle: Option<JoinHandle<ExportResult>>,
     /// Plugin instances used by the render; dropped on this thread afterwards.
     plugin_instances: Vec<krabton_clap::PluginInstance>,
+}
+
+/// Where the set every new set starts from is kept.
+fn default_set_path() -> std::path::PathBuf {
+    krabton_engine::ffmpeg::library_dir().with_file_name(format!("Default Set.{FILE_EXTENSION}"))
+}
+
+/// How many recent sets are kept.
+const RECENT_SETS: usize = 12;
+
+/// `path` on top of the list, once.
+pub(crate) fn remember(list: &mut Vec<std::path::PathBuf>, path: &std::path::Path) {
+    list.retain(|p| p != path);
+    list.insert(0, path.to_path_buf());
+    list.truncate(RECENT_SETS);
+}
+
+/// The tracks that get a stem: what is not muted, without a DJ's decks.
+pub(crate) fn stem_tracks(project: &Project) -> Vec<(u64, String)> {
+    project.tracks.iter().filter(|t| !t.mixer.mute && !project.dj.decks.contains(&Some(t.id))).map(|t| (t.id, t.name.clone())).collect()
+}
+
+/// The set with only this track heard (returns still answering it), the master's chain off.
+pub(crate) fn stem_project(project: &Project, track: u64) -> Project {
+    let mut p = project.clone();
+    for t in p.tracks.iter_mut() {
+        t.mixer.solo = t.id == track;
+    }
+    for d in p.master.devices.iter_mut() {
+        d.enabled = false;
+    }
+    p.dj.on = false;
+    p
+}
+
+/// A track's name as a file name.
+pub(crate) fn stem_file_name(name: &str) -> String {
+    let clean: String = name.chars().map(|c| if c.is_alphanumeric() || " -_".contains(c) { c } else { '_' }).collect();
+    let clean = clean.trim();
+    if clean.is_empty() { "Track".to_string() } else { clean.to_string() }
 }
 
 /// Target of the Key & Scale dialog.
@@ -614,6 +656,10 @@ pub struct App {
     /// The clip view shows envelopes (instead of notes or audio), which one,
     /// and whether dragging draws.
     pub(crate) env_view: bool,
+    /// The clip's Steps tab (see `ui::steps_view`).
+    pub(crate) steps: crate::ui::steps_view::StepsState,
+    /// Counting in, to record when it has.
+    pub(crate) count_pending: bool,
     pub(crate) env_target: Option<krabton_engine::modulation::ModTarget>,
     pub(crate) env_draw: bool,
     /// Automation Arm: knobs turned while clips play are recorded into them.
@@ -798,7 +844,7 @@ impl App {
             sample_cache: HashMap::new(),
             imports: Default::default(),
             renaming: None,
-            export: ExportDialog { open: false, source: ExportSource::Scene, scene: 0, bars: 8, sample_rate: 44100 },
+            export: ExportDialog { open: false, source: ExportSource::Scene, scene: 0, bars: 8, sample_rate: 44100, stems: false },
             slicing: None,
             convert: Default::default(),
             export_job: None,
@@ -831,6 +877,8 @@ impl App {
             stretch_custom: None,
             shot: None,
             env_view: false,
+            steps: Default::default(),
+            count_pending: false,
             env_target: None,
             env_draw: false,
             auto_arm: false,
@@ -3006,6 +3054,30 @@ impl App {
     }
 
     pub fn toggle_record(&mut self) {
+        if self.count_pending {
+            self.count_pending = false;
+            self.cmd(Command::Stop);
+            return;
+        }
+        let bars = self.prefs.count_in as f64;
+        if bars > 0.0 && !self.recording && self.takes.is_empty() && !self.is_playing() {
+            self.count_pending = true;
+            self.cmd(Command::CountIn { beats: bars * self.project.beats_per_bar_f() });
+            self.toast("Counting in...");
+            return;
+        }
+        self.record_now();
+    }
+
+    /// The count-in has ended and the song runs: recording starts.
+    fn poll_count_in(&mut self) {
+        if self.count_pending && self.is_playing() {
+            self.count_pending = false;
+            self.record_now();
+        }
+    }
+
+    fn record_now(&mut self) {
         if self.recording || !self.takes.is_empty() {
             self.recording = false;
             self.stop_takes();
@@ -3516,9 +3588,11 @@ impl App {
         if self.ask_first(crate::safety::After::New) {
             return;
         }
-        self.replace_project(Project::new_default());
+        let start = Project::load(&default_set_path()).ok().map(|(p, _)| p);
+        let own = start.is_some();
+        self.replace_project(start.unwrap_or_else(Project::new_default));
         self.file_path = None;
-        self.toast("New set");
+        self.toast(if own { "New set, from your default" } else { "New set" });
     }
 
     pub fn load_demo(&mut self) {
@@ -3560,6 +3634,34 @@ impl App {
 
     /// Opens a set from disk (the Open dialog, or a file double-clicked in
     /// the file manager).
+    /// A set opened or saved goes on top of the recent ones.
+    fn remember_set(&mut self, path: &std::path::Path) {
+        remember(&mut self.prefs.recent_sets, path);
+        self.prefs.save();
+    }
+
+    /// What this set is goes into every new set from now on.
+    pub(crate) fn save_default_set(&mut self) {
+        let path = default_set_path();
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        self.plugins.store_states(&mut self.project);
+        match self.project.save(&path) {
+            Ok(()) => self.toast("New sets start like this one now"),
+            Err(e) => self.toast(format!("Could not save it: {e}")),
+        }
+    }
+
+    pub(crate) fn forget_default_set(&mut self) {
+        let _ = std::fs::remove_file(default_set_path());
+        self.toast("New sets start the way Krabton's do again");
+    }
+
+    pub(crate) fn has_default_set(&self) -> bool {
+        default_set_path().is_file()
+    }
+
     pub fn open_path(&mut self, path: std::path::PathBuf) {
         if self.ask_first(crate::safety::After::OpenPath(path.clone())) {
             return;
@@ -3568,6 +3670,7 @@ impl App {
             Ok((p, missing)) => {
                 self.replace_project(p);
                 self.file_path = Some(path.clone());
+                self.remember_set(&path);
                 if missing.is_empty() {
                     self.toast(format!("Opened {}", path.display()));
                 } else {
@@ -3604,6 +3707,7 @@ impl App {
                 self.safety_saved();
                 self.committed = self.project.clone();
                 self.toast(format!("Saved {}", path.display()));
+                self.remember_set(&path);
                 self.file_path = Some(path);
             }
             Err(e) => self.toast(format!("Save failed: {e}")),
@@ -3641,6 +3745,10 @@ impl App {
         if self.export_job.is_some() {
             return;
         }
+        if self.export.stems {
+            self.start_export_stems();
+            return;
+        }
         let name = format!("{}.wav", self.project.name);
         let Some(path) = rfd::FileDialog::new().add_filter("WAV audio", &["wav"]).add_filter("MP3 audio", &["mp3"]).set_file_name(name).save_file() else { return };
         let mp3 = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("mp3"));
@@ -3672,6 +3780,66 @@ impl App {
                 None => Err("Export cancelled".into()),
             };
             (result, leftovers)
+        });
+        self.export_job = Some(ExportJob { progress, handle: Some(handle), plugin_instances });
+        self.export.open = false;
+    }
+
+    /// Each track that plays on its own, as a WAV in a folder, without the
+    /// master's chain: for mixing somewhere else.
+    fn start_export_stems(&mut self) {
+        let Some(dir) = rfd::FileDialog::new().set_title("A folder for the stems").pick_folder() else { return };
+        self.export_stems_to(dir);
+    }
+
+    fn export_stems_to(&mut self, dir: std::path::PathBuf) {
+        let project = self.project.clone();
+        let bar = project.beats_per_bar_f();
+        let source = match self.export.source {
+            ExportSource::Arrangement => {
+                let end = project.arrangement_end();
+                if end <= 0.0 {
+                    self.toast("The arrangement is empty. Use 'Scenes to Arrangement' or export a scene.");
+                    return;
+                }
+                RenderSource::Arrangement { start: 0.0, end }
+            }
+            ExportSource::Scene => RenderSource::Scene { scene: self.export.scene, beats: self.export.bars as f64 * bar },
+        };
+        let sr = self.export.sample_rate;
+        // A plugin can't go through two renders: each stem gets its own, of those it hears.
+        let mut plugin_instances = Vec::new();
+        let mut stems = Vec::new();
+        let mut failed = None;
+        for (track, name) in stem_tracks(&project) {
+            let (instances, processors, errors) = self.plugins.export_instances_of(project.plugins_heard_with(track), sr as f64);
+            plugin_instances.extend(instances);
+            failed = failed.or(errors.into_iter().next());
+            stems.push((track, name, processors));
+        }
+        if let Some(e) = failed {
+            self.toast(format!("Exporting without a plugin: {e}"));
+        }
+        let progress = Arc::new(RenderProgress::default());
+        let pr = progress.clone();
+        let handle = std::thread::spawn(move || {
+            let mut stopped = Vec::new();
+            let mut written = 0usize;
+            for (track, name, processors) in stems {
+                let (audio, leftovers) = render::render_with_plugins(&stem_project(&project, track), source, sr, bar, Some(&pr), processors);
+                stopped.extend(leftovers);
+                let Some(buf) = audio else { return (Err("Export cancelled".to_string()), stopped) };
+                // A track that says nothing here gets no file.
+                if buf.iter().all(|s| s.abs() < 1e-5) {
+                    continue;
+                }
+                written += 1;
+                let path = dir.join(format!("{written:02} {}.wav", stem_file_name(&name)));
+                if let Err(e) = render::write_wav(&path, sr, &buf) {
+                    return (Err(e), stopped);
+                }
+            }
+            (Ok(format!("{written} stems to {}", dir.display())), stopped)
         });
         self.export_job = Some(ExportJob { progress, handle: Some(handle), plugin_instances });
         self.export.open = false;
@@ -4871,6 +5039,11 @@ impl App {
                     self.project.scenes_to_arrangement();
                 }
                 "export" => self.export.open = true,
+                "steps" => self.steps.open = true,
+                "countin" => self.prefs.count_in = nums.first().copied().unwrap_or(0) as u8,
+                "stemsto" => self.export_stems_to(std::path::PathBuf::from(arg)),
+                "defaultset" => self.save_default_set(),
+                "newset" => self.new_project(),
                 "about" => self.show_about = true,
                 "record" => self.toggle_record(),
                 "arm" => {
@@ -5094,6 +5267,7 @@ impl eframe::App for App {
         self.recover_engine();
         self.poll_recording();
         self.tape_frame();
+        self.poll_count_in();
         self.poll_export();
         self.poll_clip_jobs();
         self.poll_imports();
@@ -5339,5 +5513,48 @@ fn midi_file_gm(bank: &krabton_engine::dsp::sf2::Sf2Ref, t: &midi_file::MidiSong
     match bank.gm(program, drums).or_else(|| bank.presets.first()) {
         Some(p) => Instrument::sf2(Some(bank.clone()), p.bank, p.patch),
         None => Instrument::sf2(Some(bank.clone()), 0, 0),
+    }
+}
+
+#[cfg(test)]
+mod set_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn a_set_goes_on_top_of_the_recent_ones_once() {
+        let mut list = vec![PathBuf::from("a.krab"), PathBuf::from("b.krab")];
+        remember(&mut list, &PathBuf::from("b.krab"));
+        assert_eq!(list, [PathBuf::from("b.krab"), PathBuf::from("a.krab")]);
+        for k in 0..30 {
+            remember(&mut list, &PathBuf::from(format!("{k}.krab")));
+        }
+        assert_eq!(list.len(), RECENT_SETS);
+        assert_eq!(list[0], PathBuf::from("29.krab"));
+    }
+
+    #[test]
+    fn a_stem_is_its_own_track_without_the_master_chain() {
+        let mut p = Project::new_default();
+        let dev = p.make_device(krabton_engine::dsp::effects::EffectKind::LensLimiter);
+        p.master.devices.push(dev);
+        p.tracks[1].mixer.mute = true;
+        let (first, muted) = (p.tracks[0].id, p.tracks[1].id);
+        p.dj.decks[0] = Some(p.tracks[2].id);
+        let tracks = stem_tracks(&p);
+        assert!(tracks.iter().any(|t| t.0 == first));
+        assert!(!tracks.iter().any(|t| t.0 == muted), "muted");
+        assert_eq!(tracks.len(), p.tracks.len() - 2, "nor a DJ's deck");
+        p.dj.on = true;
+        let stem = stem_project(&p, first);
+        assert!(stem.tracks[0].mixer.solo && !stem.tracks[1].mixer.solo);
+        assert!(stem.master.devices.iter().all(|d| !d.enabled));
+        assert!(!stem.dj.on);
+    }
+
+    #[test]
+    fn a_track_name_makes_a_file_name() {
+        assert_eq!(stem_file_name("Bass: Fat/Low"), "Bass_ Fat_Low");
+        assert_eq!(stem_file_name("  "), "Track");
     }
 }

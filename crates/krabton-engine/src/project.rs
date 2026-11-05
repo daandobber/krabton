@@ -433,6 +433,9 @@ pub struct Clip {
     /// into it). None: the track sounds as it does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sound: Option<Box<Sound>>,
+    /// The rows of its Steps tab, those not as long as the clip or added by hand.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub step_rows: Vec<crate::steps::StepRow>,
     /// A MIDI clip's groove (from the Groove Pool): its notes play with that
     /// feel, where they are written (see `groove`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -656,7 +659,7 @@ pub fn db_to_fader_pos(db: f32) -> f32 {
 
 impl Clip {
     pub fn new_midi(id: u64, name: impl Into<String>, color: Rgb, length: f64) -> Self {
-        Self { id, name: name.into(), color, length, content: ClipContent::Midi { notes: Vec::new() }, envelopes: Vec::new(), sound: None, groove: None, launch: Default::default() }
+        Self { id, name: name.into(), color, length, content: ClipContent::Midi { notes: Vec::new() }, envelopes: Vec::new(), sound: None, step_rows: Vec::new(), groove: None, launch: Default::default() }
     }
 
     /// Creates an audio clip warped the way Live's auto-warp does it. A loop
@@ -716,7 +719,7 @@ impl Clip {
             }
             _ => audio.sample_beats(),
         };
-        Self { id, name: sample.name.clone(), color, length: length.max(0.25), content: ClipContent::Audio(audio), envelopes: Vec::new(), sound: None, groove: None, launch: Default::default() }
+        Self { id, name: sample.name.clone(), color, length: length.max(0.25), content: ClipContent::Audio(audio), envelopes: Vec::new(), sound: None, step_rows: Vec::new(), groove: None, launch: Default::default() }
     }
 
     /// How long it plays before it repeats or ends, in beats: the loop, or
@@ -2298,6 +2301,20 @@ impl Project {
         for devs in chains {
             v.extend(devs.iter().filter_map(|d| d.plugin.as_ref()));
         }
+        v
+    }
+
+    /// The plugins a track is heard through on its own: its instrument and
+    /// devices, and the returns it can send to.
+    pub fn plugins_heard_with(&self, track: u64) -> Vec<&PluginInstrument> {
+        let mut v = Vec::new();
+        if let Some(t) = self.tracks.iter().find(|t| t.id == track) {
+            if let Some(Instrument::Plugin(p)) = &t.instrument {
+                v.push(p);
+            }
+            v.extend(t.devices.iter().filter_map(|d| d.plugin.as_ref()));
+        }
+        v.extend(self.returns.iter().flat_map(|r| r.devices.iter()).filter_map(|d| d.plugin.as_ref()));
         v
     }
 

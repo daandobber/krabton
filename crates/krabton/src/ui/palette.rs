@@ -62,6 +62,7 @@ fn actions() -> Vec<Entry> {
     vec![
         e("Save", |a| a.save(false)),
         e("Save As", |a| a.save(true)),
+        e("Save as Default Set", |a| a.save_default_set()),
         e("New Set", |a| a.new_project()),
         e("Open Set", |a| a.open()),
         e("Undo", |a| a.undo()),

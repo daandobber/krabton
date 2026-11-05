@@ -187,10 +187,15 @@ impl PluginManager {
     /// state, for an offline render. Keep the returned instances alive (on
     /// this thread) until the render thread has given the processors back.
     pub fn export_instances(&mut self, project: &Project, sample_rate: f64) -> (Vec<PluginInstance>, Vec<(u64, Box<dyn AudioProcessor>)>, Vec<String>) {
+        self.export_instances_of(project.plugins(), sample_rate)
+    }
+
+    /// The same, for these plugins only.
+    pub fn export_instances_of(&mut self, plugins: Vec<&PluginInstrument>, sample_rate: f64) -> (Vec<PluginInstance>, Vec<(u64, Box<dyn AudioProcessor>)>, Vec<String>) {
         let mut keep = Vec::new();
         let mut procs = Vec::new();
         let mut errors = Vec::new();
-        for p in project.plugins() {
+        for p in plugins {
             let state = self.instances.get(&p.instance).and_then(|i| i.save_state());
             match self.create(p, sample_rate, state.as_deref()) {
                 Ok(inst) => {

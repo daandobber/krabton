@@ -37,6 +37,7 @@ pub mod singer;
 pub mod slicing;
 pub mod hyper;
 pub mod tape;
+pub mod steps;
 pub mod to_midi;
 pub mod video;
 pub mod warp;

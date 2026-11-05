@@ -306,6 +306,7 @@ impl App {
                     ui.selectable_value(&mut self.export.sample_rate, sr, format!("{sr}"));
                 }
             });
+            ui.checkbox(&mut self.export.stems, "Stems: each track on its own").on_hover_text("A WAV per track in a folder you choose, without the master's chain: for mixing somewhere else. Muted tracks are left out");
             ui.label(RichText::new("24-bit WAV, one bar of tail for reverbs and delays.").small().color(TEXT_DIM));
             ui.add_space(4.0);
             if ui.button(RichText::new("Export...").strong()).clicked() {

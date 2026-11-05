@@ -115,8 +115,16 @@ impl App {
         let midi = clip.is_midi();
         let n_env = clip.envelopes.iter().filter(|e| !e.points.is_empty()).count();
         let first = if midi { "Notes" } else { "Audio" };
-        if tui.add(egui::Button::new(RichText::new(first).color(if !self.env_view { TEXT_DARK } else { TEXT })).fill(if !self.env_view { accent_now() } else { PANEL3 })).clicked() {
+        if tui.add(egui::Button::new(RichText::new(first).color(if !self.env_view && !(midi && self.steps.open) { TEXT_DARK } else { TEXT })).fill(if !self.env_view && !(midi && self.steps.open) { accent_now() } else { PANEL3 })).clicked() {
             self.env_view = false;
+            self.steps.open = false;
+        }
+        if midi {
+            let on = self.steps.open && !self.env_view;
+            if tui.add(egui::Button::new(RichText::new("Steps").color(if on { TEXT_DARK } else { TEXT })).fill(if on { accent_now() } else { PANEL3 })).on_hover_text("The clip as a step sequencer: a row per drum or note, each with its own length and rate").clicked() {
+                self.steps.open = true;
+                self.env_view = false;
+            }
         }
         let env_label = if n_env > 0 { format!("Envelopes ({n_env})") } else { "Envelopes".to_string() };
         if tui.add(egui::Button::new(RichText::new(env_label).color(if self.env_view { TEXT_DARK } else { TEXT })).fill(if self.env_view { accent_now() } else { PANEL3 })).on_hover_text("Lines that move the mixer, the instrument and the effects while the clip plays: draw them, or record knob moves with Automation Arm").clicked() {
@@ -134,6 +142,8 @@ impl App {
             }
         } else if self.env_view {
             self.ui_envelopes(ui, below, sel);
+        } else if midi && self.steps.open {
+            self.ui_steps(ui, below, sel);
         } else {
             match &clip.content {
                 ClipContent::Midi { .. } => {

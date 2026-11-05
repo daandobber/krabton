@@ -372,6 +372,8 @@ pub enum Command {
     PitchBend { track: u64, semis: f32 },
     /// The mod wheel of a track (0..1), for its Mod Wheel modulators.
     ModWheel { track: u64, value: f32 },
+    /// Clicks for so many beats, then the song starts.
+    CountIn { beats: f64 },
     /// The Map slides to where the project now has it, over this long.
     MapGlide { seconds: f32 },
     /// How hard a pad is pressed after the hit, for the track's Pressure modulators.
@@ -1439,6 +1441,9 @@ pub struct Engine {
     dj_cue: Vec<f32>,
     /// The room as it is now (it slides over to a setup), and how long that still takes (s).
     map_now: crate::dsp::fx::stage::MapRoom,
+    /// Beats still to count in, and whether the song has to start now.
+    count_in: f64,
+    count_done: bool,
     map_glide: f32,
     /// Clip envelope values this block (target, 0..1).
     envs: Vec<(crate::modulation::ModTarget, f32)>,
@@ -1520,6 +1525,8 @@ impl Engine {
             dj_bus: vec![0.0; 4 * MAX_BLOCK],
             dj_cue: vec![0.0; 2 * MAX_BLOCK],
             map_now: Default::default(),
+            count_in: 0.0,
+            count_done: false,
             map_glide: 0.0,
             envs: Vec::with_capacity(256),
             signals: Vec::with_capacity(MAX_TRACKS),
@@ -1638,11 +1645,15 @@ impl Engine {
                 self.reconcile();
             }
             Command::Play => {
+                self.count_in = 0.0;
+                self.count_done = false;
                 if !self.playing {
                     self.start_transport();
                 }
             }
             Command::Stop => {
+                self.count_in = 0.0;
+                self.count_done = false;
                 if self.playing {
                     self.playing = false;
                     self.out_stop = true;
@@ -1692,6 +1703,11 @@ impl Engine {
                 }
             }
             Command::MapGlide { seconds } => self.map_glide = seconds.max(0.0),
+            Command::CountIn { beats } => {
+                if !self.playing {
+                    self.count_in = beats.max(0.0);
+                }
+            }
             Command::LaunchScene(scene) => {
                 self.status.last_scene.store(scene as i32, RELAXED);
                 self.status.scene_launches.fetch_add(1, RELAXED);
@@ -2191,6 +2207,9 @@ impl Engine {
     fn process_block(&mut self, n: usize) {
         let mut done = 0;
         while done < n {
+            if std::mem::take(&mut self.count_done) && !self.playing {
+                self.start_transport();
+            }
             let mut seg = n - done;
             if self.mods.active() {
                 seg = seg.min(MOD_BLOCK);
@@ -2211,6 +2230,10 @@ impl Engine {
                     let k = ((p.loop_end - self.song_pos) * spb).ceil().max(1.0) as usize;
                     seg = seg.min(k);
                 }
+            }
+            // The count ends on the beat: the song starts on the frame it does.
+            if !self.playing && self.count_in > 0.0 {
+                seg = seg.min(((self.count_in * spb).ceil() as usize).max(1));
             }
             if !self.playing {
                 for rt in self.tracks.iter_mut() {
@@ -2995,6 +3018,22 @@ impl Engine {
                 let accent = (b as i64).rem_euclid(project.beats_per_bar.max(1) as i64) == 0;
                 click_at = Some((at.min(seg.saturating_sub(1)), accent));
             }
+        }
+        // Counting in: clicks on the beats that are left, then the song.
+        if !playing && self.count_in > 0.0 {
+            let before = self.count_in;
+            let after = before - seg as f64 / spb;
+            let beat = before.ceil();
+            let at = if (before - beat).abs() < 1e-9 { Some(0.0) } else if before.floor() > after { Some((before - before.floor()) * spb) } else { None };
+            if let Some(at) = at {
+                let left = if (before - beat).abs() < 1e-9 { beat } else { before.floor() } as i64;
+                let accent = left.rem_euclid(project.beats_per_bar.max(1) as i64) == 0;
+                if left > 0 {
+                    click_at = Some(((at as usize).min(seg.saturating_sub(1)), accent));
+                }
+            }
+            self.count_in = after.max(0.0);
+            self.count_done = after <= 0.0;
         }
         let mut preview_done = false;
         for i in 0..seg {
@@ -3952,6 +3991,38 @@ mod tests {
         let side = |c: usize| out[9600..].chunks(2).map(|f| f[c].abs()).fold(0.0f32, f32::max);
         assert!(side(1) > 0.01, "the cue, fader down, in the right ear: {}", side(1));
         assert!(side(0) < 1e-3, "nothing of it in the left: {}", side(0));
+    }
+
+    #[test]
+    fn counting_in_clicks_and_then_the_song_starts() {
+        let p = Project::new_default();
+        let bpm = p.bpm;
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        h.send(Command::CountIn { beats: 4.0 });
+        let beat = 60.0 / bpm as f32;
+        let out = run(&mut e, beat * 3.5);
+        assert!(!e.is_playing(), "not yet");
+        let clicks = out.chunks(2).map(|f| f[0].abs()).collect::<Vec<_>>();
+        // A click on each of the beats: three by now and a half.
+        let frames = (beat * 48000.0) as usize;
+        for b in 0..3 {
+            let top = clicks[b * frames..(b * frames + 2000).min(clicks.len())].iter().cloned().fold(0.0f32, f32::max);
+            assert!(top > 0.01, "beat {b}: {top}");
+        }
+        let quiet = clicks[frames / 2 + 4000..frames - 200].iter().cloned().fold(0.0f32, f32::max);
+        assert!(quiet < 0.01, "between the beats: {quiet}");
+        run(&mut e, beat);
+        assert!(e.is_playing(), "and the song runs");
+    }
+
+    #[test]
+    fn stopping_ends_a_count_in() {
+        let (mut e, h) = Engine::new(48000.0, Arc::new(Project::new_default()));
+        h.send(Command::CountIn { beats: 2.0 });
+        run(&mut e, 0.2);
+        h.send(Command::Stop);
+        run(&mut e, 2.0);
+        assert!(!e.is_playing());
     }
 
     #[test]

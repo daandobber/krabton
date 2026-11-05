@@ -272,6 +272,20 @@ impl App {
                 ui.close();
                 self.open();
             }
+            let recent = self.prefs.recent_sets.clone();
+            ui.add_enabled_ui(!recent.is_empty(), |ui| {
+                ui.menu_button("Open Recent", |ui| {
+                    for path in recent {
+                        let name = path.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                        let there = path.is_file();
+                        if ui.add_enabled(there, egui::Button::new(name)).on_hover_text(path.display().to_string()).clicked() {
+                            ui.close();
+                            self.open_path(path);
+                            break;
+                        }
+                    }
+                });
+            });
             if ui.button("Save           Ctrl+S").clicked() {
                 ui.close();
                 self.save(false);
@@ -279,6 +293,14 @@ impl App {
             if ui.button("Save As...     Ctrl+Shift+S").clicked() {
                 ui.close();
                 self.save(true);
+            }
+            if ui.button("Save as Default Set").on_hover_text("New sets start like this one from now on: your tracks, effects and settings").clicked() {
+                ui.close();
+                self.save_default_set();
+            }
+            if self.has_default_set() && ui.button("Forget Default Set").clicked() {
+                ui.close();
+                self.forget_default_set();
             }
             ui.separator();
             if ui.button("Import Audio...").on_hover_text("WAV, FLAC, MP3 or AIFF files become clips: on the selected audio track (from its selected slot, or the playhead), or on a new one").clicked() {
@@ -378,6 +400,15 @@ impl App {
             }
         });
         ui.menu_button("Options", |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Count-In").small().color(TEXT_DIM));
+                for (bars, name) in [(0u8, "None"), (1, "1 Bar"), (2, "2 Bars")] {
+                    if ui.selectable_label(self.prefs.count_in == bars, name).on_hover_text("Clicks before recording starts from a stopped song").clicked() {
+                        self.prefs.count_in = bars;
+                        self.prefs.save();
+                    }
+                }
+            });
             if ui.checkbox(&mut self.prefs.big_picture, "Start in Big Picture").on_hover_text("For a Steam Deck, a ClockworkPi or a touch screen. --big-picture or KRABTON_BIG_PICTURE=1 does it once").changed() {
                 self.prefs.save();
             }
