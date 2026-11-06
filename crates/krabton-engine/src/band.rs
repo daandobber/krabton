@@ -42,7 +42,7 @@ pub const FOLLOWS: &[&str] = &["Root", "Chord", "Bass"];
 pub const NONE: u8 = 0xff;
 
 /// The sequencers that can follow the band (they have Band and Follow, last).
-pub const FOLLOWERS: [MidiFxKind; 41] = {
+pub const FOLLOWERS: [MidiFxKind; 43] = {
     use MidiFxKind as K;
     [
         K::Step,
@@ -86,14 +86,16 @@ pub const FOLLOWERS: [MidiFxKind; 41] = {
         K::Gamelan,
         K::Raga,
         K::Call,
+        K::Hook,
+        K::SlideBass,
     ]
 };
 
 /// The drum and rhythm sequencers that can be in the band (a Band switch,
 /// last; no Follow: their notes are drums).
-pub const DRUMS: [MidiFxKind; 7] = {
+pub const DRUMS: [MidiFxKind; 8] = {
     use MidiFxKind as K;
-    [K::Drummer, K::HomeRhythms, K::DrumMap, K::Chance, K::Percussion, K::Bits, K::DrumGrid]
+    [K::HatRolls, K::Drummer, K::HomeRhythms, K::DrumMap, K::Chance, K::Percussion, K::Bits, K::DrumGrid]
 };
 
 /// A part's feel: its steps as written, twice as long, or half as long.

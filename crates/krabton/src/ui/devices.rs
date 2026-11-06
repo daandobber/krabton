@@ -1041,6 +1041,8 @@ impl App {
             } else if kind == EffectKind::OpenAir {
                 crate::ui::open_air_view::open_air_panel(ui, id, dev_id, &mut params, accent, h, mv.as_mut(), &status, &mut width)
 
+            } else if kind == EffectKind::StepGate {
+                crate::ui::step_gate_view::step_gate_panel(ui, id, &mut params, accent, h, mv.as_mut(), &status)
             } else if kind == EffectKind::Rackverb {
                 crate::ui::rackverb_view::rackverb_panel(ui, id, dev_id, &mut params, h, mv.as_mut(), &status)
             } else if kind == EffectKind::LensEq {
@@ -2350,6 +2352,72 @@ impl App {
                             ui.add_space(6.0);
                             param_grid_mod(ui, Id::new(("console", track_id)), krabton_engine::dsp::console::SPECS, params, accent_now(), h - 48.0, mv.as_mut());
                         });
+                    }
+                    Instrument::Glide { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
+                            egui::ComboBox::from_id_salt(("glide_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in krabton_engine::dsp::glide::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = krabton_engine::dsp::glide::preset(name);
+                                    }
+                                }
+                            });
+                        });
+                        param_grid_mod(ui, Id::new(("glide", track_id)), krabton_engine::dsp::glide::SPECS, params, accent_now(), h - 24.0, mv.as_mut());
+                    }
+                    Instrument::StringMachine { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
+                            egui::ComboBox::from_id_salt(("string_machine_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in krabton_engine::dsp::string_machine::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = krabton_engine::dsp::string_machine::preset(name);
+                                    }
+                                }
+                            });
+                        });
+                        param_grid_mod(ui, Id::new(("string_machine", track_id)), krabton_engine::dsp::string_machine::SPECS, params, accent_now(), h - 24.0, mv.as_mut());
+                    }
+                    Instrument::Tines { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
+                            egui::ComboBox::from_id_salt(("tines_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in krabton_engine::dsp::tines::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = krabton_engine::dsp::tines::preset(name);
+                                    }
+                                }
+                            });
+                        });
+                        param_grid_mod(ui, Id::new(("tines", track_id)), krabton_engine::dsp::tines::SPECS, params, accent_now(), h - 24.0, mv.as_mut());
+                    }
+                    Instrument::Sweeps { preset, params } => {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preset").small().color(crate::skin::ink_dim()));
+                            egui::ComboBox::from_id_salt(("sweeps_preset", track_id)).width(130.0).selected_text(preset.as_str()).show_ui(ui, |ui| {
+                                for name in krabton_engine::dsp::sweeps::preset_names() {
+                                    if ui.selectable_label(preset == name, *name).clicked() {
+                                        *preset = name.to_string();
+                                        *params = krabton_engine::dsp::sweeps::preset(name);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("Kind").small().color(crate::skin::ink_dim()));
+                            let kinds = krabton_engine::dsp::sweeps::KINDS;
+                            let now = (params[krabton_engine::dsp::sweeps::KIND].round().max(0.0) as usize).min(kinds.len() - 1);
+                            egui::ComboBox::from_id_salt(("sweeps_kind", track_id)).width(100.0).selected_text(kinds[now]).show_ui(ui, |ui| {
+                                for (k, name) in kinds.iter().enumerate() {
+                                    if ui.selectable_label(k == now, *name).clicked() {
+                                        params[krabton_engine::dsp::sweeps::KIND] = k as f32;
+                                    }
+                                }
+                            });
+                        });
+                        param_grid_mod(ui, Id::new(("sweeps", track_id)), krabton_engine::dsp::sweeps::SPECS, params, accent_now(), h - 24.0, mv.as_mut());
                     }
                     Instrument::Handheld { preset, params } => {
                         ui.horizontal(|ui| {

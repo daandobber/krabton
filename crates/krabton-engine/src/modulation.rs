@@ -240,6 +240,8 @@ pub enum ModTarget {
     Volume(u64),
     Pan(u64),
     Send { track: u64, send: u16 },
+    /// The track's mod wheel (CC 1): what the wheel is routed to moves with it.
+    Wheel(u64),
 }
 
 /// A knob on a controller that moves a parameter.
@@ -299,6 +301,10 @@ pub fn instrument_specs(i: &Instrument) -> Option<&'static [ParamSpec]> {
         Instrument::Calculator { .. } => Some(crate::dsp::calculator::SPECS),
         Instrument::Console { .. } => Some(crate::dsp::console::SPECS),
         Instrument::Handheld { .. } => Some(crate::dsp::handheld::SPECS),
+        Instrument::Glide { .. } => Some(crate::dsp::glide::SPECS),
+        Instrument::StringMachine { .. } => Some(crate::dsp::string_machine::SPECS),
+        Instrument::Tines { .. } => Some(crate::dsp::tines::SPECS),
+        Instrument::Sweeps { .. } => Some(crate::dsp::sweeps::SPECS),
         Instrument::Micro { .. } => Some(crate::dsp::micro::SPECS),
         Instrument::Warp { .. } => Some(crate::dsp::warp::SPECS),
         Instrument::Hybrid { .. } => Some(crate::dsp::hybrid::SPECS),
@@ -325,7 +331,7 @@ pub fn instrument_specs(i: &Instrument) -> Option<&'static [ParamSpec]> {
 
 pub fn instrument_params(i: &Instrument) -> Option<&[f32]> {
     match i {
-        Instrument::Synth { params, .. } | Instrument::Sampler { params, .. } | Instrument::Fm { params, .. } | Instrument::Macro { params, .. } | Instrument::Braids { params, .. } | Instrument::Elements { params, .. } | Instrument::Analog { params, .. } | Instrument::Shakers { params, .. } | Instrument::Modular { params, .. } | Instrument::Voice { params, .. } | Instrument::Mallets { params, .. } | Instrument::Strings { params, .. } | Instrument::Winds { params, .. } | Instrument::Organ { params, .. } | Instrument::Rings { params, .. } | Instrument::Monk { params, .. } | Instrument::Piano { params, .. } | Instrument::Bassline { params, .. } | Instrument::Mono101 { params, .. } | Instrument::Munich { params, .. } | Instrument::Drone { params, .. } | Instrument::Waves { params, .. } | Instrument::Guitar { params, .. } | Instrument::WindChimes { params, .. } | Instrument::Birds { params, .. } | Instrument::Nature { params, .. } | Instrument::PanFlute { params, .. } | Instrument::Melodica { params, .. } | Instrument::Harmonica { params, .. } | Instrument::Calculator { params, .. } | Instrument::Console { params, .. } | Instrument::Handheld { params, .. } | Instrument::Micro { params, .. } | Instrument::Warp { params, .. } | Instrument::Hybrid { params, .. } | Instrument::Quartet { params, .. } | Instrument::ChipFm { params, .. } | Instrument::V2 { params, .. } | Instrument::Oidos { params, .. } | Instrument::Orchestra { params, .. } | Instrument::Facet { params, .. } | Instrument::BeadsSynth { params, .. } | Instrument::Sf2 { params, .. } | Instrument::StreetOrgan { params, .. } | Instrument::Singer { params, .. } | Instrument::Hyper { params, .. } | Instrument::Coast { params, .. } | Instrument::Crimson { params, .. } | Instrument::Silicon { params, .. } => Some(params),
+        Instrument::Synth { params, .. } | Instrument::Sampler { params, .. } | Instrument::Fm { params, .. } | Instrument::Macro { params, .. } | Instrument::Braids { params, .. } | Instrument::Elements { params, .. } | Instrument::Analog { params, .. } | Instrument::Shakers { params, .. } | Instrument::Modular { params, .. } | Instrument::Voice { params, .. } | Instrument::Mallets { params, .. } | Instrument::Strings { params, .. } | Instrument::Winds { params, .. } | Instrument::Organ { params, .. } | Instrument::Rings { params, .. } | Instrument::Monk { params, .. } | Instrument::Piano { params, .. } | Instrument::Bassline { params, .. } | Instrument::Mono101 { params, .. } | Instrument::Munich { params, .. } | Instrument::Drone { params, .. } | Instrument::Waves { params, .. } | Instrument::Guitar { params, .. } | Instrument::WindChimes { params, .. } | Instrument::Birds { params, .. } | Instrument::Nature { params, .. } | Instrument::PanFlute { params, .. } | Instrument::Melodica { params, .. } | Instrument::Harmonica { params, .. } | Instrument::Calculator { params, .. } | Instrument::Console { params, .. } | Instrument::Handheld { params, .. } | Instrument::Glide { params, .. } | Instrument::StringMachine { params, .. } | Instrument::Tines { params, .. } | Instrument::Sweeps { params, .. } | Instrument::Micro { params, .. } | Instrument::Warp { params, .. } | Instrument::Hybrid { params, .. } | Instrument::Quartet { params, .. } | Instrument::ChipFm { params, .. } | Instrument::V2 { params, .. } | Instrument::Oidos { params, .. } | Instrument::Orchestra { params, .. } | Instrument::Facet { params, .. } | Instrument::BeadsSynth { params, .. } | Instrument::Sf2 { params, .. } | Instrument::StreetOrgan { params, .. } | Instrument::Singer { params, .. } | Instrument::Hyper { params, .. } | Instrument::Coast { params, .. } | Instrument::Crimson { params, .. } | Instrument::Silicon { params, .. } => Some(params),
         Instrument::Theremin { params, .. } => Some(params),
         Instrument::Granulator { params, .. } => Some(params),
         Instrument::Keytone { params, .. } => Some(params),
@@ -341,7 +347,7 @@ pub fn instrument_params(i: &Instrument) -> Option<&[f32]> {
 /// [`instrument_params`], to change them.
 pub fn instrument_params_mut(i: &mut Instrument) -> Option<&mut Vec<f32>> {
     match i {
-        Instrument::Synth { params, .. } | Instrument::Sampler { params, .. } | Instrument::Fm { params, .. } | Instrument::Macro { params, .. } | Instrument::Braids { params, .. } | Instrument::Elements { params, .. } | Instrument::Analog { params, .. } | Instrument::Shakers { params, .. } | Instrument::Modular { params, .. } | Instrument::Voice { params, .. } | Instrument::Mallets { params, .. } | Instrument::Strings { params, .. } | Instrument::Winds { params, .. } | Instrument::Organ { params, .. } | Instrument::Rings { params, .. } | Instrument::Monk { params, .. } | Instrument::Piano { params, .. } | Instrument::Bassline { params, .. } | Instrument::Mono101 { params, .. } | Instrument::Munich { params, .. } | Instrument::Drone { params, .. } | Instrument::Waves { params, .. } | Instrument::Guitar { params, .. } | Instrument::WindChimes { params, .. } | Instrument::Birds { params, .. } | Instrument::Nature { params, .. } | Instrument::PanFlute { params, .. } | Instrument::Melodica { params, .. } | Instrument::Harmonica { params, .. } | Instrument::Calculator { params, .. } | Instrument::Console { params, .. } | Instrument::Handheld { params, .. } | Instrument::Micro { params, .. } | Instrument::Warp { params, .. } | Instrument::Hybrid { params, .. } | Instrument::Quartet { params, .. } | Instrument::ChipFm { params, .. } | Instrument::V2 { params, .. } | Instrument::Oidos { params, .. } | Instrument::Orchestra { params, .. } | Instrument::Facet { params, .. } | Instrument::BeadsSynth { params, .. } | Instrument::Sf2 { params, .. } | Instrument::StreetOrgan { params, .. } | Instrument::Singer { params, .. } | Instrument::Hyper { params, .. } | Instrument::Coast { params, .. } | Instrument::Crimson { params, .. } | Instrument::Silicon { params, .. } => Some(params),
+        Instrument::Synth { params, .. } | Instrument::Sampler { params, .. } | Instrument::Fm { params, .. } | Instrument::Macro { params, .. } | Instrument::Braids { params, .. } | Instrument::Elements { params, .. } | Instrument::Analog { params, .. } | Instrument::Shakers { params, .. } | Instrument::Modular { params, .. } | Instrument::Voice { params, .. } | Instrument::Mallets { params, .. } | Instrument::Strings { params, .. } | Instrument::Winds { params, .. } | Instrument::Organ { params, .. } | Instrument::Rings { params, .. } | Instrument::Monk { params, .. } | Instrument::Piano { params, .. } | Instrument::Bassline { params, .. } | Instrument::Mono101 { params, .. } | Instrument::Munich { params, .. } | Instrument::Drone { params, .. } | Instrument::Waves { params, .. } | Instrument::Guitar { params, .. } | Instrument::WindChimes { params, .. } | Instrument::Birds { params, .. } | Instrument::Nature { params, .. } | Instrument::PanFlute { params, .. } | Instrument::Melodica { params, .. } | Instrument::Harmonica { params, .. } | Instrument::Calculator { params, .. } | Instrument::Console { params, .. } | Instrument::Handheld { params, .. } | Instrument::Glide { params, .. } | Instrument::StringMachine { params, .. } | Instrument::Tines { params, .. } | Instrument::Sweeps { params, .. } | Instrument::Micro { params, .. } | Instrument::Warp { params, .. } | Instrument::Hybrid { params, .. } | Instrument::Quartet { params, .. } | Instrument::ChipFm { params, .. } | Instrument::V2 { params, .. } | Instrument::Oidos { params, .. } | Instrument::Orchestra { params, .. } | Instrument::Facet { params, .. } | Instrument::BeadsSynth { params, .. } | Instrument::Sf2 { params, .. } | Instrument::StreetOrgan { params, .. } | Instrument::Singer { params, .. } | Instrument::Hyper { params, .. } | Instrument::Coast { params, .. } | Instrument::Crimson { params, .. } | Instrument::Silicon { params, .. } => Some(params),
         Instrument::Theremin { params, .. } => Some(params),
         Instrument::Granulator { params, .. } => Some(params),
         Instrument::Keytone { params, .. } => Some(params),
@@ -441,6 +447,7 @@ impl Project {
         match target {
             ModTarget::Volume(t) => (track_name(t).unwrap_or_default(), "Volume".into()),
             ModTarget::Pan(t) => (track_name(t).unwrap_or_default(), "Pan".into()),
+            ModTarget::Wheel(t) => (track_name(t).unwrap_or_default(), "Mod Wheel".into()),
             ModTarget::Send { track, send } => {
                 let name = self.returns.get(send as usize).map(|r| r.name.clone()).unwrap_or_else(|| format!("Send {}", send + 1));
                 (track_name(track).unwrap_or_default(), format!("Send {}", name.chars().next().unwrap_or('?')))
@@ -472,7 +479,7 @@ impl Project {
     pub fn target_exists(&self, target: ModTarget) -> bool {
         let has_track = |id: u64| self.tracks.iter().any(|t| t.id == id) || self.returns.iter().any(|r| r.id == id);
         match target {
-            ModTarget::Volume(t) | ModTarget::Pan(t) => has_track(t),
+            ModTarget::Volume(t) | ModTarget::Pan(t) | ModTarget::Wheel(t) => has_track(t),
             ModTarget::Send { track, send } => self.tracks.iter().any(|t| t.id == track) && (send as usize) < self.returns.len(),
             ModTarget::Param { owner, param } => self.owner_specs(owner).map(|s| (param as usize) < s.len()).unwrap_or(false) || self.in_clip_sounds(owner, param as usize),
         }
@@ -749,6 +756,8 @@ impl ModRuntime {
                         Dest::Pan(mix)
                     }
                 }
+                // The engine hands it to the track itself.
+                ModTarget::Wheel(_) => continue,
                 ModTarget::Send { track, send } => match p.track_index(track) {
                     Some(t) if (send as usize) < p.returns.len().min(8) => Dest::Send(t, send as usize),
                     _ => continue,
@@ -866,6 +875,7 @@ impl ModRuntime {
                         }
                     }
                 }
+                ModTarget::Wheel(_) => {}
                 ModTarget::Send { track, send } => {
                     if let Some(m) = p.track_index(track).and_then(|t| self.track_mix.get_mut(t)) {
                         if let Some(s) = m.sends_abs.get_mut(send as usize) {

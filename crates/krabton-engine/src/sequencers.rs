@@ -40,6 +40,7 @@ pub mod touch;
 pub mod nature;
 pub mod systems;
 pub mod world;
+pub mod rolls;
 pub mod home;
 pub mod inferno;
 
@@ -605,7 +606,7 @@ impl SeqState {
         // What came in and passes through is not shaped (only what it plays).
         let passing = out.len();
         // Acid and Guitar Chords move their own notes (a semitone line, chord shapes).
-        self.shift_in_note = !matches!(kind, K::Acid | K::GuitarChords | K::Ukulele | K::Drummer | K::DrumMap | K::Chance | K::Bits | K::Percussion | K::HomeRhythms | K::Inferno);
+        self.shift_in_note = !matches!(kind, K::HatRolls | K::Acid | K::GuitarChords | K::Ukulele | K::Drummer | K::DrumMap | K::Chance | K::Bits | K::Percussion | K::HomeRhythms | K::Inferno);
         if ctx.playing {
             self.flush_pending(ctx, out);
         }
@@ -664,7 +665,7 @@ impl SeqState {
                     K::HomeRhythms => home::step_beats(p),
                     K::Inferno => inferno::step_beats(p),
                     K::Chaos | K::Automaton | K::Ant | K::Markov | K::Words | K::Lorenz | K::Tintinnabuli => rate_beats(p[0]),
-                    K::Sandpile | K::Plants | K::Bells | K::Canon | K::Row | K::Gears | K::Formula | K::Staircase | K::Gamelan | K::Raga | K::Call => rate_beats(p[0]),
+                    K::Sandpile | K::Plants | K::Bells | K::Canon | K::Row | K::Gears | K::Formula | K::Staircase | K::Gamelan | K::Raga | K::Call | K::HatRolls | K::Hook | K::SlideBass => rate_beats(p[0]),
                     K::Glass => rate_beats(p[0]) / minimal::GLASS_TICKS,
                     K::Satie => rate_beats(p[0]) / minimal::SATIE_TICKS,
                     K::Riley => rate_beats(p[0]) / minimal::RILEY_TICKS,
@@ -753,6 +754,9 @@ impl SeqState {
                             K::Gamelan => self.gamelan(k, p, at, step_frames, out, ctx),
                             K::Raga => self.raga(k, p, at, step_frames, out, ctx),
                             K::Call => self.call(k, p, at, step_frames, out, ctx),
+                            K::HatRolls => self.hat_rolls(k, p, at, step_frames, out, ctx),
+                            K::Hook => self.hook(k, p, at, step_frames, out, ctx),
+                            K::SlideBass => self.slide_bass(k, p, at, step_frames, out, ctx),
                             K::HomeRhythms => self.home(k, p, at, step_frames, out, ctx),
                             K::Inferno => self.inferno(k, p, data, at, step_frames, out, ctx),
                             _ => {}

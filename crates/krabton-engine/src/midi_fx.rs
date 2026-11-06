@@ -198,6 +198,9 @@ pub enum MidiFxKind {
     Call,
     HomeRhythms,
     Inferno,
+    HatRolls,
+    Hook,
+    SlideBass,
 }
 
 const ARP_STYLES: &[&str] = &["Up", "Down", "Up Down", "Down Up", "Converge", "Diverge", "Random", "Played", "Chord"];
@@ -315,7 +318,7 @@ impl MidiFxKind {
     pub fn group(self) -> &'static str {
         use MidiFxKind as K;
         match self {
-            K::Step | K::Acid | K::Inferno | K::DrumGrid | K::Progression | K::Drummer => "Classic",
+            K::Step | K::Acid | K::Inferno | K::DrumGrid | K::Progression | K::Drummer | K::HatRolls | K::Hook | K::SlideBass => "Classic",
             K::GuitarChords | K::Ukulele | K::PianoPlayer | K::BassPlayer | K::Banjo | K::Section | K::OrganGrinder | K::MusicBox => "Players",
             K::Euclid | K::DrumMap | K::Marbles | K::Chance | K::Bits | K::Percussion | K::HomeRhythms => "Rhythm",
             K::Spinner | K::Endless | K::Hands | K::Draw | K::Touch => "Played",
@@ -330,10 +333,13 @@ impl MidiFxKind {
         }
     }
 
-    pub const SEQUENCERS: [MidiFxKind; 77] = [
+    pub const SEQUENCERS: [MidiFxKind; 80] = [
         MidiFxKind::Step,
         MidiFxKind::Acid,
         MidiFxKind::Inferno,
+        MidiFxKind::HatRolls,
+        MidiFxKind::Hook,
+        MidiFxKind::SlideBass,
         MidiFxKind::DrumGrid,
         MidiFxKind::Progression,
         MidiFxKind::Polymeter,
@@ -443,6 +449,9 @@ impl MidiFxKind {
             MidiFxKind::Step => "Step",
             MidiFxKind::Acid => "Acid",
             MidiFxKind::Inferno => "Inferno",
+            MidiFxKind::HatRolls => "Hat Rolls",
+            MidiFxKind::Hook => "Hook",
+            MidiFxKind::SlideBass => "Slide Bass",
             MidiFxKind::DrumGrid => "Drum Grid",
             MidiFxKind::Progression => "Progression",
             MidiFxKind::Euclid => "Euclid",
@@ -540,6 +549,9 @@ impl MidiFxKind {
             MidiFxKind::Step => "Classic 16-step sequencer: note, velocity, length and ratchets per step",
             MidiFxKind::Acid => "TB-303 style bass line with accent, slide and tie",
             MidiFxKind::Inferno => "A big bass sequencer for synths: eight patterns of up to 64 steps, per step a note, octave, accent, slide, tie, gate, ratchets, chance, condition, nudge and wob; Ignite writes a line in twenty genres (acid, techno, house, garage, dubstep, drum and bass, trap, drill, synthwave, funk, psytrance, amapiano...), Evolve keeps changing it, Burn plays it hotter; in the band per part",
+            MidiFxKind::HatRolls => "A hi-hat for trap and pluggnb: ticking on the eighths or sixteenths, broken up by rolls of two, three, four or six that climb or fall, with a fill at the end of its cycle and an open hat now and then. The same pattern until you pick another seed",
+            MidiFxKind::Hook => "A melody of a few notes in the song's key on the dotted rhythm those tracks stand on, repeating, its end changing every fourth time round. Another seed is another hook",
+            MidiFxKind::SlideBass => "Long bass notes on the three-three-two, mostly on the root, that overlap to slide into each other: put it on the Glide synth",
             MidiFxKind::DrumGrid => "x0x drum machine grid: 8 lanes, 16 steps, accents and swing",
             MidiFxKind::Progression => "A chord progression in the project key, with rhythms",
             MidiFxKind::Euclid => "Four euclidean rhythm rings, great for drums",
@@ -637,6 +649,9 @@ impl MidiFxKind {
             MidiFxKind::Step => crate::classic_seq::STEP,
             MidiFxKind::Acid => crate::classic_seq::ACID,
             MidiFxKind::Inferno => sequencers::inferno::SPECS,
+            MidiFxKind::HatRolls => sequencers::rolls::HAT_ROLLS,
+            MidiFxKind::Hook => sequencers::rolls::HOOK,
+            MidiFxKind::SlideBass => sequencers::rolls::SLIDE_BASS,
             MidiFxKind::DrumGrid => crate::classic_seq::DRUM_GRID,
             MidiFxKind::Progression => crate::classic_seq::PROGRESSION,
             MidiFxKind::Euclid => sequencers::EUCLID,

@@ -116,6 +116,10 @@ pub fn effect(kind: EffectKind) -> &'static [Preset] {
         E::Warps => WARPS_PRESETS,
         E::VaFilter => VAFILTER_PRESETS,
         E::Slam => SLAM,
+        E::Cassette => CASSETTE_FX,
+        E::Vocoder => VOCODER_FX,
+        E::Backwards => BACKWARDS_FX,
+        E::Ring => RING_FX,
         E::Moo => MOO,
         E::AwGalactic => AW_GALACTIC,
         E::AwVerbity2 => AW_VERBITY,
@@ -241,6 +245,9 @@ pub fn midi(kind: MidiFxKind) -> &'static [Preset] {
         K::Gamelan => GAMELAN,
         K::Raga => RAGA,
         K::Call => CALL,
+        K::HatRolls => HAT_ROLLS,
+        K::Hook => HOOK,
+        K::SlideBass => SLIDE_BASS,
         K::HomeRhythms => HOME_RHYTHMS,
         K::Inferno => crate::sequencers::inferno::PRESETS,
         _ => crate::sequencers::players::presets(kind),
@@ -1358,6 +1365,61 @@ static STAIRCASE: &[Preset] = &[
     p("Wandering", &[("Direction", C("Wander"))]),
     p("Climbing", &[("Play", C("Climb")), ("Rate", C("1/16")), ("Every", N(4.0))]),
 ];
+static CASSETTE_FX: &[Preset] = &[
+    p("Car Summer", &[]),
+    p("Fresh Tape", &[("Wow", N(0.05)), ("Flutter", N(0.05)), ("Hiss", N(0.05)), ("Dropouts", N(0.0)), ("Tone", N(14000.0))]),
+    p("Dictaphone", &[("Tone", N(2500.0)), ("Hiss", N(0.5)), ("Saturation", N(0.7)), ("Bump", N(0.0))]),
+    p("Seasick", &[("Wow", N(1.0)), ("Flutter", N(0.4))]),
+    p("Falling Apart", &[("Wow", N(0.6)), ("Flutter", N(0.6)), ("Dropouts", N(0.8)), ("Hiss", N(0.5)), ("Tone", N(3500.0))]),
+];
+
+static VOCODER_FX: &[Preset] = &[
+    p("Choir of Saws", &[]),
+    p("One Robot", &[("Chord", C("One Note")), ("Wave", C("Square")), ("Detune", N(0.0))]),
+    p("Wide Stack", &[("Chord", C("Wide")), ("Detune", N(15.0))]),
+    p("Bright Whisper", &[("Hiss", N(1.0)), ("Formant", N(5.0))]),
+    p("Giant", &[("Octave", N(-1.0)), ("Formant", N(-7.0)), ("Chord", C("Fifth"))]),
+];
+
+static BACKWARDS_FX: &[Preset] = &[
+    p("Quarter", &[]),
+    p("Swell Into It", &[("Length", C("1/2")), ("Mix", N(0.6)), ("Feedback", N(0.1))]),
+    p("Short Rewind", &[("Length", C("1/8")), ("Feedback", N(0.5))]),
+    p("Long Dream", &[("Length", C("1 Bar")), ("Feedback", N(0.6)), ("Tone", N(3000.0)), ("Mix", N(0.5))]),
+];
+
+static RING_FX: &[Preset] = &[
+    p("Bell", &[("Frequency", N(440.0))]),
+    p("Robot", &[("Frequency", N(90.0)), ("Wave", C("Square"))]),
+    p("Tremolo", &[("Frequency", N(5.0))]),
+    p("In Key", &[("Key", N(1.0)), ("Degree", N(5.0))]),
+    p("Wide Metal", &[("Frequency", N(800.0)), ("Spread", N(30.0)), ("Mix", N(0.6))]),
+];
+
+static HAT_ROLLS: &[Preset] = &[
+    p("Eighths and Rolls", &[]),
+    p("Busy", &[("Base", C("1/16")), ("Rolls", N(0.4)), ("Fill", N(0.9))]),
+    p("Sparse Pluggnb", &[("Rolls", N(0.12)), ("Fill", N(0.4)), ("Open", N(0.25))]),
+    p("Quarter Slow", &[("Base", C("1/4")), ("Rolls", N(0.3))]),
+    p("All Rolls", &[("Rolls", N(0.85)), ("Fill", N(1.0))]),
+];
+
+static HOOK: &[Preset] = &[
+    p("Two Bars", &[]),
+    p("Sparse Bells", &[("Density", N(0.2)), ("Center", N(79.0)), ("Range", N(4.0))]),
+    p("Busy Lead", &[("Density", N(0.8)), ("Range", N(8.0))]),
+    p("Rising", &[("Shape", C("Rise")), ("Length", C("1 Bar"))]),
+    p("Question and Answer", &[("Shape", C("Answer")), ("Length", C("4 Bars")), ("Change", N(0.8))]),
+];
+
+static SLIDE_BASS: &[Preset] = &[
+    p("Three Three Two", &[]),
+    p("Bounce", &[("Pattern", C("Bounce")), ("Slide", N(0.15))]),
+    p("Half Time Slides", &[("Pattern", C("Half Time")), ("Slide", N(0.7)), ("Move", N(0.5))]),
+    p("Long Notes", &[("Pattern", C("Sparse")), ("Slide", N(0.4))]),
+    p("Moving", &[("Pattern", C("Chance")), ("Move", N(0.7)), ("Slide", N(0.5))]),
+];
+
 static GAMELAN: &[Preset] = &[
     p("Norot", &[]),
     p("Nyog Cag", &[("Style", C("Nyog Cag"))]),

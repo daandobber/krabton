@@ -436,6 +436,12 @@ pub struct Clip {
     /// The rows of its Steps tab, those not as long as the clip or added by hand.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub step_rows: Vec<crate::steps::StepRow>,
+    /// The rows of steps for parameters (their values are in `envelopes`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub step_lanes: Vec<crate::steps::StepLane>,
+    /// The Steps tab shows the clip as one melody row (each step its own pitch).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_melody: Option<crate::steps::StepRow>,
     /// A MIDI clip's groove (from the Groove Pool): its notes play with that
     /// feel, where they are written (see `groove`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -659,7 +665,7 @@ pub fn db_to_fader_pos(db: f32) -> f32 {
 
 impl Clip {
     pub fn new_midi(id: u64, name: impl Into<String>, color: Rgb, length: f64) -> Self {
-        Self { id, name: name.into(), color, length, content: ClipContent::Midi { notes: Vec::new() }, envelopes: Vec::new(), sound: None, step_rows: Vec::new(), groove: None, launch: Default::default() }
+        Self { id, name: name.into(), color, length, content: ClipContent::Midi { notes: Vec::new() }, envelopes: Vec::new(), sound: None, step_rows: Vec::new(), step_lanes: Vec::new(), step_melody: None, groove: None, launch: Default::default() }
     }
 
     /// Creates an audio clip warped the way Live's auto-warp does it. A loop
@@ -719,7 +725,7 @@ impl Clip {
             }
             _ => audio.sample_beats(),
         };
-        Self { id, name: sample.name.clone(), color, length: length.max(0.25), content: ClipContent::Audio(audio), envelopes: Vec::new(), sound: None, step_rows: Vec::new(), groove: None, launch: Default::default() }
+        Self { id, name: sample.name.clone(), color, length: length.max(0.25), content: ClipContent::Audio(audio), envelopes: Vec::new(), sound: None, step_rows: Vec::new(), step_lanes: Vec::new(), step_melody: None, groove: None, launch: Default::default() }
     }
 
     /// How long it plays before it repeats or ends, in beats: the loop, or
@@ -1182,6 +1188,14 @@ pub enum Instrument {
     /// Munich: a big mono for bass and leads, three free-running oscillators
     /// into a ladder whose every stage saturates, and a stereo tape echo.
     Munich { preset: String, params: Vec<f32> },
+    /// Glide: the long bass of trap and pluggnb: one sine that booms and slides into the next note.
+    Glide { preset: String, params: Vec<f32> },
+    /// String Machine: the string keyboards of the seventies: bright saws in three registers through a swaying ensemble.
+    StringMachine { preset: String, params: Vec<f32> },
+    /// Tines: the electric piano of the seventies: a struck steel tine, a coil that barks when it swings hard, a suitcase tremolo.
+    Tines { preset: String, params: Vec<f32> },
+    /// Sweeps: risers, downlifters, impacts, lasers and a dropping sub, set off by a key.
+    Sweeps { preset: String, params: Vec<f32> },
 }
 
 impl Instrument {
@@ -1316,6 +1330,22 @@ impl Instrument {
 
     pub fn handheld(preset: &str) -> Self {
         Instrument::Handheld { preset: preset.to_string(), params: crate::dsp::handheld::preset(preset) }
+    }
+
+    pub fn glide(preset: &str) -> Self {
+        Instrument::Glide { preset: preset.to_string(), params: crate::dsp::glide::preset(preset) }
+    }
+
+    pub fn string_machine(preset: &str) -> Self {
+        Instrument::StringMachine { preset: preset.to_string(), params: crate::dsp::string_machine::preset(preset) }
+    }
+
+    pub fn tines(preset: &str) -> Self {
+        Instrument::Tines { preset: preset.to_string(), params: crate::dsp::tines::preset(preset) }
+    }
+
+    pub fn sweeps(preset: &str) -> Self {
+        Instrument::Sweeps { preset: preset.to_string(), params: crate::dsp::sweeps::preset(preset) }
     }
 
     pub fn micro(preset: &str) -> Self {
@@ -1478,6 +1508,10 @@ impl Instrument {
             Instrument::Calculator { .. } => "Calculator",
             Instrument::Console { .. } => "Console",
             Instrument::Handheld { .. } => "Handheld",
+            Instrument::Glide { .. } => "Glide",
+            Instrument::StringMachine { .. } => "String Machine",
+            Instrument::Tines { .. } => "Tines",
+            Instrument::Sweeps { .. } => "Sweeps",
             Instrument::Micro { .. } => "Micro",
             Instrument::Warp { .. } => "Warp",
             Instrument::Hybrid { .. } => "Hybrid",
@@ -1532,7 +1566,7 @@ impl Instrument {
             Instrument::Grit { preset, .. } => preset.clone(),
             Instrument::Flip { sample: Some(s), .. } => s.name.clone(),
             Instrument::Flip { preset, .. } => preset.clone(),
-            Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Modular { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } | Instrument::Monk { preset, .. } | Instrument::Piano { preset, .. } | Instrument::Bassline { preset, .. } | Instrument::Mono101 { preset, .. } | Instrument::Munich { preset, .. } | Instrument::Drone { preset, .. } | Instrument::Waves { preset, .. } | Instrument::Guitar { preset, .. } | Instrument::WindChimes { preset, .. } | Instrument::Birds { preset, .. } | Instrument::Nature { preset, .. } | Instrument::PanFlute { preset, .. } | Instrument::Melodica { preset, .. } | Instrument::Harmonica { preset, .. } | Instrument::Calculator { preset, .. } | Instrument::Console { preset, .. } | Instrument::Handheld { preset, .. } | Instrument::Micro { preset, .. } | Instrument::Warp { preset, .. } | Instrument::Hybrid { preset, .. } | Instrument::Quartet { preset, .. } | Instrument::ChipFm { preset, .. } | Instrument::V2 { preset, .. } | Instrument::Oidos { preset, .. } | Instrument::Orchestra { preset, .. } | Instrument::Facet { preset, .. } | Instrument::BeadsSynth { preset, .. } | Instrument::StreetOrgan { preset, .. } => preset.clone(),
+            Instrument::Macro { preset, .. } | Instrument::Braids { preset, .. } | Instrument::Elements { preset, .. } | Instrument::Analog { preset, .. } | Instrument::Shakers { preset, .. } | Instrument::Modular { preset, .. } | Instrument::Voice { preset, .. } | Instrument::Mallets { preset, .. } | Instrument::Strings { preset, .. } | Instrument::Winds { preset, .. } | Instrument::Organ { preset, .. } | Instrument::Rings { preset, .. } | Instrument::Monk { preset, .. } | Instrument::Piano { preset, .. } | Instrument::Bassline { preset, .. } | Instrument::Mono101 { preset, .. } | Instrument::Munich { preset, .. } | Instrument::Drone { preset, .. } | Instrument::Waves { preset, .. } | Instrument::Guitar { preset, .. } | Instrument::WindChimes { preset, .. } | Instrument::Birds { preset, .. } | Instrument::Nature { preset, .. } | Instrument::PanFlute { preset, .. } | Instrument::Melodica { preset, .. } | Instrument::Harmonica { preset, .. } | Instrument::Calculator { preset, .. } | Instrument::Console { preset, .. } | Instrument::Handheld { preset, .. } | Instrument::Glide { preset, .. } | Instrument::StringMachine { preset, .. } | Instrument::Tines { preset, .. } | Instrument::Sweeps { preset, .. } | Instrument::Micro { preset, .. } | Instrument::Warp { preset, .. } | Instrument::Hybrid { preset, .. } | Instrument::Quartet { preset, .. } | Instrument::ChipFm { preset, .. } | Instrument::V2 { preset, .. } | Instrument::Oidos { preset, .. } | Instrument::Orchestra { preset, .. } | Instrument::Facet { preset, .. } | Instrument::BeadsSynth { preset, .. } | Instrument::StreetOrgan { preset, .. } => preset.clone(),
         }
     }
 
@@ -2706,6 +2740,10 @@ impl Project {
                     Some(Instrument::Calculator { params, .. }) => params::fix_len(params, crate::dsp::calculator::SPECS),
                     Some(Instrument::Console { params, .. }) => params::fix_len(params, crate::dsp::console::SPECS),
                     Some(Instrument::Handheld { params, .. }) => params::fix_len(params, crate::dsp::handheld::SPECS),
+                    Some(Instrument::Glide { params, .. }) => params::fix_len(params, crate::dsp::glide::SPECS),
+                    Some(Instrument::StringMachine { params, .. }) => params::fix_len(params, crate::dsp::string_machine::SPECS),
+                    Some(Instrument::Tines { params, .. }) => params::fix_len(params, crate::dsp::tines::SPECS),
+                    Some(Instrument::Sweeps { params, .. }) => params::fix_len(params, crate::dsp::sweeps::SPECS),
                     Some(Instrument::Micro { params, .. }) => params::fix_len(params, crate::dsp::micro::SPECS),
                     Some(Instrument::Warp { params, .. }) => params::fix_len(params, crate::dsp::warp::SPECS),
                     Some(Instrument::Hybrid { params, .. }) => params::fix_len(params, crate::dsp::hybrid::SPECS),

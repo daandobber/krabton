@@ -96,6 +96,20 @@ pub enum EffectKind {
     /// A hosted effect plug-in (`Device::plugin`), not in `ALL`.
     Plugin,
     Fryer,
+    /// Vocoder.
+    Vocoder,
+    /// Cassette.
+    Cassette,
+    /// Step Gate.
+    StepGate,
+    /// Backwards.
+    Backwards,
+    /// Halt.
+    Halt,
+    /// De-Esser.
+    DeEsser,
+    /// Ring.
+    Ring,
     /// Tune: pitch correction, in the song's key.
     Tune,
     /// Rackverb: the little rack reverbs of the late eighties.
@@ -211,7 +225,7 @@ static UTILITY: &[ParamSpec] = &[
 ];
 
 impl EffectKind {
-    pub const ALL: [EffectKind; 89] = [
+    pub const ALL: [EffectKind; 96] = [
         EffectKind::Eq3,
         EffectKind::AutoFilter,
         EffectKind::VaFilter,
@@ -301,6 +315,13 @@ impl EffectKind {
         EffectKind::AwInfinity2,
         EffectKind::Looper,
         EffectKind::Fryer,
+        EffectKind::Vocoder,
+        EffectKind::Cassette,
+        EffectKind::StepGate,
+        EffectKind::Backwards,
+        EffectKind::Halt,
+        EffectKind::DeEsser,
+        EffectKind::Ring,
     ];
 
     /// Where it goes in the browser and the effect menu.
@@ -395,6 +416,13 @@ impl EffectKind {
             EffectKind::Snowglobe => "Delay & Loop",
             EffectKind::Looper => "Delay & Loop",
             EffectKind::Fryer => "Distortion",
+            EffectKind::Vocoder => "Reverb & Resonance",
+            EffectKind::Cassette => "Distortion",
+            EffectKind::StepGate => "Modulation",
+            EffectKind::Backwards => "Delay",
+            EffectKind::Halt => "Delay",
+            EffectKind::DeEsser => "Dynamics",
+            EffectKind::Ring => "Modulation",
         }
     }
 
@@ -451,6 +479,13 @@ impl EffectKind {
             EffectKind::Snowglobe => "Snowglobe",
             EffectKind::Looper => "Looper",
             EffectKind::Fryer => "Fryer",
+            EffectKind::Vocoder => "Vocoder",
+            EffectKind::Cassette => "Cassette",
+            EffectKind::StepGate => "Step Gate",
+            EffectKind::Backwards => "Backwards",
+            EffectKind::Halt => "Halt",
+            EffectKind::DeEsser => "De-Esser",
+            EffectKind::Ring => "Ring",
             EffectKind::AwGalactic => "Galactic",
             EffectKind::AwVerbity2 => "Verbity2",
             EffectKind::AwChamber => "Chamber",
@@ -546,6 +581,13 @@ impl EffectKind {
             EffectKind::Convolution => "A space's answer to a click, played for everything: rooms, halls, a cathedral, plate, spring, stairwell, garage, cave, tunnel, forest, a speaker cabinet, or a WAV of your own; size, decay, reverse",
             EffectKind::Snowglobe => "A small world of loops, grains, glitches and echoes made from what comes in, on the beat: eleven modes (Tiles, Steps, Slide, Mist, Cave, Harp, Shuffle, Chop, Climb, Rhythm, Bend) with four variations, Activity, Repeats, Shape, Filter, its own reverb (Space), Hold and Reverse",
             EffectKind::Fryer => "Analog Princess's FRY section for any sound: an 808 into another 808 (one, two or three deep, soft, hard into the ceiling, folded or lopsided), a ring modulator (free or in the song's time), bits and downsampling, the subliminal shadow under it (a quiet copy backwards and pitched down, low-passed), stutter, tape stop and channel surfing now and then or while held, and the 2015 clip into the ceiling. Deep Fry turns it all up",
+            EffectKind::Vocoder => "What goes in speaks and a chord in the song's key sings it: twenty bands listen to the track and open twenty bands on a stack of saws, the s and t still coming through as hiss. Move the Degree to change the chord",
+            EffectKind::Cassette => "A tape that has been in a car all summer: the pitch sways and shivers, it saturates, the top goes, the low end swells, it hisses and now and then the sound dips where the oxide has worn",
+            EffectKind::StepGate => "The volume chopped to a pattern of up to sixteen steps that follows the song, each with its own level, going from side to side if you like. A pad becomes a rhythm",
+            EffectKind::Backwards => "An echo that comes back reversed, swelling up to where the sound was, a note of the song long. With feedback the echo of an echo plays forward again",
+            EffectKind::Halt => "Someone leans on the reel: press Stop and the sound slows down to nothing, as a tape or a record would; let go and it spins back up and joins the song where it is by now",
+            EffectKind::DeEsser => "Tames the sharp s of a voice and the fizz on a cymbal, only when they are there. Listen lets you hear what it takes away",
+            EffectKind::Ring => "The sound multiplied by a tone: the notes go, the sum and the difference stay. Bells out of pads, robots out of voices, and with Key on the tone is a note of the song's key",
             EffectKind::Looper => "A loop pedal: one button records a loop, overdubs onto it and plays it; Stop, Clear, Undo and Redo of the last overdub, Multiply, half and double speed, Reverse, Feedback, and the input heard always, never or while recording. With the song it starts and ends on the bar and follows the tempo (or the first loop sets it); drag the loop out as a clip",
             EffectKind::AwGalactic => "A huge, lush, slowly drifting stereo reverb for pads and ambient spaces (Airwindows)",
             EffectKind::AwVerbity2 => "A smooth, dense room-to-hall reverb with size, sustain and darkness (Airwindows)",
@@ -642,6 +684,13 @@ impl EffectKind {
             EffectKind::Snowglobe => super::fx::snowglobe::SPECS,
             EffectKind::Looper => super::fx::looper::SPECS,
             EffectKind::Fryer => super::fx::fryer::SPECS,
+            EffectKind::Vocoder => super::fx::vocoder::SPECS,
+            EffectKind::Cassette => super::fx::cassette::SPECS,
+            EffectKind::StepGate => super::fx::step_gate::SPECS,
+            EffectKind::Backwards => super::fx::backwards::SPECS,
+            EffectKind::Halt => super::fx::halt::SPECS,
+            EffectKind::DeEsser => super::fx::de_esser::SPECS,
+            EffectKind::Ring => super::fx::ring::SPECS,
             EffectKind::AwGalactic => super::fx::airwindows::GALACTIC,
             EffectKind::AwVerbity2 => super::fx::airwindows::VERBITY2,
             EffectKind::AwChamber => super::fx::airwindows::CHAMBER,
@@ -750,6 +799,13 @@ pub enum EffectState {
     Snowglobe(Box<super::fx::snowglobe::Snowglobe>),
     Looper(Box<super::fx::looper::Looper>),
     Fryer(Box<super::fx::fryer::Fryer>),
+    Vocoder(Box<super::fx::vocoder::Vocoder>),
+    Cassette(Box<super::fx::cassette::Cassette>),
+    StepGate(Box<super::fx::step_gate::StepGate>),
+    Backwards(Box<super::fx::backwards::Backwards>),
+    Halt(Box<super::fx::halt::Halt>),
+    DeEsser(Box<super::fx::de_esser::DeEsser>),
+    Ring(Box<super::fx::ring::Ring>),
     Rings(Box<super::rings_synth::RingsFx>),
     Clouds(Box<super::fx::clouds::CloudsFx>),
     Beads(Box<super::fx::beads::BeadsFx>),
@@ -850,6 +906,13 @@ impl EffectState {
             EffectKind::Snowglobe => EffectState::Snowglobe(Box::new(super::fx::snowglobe::Snowglobe::new(sr))),
             EffectKind::Looper => EffectState::Looper(Box::new(super::fx::looper::Looper::new())),
             EffectKind::Fryer => EffectState::Fryer(Box::new(super::fx::fryer::Fryer::new(sr))),
+            EffectKind::Vocoder => EffectState::Vocoder(Box::new(super::fx::vocoder::Vocoder::new(sr))),
+            EffectKind::Cassette => EffectState::Cassette(Box::new(super::fx::cassette::Cassette::new(sr))),
+            EffectKind::StepGate => EffectState::StepGate(Box::new(super::fx::step_gate::StepGate::new(sr))),
+            EffectKind::Backwards => EffectState::Backwards(Box::new(super::fx::backwards::Backwards::new(sr))),
+            EffectKind::Halt => EffectState::Halt(Box::new(super::fx::halt::Halt::new(sr))),
+            EffectKind::DeEsser => EffectState::DeEsser(Box::new(super::fx::de_esser::DeEsser::new(sr))),
+            EffectKind::Ring => EffectState::Ring(Box::new(super::fx::ring::Ring::new(sr))),
             EffectKind::AwGalactic => Self::airwindows(kind, "Galactic", sr),
             EffectKind::AwVerbity2 => Self::airwindows(kind, "Verbity2", sr),
             EffectKind::AwChamber => Self::airwindows(kind, "Chamber", sr),
@@ -977,6 +1040,13 @@ impl EffectState {
             EffectState::Snowglobe(_) => EffectKind::Snowglobe,
             EffectState::Looper(_) => EffectKind::Looper,
             EffectState::Fryer(_) => EffectKind::Fryer,
+            EffectState::Vocoder(_) => EffectKind::Vocoder,
+            EffectState::Cassette(_) => EffectKind::Cassette,
+            EffectState::StepGate(_) => EffectKind::StepGate,
+            EffectState::Backwards(_) => EffectKind::Backwards,
+            EffectState::Halt(_) => EffectKind::Halt,
+            EffectState::DeEsser(_) => EffectKind::DeEsser,
+            EffectState::Ring(_) => EffectKind::Ring,
             EffectState::Airwindows(kind, _) => *kind,
             EffectState::Rings(_) => EffectKind::Rings,
             EffectState::Clouds(_) => EffectKind::Clouds,
@@ -1236,6 +1306,13 @@ impl EffectState {
             EffectState::Snowglobe(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Looper(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Fryer(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
+            EffectState::Vocoder(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
+            EffectState::Cassette(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
+            EffectState::StepGate(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
+            EffectState::Backwards(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
+            EffectState::Halt(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
+            EffectState::DeEsser(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
+            EffectState::Ring(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Airwindows(_, e) => e.process(p, &mut l[..n], &mut r[..n]),
             EffectState::Rings(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Clouds(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),

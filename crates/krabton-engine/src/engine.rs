@@ -39,6 +39,10 @@ use crate::dsp::harmonica::HarmonicaState;
 use crate::dsp::calculator::CalculatorState;
 use crate::dsp::console::ConsoleState;
 use crate::dsp::handheld::HandheldState;
+use crate::dsp::glide::GlideState;
+use crate::dsp::string_machine::StringMachineState;
+use crate::dsp::tines::TinesState;
+use crate::dsp::sweeps::SweepsState;
 use crate::dsp::micro::MicroState;
 use crate::dsp::warp::WarpState;
 use crate::dsp::hybrid::HybridState;
@@ -568,6 +572,10 @@ enum InstState {
     Calculator(Box<CalculatorState>),
     Console(Box<ConsoleState>),
     Handheld(Box<HandheldState>),
+    Glide(Box<GlideState>),
+    StringMachine(Box<StringMachineState>),
+    Tines(Box<TinesState>),
+    Sweeps(Box<SweepsState>),
     Micro(Box<MicroState>),
     Warp(Box<WarpState>),
     Hybrid(Box<HybridState>),
@@ -620,6 +628,10 @@ impl InstState {
             InstState::Calculator(s) => s.pitch_bend = semis,
             InstState::Console(s) => s.pitch_bend = semis,
             InstState::Handheld(s) => s.pitch_bend = semis,
+            InstState::Glide(s) => s.pitch_bend = semis,
+            InstState::StringMachine(s) => s.pitch_bend = semis,
+            InstState::Tines(s) => s.pitch_bend = semis,
+            InstState::Sweeps(s) => s.pitch_bend = semis,
             InstState::Micro(s) => s.pitch_bend = semis,
             InstState::Warp(s) => s.pitch_bend = semis,
             InstState::Hybrid(s) => s.pitch_bend = semis,
@@ -684,6 +696,10 @@ impl InstState {
             Some(Instrument::Calculator { .. }) => InstState::Calculator(Box::new(CalculatorState::new(sr))),
             Some(Instrument::Console { .. }) => InstState::Console(Box::new(ConsoleState::new(sr))),
             Some(Instrument::Handheld { .. }) => InstState::Handheld(Box::new(HandheldState::new(sr))),
+            Some(Instrument::Glide { .. }) => InstState::Glide(Box::new(GlideState::new(sr))),
+            Some(Instrument::StringMachine { .. }) => InstState::StringMachine(Box::new(StringMachineState::new(sr))),
+            Some(Instrument::Tines { .. }) => InstState::Tines(Box::new(TinesState::new(sr))),
+            Some(Instrument::Sweeps { .. }) => InstState::Sweeps(Box::new(SweepsState::new(sr))),
             Some(Instrument::Micro { .. }) => InstState::Micro(Box::new(MicroState::new(sr))),
             Some(Instrument::Warp { .. }) => InstState::Warp(Box::new(WarpState::new(sr))),
             Some(Instrument::Hybrid { .. }) => InstState::Hybrid(Box::new(HybridState::new(sr))),
@@ -764,6 +780,10 @@ impl InstState {
                 | (InstState::Calculator(_), Some(Instrument::Calculator { .. }))
                 | (InstState::Console(_), Some(Instrument::Console { .. }))
                 | (InstState::Handheld(_), Some(Instrument::Handheld { .. }))
+                | (InstState::Glide(_), Some(Instrument::Glide { .. }))
+                | (InstState::StringMachine(_), Some(Instrument::StringMachine { .. }))
+                | (InstState::Tines(_), Some(Instrument::Tines { .. }))
+                | (InstState::Sweeps(_), Some(Instrument::Sweeps { .. }))
                 | (InstState::Micro(_), Some(Instrument::Micro { .. }))
                 | (InstState::Warp(_), Some(Instrument::Warp { .. }))
                 | (InstState::Hybrid(_), Some(Instrument::Hybrid { .. }))
@@ -835,6 +855,10 @@ impl InstState {
             (InstState::Calculator(s), Instrument::Calculator { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Console(s), Instrument::Console { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Handheld(s), Instrument::Handheld { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Glide(s), Instrument::Glide { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::StringMachine(s), Instrument::StringMachine { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Tines(s), Instrument::Tines { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
+            (InstState::Sweeps(s), Instrument::Sweeps { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Micro(s), Instrument::Micro { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Warp(s), Instrument::Warp { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Hybrid(s), Instrument::Hybrid { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
@@ -900,6 +924,10 @@ impl InstState {
             (InstState::Calculator(s), Instrument::Calculator { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Console(s), Instrument::Console { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Handheld(s), Instrument::Handheld { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Glide(s), Instrument::Glide { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::StringMachine(s), Instrument::StringMachine { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Tines(s), Instrument::Tines { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
+            (InstState::Sweeps(s), Instrument::Sweeps { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Micro(s), Instrument::Micro { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Warp(s), Instrument::Warp { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Hybrid(s), Instrument::Hybrid { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
@@ -965,6 +993,10 @@ impl InstState {
             InstState::Calculator(s) => s.all_off(),
             InstState::Console(s) => s.all_off(),
             InstState::Handheld(s) => s.all_off(),
+            InstState::Glide(s) => s.all_off(),
+            InstState::StringMachine(s) => s.all_off(),
+            InstState::Tines(s) => s.all_off(),
+            InstState::Sweeps(s) => s.all_off(),
             InstState::Micro(s) => s.all_off(),
             InstState::Warp(s) => s.all_off(),
             InstState::Hybrid(s) => s.all_off(),
@@ -1084,6 +1116,10 @@ impl InstState {
             (InstState::Calculator(s), Instrument::Calculator { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Console(s), Instrument::Console { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Handheld(s), Instrument::Handheld { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Glide(s), Instrument::Glide { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::StringMachine(s), Instrument::StringMachine { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Tines(s), Instrument::Tines { params, .. }) => s.render(ov.unwrap_or(params), l, r),
+            (InstState::Sweeps(s), Instrument::Sweeps { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Micro(s), Instrument::Micro { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Warp(s), Instrument::Warp { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Hybrid(s), Instrument::Hybrid { params, .. }) => s.render(ov.unwrap_or(params), l, r),
@@ -2325,6 +2361,14 @@ impl Engine {
                             }
                         }
                     }
+                }
+            }
+        }
+        // A clip's line on the mod wheel turns the track's wheel.
+        for (target, v) in self.envs.iter() {
+            if let crate::modulation::ModTarget::Wheel(id) = *target {
+                if let Some(rt) = project.track_index(id).and_then(|t| self.tracks.get_mut(t)) {
+                    rt.signal.modwheel = v.clamp(0.0, 1.0);
                 }
             }
         }
@@ -3994,6 +4038,35 @@ mod tests {
     }
 
     #[test]
+    fn the_new_synths_sound_through_the_engine() {
+        for (name, inst) in [("Glide", Instrument::glide("Long Boom")), ("String Machine", Instrument::string_machine("Full Section")), ("Tines", Instrument::tines("Suitcase")), ("Sweeps", Instrument::sweeps("Thud"))] {
+            let mut p = Project::new_default();
+            let t = p.add_midi_track(Some(inst));
+            let id = p.tracks[t].id;
+            let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+            h.send(Command::NoteOn { track: id, pitch: 48, velocity: 1.0 });
+            let out = run(&mut e, 0.5);
+            let top = out.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+            assert!(top > 0.01 && top.is_finite(), "{name}: {top}");
+        }
+    }
+
+    #[test]
+    fn a_slide_bass_on_a_glide_synth_plays_with_the_song() {
+        let mut p = Project::new_default();
+        let t = p.add_midi_track(Some(Instrument::glide("Long Boom")));
+        let dev = p.make_midi_device(crate::midi_fx::MidiFxKind::SlideBass);
+        p.tracks[t].midi_devices.push(dev);
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        let quiet = run(&mut e, 0.2);
+        assert!(quiet.iter().all(|v| v.abs() < 1e-4), "stopped");
+        h.send(Command::Play);
+        let out = run(&mut e, 4.0);
+        let top = out.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!(top > 0.05, "{top}");
+    }
+
+    #[test]
     fn counting_in_clicks_and_then_the_song_starts() {
         let p = Project::new_default();
         let bpm = p.bpm;
@@ -4633,6 +4706,21 @@ mod tests {
         assert!(sounding >= 3, "{sounding} tracks report their sound");
         // Both sequencers of a track, not only the first.
         assert!(h.status.seqs.read(ids.0).is_some() && h.status.seqs.read(ids.1).is_some());
+    }
+
+    #[test]
+    fn a_clip_turns_the_tracks_mod_wheel() {
+        use crate::modulation::ModTarget;
+        let mut p = Project::new_default();
+        let id = p.tracks[0].id;
+        let mut c = Clip::new_midi(p.alloc_id(), "c", [1, 2, 3], 4.0);
+        c.envelopes.push(Envelope { target: ModTarget::Wheel(id), points: vec![(0.0, 0.25)] });
+        p.tracks[0].slots[0] = Some(c);
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        h.send(Command::Play);
+        h.send(Command::LaunchClip { track: id, slot: 0 });
+        run(&mut e, 0.5);
+        assert_eq!(e.tracks[0].signal.modwheel, 0.25);
     }
 
     #[test]

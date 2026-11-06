@@ -45,6 +45,13 @@ pub mod transient;
 pub mod verb;
 pub mod tune;
 pub mod rackverb;
+pub mod vocoder;
+pub mod cassette;
+pub mod step_gate;
+pub mod backwards;
+pub mod halt;
+pub mod de_esser;
+pub mod ring;
 pub mod vinyl;
 
 use std::f32::consts::TAU;

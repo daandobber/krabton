@@ -164,6 +164,10 @@ pub enum BrowserItem {
     Calculator(&'static str),
     Console(&'static str),
     Handheld(&'static str),
+    Glide(&'static str),
+    StringMachine(&'static str),
+    Tines(&'static str),
+    Sweeps(&'static str),
     Micro(&'static str),
     Warp(&'static str),
     Hybrid(&'static str),
@@ -248,6 +252,10 @@ impl BrowserItem {
             BrowserItem::Calculator(p) => format!("Calculator: {p}"),
             BrowserItem::Console(p) => format!("Console: {p}"),
             BrowserItem::Handheld(p) => format!("Handheld: {p}"),
+            BrowserItem::Glide(p) => format!("Glide: {p}"),
+            BrowserItem::StringMachine(p) => format!("String Machine: {p}"),
+            BrowserItem::Tines(p) => format!("Tines: {p}"),
+            BrowserItem::Sweeps(p) => format!("Sweeps: {p}"),
             BrowserItem::Micro(p) => format!("Micro: {p}"),
             BrowserItem::Warp(p) => format!("Warp: {p}"),
             BrowserItem::Hybrid(p) => format!("Hybrid: {p}"),
@@ -1434,7 +1442,7 @@ impl App {
                 }
                 self.toast(format!("Loading {} ...", info.name));
             }
-            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Munich(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::StreetOrgan(_) | BrowserItem::Harmonica(_) | BrowserItem::Calculator(_) | BrowserItem::Console(_) | BrowserItem::Handheld(_) | BrowserItem::Micro(_) | BrowserItem::Warp(_) | BrowserItem::Hybrid(_) | BrowserItem::Quartet(_) | BrowserItem::ChipFm(_) | BrowserItem::V2(_) | BrowserItem::Oidos(_) | BrowserItem::Orchestra(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) | BrowserItem::Coast(_) | BrowserItem::Crimson(_) | BrowserItem::Silicon(_) | BrowserItem::Theremin(_) | BrowserItem::Granulator(_) | BrowserItem::Keytone(_) | BrowserItem::Princess(_) | BrowserItem::Turntable(_) | BrowserItem::Grit(_) | BrowserItem::Stretch(_) | BrowserItem::Flip(_) => {
+            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Munich(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::StreetOrgan(_) | BrowserItem::Harmonica(_) | BrowserItem::Calculator(_) | BrowserItem::Console(_) | BrowserItem::Handheld(_) | BrowserItem::Glide(_) | BrowserItem::StringMachine(_) | BrowserItem::Tines(_) | BrowserItem::Sweeps(_) | BrowserItem::Micro(_) | BrowserItem::Warp(_) | BrowserItem::Hybrid(_) | BrowserItem::Quartet(_) | BrowserItem::ChipFm(_) | BrowserItem::V2(_) | BrowserItem::Oidos(_) | BrowserItem::Orchestra(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) | BrowserItem::Coast(_) | BrowserItem::Crimson(_) | BrowserItem::Silicon(_) | BrowserItem::Theremin(_) | BrowserItem::Granulator(_) | BrowserItem::Keytone(_) | BrowserItem::Princess(_) | BrowserItem::Turntable(_) | BrowserItem::Grit(_) | BrowserItem::Stretch(_) | BrowserItem::Flip(_) => {
                 let inst = match item {
                     BrowserItem::Synth(p) => Instrument::synth(p),
                     BrowserItem::Macro(p) => Instrument::macro_osc(p),
@@ -1468,6 +1476,10 @@ impl App {
                     BrowserItem::Calculator(p) => Instrument::calculator(p),
                     BrowserItem::Console(p) => Instrument::console(p),
                     BrowserItem::Handheld(p) => Instrument::handheld(p),
+                    BrowserItem::Glide(p) => Instrument::glide(p),
+                    BrowserItem::StringMachine(p) => Instrument::string_machine(p),
+                    BrowserItem::Tines(p) => Instrument::tines(p),
+                    BrowserItem::Sweeps(p) => Instrument::sweeps(p),
                     BrowserItem::Micro(p) => Instrument::micro(p),
                     BrowserItem::Warp(p) => Instrument::warp(p),
                     BrowserItem::Hybrid(p) => Instrument::hybrid(p),
@@ -4472,6 +4484,30 @@ impl App {
                     let names = krabton_engine::dsp::console::preset_names();
                     let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
                     self.apply_item(&BrowserItem::Console(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "glide" => {
+                    let names = krabton_engine::dsp::glide::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Glide(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "string_machine" => {
+                    let names = krabton_engine::dsp::string_machine::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::StringMachine(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "tines" => {
+                    let names = krabton_engine::dsp::tines::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Tines(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "sweeps" => {
+                    let names = krabton_engine::dsp::sweeps::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Sweeps(p), DropTarget::NewTrack);
                     self.detail = DetailTab::Devices;
                 }
                 "handheld" => {

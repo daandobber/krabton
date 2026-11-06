@@ -723,6 +723,80 @@ const CONSOLE: Skin = Skin {
     ..BASE
 };
 
+const GLIDE: Skin = Skin {
+    top: hex(0x161214),
+    bottom: hex(0x0a0809),
+    surface: Surface::Carbon,
+    ink: hex(0xf2e9ea),
+    dim: hex(0xa38f93),
+    well: hex(0x050404),
+    well_ink: hex(0xff6a5a),
+    accent: hex(0xff3b30),
+    knob: Knob::Cap,
+    cap: hex(0xc4261d),
+    logo: Font::Block,
+    logo_size: 19.0,
+    logo_ink: hex(0xff3b30),
+    logo_case: Case::Upper,
+    ..BASE
+};
+
+const STRING_MACHINE: Skin = Skin {
+    top: hex(0xd9cdb2),
+    bottom: hex(0xc2b596),
+    surface: Surface::Grain,
+    cheeks: Some(hex(0x6a4322)),
+    stripes: &[hex(0xd9772b), hex(0xb24a1f), hex(0x6a2b16)],
+    ink: hex(0x33261a),
+    dim: hex(0x6f5e48),
+    well: hex(0x3a2c1f),
+    well_ink: hex(0xf2e6cd),
+    accent: hex(0xc4581d),
+    knob: Knob::Vintage,
+    cap: hex(0x1d1712),
+    logo: Font::Wide,
+    logo_size: 17.0,
+    logo_ink: hex(0x6a2b16),
+    logo_case: Case::Upper,
+    caps: true,
+    ..BASE
+};
+
+const TINES: Skin = Skin {
+    top: hex(0x1f1d1c),
+    bottom: hex(0x151413),
+    surface: Surface::Grain,
+    stripes: &[hex(0x9c9a94)],
+    ink: hex(0xe9e4d8),
+    dim: hex(0xa39d90),
+    well: hex(0x0d0c0b),
+    well_ink: hex(0xe9e4d8),
+    accent: hex(0xd8b25a),
+    knob: Knob::Chrome,
+    cap: hex(0xb9b6ad),
+    logo: Font::Ui,
+    logo_size: 20.0,
+    logo_ink: hex(0xd8b25a),
+    ..BASE
+};
+
+const SWEEPS: Skin = Skin {
+    top: hex(0x10162a),
+    bottom: hex(0x070a16),
+    surface: Surface::Flat,
+    ink: hex(0xdce7ff),
+    dim: hex(0x8391b8),
+    well: hex(0x050814),
+    well_ink: hex(0x7fe9ff),
+    accent: hex(0x36d6ff),
+    knob: Knob::Neon,
+    cap: hex(0x101a34),
+    logo: Font::Future,
+    logo_size: 19.0,
+    logo_ink: hex(0x7fe9ff),
+    ..BASE
+};
+
 const HANDHELD: Skin = Skin {
     top: hex(0xcbc7bf),
     bottom: hex(0xb1aca2),
@@ -1313,6 +1387,10 @@ pub fn for_instrument(name: &str) -> Option<Skin> {
         "Calculator" => CALCULATOR,
         "Console" => CONSOLE,
         "Handheld" => HANDHELD,
+        "Glide" => GLIDE,
+        "String Machine" => STRING_MACHINE,
+        "Tines" => TINES,
+        "Sweeps" => SWEEPS,
         "Micro" => MICRO,
         "Warp" => WARP,
         "Hybrid" => HYBRID,

@@ -38,6 +38,7 @@ impl EnvTarget {
                 }
             }
             (ModTarget::Pan(_), _) => crate::ui::session::pan_text(norm * 2.0 - 1.0),
+            (ModTarget::Wheel(_), _) => format!("{:.0}", norm * 127.0),
             (ModTarget::Send { .. }, _) => format!("{:.0} %", norm * 100.0),
             (_, Some(spec)) => spec.format(spec.from_norm(norm)),
             _ => format!("{norm:.2}"),
@@ -52,6 +53,7 @@ impl App {
         let mut out = vec![
             EnvTarget { group: "Mixer".into(), name: "Volume".into(), target: ModTarget::Volume(tr.id), spec: None },
             EnvTarget { group: "Mixer".into(), name: "Pan".into(), target: ModTarget::Pan(tr.id), spec: None },
+            EnvTarget { group: "MIDI".into(), name: "Mod Wheel (CC 1)".into(), target: ModTarget::Wheel(tr.id), spec: None },
         ];
         for (j, r) in self.project.returns.iter().enumerate().take(8) {
             out.push(EnvTarget { group: "Mixer".into(), name: format!("Send {}", r.name), target: ModTarget::Send { track: tr.id, send: j as u16 }, spec: None });
@@ -93,6 +95,7 @@ impl App {
         match target {
             ModTarget::Volume(_) => Some(db_to_fader_pos(tr.mixer.volume_db)),
             ModTarget::Pan(_) => Some((tr.mixer.pan + 1.0) * 0.5),
+            ModTarget::Wheel(_) => Some(0.0),
             ModTarget::Send { send, .. } => tr.mixer.sends.get(send as usize).copied(),
             ModTarget::Param { owner, param } => {
                 let k = param as usize;

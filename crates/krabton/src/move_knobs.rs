@@ -57,6 +57,10 @@ main_knobs! {
     Micro, krabton_engine::dsp::micro::SPECS, ["Cutoff", "Resonance", "Env Cutoff", "PWM", "PWM Rate", "Vibrato", "Filter Mode", "Arp Speed"];
     Console, krabton_engine::dsp::console::SPECS, ["Duty 1", "Duty 2", "Pulse 1", "Pulse 2", "Noise", "Attack", "Decay", "Release"];
     Handheld, krabton_engine::dsp::handheld::SPECS, ["Duty 1", "Duty 2", "Pulse 1", "Pulse 2", "Wave", "Noise", "Decay", "Treble"];
+    Glide, krabton_engine::dsp::glide::SPECS, ["Decay", "Glide", "Drop", "Click", "Drive", "Overtone", "Tone", "Volume"];
+    StringMachine, krabton_engine::dsp::string_machine::SPECS, ["Cello", "Viola", "Violin", "Attack", "Release", "Ensemble", "Tone", "Bite"];
+    Tines, krabton_engine::dsp::tines::SPECS, ["Bark", "Hammer", "Bell", "Decay", "Release", "Tremolo", "Rate", "Tone"];
+    Sweeps, krabton_engine::dsp::sweeps::SPECS, ["Kind", "Length", "Noise", "Resonance", "Curve", "Width", "Drive", "Volume"];
     Calculator, krabton_engine::dsp::calculator::SPECS, ["Sound", "Vibrato", "Tremolo", "Attack", "Decay", "Release", "Rhythm", "Volume"];
     ChipFm, krabton_engine::dsp::chipfm::SPECS, ["Algorithm", "Feedback", "Op1 Level", "LFO Rate", "AM Depth", "PM Depth", "Pitch Drop", "Volume"];
     Warp, krabton_engine::dsp::warp::SPECS, ["Warp 1", "Warp 2", "Level 1", "Level 2", "Detune", "Vib Depth", "Chorus", "Volume"];

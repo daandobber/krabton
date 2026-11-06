@@ -196,7 +196,7 @@ impl App {
         let t = &self.project.tracks[ti];
         let sr = self.engine.status.sample_rate.load() as u32;
         let sample = SampleRef::new(SampleData::from_buffers(name.clone(), path, sr, l, r));
-        Clip { id, name, color: t.color, length: beats.max(0.0625), content: ClipContent::Audio(AudioClip::new(sample, self.project.bpm)), envelopes: Vec::new(), sound: None, step_rows: Vec::new(), groove: None, launch: Default::default() }
+        Clip { id, name, color: t.color, length: beats.max(0.0625), content: ClipContent::Audio(AudioClip::new(sample, self.project.bpm)), envelopes: Vec::new(), sound: None, step_rows: Vec::new(), step_lanes: Vec::new(), step_melody: None, groove: None, launch: Default::default() }
     }
 
     /// Where recordings are written: next to the saved set, or in the
