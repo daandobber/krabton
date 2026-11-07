@@ -130,7 +130,6 @@ fn drawn(ui: &mut Ui, id: Id, params: &mut [f32], live: Live, height: f32) -> bo
                 shown ^= 1 << f;
             }
         }
-        ui.label(RichText::new("Click a point: a note or a rest. Drag it up or down: which note").small().color(TEXT_DIM));
     });
     ui.ctx().memory_mut(|m| m.data.insert_temp(shown_id, shown));
 

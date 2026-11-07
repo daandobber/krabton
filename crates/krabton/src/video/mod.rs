@@ -174,6 +174,11 @@ impl Default for VideoRuntime {
 
 impl VideoRuntime {
     /// The clip that plays now (in the bank).
+    /// Whether a picture is up (a clip's, or a Video Rack's film).
+    pub fn has_picture(&self) -> bool {
+        self.shown.is_some()
+    }
+
     pub fn playing(&self) -> usize {
         self.dir.switch.clip
     }
@@ -469,6 +474,8 @@ impl App {
         let dt = self.video.last.map_or(0.0, |l| now.duration_since(l).as_secs_f32()).min(0.25);
         self.video.last = Some(now);
         let set = self.project.video.clone();
+        // A Video Rack's pad struck: its film shows while it sounds.
+        let rack = self.rack_frame();
         let v = &mut self.video;
 
         // The clips: read the new ones, let go of those taken out.
@@ -530,7 +537,11 @@ impl App {
 
         // The pictures: a new frame goes up when it changes.
         let media_of = |i: usize| set.clips.get(i).and_then(|c| v.media.get(&c.path).cloned());
-        let new = media_of(shot.clip).and_then(|m| m.frame_at(shot.at).map(|i| (m, i)));
+        let rack_size = rack.as_ref().map(|(m, _)| m.info()).map(|i| [i.width as f32, i.height as f32]);
+        let new = match &rack {
+            Some((m, t)) => m.frame_at(*t).map(|i| (m.clone(), i)),
+            None => media_of(shot.clip).and_then(|m| m.frame_at(shot.at).map(|i| (m, i))),
+        };
         match new {
             Some((m, i)) => show_frame(ctx, &mut v.texture, &mut v.shown, "video_frame", &m, i),
             None => v.shown = None,
@@ -550,7 +561,7 @@ impl App {
 
         // The effects for the stage.
         let size = |i: usize| media_of(i).map(|m| m.info()).map(|i| [i.width as f32, i.height as f32]);
-        let sizes = (v.shown.as_ref().and(size(shot.clip)), shot.from.and_then(|f| v.old_shown.as_ref().and(size(f.0))));
+        let sizes = (v.shown.as_ref().and(rack_size.or_else(|| size(shot.clip))), shot.from.and_then(|f| v.old_shown.as_ref().and(size(f.0))));
         v.params = frame_params(&set, &self.project, &mut v.dir, &shot, sizes);
         // Recording: the sound that came and the stage drawn last frame.
         if let Some(r) = &mut v.rec {

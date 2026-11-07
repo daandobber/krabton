@@ -1086,7 +1086,8 @@ impl App {
         });
         // What to do when there is nothing to see.
         let mut msg_ui = ui.new_child(UiBuilder::new().max_rect(pic.shrink(20.0)).layout(egui::Layout::top_down(egui::Align::Center)));
-        if set.clips.is_empty() {
+        // (A Video Rack's film on it is something to see.)
+        if set.clips.is_empty() && !self.video.has_picture() {
             self.video_welcome(&mut msg_ui, pic.height());
         } else if info.needs_ffmpeg {
             self.ffmpeg_offer(&mut msg_ui, pic.height());

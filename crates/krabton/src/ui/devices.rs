@@ -1236,9 +1236,8 @@ impl App {
                                 ui.add_space(6.0);
                                 egui::ScrollArea::horizontal().id_salt(id.with("full_knobs_scroll")).max_height(low).show(ui, |ui| {
                                     ui.horizontal_top(|ui| {
-                                        c |= band_ui(ui, &mut params, accent, low);
-                                        ui.add_space(6.0);
                                         b = param_grid_mod(ui, id, dev.kind.specs(), &mut params, accent, low, mv.as_mut());
+                                        c |= band_ui(ui, &mut params, accent, low);
                                     });
                                 });
                             });
@@ -1246,9 +1245,9 @@ impl App {
                         } else {
                             let (r, _) = ui.allocate_exact_size(vec2((room - knobs - 10.0).max(160.0), tall), Sense::hover());
                             c = scaled_editor(ui, r, id.with("full_editor"), |ui, height| super::seq_view::editor(ui, id.with("editor"), dev.kind, &mut params, &mut data, live, lane, accent, height));
-                            c |= band_ui(ui, &mut params, accent, tall);
                             ui.add_space(6.0);
                             b = param_grid_mod(ui, id, dev.kind.specs(), &mut params, accent, h - 28.0, mv.as_mut());
+                            c |= band_ui(ui, &mut params, accent, tall);
                             used = ui.min_rect().right() - r.right();
                             under = used > room * 0.42;
                         }
@@ -1261,9 +1260,10 @@ impl App {
                     if inferno_big {
                         return a;
                     }
-                    let c = band_ui(ui, &mut params, accent, h - 32.0);
                     ui.add_space(6.0);
                     let b = param_grid_mod(ui, id, dev.kind.specs(), &mut params, accent, h - 28.0, mv.as_mut());
+                    // The Band section at the end, small while it is off.
+                    let c = band_ui(ui, &mut params, accent, h - 32.0);
                     if dev.kind == MidiFxKind::Inferno {
                         // How far its fire goes next frame.
                         let right = ui.min_rect().right();
@@ -3044,9 +3044,6 @@ impl App {
                             }
                         }
                     }
-                    Instrument::Drums { pads, engine, .. } if *engine == drums::DrumEngine::Video => {
-                        self.video_rack_panel(ui, track_id, pads, &live, h);
-                    }
                     Instrument::Drums { kit, pads, engine } => {
                         let engine = *engine;
                         ui.horizontal(|ui| {
@@ -3117,7 +3114,12 @@ impl App {
                             });
                         }
                         ui.horizontal_top(|ui| {
-                            if crate::skin::current().is_some() {
+                            // A Video Rack: its screen first.
+                            if engine == drums::DrumEngine::Video {
+                                self.video_rack_screen(ui, track_id, pads, h - 40.0);
+                                ui.add_space(8.0);
+                            }
+                            if crate::skin::current().is_some() && engine != drums::DrumEngine::Video {
                                 // A drum machine's face: a column per drum, its step button below.
                                 if super::faces::drums::columns(ui, Id::new(("drum_face", track_id)), pads, &mut self.sel_pad, &mut self.pending_pad_hit, live.notes, h - 70.0) {
                                     // (the pads were changed in place)
@@ -3149,8 +3151,11 @@ impl App {
                                     } else {
                                         KNOB
                                     };
+                                    rect_fill(ui.painter(), r, 3.0, fill);
+                                    if engine == drums::DrumEngine::Video {
+                                        self.paint_video_thumb(ui, r, pad);
+                                    }
                                     let p = ui.painter();
-                                    rect_fill(p, r, 3.0, fill);
                                     if selected {
                                         rect_line(p, r, 3.0, 1.0, accent_now());
                                     }

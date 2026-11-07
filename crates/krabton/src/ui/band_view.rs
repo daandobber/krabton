@@ -89,14 +89,16 @@ fn part_now(live: &BandLive) -> String {
     }
 }
 
-/// A device's Band section. With Band off only its switch is there. Returns
-/// (changed, open the Band window, a cue for the band).
+/// A device's Band section, at its end. With Band off only a small switch is
+/// there; on, it opens to the band's chord and part. Returns (changed, open
+/// the Band window, a cue for the band).
 pub(crate) fn band_section(ui: &mut Ui, id: Id, kind: MidiFxKind, params: &mut [f32], live: &BandLive, accent: Color32, height: f32) -> (bool, bool, Option<Option<Cue>>) {
-    let w = 112.0;
-    let (rect, _) = ui.allocate_exact_size(vec2(w, height.max(60.0)), Sense::hover());
-    let p = ui.painter().clone();
     let follows = kb::follow_param(kind);
     let Some(bi) = kb::switch_param(kind) else { return (false, false, None) };
+    let on = params.get(bi).is_some_and(|v| *v >= 0.5);
+    let w = if on { 112.0 } else { 58.0 };
+    let (rect, _) = ui.allocate_exact_size(vec2(w, if on { height.max(60.0) } else { 46.0 }), Sense::hover());
+    let p = ui.painter().clone();
     let mut changed = false;
     let mut open = false;
     let mut cue = None;
@@ -105,7 +107,6 @@ pub(crate) fn band_section(ui: &mut Ui, id: Id, kind: MidiFxKind, params: &mut [
     let x = rect.left() + 6.0;
     let bw = w - 10.0;
     let mut y = rect.top() + 14.0;
-    let on = params.get(bi).is_some_and(|v| *v >= 0.5);
     let sw = Rect::from_min_size(pos2(x, y), vec2(bw, 28.0));
     let tip = if follows.is_some() {
         "In the band: its notes follow the band's chords, and it plays the parts as they say (energy, dynamics, key, who plays where). Off: it plays as written"
@@ -114,7 +115,7 @@ pub(crate) fn band_section(ui: &mut Ui, id: Id, kind: MidiFxKind, params: &mut [
     } else {
         "In the band: it plays the parts as they say (energy, dynamics, fills, builds and breaks, who plays where); its notes stay drums"
     };
-    if button(ui, sw, id.with("on"), if on { "In the band" } else { "Band off" }, on, accent).on_hover_text(tip).clicked() {
+    if button(ui, sw, id.with("on"), if on { "In the band" } else { "Off" }, on, accent).on_hover_text(tip).clicked() {
         if let Some(v) = params.get_mut(bi) {
             *v = if on { 0.0 } else { 1.0 };
             changed = true;
