@@ -19,13 +19,24 @@ use std::time::Instant;
 
 /// A node's size on the field.
 const R: f32 = 18.0;
-const SIDE_W: f32 = 250.0;
+/// The settings of what is picked: a panel over the field's corner.
+const PANEL_W: f32 = 220.0;
+
+/// What the Pulsars are and how to use them (the "?" in the bar).
+const HELP: &str = "A pulsar fires a pulse down each of its lines: on the beat, by chance, or when you click it.\n\
+A pulse takes as long as its line is long: where things are is the rhythm.\n\
+An orb plays its note, chord or pad on its track, and the pulse goes on down its other lines.\n\
+Gates, chances, delays, routers, shifts and reflectors change what goes on.\n\n\
+Connect joins nodes: click one, then the next (on and on, for a chain); Esc stops.\n\
+With Select, drag a node's middle to move it, its edge (or Shift and anywhere) to another to join them, or to empty space for a new orb.\n\
+Drag the field to look round, the wheel zooms. Click a node or a line to set it; right-click for more.";
 /// How long a struck node flares, and its ring goes out.
 const FLARE: f32 = 0.7;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) enum Tool {
     Select,
+    Connect,
     Pulsar,
     Orb,
     Gate,
@@ -59,11 +70,13 @@ pub(crate) struct PulsarsUi {
     menu: Option<Sel>,
     /// Whether to fit the whole field into view next time it is drawn.
     fit: bool,
+    /// Connect: the node a line goes from, till the next is clicked.
+    connect_from: Option<u64>,
 }
 
 impl Default for PulsarsUi {
     fn default() -> Self {
-        Self { pan: Vec2::ZERO, zoom: 1.0, tool: Tool::Select, selected: None, drag: None, flashes: HashMap::new(), menu: None, fit: false }
+        Self { pan: Vec2::ZERO, zoom: 1.0, tool: Tool::Select, selected: None, drag: None, flashes: HashMap::new(), menu: None, fit: false, connect_from: None }
     }
 }
 
@@ -75,6 +88,16 @@ pub(crate) fn fit_view(places: &[Pos2], size: Vec2) -> (Vec2, f32) {
     let r = Rect::from_points(places).expand(R * 3.0);
     let zoom = (size.x / r.width()).min(size.y / r.height()).clamp(0.25, 1.5);
     (r.center().to_vec2(), zoom)
+}
+
+/// Connect: a click on node `id` after one on `from`. The node to go on from,
+/// and the line to make (none for the first click; clicking the same node again stops).
+pub(crate) fn connect_click(from: Option<u64>, id: u64) -> (Option<u64>, Option<(u64, u64)>) {
+    match from {
+        None => (Some(id), None),
+        Some(a) if a == id => (None, None),
+        Some(a) => (Some(id), Some((a, id))),
+    }
 }
 
 /// Which part of a node a press at `d` (from its middle) takes: the middle
@@ -155,7 +178,7 @@ fn hash(x: u32) -> f32 {
 
 fn tool_kind(tool: Tool) -> Option<PKind> {
     match tool {
-        Tool::Select | Tool::Orb => None,
+        Tool::Select | Tool::Connect | Tool::Orb => None,
         Tool::Pulsar => Some(PKind::pulsar()),
         Tool::Gate => Some(PKind::Gate { every: 2 }),
         Tool::Chance => Some(PKind::Chance { chance: 0.5 }),
@@ -273,15 +296,21 @@ impl App {
         let full = ui.available_rect_before_wrap();
         ui.allocate_rect(full, Sense::hover());
         let bar = Rect::from_min_size(full.min, vec2(full.width(), 34.0));
-        let side = Rect::from_min_max(pos2(full.right() - SIDE_W, bar.bottom()), full.max);
-        let field = Rect::from_min_max(pos2(full.left(), bar.bottom()), pos2(side.left(), full.bottom()));
+        let field = Rect::from_min_max(pos2(full.left(), bar.bottom()), full.max);
         rect_fill(ui.painter(), bar, 0.0, PANEL2);
-        rect_fill(ui.painter(), side, 0.0, PANEL);
         let mut bui = ui.new_child(egui::UiBuilder::new().max_rect(bar.shrink2(vec2(8.0, 4.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
         self.pulsars_bar(&mut bui);
         self.pulsars_field(ui, field);
-        let mut sui = ui.new_child(egui::UiBuilder::new().max_rect(side.shrink(10.0)).layout(egui::Layout::top_down(egui::Align::Min)));
-        egui::ScrollArea::vertical().id_salt("pulsars_side").show(&mut sui, |ui| self.pulsars_side(ui));
+        // The settings of what is picked float in the field's corner; nothing picked, nothing there.
+        if self.pulsars_ui.selected.is_some() {
+            let at = pos2(field.right() - PANEL_W - 10.0, field.top() + 10.0);
+            egui::Area::new(Id::new("pulsars_panel")).order(egui::Order::Middle).fixed_pos(at).show(ui.ctx(), |ui| {
+                egui::Frame::new().fill(PANEL.gamma_multiply(0.94)).corner_radius(6.0).stroke(Stroke::new(1.0_f32, Color32::from_white_alpha(28))).inner_margin(10.0).show(ui, |ui| {
+                    ui.set_width(PANEL_W - 20.0);
+                    egui::ScrollArea::vertical().id_salt("pulsars_side").max_height(field.height() - 40.0).show(ui, |ui| self.pulsars_side(ui));
+                });
+            });
+        }
         // The field is alive: stars twinkle, pulsars turn.
         ui.ctx().request_repaint();
     }
@@ -291,6 +320,7 @@ impl App {
         ui.add_space(10.0);
         let tools = [
             (Tool::Select, "Select", "Move nodes, join them, look round the field"),
+            (Tool::Connect, "Connect", "Join nodes: click one, then the next (and the next, for a chain), or drag from one to another. Esc or the empty field stops. (Shift-drag joins with Select too.)"),
             (Tool::Pulsar, "Pulsar", "Click the field: a pulsar, which fires a pulse down its lines on the beat (or by chance, or when you click it)"),
             (Tool::Orb, "Orb", "Click the field: an orb, which plays its note (or chord, or pad) on its track when a pulse arrives"),
             (Tool::Gate, "Gate", "Lets one pulse in so many through"),
@@ -301,11 +331,12 @@ impl App {
             (Tool::Reflector, "Reflector", "Sends a pulse back the way it came"),
         ];
         for (k, (tool, name, tip)) in tools.into_iter().enumerate() {
-            if k == 1 || k == 3 {
+            if k == 2 || k == 4 {
                 ui.add_space(6.0);
             }
             if ui.selectable_label(self.pulsars_ui.tool == tool, name).on_hover_text(tip).clicked() {
                 self.pulsars_ui.tool = tool;
+                self.pulsars_ui.connect_from = None;
             }
         }
         ui.separator();
@@ -322,6 +353,7 @@ impl App {
             self.project.pulsars = Default::default();
             self.pulsars_ui.selected = None;
         }
+        ui.label(RichText::new(" ? ").strong().color(TEXT_DIM)).on_hover_text(HELP);
     }
 
     /// Deep space: a nebula and stars, further off than the field, so they move less as it does.
@@ -395,9 +427,10 @@ impl App {
         if resp.drag_started() {
             // Where it was pressed, not where the hand has got to by now.
             let pressed = ui.input(|i| i.pointer.press_origin()).map(to_world).or(world_at);
+            let joins = self.pulsars_ui.tool == Tool::Connect || ui.input(|i| i.modifiers.shift);
             if let Some(w) = pressed {
                 self.pulsars_ui.drag = Some(match node_at(w) {
-                    Some((id, d)) if takes_middle(d) => Drag::Move(id, w - place(id).unwrap_or(w)),
+                    Some((id, d)) if takes_middle(d) && !joins => Drag::Move(id, w - place(id).unwrap_or(w)),
                     Some((id, _)) => Drag::Link(id),
                     None => Drag::Pan,
                 });
@@ -421,7 +454,7 @@ impl App {
                     Some((to, _)) => self.project.pulsars.link(from, to),
                     // Into empty space: a new node there (an orb, or what the tool makes), joined.
                     None if place(from).is_some_and(|a| (a - w).length() > R * 2.5) => {
-                        let tool = if self.pulsars_ui.tool == Tool::Select { Tool::Orb } else { self.pulsars_ui.tool };
+                        let tool = if matches!(self.pulsars_ui.tool, Tool::Select | Tool::Connect) { Tool::Orb } else { self.pulsars_ui.tool };
                         if let Some(kind) = self.kind_for(tool) {
                             let to = self.new_node(kind, w);
                             self.project.pulsars.link(from, to);
@@ -437,6 +470,19 @@ impl App {
             if let Some(w) = world_at {
                 let tool = self.pulsars_ui.tool;
                 self.pulsars_ui.selected = match (node_at(w), link_at(w)) {
+                    (Some((id, _)), _) if tool == Tool::Connect => {
+                        // From this node, or from the last to this one (and on from here).
+                        let (from, link) = connect_click(self.pulsars_ui.connect_from, id);
+                        if let Some((a, b)) = link {
+                            self.project.pulsars.link(a, b);
+                        }
+                        self.pulsars_ui.connect_from = from;
+                        Some(Sel::Node(id))
+                    }
+                    (None, _) if tool == Tool::Connect => {
+                        self.pulsars_ui.connect_from = None;
+                        link_at(w).map(Sel::Link)
+                    }
                     (Some((id, _)), _) => {
                         // A pulsar fired by hand fires.
                         if matches!(set.node(id).map(|n| n.kind), Some(PKind::Pulsar { mode: 2, on: true, .. })) && self.is_playing() {
@@ -480,6 +526,12 @@ impl App {
                 ui.label(RichText::new("Right-click a node or a line").small().color(TEXT_DIM));
             }
         });
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.pulsars_ui.connect_from = None;
+        }
+        if self.pulsars_ui.connect_from.is_some_and(|id| self.project.pulsars.node(id).is_none()) {
+            self.pulsars_ui.connect_from = None;
+        }
         // Delete what is picked.
         if resp.hovered() && ui.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace)) {
             match self.pulsars_ui.selected.take() {
@@ -549,8 +601,17 @@ impl App {
             glow(&p, at, 4.0 * zoom.sqrt(), col, 0.9);
             p.circle_filled(at, r, mix(col, Color32::WHITE, 0.75));
         }
-        // A line being drawn.
-        if let (Some(Drag::Link(from)), Some(sp)) = (self.pulsars_ui.drag, pointer) {
+        // A line being drawn: dragged, or from the node Connect clicked last.
+        let drawing = match self.pulsars_ui.drag {
+            Some(Drag::Link(from)) => Some(from),
+            None if self.pulsars_ui.tool == Tool::Connect => self.pulsars_ui.connect_from,
+            _ => None,
+        };
+        if let Some(at) = self.pulsars_ui.connect_from.filter(|_| self.pulsars_ui.tool == Tool::Connect).and_then(place) {
+            let pulse = 1.35 + 0.1 * (time * 5.0).sin();
+            p.circle_stroke(to_screen(at), R * zoom * pulse, Stroke::new(2.0_f32, accent_now()));
+        }
+        if let (Some(from), Some(sp)) = (drawing, pointer) {
             if let Some(a) = place(from) {
                 let onto = world_at.and_then(node_at).is_some();
                 p.line_segment([to_screen(a), sp], Stroke::new(2.0_f32, accent_now()));
@@ -693,11 +754,12 @@ impl App {
                 p.circle_stroke(at, r * 1.4, Stroke::new(1.5_f32, Color32::WHITE));
             }
         }
-        // Where the hand is: the middle moves, the edge joins.
+        // Where the hand is: the middle moves, the edge joins (with Connect, or Shift, all of it joins).
+        let joins = self.pulsars_ui.tool == Tool::Connect || ui.input(|i| i.modifiers.shift);
         if let (Some(w), None) = (world_at, self.pulsars_ui.drag) {
             if let Some((id, d)) = node_at(w) {
                 if let Some(at) = place(id).map(to_screen) {
-                    if takes_middle(d) {
+                    if takes_middle(d) && !joins {
                         let manual = matches!(set.node(id).map(|n| n.kind), Some(PKind::Pulsar { mode: 2, .. }));
                         ui.ctx().set_cursor_icon(if manual { egui::CursorIcon::PointingHand } else { egui::CursorIcon::Grab });
                     } else {
@@ -709,7 +771,7 @@ impl App {
         }
         if set.is_empty() {
             text(&p, field.center() - vec2(0.0, 12.0), Align2::CENTER_CENTER, "Pick Pulsar or Orb above and click the field to place it.", body(), TEXT);
-            text(&p, field.center() + vec2(0.0, 12.0), Align2::CENTER_CENTER, "Drag from the edge of one node to another to join them, or start from the Example.", small(), TEXT_DIM);
+            text(&p, field.center() + vec2(0.0, 12.0), Align2::CENTER_CENTER, "Join them with Connect: click one node, then another. Or start from the Example.", small(), TEXT_DIM);
         }
     }
 
@@ -729,7 +791,11 @@ impl App {
                     self.pulsars_ui.selected = None;
                     return;
                 };
-                ui.label(RichText::new(n.kind.name()).strong().size(16.0).color(TEXT));
+                let mut close = false;
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(n.kind.name()).strong().size(16.0).color(TEXT));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| close = ui.small_button("×").on_hover_text("Close (or click the empty field)").clicked());
+                });
                 ui.add_space(6.0);
                 let dim = |ui: &mut Ui, s: &str| {
                     ui.label(RichText::new(s).small().color(TEXT_DIM));
@@ -880,6 +946,9 @@ impl App {
                 if fire {
                     self.cmd(Command::PulsarFire { node: id });
                 }
+                if close {
+                    self.pulsars_ui.selected = None;
+                }
             }
             Some(Sel::Link(k)) => {
                 let speed = self.project.pulsars.speed.max(1.0);
@@ -887,7 +956,14 @@ impl App {
                     self.pulsars_ui.selected = None;
                     return;
                 };
-                ui.label(RichText::new("Line").strong().size(16.0).color(TEXT));
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Line").strong().size(16.0).color(TEXT));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("×").clicked() {
+                            self.pulsars_ui.selected = None;
+                        }
+                    });
+                });
                 ui.label(RichText::new(format!("A pulse takes {:.2} beats down it", len / speed)).small().color(TEXT_DIM));
                 if let Some(l) = self.project.pulsars.links.get_mut(k) {
                     ui.checkbox(&mut l.one_way, "One way").on_hover_text("Pulses go one way down it only (the arrows)");
@@ -900,21 +976,7 @@ impl App {
                     self.pulsars_ui.selected = None;
                 }
             }
-            None => {
-                ui.label(RichText::new("Pulsars").strong().size(16.0).color(TEXT));
-                ui.add_space(4.0);
-                for line in [
-                    "A pulsar fires a pulse down each of its lines: on the beat, by chance, or when you click it.",
-                    "A pulse takes as long as its line is long: where things are is the rhythm.",
-                    "An orb plays its note, chord or pad on its track, and the pulse goes on down its other lines.",
-                    "Gates, chances, delays, routers, shifts and reflectors change what goes on.",
-                    "Drag a node's middle to move it, its edge to another to join them, or to empty space for a new orb. Drag the field to look round, the wheel zooms.",
-                    "Click a node or a line to set it; right-click for more.",
-                ] {
-                    ui.label(RichText::new(line).small().color(TEXT_DIM));
-                    ui.add_space(3.0);
-                }
-            }
+            None => {}
         }
     }
 }
@@ -934,6 +996,13 @@ mod tests {
         let (a, b) = (pos2(0.0, 0.0), pos2(100.0, 0.0));
         assert!((to_segment(pos2(50.0, 5.0), a, b) - 5.0).abs() < 1e-4);
         assert!((to_segment(pos2(-10.0, 0.0), a, b) - 10.0).abs() < 1e-4, "past its end: to the end");
+    }
+
+    #[test]
+    fn connect_joins_one_click_after_another() {
+        assert_eq!(connect_click(None, 1), (Some(1), None), "the first: nothing yet");
+        assert_eq!(connect_click(Some(1), 2), (Some(2), Some((1, 2))), "the next: a line, and on from there");
+        assert_eq!(connect_click(Some(2), 2), (None, None), "the same again: stop");
     }
 
     #[test]
