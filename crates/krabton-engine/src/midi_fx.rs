@@ -201,6 +201,7 @@ pub enum MidiFxKind {
     HatRolls,
     Hook,
     SlideBass,
+    Wheel,
 }
 
 const ARP_STYLES: &[&str] = &["Up", "Down", "Up Down", "Down Up", "Converge", "Diverge", "Random", "Played", "Chord"];
@@ -324,7 +325,7 @@ impl MidiFxKind {
             K::Spinner | K::Endless | K::Hands | K::Draw | K::Touch => "Played",
             K::Polymeter | K::Turing | K::Life | K::Drunk | K::Markov | K::Words | K::Sing => "Generative",
             K::Bounce | K::Orbits | K::Pong | K::Rain | K::Chaos | K::Automaton | K::Ant | K::Lorenz => "Physics & Chaos",
-            K::Fireflies | K::Sandpile | K::Pendulums | K::Flock | K::Plants => "Nature",
+            K::Fireflies | K::Sandpile | K::Pendulums | K::Flock | K::Plants | K::Wheel => "Nature",
             K::Bells | K::Canon | K::Row | K::Gears | K::Formula | K::Staircase => "Systems",
             K::Gamelan | K::Raga | K::Call => "World",
             K::Loops | K::Bloom | K::Chimes | K::DriftChords | K::Tintinnabuli | K::Pedal => "Ambient",
@@ -333,7 +334,7 @@ impl MidiFxKind {
         }
     }
 
-    pub const SEQUENCERS: [MidiFxKind; 80] = [
+    pub const SEQUENCERS: [MidiFxKind; 81] = [
         MidiFxKind::Step,
         MidiFxKind::Acid,
         MidiFxKind::Inferno,
@@ -402,6 +403,7 @@ impl MidiFxKind {
         MidiFxKind::Fireflies,
         MidiFxKind::Sandpile,
         MidiFxKind::Pendulums,
+        MidiFxKind::Wheel,
         MidiFxKind::Flock,
         MidiFxKind::Plants,
         MidiFxKind::Bells,
@@ -513,6 +515,7 @@ impl MidiFxKind {
             MidiFxKind::Fireflies => "Fireflies",
             MidiFxKind::Sandpile => "Sandpile",
             MidiFxKind::Pendulums => "Pendulums",
+            MidiFxKind::Wheel => "Wheel",
             MidiFxKind::Flock => "Flock",
             MidiFxKind::Plants => "Plants",
             MidiFxKind::Bells => "Bells",
@@ -612,6 +615,7 @@ impl MidiFxKind {
             MidiFxKind::Fireflies => "Fireflies flashing at their own pace, each pulled towards the others' rhythm: a little Coupling and they drift, more and they flash as one",
             MidiFxKind::Sandpile => "Grains dropped on a board: a cell with four topples onto its neighbours, and every wave of the avalanche plays the cells that fell",
             MidiFxKind::Pendulums => "A pendulum wave: a row of pendulums, each a little shorter, let go together; they drift through waves and chaos and meet again after the cycle",
+            MidiFxKind::Wheel => "A big wheel with a note in each car, and a rider going round it who plays every car it passes: falling from the top it rushes, climbing it hesitates, so the notes come in waves of speed. Or it swings to and fro about the bottom",
             MidiFxKind::Flock => "A flock of birds (separation, alignment, cohesion) flying over the notes: a bird crossing a line plays the note of its height",
             MidiFxKind::Plants => "A plant grown by its rules (a Lindenmayer system) and walked as a melody: F a note, + and - a step, [ ] a branch that returns",
             MidiFxKind::Bells => "Change ringing: four to eight bells in rounds, then changing order by Plain Hunt, Plain Bob, Grandsire or Stedman until they come round, with Bobs and Singles called",
@@ -713,6 +717,7 @@ impl MidiFxKind {
             MidiFxKind::Fireflies => sequencers::nature::FIREFLIES,
             MidiFxKind::Sandpile => sequencers::nature::SANDPILE,
             MidiFxKind::Pendulums => sequencers::nature::PENDULUMS,
+            MidiFxKind::Wheel => sequencers::wheel::WHEEL,
             MidiFxKind::Flock => sequencers::nature::FLOCK,
             MidiFxKind::Plants => sequencers::nature::PLANT,
             MidiFxKind::Bells => sequencers::systems::BELLS,

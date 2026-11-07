@@ -234,6 +234,7 @@ pub fn midi(kind: MidiFxKind) -> &'static [Preset] {
         K::Fireflies => FIREFLIES,
         K::Sandpile => SANDPILE,
         K::Pendulums => PENDULUMS,
+        K::Wheel => WHEEL,
         K::Flock => FLOCK,
         K::Plants => PLANTS,
         K::Bells => BELLS,
@@ -1294,6 +1295,15 @@ static SANDPILE: &[Preset] = &[
     p("Rain of Grains", &[("Spot", C("Random")), ("Drop", N(1.0)), ("Rate", C("1/16"))]),
     p("Rings", &[("Play", C("Distance")), ("Voices", N(4.0)), ("Steps", N(2.0))]),
 ];
+static WHEEL: &[Preset] = &[
+    p("Big Wheel", &[]),
+    p("Even Turn", &[("Gravity", N(0.0))]),
+    p("Heavy Fall", &[("Gravity", N(1.0)), ("Rush", N(0.7)), ("Turn", C("1 Bar"))]),
+    p("Slow Giant", &[("Turn", C("8 Bars")), ("Cars", N(16.0)), ("Gravity", N(0.8)), ("Gate", N(1.0))]),
+    p("Swing", &[("Motion", C("Swing")), ("Reach", N(0.7)), ("Gravity", N(1.0))]),
+    p("Small Swing", &[("Motion", C("Swing")), ("Reach", N(0.35)), ("Turn", C("1 Bar")), ("Cars", N(12.0))]),
+];
+
 static PENDULUMS: &[Preset] = &[
     p("Pendulum Wave", &[]),
     p("Long Cycle", &[("Cycle", C("8 Bars")), ("Pendulums", N(12.0)), ("Swings", N(12.0))]),

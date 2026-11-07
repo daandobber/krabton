@@ -39,6 +39,7 @@ pub mod sing;
 pub mod touch;
 pub mod nature;
 pub mod systems;
+pub mod wheel;
 pub mod world;
 pub mod rolls;
 pub mod home;
@@ -344,6 +345,8 @@ pub struct SeqState {
     balls_ready: bool,
     /// The last (snapped) beat each ball played, so a grid never doubles a note.
     ball_last: [f64; MAX_BALLS],
+    /// The Wheel: when each car was last played.
+    pub(crate) wheel_last: [f64; wheel::MAX_CARS],
     /// Where the next block should start; anything else is a jump (loop, locate).
     next_beat: f64,
     /// The last step played (a step on a block's edge plays once).
@@ -403,6 +406,7 @@ impl SeqState {
             balls: [(1.0, 0.0, 0.0); MAX_BALLS],
             balls_ready: false,
             ball_last: [f64::NEG_INFINITY; MAX_BALLS],
+            wheel_last: [f64::NEG_INFINITY; wheel::MAX_CARS],
             next_beat: f64::NEG_INFINITY,
             last_step: i64::MIN,
             extra: Box::default(),
@@ -439,6 +443,7 @@ impl SeqState {
         self.seeded = false;
         self.balls_ready = false;
         self.ball_last = [f64::NEG_INFINITY; MAX_BALLS];
+        self.wheel_last = [f64::NEG_INFINITY; wheel::MAX_CARS];
         self.extra.reset();
         self.ambient.restart();
         self.marbles.restart();
@@ -630,11 +635,12 @@ impl SeqState {
             // It keeps its own (jittery) clock against the song's.
             self.marbles(p, out, ctx);
         } else if ctx.playing {
-            if matches!(kind, K::Bounce | K::Orbits | K::Pong | K::Rain | K::Loops | K::Bloom | K::Chimes | K::DriftChords | K::Pedal | K::Spinner | K::Fireflies | K::Pendulums | K::Flock) {
+            if matches!(kind, K::Bounce | K::Orbits | K::Pong | K::Rain | K::Loops | K::Bloom | K::Chimes | K::DriftChords | K::Pedal | K::Spinner | K::Fireflies | K::Pendulums | K::Flock | K::Wheel) {
                 // Time-based: they keep their own time against the song's beat.
                 if (ctx.beat - self.next_beat).abs() > 1e-3 {
                     // The song jumped (a loop, a locate, a start): start over from here.
                     self.ball_last = [f64::NEG_INFINITY; MAX_BALLS];
+                    self.wheel_last = [f64::NEG_INFINITY; wheel::MAX_CARS];
                     self.balls_ready = false;
                     self.extra.rain_next = ctx.beat;
                     self.ambient.restart();
@@ -653,6 +659,7 @@ impl SeqState {
                     K::Spinner => self.spinner(p, out, ctx),
                     K::Fireflies => self.fireflies(p, out, ctx),
                     K::Pendulums => self.pendulums(p, out, ctx),
+                    K::Wheel => self.wheel(p, out, ctx),
                     K::Flock => self.flock(p, out, ctx),
                     _ => self.rain(p, out, ctx),
                 }
