@@ -951,6 +951,14 @@ impl MidiFxState {
         }
     }
 
+    /// Where a Unit Circle turns the mod wheel (None: it leaves it alone).
+    pub fn circle_out(&self) -> Option<f32> {
+        match self {
+            MidiFxState::Seq(s) => s.circle_mod,
+            _ => None,
+        }
+    }
+
     /// A Touch device's outputs (see `sequencers::touch::OUTPUTS`).
     pub fn touch_out(&self) -> Option<[f32; sequencers::touch::N_OUT]> {
         match self {

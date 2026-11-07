@@ -5,8 +5,11 @@
 //! at the bottom, as a pendulum's), or it can *Oscillate* about the bottom,
 //! θ = θ꜀ + A·sin(2πt). The pitch can come from the points, or from sin θ,
 //! cos θ or tan θ of P (of mθ, with *Harmonic* m), so the melody is the curve:
-//! a sine wave, or tan's leaps at its asymptotes. More phases put more points P
-//! on the circle, 2π/R apart. A revolution takes exactly its *Period*.
+//! a sine wave, or tan's leaps at its asymptotes; sec θ, csc θ and cot θ too.
+//! The functions can also set how long the notes are, which octave, and turn
+//! the track's mod wheel (CC 1) as P goes round, so cos θ can sweep a filter
+//! while sin θ plays the tune. More phases put more points P on the circle,
+//! 2π/R apart. A revolution takes exactly its *Period*.
 
 use super::minimal::{hash, DYNAMICS};
 use super::nature::frame_of;
@@ -36,13 +39,22 @@ pub const CLIMB_TURNS: usize = 17;
 pub const FIRST_POINT: usize = 18;
 pub const MAX_POINTS: usize = 16;
 pub const MAX_PHASES: usize = 4;
+pub const GATE_FROM: usize = 42;
+pub const OCTAVE_FROM: usize = 43;
+pub const MOD_FROM: usize = 44;
 
 pub const PERIODS: &[&str] = &["1/4 Beat", "1/2 Beat", "1 Beat", "2 Beats", "1 Bar", "2 Bars", "4 Bars", "8 Bars", "16 Bars"];
 const PERIOD_BEATS: [f64; 9] = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0];
 pub const MOTIONS: &[&str] = &["Rotate", "Oscillate"];
 /// What sets a note's pitch: the point's note, or a function of θ.
-pub const PITCHES: &[&str] = &["Points", "sin θ", "cos θ", "tan θ"];
-pub const VELOCITIES: &[&str] = &["Fixed", "Speed ω", "|sin θ|", "|cos θ|", "|tan θ|"];
+pub const PITCHES: &[&str] = &["Points", "sin θ", "cos θ", "tan θ", "sec θ", "csc θ", "cot θ"];
+pub const VELOCITIES: &[&str] = &["Fixed", "Speed ω", "|sin θ|", "|cos θ|", "|tan θ|", "|sec θ|", "|csc θ|", "|cot θ|"];
+/// What sets a note's length, its octave, the mod wheel.
+pub const GATES: &[&str] = &["Fixed", "Speed ω", "|sin θ|", "|cos θ|", "|tan θ|", "|sec θ|", "|csc θ|", "|cot θ|"];
+pub const OCTAVES: &[&str] = &["Off", "sin θ", "cos θ", "tan θ", "sec θ", "csc θ", "cot θ"];
+pub const MODS: &[&str] = &["Off", "sin θ", "cos θ", "tan θ", "sec θ", "csc θ", "cot θ", "Speed ω"];
+/// The functions, numbered from 1 as in `value`.
+pub const FUNCTIONS: [&str; 6] = ["sin", "cos", "tan", "sec", "csc", "cot"];
 
 const fn point(name: &'static str, note: f32) -> ParamSpec {
     ParamSpec::int(name, "Points", 0.0, 15.0, note, Unit::None)
@@ -93,6 +105,9 @@ pub static CIRCLE: &[ParamSpec] = &[
     DYNAMICS[3],
     ParamSpec::toggle("Band", "Band", false),
     ParamSpec::choice("Follow", "Band", crate::band::FOLLOWS, 0),
+    ParamSpec::choice("Gate From", "Function", GATES, 0),
+    ParamSpec::choice("Octave From", "Function", OCTAVES, 0),
+    ParamSpec::choice("Mod From", "Function", MODS, 0),
 ];
 
 /// N, the points on the circle.
@@ -195,16 +210,68 @@ pub fn speed_at(p: &[f32], theta: f64) -> f64 {
 
 /// tan θ kept in sight: its leaps cut off at ±2.
 pub fn tan_clipped(theta: f64) -> f64 {
-    theta.tan().clamp(-2.0, 2.0)
+    clipped(theta.tan())
 }
 
-/// A function of θ (0: none, 1 sin, 2 cos, 3 tan), from −1 to 1.
-pub fn function(which: usize, theta: f64) -> f64 {
+/// A value that runs off to infinity, cut off at ±2.
+pub fn clipped(v: f64) -> f64 {
+    if v.is_finite() {
+        v.clamp(-2.0, 2.0)
+    } else {
+        2.0
+    }
+}
+
+/// A function of θ as it is (1 sin, 2 cos, 3 tan, 4 sec, 5 csc, 6 cot), cut off at ±2.
+pub fn value(which: usize, theta: f64) -> f64 {
     match which {
         1 => theta.sin(),
         2 => theta.cos(),
-        3 => tan_clipped(theta) / 2.0,
+        3 => clipped(theta.tan()),
+        4 => clipped(1.0 / theta.cos()),
+        5 => clipped(1.0 / theta.sin()),
+        6 => clipped(theta.cos() / theta.sin()),
         _ => 0.0,
+    }
+}
+
+/// A function of θ (0: none, then as `value`) from −1 to 1.
+pub fn function(which: usize, theta: f64) -> f64 {
+    match which {
+        1 | 2 => value(which, theta),
+        3..=6 => value(which, theta) / 2.0,
+        _ => 0.0,
+    }
+}
+
+/// A choice param's value as an index into its list.
+fn choice(p: &[f32], param: usize, len: usize) -> usize {
+    (p.get(param).copied().unwrap_or(0.0).round().max(0.0) as usize).min(len - 1)
+}
+
+/// How long a pass plays, as a share of the gate.
+pub fn pass_gate(p: &[f32], theta: f64) -> f64 {
+    match choice(p, GATE_FROM, GATES.len()) {
+        0 => 1.0,
+        1 => 0.1 + 0.9 * speed_at(p, theta),
+        w => 0.1 + 0.9 * function(w - 1, theta).abs(),
+    }
+}
+
+/// Octaves up or down a pass goes (−1..1).
+pub fn pass_octave(p: &[f32], theta: f64) -> i32 {
+    match choice(p, OCTAVE_FROM, OCTAVES.len()) {
+        0 => 0,
+        w => function(w, theta).round() as i32,
+    }
+}
+
+/// Where the mod wheel is (0..1) with P at θ; None: it is left alone.
+pub fn mod_wheel(p: &[f32], theta: f64) -> Option<f32> {
+    match choice(p, MOD_FROM, MODS.len()) {
+        0 => None,
+        7 => Some(speed_at(p, theta) as f32),
+        w => Some(((function(w, theta) + 1.0) * 0.5) as f32),
     }
 }
 
@@ -268,10 +335,8 @@ pub fn pass_step(p: &[f32], k: usize, theta: f64, revolution: i64) -> Option<i32
 pub fn pass_level(p: &[f32], theta: f64) -> f64 {
     match (p[VEL_FROM].round().max(0.0) as usize).min(VELOCITIES.len() - 1) {
         1 => 0.35 + 0.65 * speed_at(p, theta),
-        2 => 0.2 + 0.8 * theta.sin().abs(),
-        3 => 0.2 + 0.8 * theta.cos().abs(),
-        4 => 0.2 + 0.8 * (theta.tan().abs() / 2.0).min(1.0),
-        _ => 1.0,
+        0 => 1.0,
+        w => 0.2 + 0.8 * function(w - 1, theta).abs(),
     }
 }
 
@@ -339,12 +404,16 @@ impl SeqState {
                 let theta = theta_at_beat(p, beat);
                 let Some(step) = pass_step(p, k, theta, revolution) else { continue };
                 let vel = p[VELOCITY] * pass_level(p, theta) as f32;
-                let pitch = ctx.scale.pitch_at(home + step);
-                self.play(ctx, frame_of(ctx, beat), pitch, vel, p[GATE] as f64 * ctx.samples_per_beat, out);
+                let octave = pass_octave(p, theta) * ctx.scale.len().max(1) as i32;
+                let pitch = ctx.scale.pitch_at(home + step + octave);
+                let gate = p[GATE] as f64 * pass_gate(p, theta);
+                self.play(ctx, frame_of(ctx, beat), pitch, vel, gate * ctx.samples_per_beat, out);
             }
         }
         // For the editor: where in its revolution P is.
         self.visual[1] = ((b1 / period).rem_euclid(1.0) * 65535.0) as u64;
+        // The mod wheel, as P is now.
+        self.circle_mod = mod_wheel(p, theta_at_beat(p, b1));
     }
 }
 
@@ -461,6 +530,56 @@ mod tests {
         assert_eq!(pass_step(&p, 0, FRAC_PI_2 / 2.0, 0), Some(4), "sin 2θ");
         p[FIRST_POINT] = 0.0;
         assert_eq!(pass_step(&p, 0, 0.0, 0), None, "a rest stays a rest");
+    }
+
+    #[test]
+    fn sec_csc_and_cot_are_what_they_are_and_cut_off_at_their_asymptotes() {
+        assert!((value(4, 0.0) - 1.0).abs() < 1e-9, "sec 0 = 1");
+        assert!((value(5, FRAC_PI_2) - 1.0).abs() < 1e-9, "csc π/2 = 1");
+        assert!((value(6, PI / 4.0) - 1.0).abs() < 1e-9, "cot π/4 = 1");
+        assert_eq!(value(4, FRAC_PI_2), 2.0, "sec at π/2 runs off: cut");
+        assert_eq!(value(6, 0.0), 2.0);
+        let mut p = circle();
+        p[PITCH] = 4.0;
+        p[RANGE] = 8.0;
+        assert_eq!(pass_step(&p, 0, 0.0, 0), Some(2), "sec 0 = 1 is half its range of ±2");
+    }
+
+    #[test]
+    fn the_functions_set_length_octave_and_the_mod_wheel() {
+        let mut p = circle();
+        assert_eq!(pass_gate(&p, 1.0), 1.0, "fixed");
+        p[GATE_FROM] = 2.0;
+        assert!((pass_gate(&p, FRAC_PI_2) - 1.0).abs() < 1e-9, "|sin π/2|");
+        assert!((pass_gate(&p, 0.0) - 0.1).abs() < 1e-9);
+        assert_eq!(pass_octave(&p, 0.0), 0);
+        p[OCTAVE_FROM] = 2.0;
+        assert_eq!(pass_octave(&p, 0.0), 1, "cos 0");
+        assert_eq!(pass_octave(&p, PI), -1);
+        assert_eq!(mod_wheel(&p, 0.0), None);
+        p[MOD_FROM] = 2.0;
+        assert_eq!(mod_wheel(&p, 0.0), Some(1.0), "cos 0 = 1: all the way up");
+        assert_eq!(mod_wheel(&p, PI), Some(0.0));
+    }
+
+    #[test]
+    fn it_turns_the_mod_wheel_as_it_goes() {
+        use crate::midi_fx::{MidiCtx, MidiFxState};
+        let mut p = circle();
+        p[MOD_FROM] = 1.0;
+        p[PERIOD] = 4.0;
+        let spb = 24000.0;
+        let mut st = MidiFxState::new(MidiFxKind::Circle);
+        let mut seen = Vec::new();
+        for b in 0..(4.0 * spb / 256.0) as u64 {
+            let now = b * 256;
+            let ctx = MidiCtx { now, len: 256, samples_per_beat: spb, scale: Scale::new(0, ScaleKind::Major), scale_on: true, beat: now as f64 / spb, playing: true, sr: 48000.0, drum_notes: 0, lead: 0.0, touch: [0.0; 5], band: Default::default() };
+            let mut out = Vec::new();
+            st.process(MidiFxKind::Circle, &p, &[], &[], &mut out, &ctx);
+            seen.push(st.circle_out().unwrap());
+        }
+        let (lo, hi) = seen.iter().fold((1.0f32, 0.0f32), |m, v| (m.0.min(*v), m.1.max(*v)));
+        assert!(lo < 0.05 && hi > 0.95, "{lo} {hi}");
     }
 
     #[test]

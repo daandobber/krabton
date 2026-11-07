@@ -347,6 +347,8 @@ pub struct SeqState {
     ball_last: [f64; MAX_BALLS],
     /// The Unit Circle: when each point was last played, by phase.
     pub(crate) circle_last: [f64; circle::MAX_POINTS * circle::MAX_PHASES],
+    /// The Unit Circle's mod wheel, if it turns it.
+    pub(crate) circle_mod: Option<f32>,
     /// Where the next block should start; anything else is a jump (loop, locate).
     next_beat: f64,
     /// The last step played (a step on a block's edge plays once).
@@ -407,6 +409,7 @@ impl SeqState {
             balls_ready: false,
             ball_last: [f64::NEG_INFINITY; MAX_BALLS],
             circle_last: [f64::NEG_INFINITY; circle::MAX_POINTS * circle::MAX_PHASES],
+            circle_mod: None,
             next_beat: f64::NEG_INFINITY,
             last_step: i64::MIN,
             extra: Box::default(),

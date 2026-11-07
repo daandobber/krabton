@@ -2627,6 +2627,11 @@ impl Engine {
                             touched = true;
                         }
                     }
+                    if dev.kind == crate::midi_fx::MidiFxKind::Circle {
+                        if let Some(w) = st.circle_out() {
+                            signal.modwheel = w;
+                        }
+                    }
                     if dev.kind == crate::midi_fx::MidiFxKind::Inferno && !fired {
                         if let Some((wheel, b)) = st.inferno_out(params) {
                             if let Some(w) = wheel {
