@@ -67,10 +67,21 @@ pub(crate) fn region_of(whole: &SampleRef, start: f64, length: f64) -> SampleReg
     SampleRegion { start: a, end: b, fade_in: 0, fade_out: (rate * 0.005) as u32 }
 }
 
-/// Where in the film the screen is, a while after the strike: it holds the
-/// pad's last picture once its sound has ended.
-pub(crate) fn film_time(start: f64, length: f64, since: f64) -> f64 {
-    start + since.clamp(0.0, length.max(0.0))
+/// How much of its film a pad has played, a while after the strike: at its
+/// tune's speed (an octave up, twice as fast), as its sound does.
+pub(crate) fn played(pad: &DrumPad, since: f64) -> f64 {
+    since.max(0.0) * 2f64.powf(pad.tune as f64 / 12.0)
+}
+
+/// Where in the film the screen is: as far along as the sound, backwards when
+/// the pad is reversed; it holds the pad's last picture once its sound has ended.
+pub(crate) fn film_time(start: f64, length: f64, played: f64, reverse: bool) -> f64 {
+    let p = played.clamp(0.0, length.max(0.0));
+    if reverse {
+        start + length - p
+    } else {
+        start + p
+    }
 }
 
 /// The pads in the order of their notes (C1 first), as the grid shows them.
@@ -187,7 +198,7 @@ impl App {
             let Some(&(pad, strikes, at)) = self.video_rack.struck.get(&t.id) else { continue };
             let Some(p) = pads.get(pad).filter(|_| strikes > 0) else { continue };
             if let (Some(_), Some(s)) = (film_of(p), &p.sample) {
-                struck.push((t.id, pad, at.elapsed().as_secs_f64(), pad_cut(s).1));
+                struck.push((t.id, pad, played(p, at.elapsed().as_secs_f64()), pad_cut(s).1));
             }
         }
         let (track, pad, since) = latest_strike(&struck)?;
@@ -196,8 +207,9 @@ impl App {
         let p = pads.get(pad)?;
         let path = film_of(p)?.to_path_buf();
         let (start, length) = pad_cut(p.sample.as_ref()?);
+        let reverse = p.reverse;
         let media = self.rack_media(&path)?;
-        Some((media, film_time(start, length, since)))
+        Some((media, film_time(start, length, since, reverse)))
     }
 
     /// The rack's screen in the device, its buttons over it, and the pad
@@ -232,7 +244,9 @@ impl App {
             match pads.get(showing).and_then(|p| Some((film_of(p)?.to_path_buf(), p.sample.clone()?))) {
                 Some((path, s)) => {
                     let (start, length) = pad_cut(&s);
-                    let t = if showing == shown_pad && strikes > 0 { film_time(start, length, since) } else { start };
+                    let along = pads.get(showing).map_or(since, |p| played(p, since));
+                    let reverse = pads.get(showing).is_some_and(|p| p.reverse);
+                    let t = if showing == shown_pad && strikes > 0 { film_time(start, length, along, reverse) } else if reverse { start + length } else { start };
                     if let Some(media) = self.rack_media(&path) {
                         if let Some(index) = media.frame_at(t) {
                             let stale = self.video_rack.screen.get(&track).is_none_or(|(_, p, k)| *p != path || *k != index);
@@ -248,7 +262,7 @@ impl App {
                             let r = Rect::from_center_size(screen.center(), size * scale);
                             ui.painter().image(tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
                         }
-                        if !media.is_done() || (showing == shown_pad && since < length + 0.2) {
+                        if !media.is_done() || (showing == shown_pad && along < length + 0.2) {
                             ui.ctx().request_repaint();
                         }
                     }
@@ -352,9 +366,16 @@ mod tests {
 
     #[test]
     fn the_screen_runs_with_the_sound_and_holds_its_last_picture() {
-        assert_eq!(film_time(2.0, 1.0, 0.25), 2.25);
-        assert_eq!(film_time(2.0, 1.0, 5.0), 3.0);
-        assert_eq!(film_time(2.0, 1.0, -1.0), 2.0);
+        assert_eq!(film_time(2.0, 1.0, 0.25, false), 2.25);
+        assert_eq!(film_time(2.0, 1.0, 5.0, false), 3.0);
+        assert_eq!(film_time(2.0, 1.0, -1.0, false), 2.0);
+        assert_eq!(film_time(2.0, 1.0, 0.25, true), 2.75, "reversed: from its end");
+        // Tuned an octave up it runs twice as fast, an octave down half.
+        let mut pad = krabton_engine::dsp::drums::video_kit().remove(0);
+        pad.tune = 12.0;
+        assert!((played(&pad, 0.5) - 1.0).abs() < 1e-9);
+        pad.tune = -12.0;
+        assert!((played(&pad, 0.5) - 0.25).abs() < 1e-9);
     }
 
     #[test]

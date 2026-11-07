@@ -381,6 +381,8 @@ pub enum Command {
     ModWheel { track: u64, value: f32 },
     /// Clicks for so many beats, then the song starts.
     CountIn { beats: f64 },
+    /// A pulsar of the Pulsars fires now (by its id).
+    PulsarFire { node: u64 },
     /// The Map slides to where the project now has it, over this long.
     MapGlide { seconds: f32 },
     /// How hard a pad is pressed after the hit, for the track's Pressure modulators.
@@ -1746,6 +1748,7 @@ impl Engine {
                 }
             }
             Command::MapGlide { seconds } => self.map_glide = seconds.max(0.0),
+            Command::PulsarFire { node } => self.pulsar.fire(node),
             Command::CountIn { beats } => {
                 if !self.playing {
                     self.count_in = beats.max(0.0);
@@ -4752,8 +4755,8 @@ mod tests {
             tr.mixer.mute = k != t;
         }
         let mut set = PulsarSet { speed: 1000.0, ..Default::default() };
-        set.nodes.push(PNode { id: 1, x: 0.0, y: 0.0, kind: PKind::Pulsar { rate: 3, on: true } });
-        set.nodes.push(PNode { id: 2, x: 100.0, y: 0.0, kind: PKind::Orb { track: Some(id), degree: 0, octave: -1, velocity: 1.0, length: 0.5 } });
+        set.nodes.push(PNode { id: 1, x: 0.0, y: 0.0, kind: PKind::pulsar() });
+        set.nodes.push(PNode { id: 2, x: 100.0, y: 0.0, kind: PKind::Orb { track: Some(id), degree: 0, octave: -1, velocity: 1.0, length: 0.5, chord: 0, note: None } });
         set.link(1, 2);
         p.pulsars = set;
         let (mut e, h) = Engine::new(48000.0, Arc::new(p));

@@ -3257,7 +3257,8 @@ impl App {
                                     let mut vals = vec![pad.level_db, pad.tune, pad.decay, pad.tone, pad.pan, pad.vel_level, pad.vel_tone, pad.vel_decay];
                                     vals.extend(macros.iter().zip([pad.a, pad.b]).filter(|(m, _)| m.is_some()).map(|(_, v)| v));
                                     // On a machine's face its columns have the first four.
-                                    let skip = if crate::skin::current().is_some() { 4 } else { 0 };
+                                    // (Not a Video Rack: it has no columns.)
+                                    let skip = if crate::skin::current().is_some() && engine != drums::DrumEngine::Video { 4 } else { 0 };
                                     if param_grid(ui, Id::new(("pad_params", track_id, k)), &specs[skip..], &mut vals[skip..], accent_now(), (h - 80.0 - wave_h).max(60.0)) {
                                         pad.level_db = vals[0];
                                         pad.tune = vals[1];

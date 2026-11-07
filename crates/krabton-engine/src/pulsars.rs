@@ -1,11 +1,13 @@
 //! Pulsars: a field of nodes joined by lines. A pulsar fires a pulse down each
-//! of its lines on the beat (every so many beats); a pulse takes as long to
-//! travel a line as the line is long (the field's *speed*, in pixels a beat),
-//! so where things are placed is the rhythm. A pulse arriving at an orb plays
-//! the orb's note on its track, and goes on down the orb's other lines; a
-//! gate lets every so many through, a chance some, a reflector sends it back
-//! the way it came. A node hears a pulse once, so a ring of orbs does not ring
-//! for ever, and a pulse dies after so many lines.
+//! of its lines (on the beat, by chance, or when clicked); a pulse takes as
+//! long to travel a line as the line is long (the field's *speed*, in pixels a
+//! beat), so where things are placed is the rhythm. A pulse arriving at an orb
+//! plays the orb's note (or chord) on its track and goes on down the orb's
+//! other lines; a gate lets every so many through, a chance some, a reflector
+//! sends it back the way it came, a delay holds it a while, a router sends each
+//! pulse down the next of its lines in turn, a shift moves the notes it will
+//! play up or down the key. A node hears a pulse once, so a ring of orbs does
+//! not ring for ever, and a pulse dies after so many lines.
 //!
 //! The project holds the field (`PulsarSet`); the engine runs it (`PulsarRt`)
 //! sample-true, in the session's time, and the notes go to the tracks as
@@ -16,8 +18,12 @@ use crate::scale::Scale;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-/// How often a pulsar fires: (name, beats).
+/// How often a pulsar fires, how long a delay holds, how long a note is: (name, beats).
 pub const RATES: [(&str, f64); 8] = [("1/16", 0.25), ("1/8", 0.5), ("1/8 D", 0.75), ("1/4", 1.0), ("1/4 D", 1.5), ("1/2", 2.0), ("1 Bar", 4.0), ("2 Bars", 8.0)];
+/// How a pulsar fires.
+pub const MODES: [&str; 3] = ["Steady", "Random", "Manual"];
+/// What an orb plays: one note, or a chord on it (steps of the key).
+pub const CHORDS: [(&str, &[i32]); 4] = [("One Note", &[0]), ("Fifth", &[0, 4]), ("Triad", &[0, 2, 4]), ("Seventh", &[0, 2, 4, 6])];
 /// Lines a pulse travels before it dies.
 pub const MAX_HOPS: u8 = 24;
 /// What the field can hold, and how many pulses can be under way.
@@ -37,6 +43,10 @@ pub struct PulsarSet {
 
 fn default_speed() -> f32 {
     160.0
+}
+
+fn one() -> f32 {
+    1.0
 }
 
 impl Default for PulsarSet {
@@ -91,16 +101,44 @@ pub struct PNode {
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum PKind {
-    /// Fires a pulse down each of its lines, every `rate` (see `RATES`).
-    Pulsar { rate: u8, on: bool },
-    /// Plays a note on a track: so many steps of the song's key from C3, in octave `octave`.
-    Orb { track: Option<u64>, degree: i32, octave: i32, velocity: f32, length: f32 },
+    /// Fires a pulse down each of its lines: every `rate` (see `RATES`), or
+    /// then by `chance` (Random), or when clicked (Manual); its pulses play
+    /// as hard as `strength` says.
+    Pulsar {
+        rate: u8,
+        on: bool,
+        #[serde(default)]
+        mode: u8,
+        #[serde(default = "one")]
+        chance: f32,
+        #[serde(default = "one")]
+        strength: f32,
+    },
+    /// Plays a note (or a chord on it, see `CHORDS`) on a track: so many steps
+    /// of the song's key from C3, in octave `octave`; or a fixed note (a drum).
+    Orb {
+        track: Option<u64>,
+        degree: i32,
+        octave: i32,
+        velocity: f32,
+        length: f32,
+        #[serde(default)]
+        chord: u8,
+        #[serde(default)]
+        note: Option<u8>,
+    },
     /// Lets one pulse in `every` through.
     Gate { every: u8 },
     /// Lets a pulse through so often (0..1).
     Chance { chance: f32 },
     /// Sends a pulse back the way it came.
     Reflector,
+    /// Holds a pulse so long (see `RATES`) before it goes on.
+    Delay { wait: u8 },
+    /// Sends each pulse down the next of its lines in turn.
+    Router,
+    /// The notes a pulse plays from here on are so many steps of the key higher.
+    Shift { steps: i8 },
 }
 
 impl PKind {
@@ -111,7 +149,20 @@ impl PKind {
             PKind::Gate { .. } => "Gate",
             PKind::Chance { .. } => "Chance",
             PKind::Reflector => "Reflector",
+            PKind::Delay { .. } => "Delay",
+            PKind::Router => "Router",
+            PKind::Shift { .. } => "Shift",
         }
+    }
+
+    /// A pulsar as it is placed.
+    pub fn pulsar() -> Self {
+        PKind::Pulsar { rate: 3, on: true, mode: 0, chance: 1.0, strength: 1.0 }
+    }
+
+    /// An orb as it is placed.
+    pub fn orb(track: Option<u64>, degree: i32) -> Self {
+        PKind::Orb { track, degree, octave: 0, velocity: 0.8, length: 0.25, chord: 0, note: None }
     }
 }
 
@@ -130,7 +181,20 @@ pub fn orb_pitch(scale: &Scale, degree: i32, octave: i32) -> u8 {
     scale.pitch_at(home + degree).clamp(0, 127) as u8
 }
 
-/// A pulse under way: down which line, from which end, since when, until when.
+/// The notes an orb plays with a pulse that is `shift` steps up the key.
+pub fn orb_notes(scale: &Scale, kind: &PKind, shift: i32) -> Vec<u8> {
+    match *kind {
+        PKind::Orb { note: Some(n), .. } => vec![n],
+        PKind::Orb { degree, octave, chord, .. } => {
+            let steps = CHORDS[(chord as usize).min(CHORDS.len() - 1)].1;
+            steps.iter().map(|s| orb_pitch(scale, degree + shift + s, octave)).collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// A pulse under way: down which line, from which end, since when, until
+/// when; what it carries (its shift up the key, how hard, which pulsar).
 #[derive(Clone, Copy, Debug)]
 pub struct Flight {
     pub line: usize,
@@ -138,8 +202,18 @@ pub struct Flight {
     pub from_a: bool,
     pub start: f64,
     pub arrive: f64,
+    pub carry: Carry,
+}
+
+/// What a pulse carries from node to node.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Carry {
     pub pulse: u64,
     pub hops: u8,
+    pub shift: i32,
+    pub strength: f32,
+    /// The pulsar it came from (its place), for its colour.
+    pub origin: u8,
 }
 
 /// A line resolved to node places: (a, b, length, one way).
@@ -151,18 +225,20 @@ struct Line {
     one_way: bool,
 }
 
-/// Where a note goes: the track (by id), how far into the block, the event.
+/// Where a note goes: the track (by id), the event.
 pub type Out = (u64, MidiEvent);
 
 /// The field running in the engine.
 pub struct PulsarRt {
     lines: Vec<Line>,
-    /// Each node's last pulse heard, and a gate's count.
+    /// Each node's last pulse heard, and a gate's or router's count.
     heard: Vec<u64>,
     counts: Vec<u32>,
     flights: Vec<Flight>,
     /// Notes to end: (beat, track, pitch).
     offs: Vec<(f64, u64, u8)>,
+    /// Pulsars clicked: they fire at the start of the next block.
+    fire: Vec<u64>,
     next_pulse: u64,
     rng: u32,
     /// Nodes struck since the editor last looked (a bit each).
@@ -177,6 +253,7 @@ impl Default for PulsarRt {
             counts: vec![0; MAX_NODES],
             flights: Vec::with_capacity(MAX_FLIGHTS),
             offs: Vec::with_capacity(512),
+            fire: Vec::with_capacity(16),
             next_pulse: 1,
             rng: 0x9E37_79B9,
             struck: [0; MAX_NODES / 64],
@@ -205,9 +282,22 @@ impl PulsarRt {
         &self.flights
     }
 
+    /// A pulsar clicked fires.
+    pub fn fire(&mut self, node: u64) {
+        if self.fire.len() < self.fire.capacity() {
+            self.fire.push(node);
+        }
+    }
+
+    /// Whether anything is still under way or sounding.
+    pub fn busy(&self) -> bool {
+        !self.flights.is_empty() || !self.offs.is_empty()
+    }
+
     /// Everything stops: the notes end now.
     pub fn stop(&mut self, out: &mut impl FnMut(Out)) {
         self.flights.clear();
+        self.fire.clear();
         for (_, track, pitch) in self.offs.drain(..) {
             out((track, MidiEvent::off(0, pitch)));
         }
@@ -222,25 +312,51 @@ impl PulsarRt {
         (x >> 8) as f32 / 16_777_216.0
     }
 
-    /// Sends a pulse from node `from` down its lines (`except` the one it came by).
-    fn send(&mut self, from: usize, except: Option<usize>, at: f64, pulse: u64, hops: u8, speed: f64) {
-        if hops == 0 {
+    /// The lines a pulse at node `from` can leave by (`except` the one it came by).
+    fn ways_out(&self, from: usize, except: Option<usize>) -> impl Iterator<Item = (usize, bool)> + '_ {
+        self.lines.iter().enumerate().filter_map(move |(k, line)| {
+            if Some(k) == except {
+                None
+            } else if line.a == from {
+                Some((k, true))
+            } else if line.b == from && !line.one_way {
+                Some((k, false))
+            } else {
+                None
+            }
+        })
+    }
+
+    fn launch(&mut self, line: usize, from_a: bool, at: f64, carry: Carry, speed: f64) {
+        if self.flights.len() >= self.flights.capacity() || carry.hops == 0 {
             return;
         }
-        for (k, line) in self.lines.iter().enumerate() {
-            if Some(k) == except || self.flights.len() >= self.flights.capacity() {
-                continue;
+        let travel = (self.lines[line].len / speed.max(1.0)).max(1e-4);
+        self.flights.push(Flight { line, from_a, start: at, arrive: at + travel, carry: Carry { hops: carry.hops - 1, ..carry } });
+    }
+
+    /// Sends a pulse from node `from` down all its lines (`except` the one it came by).
+    fn send(&mut self, from: usize, except: Option<usize>, at: f64, carry: Carry, speed: f64) {
+        let mut ways = [(0usize, false); 64];
+        let mut n = 0;
+        for w in self.ways_out(from, except) {
+            if n < ways.len() {
+                ways[n] = w;
+                n += 1;
             }
-            let from_a = if line.a == from {
-                true
-            } else if line.b == from && !line.one_way {
-                false
-            } else {
-                continue;
-            };
-            let travel = (line.len / speed.max(1.0)).max(1e-4);
-            self.flights.push(Flight { line: k, from_a, start: at, arrive: at + travel, pulse, hops: hops - 1 });
         }
+        for &(k, from_a) in &ways[..n] {
+            self.launch(k, from_a, at, carry, speed);
+        }
+    }
+
+    fn fire_pulsar(&mut self, i: usize, at: f64, strength: f32, speed: f64) {
+        let pulse = self.next_pulse;
+        self.next_pulse += 1;
+        self.heard[i] = pulse;
+        self.struck[i / 64] |= 1 << (i % 64);
+        let carry = Carry { pulse, hops: MAX_HOPS, shift: 0, strength, origin: i.min(255) as u8 };
+        self.send(i, None, at, carry, speed);
     }
 
     /// Runs the field from beat `b0` to `b1` (the session's), `spb` frames a
@@ -248,18 +364,27 @@ impl PulsarRt {
     pub fn run(&mut self, set: &PulsarSet, scale: &Scale, b0: f64, b1: f64, spb: f64, frames: usize, out: &mut impl FnMut(Out)) {
         let speed = set.speed.max(1.0) as f64;
         let offset = |beat: f64| (((beat - b0) * spb).max(0.0) as usize).min(frames.saturating_sub(1)) as u32;
-        // The pulsars fire.
+        // Pulsars clicked.
+        let clicked: Vec<u64> = self.fire.drain(..).collect();
+        for id in clicked {
+            if let Some((i, n)) = set.nodes.iter().enumerate().take(MAX_NODES).find(|(_, n)| n.id == id) {
+                if let PKind::Pulsar { strength, .. } = n.kind {
+                    self.fire_pulsar(i, b0, strength, speed);
+                }
+            }
+        }
+        // The pulsars fire on their beats (by chance, for a random one).
         for (i, n) in set.nodes.iter().enumerate().take(MAX_NODES) {
-            if let PKind::Pulsar { rate, on: true } = n.kind {
+            if let PKind::Pulsar { rate, on: true, mode, chance, strength } = n.kind {
+                if mode == 2 {
+                    continue;
+                }
                 let every = RATES[(rate as usize).min(RATES.len() - 1)].1;
                 let mut k = (b0 / every - 1e-9).ceil();
                 while k * every < b1 {
-                    let at = k * every;
-                    let pulse = self.next_pulse;
-                    self.next_pulse += 1;
-                    self.heard[i] = pulse;
-                    self.struck[i / 64] |= 1 << (i % 64);
-                    self.send(i, None, at, pulse, MAX_HOPS, speed);
+                    if mode == 0 || self.random() < chance {
+                        self.fire_pulsar(i, k * every, strength, speed);
+                    }
                     k += 1.0;
                 }
             }
@@ -272,47 +397,72 @@ impl PulsarRt {
             let to = if f.from_a { line.b } else { line.a };
             let Some(node) = set.nodes.get(to) else { continue };
             let reflector = matches!(node.kind, PKind::Reflector);
-            if self.heard[to] == f.pulse && !reflector {
+            if self.heard[to] == f.carry.pulse && !reflector {
                 continue;
             }
-            self.heard[to] = f.pulse;
+            self.heard[to] = f.carry.pulse;
             self.struck[to / 64] |= 1 << (to % 64);
             let at = f.arrive;
-            let goes_on = match node.kind {
-                PKind::Orb { track, degree, octave, velocity, length } => {
+            let mut carry = f.carry;
+            match node.kind {
+                PKind::Orb { track, velocity, length, .. } => {
                     if let Some(track) = track {
-                        let pitch = orb_pitch(scale, degree, octave);
-                        out((track, MidiEvent::on(offset(at), pitch, velocity.clamp(0.01, 1.0))));
-                        if self.offs.len() < self.offs.capacity() {
-                            self.offs.push((at + length.max(0.01) as f64, track, pitch));
+                        let vel = (velocity * carry.strength).clamp(0.01, 1.0);
+                        for pitch in orb_notes(scale, &node.kind, carry.shift) {
+                            out((track, MidiEvent::on(offset(at), pitch, vel)));
+                            if self.offs.len() < self.offs.capacity() {
+                                self.offs.push((at + length.max(0.01) as f64, track, pitch));
+                            }
                         }
                     }
-                    true
+                    self.send(to, Some(f.line), at, carry, speed);
                 }
-                PKind::Pulsar { .. } => true,
+                PKind::Pulsar { .. } => self.send(to, Some(f.line), at, carry, speed),
                 PKind::Gate { every } => {
                     self.counts[to] += 1;
-                    let open = self.counts[to] >= every.max(1) as u32;
-                    if open {
+                    if self.counts[to] >= every.max(1) as u32 {
                         self.counts[to] = 0;
+                        self.send(to, Some(f.line), at, carry, speed);
                     }
-                    open
                 }
-                PKind::Chance { chance } => self.random() < chance,
+                PKind::Chance { chance } => {
+                    if self.random() < chance {
+                        self.send(to, Some(f.line), at, carry, speed);
+                    }
+                }
                 PKind::Reflector => {
                     // Back down the line it came by, the way it came: a new
                     // pulse, so what it passed on the way plays again.
-                    if f.hops > 0 && self.flights.len() < self.flights.capacity() && !line.one_way {
+                    if !line.one_way {
                         let pulse = self.next_pulse;
                         self.next_pulse += 1;
                         self.heard[to] = pulse;
-                        self.flights.push(Flight { line: f.line, from_a: !f.from_a, start: at, arrive: at + (line.len / speed).max(1e-4), pulse, hops: f.hops - 1 });
+                        self.launch(f.line, !f.from_a, at, Carry { pulse, ..carry }, speed);
                     }
-                    false
                 }
-            };
-            if goes_on {
-                self.send(to, Some(f.line), at, f.pulse, f.hops, speed);
+                PKind::Delay { wait } => {
+                    let held = at + RATES[(wait as usize).min(RATES.len() - 1)].1;
+                    self.send(to, Some(f.line), held, carry, speed);
+                }
+                PKind::Router => {
+                    let mut ways = [(0usize, false); 64];
+                    let mut n = 0;
+                    for w in self.ways_out(to, Some(f.line)) {
+                        if n < ways.len() {
+                            ways[n] = w;
+                            n += 1;
+                        }
+                    }
+                    if n > 0 {
+                        let (k, from_a) = ways[self.counts[to] as usize % n];
+                        self.counts[to] = self.counts[to].wrapping_add(1);
+                        self.launch(k, from_a, at, carry, speed);
+                    }
+                }
+                PKind::Shift { steps } => {
+                    carry.shift += steps as i32;
+                    self.send(to, Some(f.line), at, carry, speed);
+                }
             }
         }
         // The notes that end now.
@@ -335,7 +485,7 @@ impl PulsarRt {
 }
 
 /// What the editor is told: the pulses under way (each its line, the end it
-/// left, how far along: see `pack`), and the nodes struck since it last looked.
+/// left, how far along, its pulsar: see `pack`), and the nodes struck since it last looked.
 pub struct PulsarStatus {
     pub flights: [AtomicU64; SHOWN_FLIGHTS],
     pub count: AtomicU32,
@@ -348,12 +498,22 @@ impl Default for PulsarStatus {
     }
 }
 
+/// A pulse under way as the editor sees it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shown {
+    pub line: usize,
+    pub from_a: bool,
+    pub along: f32,
+    /// Its pulsar's place.
+    pub origin: usize,
+}
+
 impl PulsarStatus {
     /// The engine says where things are, at beat `now`.
     pub fn publish(&self, rt: &mut PulsarRt, now: f64) {
         let n = rt.flights.len().min(SHOWN_FLIGHTS);
         for (slot, f) in self.flights.iter().zip(rt.flights.iter()) {
-            slot.store(pack(f.line, f.from_a, progress(f, now)), Ordering::Relaxed);
+            slot.store(pack(f.line, f.from_a, progress(f, now), f.carry.origin as usize), Ordering::Relaxed);
         }
         self.count.store(n as u32, Ordering::Relaxed);
         for (slot, bits) in self.struck.iter().zip(rt.take_struck()) {
@@ -363,8 +523,8 @@ impl PulsarStatus {
         }
     }
 
-    /// The pulses under way: (line, from its `a` end, how far along).
-    pub fn read(&self) -> Vec<(usize, bool, f32)> {
+    /// The pulses under way.
+    pub fn read(&self) -> Vec<Shown> {
         let n = (self.count.load(Ordering::Relaxed) as usize).min(SHOWN_FLIGHTS);
         self.flights[..n].iter().map(|f| unpack(f.load(Ordering::Relaxed))).collect()
     }
@@ -385,19 +545,12 @@ impl PulsarStatus {
 }
 
 /// A pulse under way for the editor, in one number.
-pub fn pack(line: usize, from_a: bool, along: f64) -> u64 {
-    (line as u64 & 0xffff) | (from_a as u64) << 16 | ((along.clamp(0.0, 1.0) * 65535.0) as u64) << 32
+pub fn pack(line: usize, from_a: bool, along: f64, origin: usize) -> u64 {
+    (line as u64 & 0xffff) | (from_a as u64) << 16 | (origin as u64 & 0xff) << 17 | ((along.clamp(0.0, 1.0) * 65535.0) as u64) << 32
 }
 
-pub fn unpack(v: u64) -> (usize, bool, f32) {
-    ((v & 0xffff) as usize, v >> 16 & 1 == 1, ((v >> 32) & 0xffff) as f32 / 65535.0)
-}
-
-impl PulsarRt {
-    /// Whether anything is still under way or sounding.
-    pub fn busy(&self) -> bool {
-        !self.flights.is_empty() || !self.offs.is_empty()
-    }
+pub fn unpack(v: u64) -> Shown {
+    Shown { line: (v & 0xffff) as usize, from_a: v >> 16 & 1 == 1, origin: (v >> 17 & 0xff) as usize, along: ((v >> 32) & 0xffff) as f32 / 65535.0 }
 }
 
 /// The lines of a field as the engine numbers them (those whose nodes are there).
@@ -421,16 +574,19 @@ mod tests {
     }
 
     fn orb(id: u64, x: f32, degree: i32) -> PNode {
-        PNode { id, x, y: 0.0, kind: PKind::Orb { track: Some(7), degree, octave: 0, velocity: 0.8, length: 0.25 } }
+        PNode { id, x, y: 0.0, kind: PKind::orb(Some(7), degree) }
     }
 
     fn pulsar(id: u64, x: f32, rate: u8) -> PNode {
-        PNode { id, x, y: 0.0, kind: PKind::Pulsar { rate, on: true } }
+        PNode { id, x, y: 0.0, kind: PKind::Pulsar { rate, on: true, mode: 0, chance: 1.0, strength: 1.0 } }
     }
 
-    /// Runs the field over so many beats in blocks; the notes struck: (beat, pitch).
-    fn run(set: &PulsarSet, beats: f64) -> Vec<(f64, u8)> {
-        let mut rt = PulsarRt::default();
+    fn node(id: u64, x: f32, kind: PKind) -> PNode {
+        PNode { id, x, y: 0.0, kind }
+    }
+
+    /// Runs the field over so many beats in blocks; the notes struck: (beat, pitch, velocity).
+    fn run_with(set: &PulsarSet, beats: f64, rt: &mut PulsarRt) -> Vec<(f64, u8, f32)> {
         rt.resolve(set);
         let spb = 24000.0;
         let mut ons = Vec::new();
@@ -441,11 +597,15 @@ mod tests {
             rt.run(set, &c_major(), b0, b1, spb, 256, &mut |(track, e): Out| {
                 assert_eq!(track, 7);
                 if e.on {
-                    ons.push((b0 + e.offset as f64 / spb, e.pitch));
+                    ons.push((b0 + e.offset as f64 / spb, e.pitch, e.vel));
                 }
             });
         }
         ons
+    }
+
+    fn run(set: &PulsarSet, beats: f64) -> Vec<(f64, u8, f32)> {
+        run_with(set, beats, &mut PulsarRt::default())
     }
 
     fn field(nodes: Vec<PNode>, links: &[(u64, u64)]) -> PulsarSet {
@@ -497,14 +657,14 @@ mod tests {
 
     #[test]
     fn a_gate_lets_every_so_many_through() {
-        let s = field(vec![pulsar(1, 0.0, 3), PNode { id: 2, x: 50.0, y: 0.0, kind: PKind::Gate { every: 2 } }, orb(3, 100.0, 0)], &[(1, 2), (2, 3)]);
+        let s = field(vec![pulsar(1, 0.0, 3), node(2, 50.0, PKind::Gate { every: 2 }), orb(3, 100.0, 0)], &[(1, 2), (2, 3)]);
         let ons = run(&s, 8.0);
         assert!((3..=4).contains(&ons.len()), "half of eight: {ons:?}");
     }
 
     #[test]
     fn chance_lets_some_through() {
-        let s = field(vec![pulsar(1, 0.0, 0), PNode { id: 2, x: 50.0, y: 0.0, kind: PKind::Chance { chance: 0.5 } }, orb(3, 100.0, 0)], &[(1, 2), (2, 3)]);
+        let s = field(vec![pulsar(1, 0.0, 0), node(2, 50.0, PKind::Chance { chance: 0.5 }), orb(3, 100.0, 0)], &[(1, 2), (2, 3)]);
         let n = run(&s, 16.0).len();
         assert!(n > 15 && n < 50, "about half of 63: {n}");
     }
@@ -512,10 +672,62 @@ mod tests {
     #[test]
     fn a_reflector_sends_it_back() {
         // Pulsar - orb - reflector: the orb plays going out and coming back.
-        let s = field(vec![pulsar(1, 0.0, 7), orb(2, 100.0, 0), PNode { id: 3, x: 150.0, y: 0.0, kind: PKind::Reflector }], &[(1, 2), (2, 3)]);
+        let s = field(vec![pulsar(1, 0.0, 7), orb(2, 100.0, 0), node(3, 150.0, PKind::Reflector)], &[(1, 2), (2, 3)]);
         let ons = run(&s, 4.0);
         assert_eq!(ons.len(), 2, "{ons:?}");
         assert!((ons[1].0 - 2.0).abs() < 0.02, "half a beat there, half a beat back: {ons:?}");
+    }
+
+    #[test]
+    fn a_delay_holds_a_pulse() {
+        let s = field(vec![pulsar(1, 0.0, 7), node(2, 50.0, PKind::Delay { wait: 3 }), orb(3, 100.0, 0)], &[(1, 2), (2, 3)]);
+        let ons = run(&s, 4.0);
+        assert!((ons[0].0 - 2.0).abs() < 0.02, "a beat of lines and a beat held: {ons:?}");
+    }
+
+    #[test]
+    fn a_router_sends_each_pulse_down_the_next_line() {
+        let s = field(vec![pulsar(1, 0.0, 3), node(2, 50.0, PKind::Router), orb(3, 100.0, 0), orb(4, 100.0, 2), orb(5, 100.0, 4)], &[(1, 2), (2, 3), (2, 4), (2, 5)]);
+        let notes: Vec<u8> = run(&s, 6.0).iter().map(|o| o.1).collect();
+        assert_eq!(&notes[..4], [48, 52, 55, 48], "one at a time, in turn: {notes:?}");
+    }
+
+    #[test]
+    fn a_shift_moves_what_a_pulse_plays_and_an_orb_plays_chords() {
+        let s = field(vec![pulsar(1, 0.0, 7), node(2, 50.0, PKind::Shift { steps: 2 }), orb(3, 100.0, 0)], &[(1, 2), (2, 3)]);
+        assert_eq!(run(&s, 4.0)[0].1, 52, "C3 two steps up the key");
+        let mut s = field(vec![pulsar(1, 0.0, 7), orb(2, 100.0, 0)], &[(1, 2)]);
+        if let PKind::Orb { chord, .. } = &mut s.nodes[1].kind {
+            *chord = 2;
+        }
+        let mut notes: Vec<u8> = run(&s, 4.0).iter().map(|o| o.1).collect();
+        notes.sort();
+        assert_eq!(notes, [48, 52, 55], "a triad");
+        if let PKind::Orb { note, .. } = &mut s.nodes[1].kind {
+            *note = Some(38);
+        }
+        assert_eq!(run(&s, 4.0).iter().map(|o| o.1).collect::<Vec<_>>(), [38], "a fixed note: a drum");
+    }
+
+    #[test]
+    fn a_pulsar_can_fire_by_chance_or_by_hand_and_as_hard_as_it_says() {
+        let mut s = field(vec![pulsar(1, 0.0, 0), orb(2, 100.0, 0)], &[(1, 2)]);
+        if let PKind::Pulsar { mode, chance, strength, .. } = &mut s.nodes[0].kind {
+            *mode = 1;
+            *chance = 0.5;
+            *strength = 0.5;
+        }
+        let ons = run(&s, 16.0);
+        assert!(ons.len() > 15 && ons.len() < 50, "{}", ons.len());
+        assert!(ons.iter().all(|o| (o.2 - 0.4).abs() < 1e-6), "half as hard: {:?}", ons[0]);
+        // By hand: nothing until it is clicked.
+        if let PKind::Pulsar { mode, .. } = &mut s.nodes[0].kind {
+            *mode = 2;
+        }
+        assert!(run(&s, 4.0).is_empty());
+        let mut rt = PulsarRt::default();
+        rt.fire(1);
+        assert_eq!(run_with(&s, 4.0, &mut rt).len(), 1);
     }
 
     #[test]
@@ -530,14 +742,13 @@ mod tests {
 
     #[test]
     fn stopping_ends_the_notes() {
-        let s = field(vec![pulsar(1, 0.0, 6), orb(2, 100.0, 0)], &[(1, 2)]);
-        let mut rt = PulsarRt::default();
-        let mut s2 = s.clone();
-        if let PKind::Orb { length, .. } = &mut s2.nodes[1].kind {
+        let mut s = field(vec![pulsar(1, 0.0, 6), orb(2, 100.0, 0)], &[(1, 2)]);
+        if let PKind::Orb { length, .. } = &mut s.nodes[1].kind {
             *length = 8.0;
         }
-        rt.resolve(&s2);
-        rt.run(&s2, &c_major(), 0.0, 1.5, 1000.0, 1500, &mut |_| {});
+        let mut rt = PulsarRt::default();
+        rt.resolve(&s);
+        rt.run(&s, &c_major(), 0.0, 1.5, 1000.0, 1500, &mut |_| {});
         let mut offs = 0;
         rt.stop(&mut |(_, e): Out| offs += usize::from(!e.on));
         assert_eq!(offs, 1);
@@ -546,11 +757,8 @@ mod tests {
 
     #[test]
     fn the_editor_is_told_where_the_pulses_are() {
-        let (line, from_a, along) = unpack(pack(300, true, 0.25));
-        assert!(line == 300 && from_a && (along - 0.25).abs() < 1e-4);
-        let (line, from_a, along) = unpack(pack(7, false, 0.5));
-        assert_eq!((line, from_a), (7, false));
-        assert!((along - 0.5).abs() < 1e-4);
+        let shown = unpack(pack(300, true, 0.25, 9));
+        assert!(shown.line == 300 && shown.from_a && shown.origin == 9 && (shown.along - 0.25).abs() < 1e-4);
         let s = field(vec![pulsar(1, 0.0, 6), orb(2, 100.0, 0)], &[(1, 2)]);
         let mut rt = PulsarRt::default();
         rt.resolve(&s);
@@ -559,7 +767,8 @@ mod tests {
         st.publish(&mut rt, 0.5);
         let shown = st.read();
         assert_eq!(shown.len(), 1);
-        assert!((shown[0].2 - 0.5).abs() < 1e-3, "half way down a line of a beat");
+        assert!((shown[0].along - 0.5).abs() < 1e-3, "half way down a line of a beat");
+        assert_eq!(shown[0].origin, 0, "from the pulsar in place 0");
         assert_eq!(st.take_struck(), [0], "the pulsar fired");
         assert!(st.take_struck().is_empty());
         assert_eq!(line_order(&s), [0]);
@@ -571,6 +780,10 @@ mod tests {
         assert_eq!(s.links.len(), 1);
         let back: PulsarSet = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
         assert_eq!(back, s);
+        // A field from before chords and modes still loads.
+        let old = r#"{"nodes":[{"id":1,"x":0.0,"y":0.0,"kind":{"Pulsar":{"rate":3,"on":true}}},{"id":2,"x":1.0,"y":0.0,"kind":{"Orb":{"track":7,"degree":0,"octave":0,"velocity":0.8,"length":0.25}}}],"links":[]}"#;
+        let old: PulsarSet = serde_json::from_str(old).unwrap();
+        assert_eq!(old.nodes[0].kind, PKind::Pulsar { rate: 3, on: true, mode: 0, chance: 1.0, strength: 1.0 });
         s.remove(2);
         assert!(s.links.is_empty());
     }
