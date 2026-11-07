@@ -3176,7 +3176,7 @@ impl DrumState {
                             tg = 0.0;
                             break;
                         }
-                        let (a, b) = ts.read(tpos);
+                        let (a, b) = ts.read(if pad.reverse { ts.frames() as f64 - 1.0 - tpos } else { tpos });
                         l[i] += a * tg * base * pl;
                         r[i] += b * tg * base * pr;
                         tpos += trate;
@@ -3198,7 +3198,7 @@ impl DrumState {
                         v.active = false;
                         break;
                     }
-                    let (sl, sr2) = s.read(v.sample_pos);
+                    let (sl, sr2) = s.read(if pad.reverse { frames - 1.0 - v.sample_pos } else { v.sample_pos });
                     let g = gain * v.amp * v.choke;
                     l[i] += sl * g * pl;
                     r[i] += sr2 * g * pr;
@@ -3289,6 +3289,26 @@ mod tests {
                 assert!(!still, "{} still plays after 8 s", v.name());
             }
         }
+    }
+
+    #[test]
+    fn a_reversed_pad_plays_its_sample_from_the_end() {
+        use crate::sample::{SampleData, SampleRef};
+        // A ramp up: forwards it starts quiet, backwards loud.
+        let ramp: Vec<f32> = (0..4800).map(|i| i as f32 / 4800.0).collect();
+        let mut pads = video_kit();
+        pads[0].sample = Some(SampleRef::new(SampleData::from_buffers("ramp", None, 48000, ramp.clone(), ramp)));
+        pads[0].decay = 10.0;
+        let first = |reverse: bool| {
+            let mut p = pads.clone();
+            p[0].reverse = reverse;
+            let mut d = DrumState::new();
+            d.note_on(&p, p[0].note, 1.0, 48000.0);
+            let (mut l, mut r) = (vec![0.0; 64], vec![0.0; 64]);
+            d.render(&p, &mut l, &mut r, 48000.0);
+            l[1].abs()
+        };
+        assert!(first(true) > first(false) * 20.0 + 0.01, "{} {}", first(false), first(true));
     }
 
     #[test]

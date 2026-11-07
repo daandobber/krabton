@@ -3241,6 +3241,13 @@ impl App {
                                             ui.checkbox(&mut pad.gate, RichText::new("Gate").small().color(crate::skin::ink_dim())).on_hover_text("Plays only while its note is held (a slice stops where its note ends); off: to its end");
                                         }
                                     });
+                                    // Its sample as a waveform: where it starts and ends, its fades, Reverse.
+                                    let wave = pad.layers.is_empty() && pad.sample.as_ref().is_some_and(|s| s.path.is_some());
+                                    if wave {
+                                        let since = self.pad_since(track_id, k);
+                                        self.pad_wave(ui, Id::new(("pad_wave", track_id, k)), pad, 330.0, 64.0, since);
+                                    }
+                                    let wave_h = if wave { 92.0 } else { 0.0 };
                                     // Level, Tune, Decay, Tone, Pan and the voice's own knobs.
                                     let mut specs = PAD_SPECS.to_vec();
                                     let macros = pad.voice.macros();
@@ -3251,7 +3258,7 @@ impl App {
                                     vals.extend(macros.iter().zip([pad.a, pad.b]).filter(|(m, _)| m.is_some()).map(|(_, v)| v));
                                     // On a machine's face its columns have the first four.
                                     let skip = if crate::skin::current().is_some() { 4 } else { 0 };
-                                    if param_grid(ui, Id::new(("pad_params", track_id, k)), &specs[skip..], &mut vals[skip..], accent_now(), h - 80.0) {
+                                    if param_grid(ui, Id::new(("pad_params", track_id, k)), &specs[skip..], &mut vals[skip..], accent_now(), (h - 80.0 - wave_h).max(60.0)) {
                                         pad.level_db = vals[0];
                                         pad.tune = vals[1];
                                         pad.decay = vals[2];

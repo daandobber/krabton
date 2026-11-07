@@ -681,6 +681,8 @@ pub struct App {
     pub(crate) steps: crate::ui::steps_view::StepsState,
     /// The Video Racks' films and screens (see `ui::video_rack`).
     pub(crate) video_rack: crate::ui::video_rack::VideoRackState,
+    /// Files read whole for the drum pads' waveforms (see `ui::sample_wave`).
+    pub(crate) waves: crate::ui::sample_wave::WaveCache,
     /// Counting in, to record when it has.
     pub(crate) count_pending: bool,
     pub(crate) env_target: Option<krabton_engine::modulation::ModTarget>,
@@ -906,6 +908,7 @@ impl App {
             env_view: false,
             steps: Default::default(),
             video_rack: Default::default(),
+            waves: Default::default(),
             count_pending: false,
             env_target: None,
             env_draw: false,

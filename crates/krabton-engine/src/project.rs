@@ -860,6 +860,9 @@ pub struct DrumPad {
     /// ends); off: every hit plays to its end, as drums do.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub gate: bool,
+    /// Its sample plays backwards, from its end.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reverse: bool,
 }
 
 impl DrumPad {
@@ -927,6 +930,7 @@ impl DrumPad {
             vel_tone: 0.0,
             vel_decay: 0.0,
             gate: false,
+            reverse: false,
         }
     }
 }

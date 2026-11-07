@@ -10,7 +10,7 @@ use crate::app::App;
 use crate::theme::*;
 use crate::video::media::{Kind, Media};
 use crate::widgets::*;
-use egui::{pos2, vec2, Align2, Color32, ColorImage, Rect, RichText, Sense, TextureHandle, TextureOptions, Ui};
+use egui::{pos2, vec2, Align2, Color32, ColorImage, Rect, Sense, TextureHandle, TextureOptions, Ui};
 use krabton_engine::dsp::drums::DrumEngine;
 use krabton_engine::sample::{SampleRegion, SampleRef};
 use krabton_engine::{DrumPad, Instrument};
@@ -92,6 +92,13 @@ pub(crate) fn latest_strike(struck: &[(u64, usize, f64, f64)]) -> Option<(u64, u
     struck.iter().filter(|s| s.2 <= s.3).min_by(|a, b| a.2.total_cmp(&b.2)).map(|s| (s.0, s.1, s.2))
 }
 
+impl VideoRackState {
+    /// How long ago pad `k` of a drum track was struck.
+    pub(crate) fn pad_since(&self, track: u64, k: usize) -> Option<f64> {
+        self.struck.get(&track).filter(|s| s.0 == k && s.1 > 0).map(|s| s.2.elapsed().as_secs_f64())
+    }
+}
+
 impl App {
     /// Starts reading a film's sound for a pad (the frames come in by themselves).
     pub(crate) fn load_video_pad(&mut self, track: u64, pad: usize, path: PathBuf, cut: Option<(f64, f64)>) {
@@ -148,6 +155,7 @@ impl App {
             match result {
                 Ok(whole) => {
                     self.video_rack.whole.insert(l.path.clone(), whole.clone());
+                    self.waves.keep_whole(&l.path, &whole);
                     self.put_on_pad(l.track, l.pad, &l.path, &whole, l.cut);
                 }
                 Err(e) => self.toast(format!("Could not read its sound: {e}. Krabton reads films with ffmpeg: the Video can fetch it, {}", crate::video::ffmpeg::install_hint())),
@@ -156,7 +164,8 @@ impl App {
         // What each Video Rack struck (a new strike starts its film again).
         let status = self.status();
         for (ti, t) in self.project.tracks.iter().enumerate() {
-            if !matches!(t.instrument, Some(Instrument::Drums { engine: DrumEngine::Video, .. })) {
+            // Every drum track: its waveform's line runs while a pad sounds.
+            if !matches!(t.instrument, Some(Instrument::Drums { .. })) {
                 continue;
             }
             let Some(ts) = status.tracks.get(ti) else { continue };
@@ -208,19 +217,6 @@ impl App {
                 if ui.small_button("Load film...").on_hover_text("A film on the pad chosen (or drop films on the screen)").clicked() {
                     if let Some(path) = rfd::FileDialog::new().add_filter("Films", &crate::video::media::EXTENSIONS).pick_file() {
                         self.load_video_pad(track, selected, path, None);
-                    }
-                }
-                if let Some(pad) = pads.get(selected) {
-                    if let (Some(s), Some(path)) = (pad.sample.clone(), film_of(pad).map(Path::to_path_buf)) {
-                        let (mut start, mut length) = pad_cut(&s);
-                        let total = self.video_rack.whole.get(&path).map_or(start + length, |w| w.duration());
-                        ui.label(RichText::new("Start").small().color(crate::skin::ink_dim()));
-                        let a = ui.add(egui::DragValue::new(&mut start).range(0.0..=total).speed(0.01).suffix(" s").max_decimals(2)).on_hover_text("Where the pad starts in its film");
-                        ui.label(RichText::new("Length").small().color(crate::skin::ink_dim()));
-                        let b = ui.add(egui::DragValue::new(&mut length).range(0.02..=total.max(0.02)).speed(0.01).suffix(" s").max_decimals(2)).on_hover_text("How long it plays");
-                        if a.changed() || b.changed() {
-                            self.load_video_pad(track, selected, path, Some((start, length)));
-                        }
                     }
                 }
                 if !self.video_rack.loading.is_empty() {
