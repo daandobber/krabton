@@ -567,6 +567,13 @@ pub struct App {
     /// MIDI recorded into the arrangement: per track (id), the clip it goes
     /// into and where the song was last (it ends when the loop jumps back).
     arr_takes: HashMap<u64, (u64, f64)>,
+    /// Session MIDI recordings that grow until Record ends them: track -> scene.
+    slot_takes: HashMap<u64, usize>,
+    /// The track Auto-Arm armed, and the selection it last followed.
+    auto_armed: Option<u64>,
+    auto_arm_seen: Option<u64>,
+    /// A track armed with its own button: Auto-Arm leaves the arms alone.
+    arm_by_hand: bool,
     /// The grand piano's samples being installed.
     pub piano_install: Option<crate::piano_lib::Install>,
     /// Orchestra instruments on their way, by instrument.
@@ -834,6 +841,10 @@ impl App {
             rec_quantize: true,
             rec_notes: HashMap::new(),
             arr_takes: HashMap::new(),
+            slot_takes: HashMap::new(),
+            auto_armed: None,
+            auto_arm_seen: None,
+            arm_by_hand: false,
             piano_install: None,
             orchestra_installs: std::collections::HashMap::new(),
             drum_installs: Default::default(),
@@ -2580,6 +2591,32 @@ impl App {
         if group.len() == 1 && !ctrl {
             self.click_track(i, false);
         }
+        // By hand now, until nothing is armed.
+        self.arm_by_hand = self.project.tracks.iter().any(|t| t.arm);
+        self.auto_armed = None;
+        self.auto_arm_seen = match self.sel_track {
+            TrackSel::Track(k) => self.project.tracks.get(k).map(|t| t.id),
+            _ => None,
+        };
+    }
+
+    /// Auto-Arm, as in Live: the selected MIDI track is armed, so what you
+    /// play goes to it and Record records it. Arms set by hand stay.
+    fn follow_auto_arm(&mut self) {
+        if self.prefs.auto_arm_off {
+            return;
+        }
+        let TrackSel::Track(i) = self.sel_track else { return };
+        let Some(id) = self.project.tracks.get(i).map(|t| t.id) else { return };
+        if self.auto_arm_seen == Some(id) {
+            return;
+        }
+        self.auto_arm_seen = Some(id);
+        if self.arm_by_hand && self.project.tracks.iter().any(|t| t.arm) {
+            return;
+        }
+        self.arm_by_hand = false;
+        self.auto_armed = auto_arm(&mut self.project.tracks, i);
     }
 
     fn note_targets(&self) -> Vec<usize> {
@@ -3111,13 +3148,60 @@ impl App {
     /// The tracks a recording writes notes into: the ones that hear the
     /// keyboard, and armed tracks that take notes from another track.
     fn midi_record_targets(&self) -> Vec<usize> {
-        let mut v = self.note_targets();
-        for (ti, t) in self.project.tracks.iter().enumerate() {
-            if t.arm && !v.contains(&ti) && self.project.midi_source(ti).is_some() {
-                v.push(ti);
+        // The armed tracks, as in Live; with none armed, what the keys play.
+        let armed: Vec<usize> = self.project.tracks.iter().enumerate().filter(|(_, t)| t.arm && t.kind == TrackKind::Midi).map(|(ti, _)| ti).collect();
+        if !armed.is_empty() {
+            return armed;
+        }
+        self.note_targets()
+    }
+
+    /// Session takes grow as they record: the clip stays a bar ahead of where it plays.
+    fn grow_slot_takes(&mut self) {
+        if self.slot_takes.is_empty() {
+            return;
+        }
+        let status = self.status();
+        let bpb = self.project.beats_per_bar_f();
+        let takes: Vec<(u64, usize)> = self.slot_takes.iter().map(|(t, s)| (*t, *s)).collect();
+        for (track, scene) in takes {
+            let Some(ti) = self.project.track_index(track) else {
+                self.slot_takes.remove(&track);
+                continue;
+            };
+            let ts = &status.tracks[ti.min(status.tracks.len().saturating_sub(1))];
+            if ts.playing_slot.load(Ordering::Relaxed) != scene as i32 {
+                continue;
+            }
+            let pos = ts.clip_pos.load();
+            if let Some(Some(clip)) = self.project.tracks[ti].slots.get_mut(scene) {
+                let want = growing_length(pos, bpb);
+                if want > clip.length {
+                    clip.length = want;
+                }
             }
         }
-        v
+    }
+
+    /// Ends the session takes: each clip as long as the whole bars it recorded.
+    fn end_slot_takes(&mut self) {
+        let status = self.status();
+        let bpb = self.project.beats_per_bar_f();
+        for (track, scene) in std::mem::take(&mut self.slot_takes) {
+            let Some(ti) = self.project.track_index(track) else { continue };
+            let ts = &status.tracks[ti.min(status.tracks.len().saturating_sub(1))];
+            let pos = if ts.playing_slot.load(Ordering::Relaxed) == scene as i32 { ts.clip_pos.load() } else { 0.0 };
+            let held: Vec<u8> = self.rec_notes.iter().filter(|((t, _), rn)| *t == track && rn.arr.is_none()).map(|((_, p), _)| *p).collect();
+            for p in held {
+                self.finish_rec_note(track, p, None);
+            }
+            if let Some(Some(clip)) = self.project.tracks[ti].slots.get_mut(scene) {
+                clip.length = recorded_length(pos, clip.notes().iter().map(|x| x.start + x.length).fold(0.0, f64::max), bpb);
+                if clip.name == "Recording" {
+                    clip.name = "Take".into();
+                }
+            }
+        }
     }
 
     pub fn toggle_record(&mut self) {
@@ -3148,6 +3232,7 @@ impl App {
         if self.recording || !self.takes.is_empty() {
             self.recording = false;
             self.stop_takes();
+            self.end_slot_takes();
             for track in self.arr_takes.keys().copied().collect::<Vec<_>>() {
                 self.end_arr_take(track);
             }
@@ -3161,7 +3246,6 @@ impl App {
             self.toast(format!("Recording {audio} audio track{} {place}", if audio == 1 { "" } else { "s" }));
         }
         let status = self.status();
-        let bars = self.project.beats_per_bar_f() * 4.0;
         if self.view == View::Arrangement {
             // MIDI goes onto the arrangement: a clip from the playhead's bar that grows.
             let song = status.song_pos.load();
@@ -3203,14 +3287,20 @@ impl App {
                 }
             };
             let id = self.project.alloc_id();
+            // As in Live: it grows until Record is pressed again; or so many bars.
+            let fixed = self.prefs.rec_bars as f64 * self.project.beats_per_bar_f();
+            let length = if fixed > 0.0 { fixed } else { self.project.beats_per_bar_f() };
             let t = &mut self.project.tracks[ti];
-            t.slots[slot] = Some(Clip::new_midi(id, "Recording", t.color, bars));
+            t.slots[slot] = Some(Clip::new_midi(id, "Recording", t.color, length));
             let tid = t.id;
+            if fixed <= 0.0 {
+                self.slot_takes.insert(tid, slot);
+            }
             self.cmd(Command::LaunchClip { track: tid, slot });
             self.select_clip(ClipSel::Slot { track: ti, scene: slot });
         }
         if self.takes.is_empty() {
-            self.toast("Session record: play notes to overdub into the playing clip");
+            self.toast(if self.slot_takes.is_empty() { "Session record: play notes to overdub into the playing clip" } else { "Recording: the clip grows until you press Record again" });
         }
     }
 
@@ -5369,6 +5459,8 @@ impl eframe::App for App {
         self.recover_engine();
         self.poll_recording();
         self.tape_frame();
+        self.follow_auto_arm();
+        self.grow_slot_takes();
         self.poll_count_in();
         self.poll_export();
         self.poll_clip_jobs();
@@ -5658,5 +5750,61 @@ mod set_tests {
     fn a_track_name_makes_a_file_name() {
         assert_eq!(stem_file_name("Bass: Fat/Low"), "Bass_ Fat_Low");
         assert_eq!(stem_file_name("  "), "Track");
+    }
+}
+
+/// Auto-Arm on track `i`: the MIDI tracks it armed before let go, `i` armed.
+/// Returns the track armed (None: not a MIDI track, nothing changes).
+pub(crate) fn auto_arm(tracks: &mut [krabton_engine::Track], i: usize) -> Option<u64> {
+    let t = tracks.get(i)?;
+    if t.kind != TrackKind::Midi || t.is_group {
+        return None;
+    }
+    let id = t.id;
+    for t in tracks.iter_mut().filter(|t| t.kind == TrackKind::Midi) {
+        t.arm = t.id == id;
+    }
+    Some(id)
+}
+
+/// A recording clip's length while it records: a bar ahead of where it is.
+pub(crate) fn growing_length(pos: f64, beats_per_bar: f64) -> f64 {
+    let bar = beats_per_bar.max(1.0);
+    ((pos / bar).floor() + 2.0) * bar
+}
+
+/// A recording's length when it ends: the whole bars it went through, and at
+/// least as far as its last note.
+pub(crate) fn recorded_length(pos: f64, last_note_end: f64, beats_per_bar: f64) -> f64 {
+    let bar = beats_per_bar.max(1.0);
+    ((pos.max(last_note_end) / bar - 1e-6).ceil()).max(1.0) * bar
+}
+
+#[cfg(test)]
+mod record_tests {
+    use super::*;
+
+    #[test]
+    fn auto_arm_arms_the_selected_midi_track_alone() {
+        let mut p = Project::new_default();
+        p.add_midi_track(None);
+        let audio = p.add_audio_track();
+        p.tracks[audio].arm = true;
+        p.tracks[0].arm = true;
+        assert_eq!(auto_arm(&mut p.tracks, 1), Some(p.tracks[1].id));
+        assert!(p.tracks[1].arm && !p.tracks[0].arm);
+        assert!(p.tracks[audio].arm, "an audio track armed for recording stays");
+        assert_eq!(auto_arm(&mut p.tracks, audio), None, "an audio track is not auto-armed");
+        assert!(p.tracks[1].arm);
+    }
+
+    #[test]
+    fn a_take_grows_a_bar_ahead_and_ends_on_whole_bars() {
+        assert_eq!(growing_length(0.0, 4.0), 8.0);
+        assert_eq!(growing_length(5.5, 4.0), 12.0);
+        assert_eq!(recorded_length(5.5, 3.0, 4.0), 8.0);
+        assert_eq!(recorded_length(8.0, 0.0, 4.0), 8.0, "just at a bar line");
+        assert_eq!(recorded_length(0.2, 0.0, 4.0), 4.0, "at least a bar");
+        assert_eq!(recorded_length(3.0, 9.0, 4.0), 12.0, "a note held past it");
     }
 }

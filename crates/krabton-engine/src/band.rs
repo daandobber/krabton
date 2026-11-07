@@ -77,7 +77,7 @@ pub const FOLLOWERS: [MidiFxKind; 44] = {
         K::Fireflies,
         K::Sandpile,
         K::Pendulums,
-        K::Wheel,
+        K::Circle,
         K::Flock,
         K::Plants,
         K::Bells,

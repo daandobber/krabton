@@ -409,6 +409,20 @@ impl App {
                     }
                 }
             });
+            let mut auto = !self.prefs.auto_arm_off;
+            if ui.checkbox(&mut auto, "Auto-Arm").on_hover_text("Selecting a MIDI track arms it, as in Live: what you play goes to the armed tracks, and Record records them").changed() {
+                self.prefs.auto_arm_off = !auto;
+                self.prefs.save();
+            }
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Record Length").small().color(TEXT_DIM));
+                for (bars, name) in [(0u8, "Free"), (1, "1"), (2, "2"), (4, "4"), (8, "8")] {
+                    if ui.selectable_label(self.prefs.rec_bars == bars, name).on_hover_text("A new session recording: Free grows until you press Record again (as in Live), else so many bars").clicked() {
+                        self.prefs.rec_bars = bars;
+                        self.prefs.save();
+                    }
+                }
+            });
             if ui.checkbox(&mut self.prefs.big_picture, "Start in Big Picture").on_hover_text("For a Steam Deck, a ClockworkPi or a touch screen. --big-picture or KRABTON_BIG_PICTURE=1 does it once").changed() {
                 self.prefs.save();
             }

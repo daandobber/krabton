@@ -71,7 +71,7 @@ pub mod dj_library;
 pub mod dj_view;
 pub mod rackverb_view;
 pub mod step_gate_view;
-pub mod wheel_view;
+pub mod circle_view;
 pub mod hum;
 pub(crate) mod map_master;
 pub(crate) mod map_plans;

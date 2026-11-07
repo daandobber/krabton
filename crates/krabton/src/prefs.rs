@@ -110,6 +110,11 @@ pub struct Prefs {
     pub recent_sets: Vec<std::path::PathBuf>,
     /// How many bars are counted in before recording.
     pub count_in: u8,
+    /// Selecting a MIDI track arms it (as Live's Auto-Arm); off: it is armed by hand.
+    pub auto_arm_off: bool,
+    /// How long a new session recording is: 0 grows until Record is pressed
+    /// again (as in Live), else so many bars.
+    pub rec_bars: u8,
     /// What pressing a pad does (see `move_ctl::PRESSURES`).
     pub move_pressure: u8,
     /// The first start's question about packs was asked.
