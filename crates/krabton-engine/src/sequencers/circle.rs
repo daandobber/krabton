@@ -44,6 +44,8 @@ pub const OCTAVE_FROM: usize = 43;
 pub const MOD_FROM: usize = 44;
 /// What plays, each its own voice: the points' notes, then sin θ to cot θ.
 pub const PLAY_POINTS: usize = 45;
+/// Each voice's own transpose (steps of the key), in the same order.
+pub const SHIFT_FIRST: usize = 52;
 pub const VOICES: usize = 7;
 
 pub const PERIODS: &[&str] = &["1/4 Beat", "1/2 Beat", "1 Beat", "2 Beats", "1 Bar", "2 Bars", "4 Bars", "8 Bars", "16 Bars"];
@@ -119,6 +121,13 @@ pub static CIRCLE: &[ParamSpec] = &[
     ParamSpec::toggle("Play sec θ", crate::params::SCREEN_ONLY, false),
     ParamSpec::toggle("Play csc θ", crate::params::SCREEN_ONLY, false),
     ParamSpec::toggle("Play cot θ", crate::params::SCREEN_ONLY, false),
+    ParamSpec::int("Shift Points", crate::params::SCREEN_ONLY, -21.0, 21.0, 0.0, Unit::None),
+    ParamSpec::int("Shift sin θ", crate::params::SCREEN_ONLY, -21.0, 21.0, 0.0, Unit::None),
+    ParamSpec::int("Shift cos θ", crate::params::SCREEN_ONLY, -21.0, 21.0, 0.0, Unit::None),
+    ParamSpec::int("Shift tan θ", crate::params::SCREEN_ONLY, -21.0, 21.0, 0.0, Unit::None),
+    ParamSpec::int("Shift sec θ", crate::params::SCREEN_ONLY, -21.0, 21.0, 0.0, Unit::None),
+    ParamSpec::int("Shift csc θ", crate::params::SCREEN_ONLY, -21.0, 21.0, 0.0, Unit::None),
+    ParamSpec::int("Shift cot θ", crate::params::SCREEN_ONLY, -21.0, 21.0, 0.0, Unit::None),
 ];
 
 /// N, the points on the circle.
@@ -438,7 +447,9 @@ impl SeqState {
                 let mut sounded = [i32::MIN; VOICES];
                 for (v, on) in voices(p).into_iter().enumerate() {
                     let Some(step) = voice_step(p, k, v, theta, revolution).filter(|_| on) else { continue };
-                    let pitch = ctx.scale.pitch_at(home + step + octave);
+                    // Each voice its own transpose, in steps of the key.
+                    let shift = p.get(SHIFT_FIRST + v).copied().unwrap_or(0.0).round() as i32;
+                    let pitch = ctx.scale.pitch_at(home + step + octave + shift);
                     if sounded.contains(&pitch) {
                         continue;
                     }
@@ -636,6 +647,23 @@ mod tests {
         let mut old = circle();
         old[PITCH] = 2.0;
         assert_eq!(voices(&old), [false, false, true, false, false, false, false]);
+    }
+
+    #[test]
+    fn each_voice_can_be_transposed_on_its_own() {
+        let mut p = all_points(circle());
+        p[PERIOD] = 4.0;
+        p[POINTS] = 4.0;
+        p[PLAY_POINTS + 2] = 1.0;
+        let plain = run(MidiFxKind::Circle, &p, &MidiFxKind::Circle.default_data(), 4.0);
+        p[SHIFT_FIRST + 2] = 7.0;
+        let shifted = run(MidiFxKind::Circle, &p, &MidiFxKind::Circle.default_data(), 4.0);
+        // The cos voice an octave (seven steps of C major) up, the points where they were.
+        let top = |v: &[(f64, u8)]| v.iter().map(|o| o.1).max().unwrap();
+        assert_eq!(top(&shifted), top(&plain) + 12, "{plain:?} {shifted:?}");
+        assert!(plain.iter().any(|o| o.1 == 60) && shifted.iter().any(|o| o.1 == 60), "the points' C4 stays where it was");
+        assert_eq!(CIRCLE[SHIFT_FIRST].name, "Shift Points");
+        assert_eq!(CIRCLE[PLAY_POINTS].name, "Play Points");
     }
 
     #[test]

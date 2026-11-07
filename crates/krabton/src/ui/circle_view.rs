@@ -62,6 +62,14 @@ pub(crate) fn playing(params: &[f32]) -> u8 {
     (0..6).filter(|f| v[f + 1]).fold(0u8, |m, f| m | 1 << f)
 }
 
+/// A voice's transpose, as a little box to drag up or down (steps of the key).
+fn shift_chip(ui: &mut Ui, id: Id, value: &mut f32, color: Color32) -> bool {
+    let (r, _) = ui.allocate_exact_size(vec2(26.0, 18.0), Sense::hover());
+    let v = value.round() as i32;
+    let label = if v == 0 { "0".to_string() } else { format!("{v:+}") };
+    super::seq_more_view::chip(ui, r, id, &label, color, value, -21.0, 21.0, "Its own transpose, in steps of the key (7: an octave): drag up or down")
+}
+
 pub(crate) fn circle(ui: &mut Ui, id: Id, params: &mut [f32], live: Live, height: f32) -> bool {
     if params.len() < uc::CIRCLE.len() {
         return false;
@@ -110,6 +118,7 @@ fn drawn(ui: &mut Ui, id: Id, params: &mut [f32], live: Live, height: f32) -> bo
             }
             changed = true;
         }
+        changed |= shift_chip(ui, id.with(("shift", 0usize)), &mut params[uc::SHIFT_FIRST], TEXT);
         for (f, name) in uc::FUNCTIONS.iter().enumerate() {
             let mut plays = uc::voices(params)[f + 1];
             if ui.checkbox(&mut plays, "").on_hover_text(format!("{name} θ plays: its own melody, with the others ticked")).changed() {
@@ -129,6 +138,7 @@ fn drawn(ui: &mut Ui, id: Id, params: &mut [f32], live: Live, height: f32) -> bo
             if ui.add(button).on_hover_text(format!("Show {name} θ on the circle and its wave")).clicked() {
                 shown ^= 1 << f;
             }
+            changed |= shift_chip(ui, id.with(("shift", f + 1)), &mut params[uc::SHIFT_FIRST + 1 + f], COLORS[f]);
         }
     });
     ui.ctx().memory_mut(|m| m.data.insert_temp(shown_id, shown));

@@ -1935,6 +1935,9 @@ pub struct Project {
     /// The DJ mixer: two decks and the set (see `dsp::dj`).
     #[serde(default)]
     pub dj: crate::dsp::dj::DjMix,
+    /// The Pulsars: pulsars, orbs and the lines between them (see `pulsars`).
+    #[serde(default, skip_serializing_if = "crate::pulsars::PulsarSet::is_empty")]
+    pub pulsars: crate::pulsars::PulsarSet,
     /// The ways tracks and the listener walk on the Map.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub map_paths: Vec<crate::dsp::fx::stage::MapPath>,
@@ -2030,6 +2033,7 @@ impl Project {
             // A new set starts on a stage: wider than deep.
             map: crate::dsp::fx::stage::MapRoom { size: 20.0, depth: 12.0, ..Default::default() },
             dj: Default::default(),
+            pulsars: Default::default(),
             map_paths: Vec::new(),
             map_setups: Vec::new(),
             play_key: None,

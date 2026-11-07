@@ -67,6 +67,7 @@ pub mod seq_view;
 pub mod session;
 pub mod settings;
 pub mod sample_wave;
+pub mod pulsars_view;
 pub mod steps_view;
 pub mod video_rack;
 pub mod dj_library;

@@ -36,6 +36,8 @@ pub enum View {
     /// The Video: its clips and Looks along the top, the picture and its
     /// timeline in the middle, what it does on the right.
     Video,
+    /// Pulsars: a field of pulsars and orbs joined by lines (see `ui::pulsars_view`).
+    Pulsars,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -681,6 +683,8 @@ pub struct App {
     pub(crate) steps: crate::ui::steps_view::StepsState,
     /// The Video Racks' films and screens (see `ui::video_rack`).
     pub(crate) video_rack: crate::ui::video_rack::VideoRackState,
+    /// The Pulsars view's state (see `ui::pulsars_view`).
+    pub(crate) pulsars_ui: crate::ui::pulsars_view::PulsarsUi,
     /// Files read whole for the drum pads' waveforms (see `ui::sample_wave`).
     pub(crate) waves: crate::ui::sample_wave::WaveCache,
     /// Counting in, to record when it has.
@@ -908,6 +912,7 @@ impl App {
             env_view: false,
             steps: Default::default(),
             video_rack: Default::default(),
+            pulsars_ui: Default::default(),
             waves: Default::default(),
             count_pending: false,
             env_target: None,
@@ -4366,6 +4371,8 @@ impl App {
                 "mapwin" => self.map_window = true,
                 "humwin" => self.hum.open = true,
                 "dj" => self.view = View::Dj,
+                "pulsars" => self.view = View::Pulsars,
+                "pulsarexample" => self.pulsar_example_now(),
                 "djload" => {
                     if let Some((d, path)) = arg.split_once(',') {
                         self.dj_enter();
@@ -5626,6 +5633,7 @@ impl eframe::App for App {
                 View::Tape => self.ui_tape(ui),
                 View::Video => self.ui_video_view(ui),
                 View::Dj => self.ui_dj(ui),
+                View::Pulsars => self.ui_pulsars(ui),
             }
         });
         self.move_hud(ctx);

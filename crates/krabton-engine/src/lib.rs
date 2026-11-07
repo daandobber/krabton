@@ -31,6 +31,7 @@ pub mod sample;
 pub mod sample_map;
 pub mod sequencers;
 pub mod groups;
+pub mod pulsars;
 pub mod routing;
 pub mod scale;
 pub mod scope;

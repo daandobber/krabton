@@ -218,6 +218,8 @@ pub struct EngineStatus {
     pub mods: Vec<AtomicF32>,
     /// Where the listener on the Map is now (modulated): across, depth, turn.
     pub listener_live: [AtomicF32; 3],
+    /// The Pulsars: the pulses under way and the nodes struck.
+    pub pulsars: crate::pulsars::PulsarStatus,
     /// How loud the DJ mixer's channels are: deck A, deck B, the set.
     pub dj_levels: [AtomicF32; 3],
     /// The Session scene launched last, and how many have been.
@@ -320,6 +322,7 @@ impl EngineStatus {
             preview_active: AtomicBool::new(false),
             mods: (0..MAX_MODS).map(|_| AtomicF32::new(0.0)).collect(),
             listener_live: std::array::from_fn(|_| AtomicF32::new(0.0)),
+            pulsars: Default::default(),
             dj_levels: std::array::from_fn(|_| AtomicF32::new(0.0)),
             last_scene: AtomicI32::new(-1),
             scene_launches: AtomicU32::new(0),
@@ -1488,6 +1491,8 @@ pub struct Engine {
     signals: Vec<TrackSignal>,
     /// Track indices in processing order (sources before listeners).
     order: Vec<usize>,
+    /// The Pulsars running.
+    pulsar: crate::pulsars::PulsarRt,
     input: Option<Arc<InputRing>>,
     /// The interface inputs of the current block, channel-major.
     in_buf: Vec<f32>,
@@ -1568,6 +1573,7 @@ impl Engine {
             envs: Vec::with_capacity(256),
             signals: Vec::with_capacity(MAX_TRACKS),
             order: Vec::with_capacity(MAX_TRACKS),
+            pulsar: Default::default(),
             input: None,
             in_buf: vec![0.0; MAX_INPUTS * MAX_BLOCK],
             in_l: vec![0.0; MAX_BLOCK],
@@ -2218,6 +2224,7 @@ impl Engine {
             self.trash(g);
         }
         // Routing: processing order, what each audio track hears, where it goes.
+        self.pulsar.resolve(&project.pulsars);
         self.order.clear();
         self.order.extend(project.routing_order());
         for (ti, (t, rt)) in project.tracks.iter().zip(self.tracks.iter_mut()).enumerate() {
@@ -2325,6 +2332,26 @@ impl Engine {
         let (out_start, out_stop) = (std::mem::take(&mut self.out_start), std::mem::take(&mut self.out_stop));
         // Effects that keep time follow the session clock (it starts from the song position).
         let ctx = FxCtx { sr, bpm: project.bpm as f32, beat: s0, playing, scale: project.scale };
+
+        // The Pulsars: their notes go to the tracks as played notes do.
+        {
+            let tracks = &mut self.tracks;
+            let mut to_track = |(id, e): crate::pulsars::Out| {
+                if let Some(rt) = project.track_index(id).and_then(|ti| tracks.get_mut(ti)) {
+                    if rt.live.len() < rt.live.capacity() {
+                        rt.live.push(e);
+                    }
+                }
+            };
+            if playing && !project.pulsars.is_empty() {
+                let s1 = s0 + seg as f64 / spb;
+                self.pulsar.run(&project.pulsars, &project.scale, s0, s1, spb, seg, &mut to_track);
+                status.pulsars.publish(&mut self.pulsar, s1);
+            } else if self.pulsar.busy() {
+                self.pulsar.stop(&mut to_track);
+                status.pulsars.publish(&mut self.pulsar, s0);
+            }
+        }
 
         // Modulators run once per block, from what the tracks did last block.
         self.signals.clear();
@@ -4713,6 +4740,29 @@ mod tests {
         assert!(sounding >= 3, "{sounding} tracks report their sound");
         // Both sequencers of a track, not only the first.
         assert!(h.status.seqs.read(ids.0).is_some() && h.status.seqs.read(ids.1).is_some());
+    }
+
+    #[test]
+    fn a_pulsar_plays_an_orbs_note_on_its_track() {
+        use crate::pulsars::{PKind, PNode, PulsarSet};
+        let mut p = Project::new_default();
+        let t = p.add_midi_track(Some(Instrument::glide("Clean Sub")));
+        let id = p.tracks[t].id;
+        for (k, tr) in p.tracks.iter_mut().enumerate() {
+            tr.mixer.mute = k != t;
+        }
+        let mut set = PulsarSet { speed: 1000.0, ..Default::default() };
+        set.nodes.push(PNode { id: 1, x: 0.0, y: 0.0, kind: PKind::Pulsar { rate: 3, on: true } });
+        set.nodes.push(PNode { id: 2, x: 100.0, y: 0.0, kind: PKind::Orb { track: Some(id), degree: 0, octave: -1, velocity: 1.0, length: 0.5 } });
+        set.link(1, 2);
+        p.pulsars = set;
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        let silent = run(&mut e, 0.3).iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!(silent < 1e-4, "stopped: {silent}");
+        h.send(Command::Play);
+        let top = run(&mut e, 1.0).iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!(top > 0.05, "{top}");
+        assert!(e.status.pulsars.take_struck().contains(&1), "the orb was struck");
     }
 
     #[test]

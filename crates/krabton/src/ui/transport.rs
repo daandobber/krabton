@@ -189,6 +189,7 @@ impl App {
                     self.map_window = !map_on;
                 }
                 let views = [
+                    (View::Pulsars, "Pulsars", "Puls."),
                     (View::Dj, "DJ", "DJ"),
                     (View::Touch, "Touch", "Tch."),
                     (View::Tape, "Tape", "Tape"),
@@ -198,6 +199,7 @@ impl App {
                 ];
                 let tip = |v: View| match v {
                     View::Studio => "The studio: every track a machine on the shelf, its patterns and mixer beside it (Ctrl+Shift+R)",
+                    View::Pulsars => "Pulsars: pulsars fire pulses down lines to orbs, which play their notes on your tracks; where things are is the rhythm",
                     View::Dj => "DJ: two decks and your own set on one mixer, with tempo and key found, sync, EQ and a crossfader",
                     View::Tape => "The four-track tape: record what you play, at any speed, backwards, looped",
                     View::Touch => "Touch: play the selected track with plates (higher up: harder), a pulser, five steps, chance, and cables to its knobs; the letter keys press the plates",
