@@ -1025,6 +1025,7 @@ impl InstState {
     /// nothing to say). Returns false for instruments without such values.
     fn visual(&self, out: &mut [f32; INST_VALS]) -> bool {
         match self {
+            InstState::Drums(s) => s.visual(out),
             InstState::Shakers(s) => s.visual(out),
             InstState::Organ(s) => s.visual(out),
             InstState::Analog(s) => s.visual(out),

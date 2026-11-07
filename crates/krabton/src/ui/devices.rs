@@ -3044,6 +3044,9 @@ impl App {
                             }
                         }
                     }
+                    Instrument::Drums { pads, engine, .. } if *engine == drums::DrumEngine::Video => {
+                        self.video_rack_panel(ui, track_id, pads, &live, h);
+                    }
                     Instrument::Drums { kit, pads, engine } => {
                         let engine = *engine;
                         ui.horizontal(|ui| {

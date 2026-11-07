@@ -957,6 +957,8 @@ pub enum DrumEngine {
     Princess,
     /// The toy sampling keyboard's drums (see `keytone`).
     Keytone,
+    /// Pads that are films: their sound plays, the app shows their picture.
+    Video,
 }
 
 static G606: [(&str, &[DrumVoice]); 1] = [("606", &DrumVoice::M606)];
@@ -980,7 +982,7 @@ static GPRINCESS: [(&str, &[DrumVoice]); 1] = [("Analog Princess", &DrumVoice::P
 impl DrumEngine {
     /// The engines to choose from. `Shakers` is only kept for old projects:
     /// its kits are the Drum Rack's now, and Shakers is an instrument.
-    pub const ALL: [DrumEngine; 16] = [DrumEngine::RealDrums, DrumEngine::SampledMachines, DrumEngine::Acoustic, DrumEngine::Retro, DrumEngine::Chip, DrumEngine::Resonant, DrumEngine::MacroDrums, DrumEngine::M808, DrumEngine::M909, DrumEngine::M606, DrumEngine::Cr78, DrumEngine::Mutable, DrumEngine::FmDrums, DrumEngine::Princess, DrumEngine::Keytone, DrumEngine::Rack];
+    pub const ALL: [DrumEngine; 17] = [DrumEngine::RealDrums, DrumEngine::SampledMachines, DrumEngine::Acoustic, DrumEngine::Retro, DrumEngine::Chip, DrumEngine::Resonant, DrumEngine::MacroDrums, DrumEngine::M808, DrumEngine::M909, DrumEngine::M606, DrumEngine::Cr78, DrumEngine::Mutable, DrumEngine::FmDrums, DrumEngine::Princess, DrumEngine::Keytone, DrumEngine::Rack, DrumEngine::Video];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -1001,6 +1003,7 @@ impl DrumEngine {
             DrumEngine::SampledMachines => "Sampled Machines",
             DrumEngine::Princess => "Analog Princess Kits",
             DrumEngine::Keytone => "Keytone Drums",
+            DrumEngine::Video => "Video Rack",
         }
     }
 
@@ -1023,6 +1026,7 @@ impl DrumEngine {
             DrumEngine::Acoustic => "A real drum kit, modelled: kick, snare with its wires, side stick, three toms, hi-hat (closed, pedal, open), ride and its bell, crashes; every hit a little different, harder hits brighter",
             DrumEngine::Princess => "Deep-fried pluggnb drums: an 808 put into another 808 (ring-modulated, or pushing its pitch around), clipped to the ceiling as in 2015, sliding from note to note (play it from the keys below the drums, 23 to 58 Hz); a clipped kick, a plugg snare with a clap and a room, crispy ring-modulated hats and rolls in the song's time, laser, bit perc, channel surfing static and a subliminal shadow, and the plugg bell",
             DrumEngine::Keytone => "The rhythm section of the toy sampling keyboards and small home keyboards of the eighties: bass drum, snare, rim, clap, hi-hats, two toms, cymbal, claves, cowbell, congas and maracas as crunchy 8-bit samples at about 9.4 kHz (Rate and Bits on every pad). Play them with Home Rhythms",
+            DrumEngine::Video => "A rack of films: drop videos on its pads (or load a folder of them); a pad plays the film's sound and the screen shows its picture from where the pad starts. Start and length cut a hit out of a longer film",
         }
     }
 
@@ -1046,6 +1050,7 @@ impl DrumEngine {
             DrumEngine::SampledMachines => &GMACHINES,
             DrumEngine::Princess => &GPRINCESS,
             DrumEngine::Keytone => &GKEYTONE,
+            DrumEngine::Video => &DrumVoice::GROUPS,
         }
     }
 
@@ -1068,6 +1073,7 @@ impl DrumEngine {
             DrumEngine::Rack => &["Classic 808", "Classic 909", "Classic Lo-Fi", "Hybrid", "Electro", "606 Electro", "Shaker Kit", "Hand Percussion", "Found Sounds"],
             DrumEngine::Princess => &["Pluggnb", "Deep Fried", "2015 Clip", "Channel Surfing", "Subliminal"],
             DrumEngine::Keytone => &["Keytone Kit", "Home Keyboard Kit", "Toy Crunch Kit"],
+            DrumEngine::Video => &["Empty Video Rack"],
         }
     }
 }
@@ -1117,6 +1123,20 @@ pub fn engine_of(kit: &str) -> DrumEngine {
 /// Every kit of every engine.
 pub fn kit_names() -> Vec<&'static str> {
     DrumEngine::ALL.iter().flat_map(|e| e.kits().iter().copied()).collect()
+}
+
+/// Sixteen pads waiting for films, on the notes from C1 up (a silent sample
+/// each, so that nothing plays until a film is put on it).
+pub fn video_kit() -> Vec<DrumPad> {
+    (0..MAX_PADS)
+        .map(|k| {
+            let mut p = DrumPad::new(DrumVoice::Kick);
+            p.name = format!("Pad {}", k + 1);
+            p.note = 36 + k as u8;
+            p.sample = Some(crate::sample::SampleRef::new(crate::sample::SampleData::silent("Empty", None)));
+            p
+        })
+        .collect()
 }
 
 /// An acoustic kit of sixteen pads, on the General MIDI notes.
@@ -1310,6 +1330,7 @@ pub fn kit(name: &str) -> Vec<DrumPad> {
     };
     let hat = |p: &mut DrumPad| p.choke = 1;
     match current_name(name) {
+        "Empty Video Rack" => video_kit(),
         // ---------------------------------------------------------- Acoustic
         n @ ("Studio Kit" | "Rock Kit" | "Jazz Kit" | "Funk Kit" | "Vintage Kit" | "Brush Kit") => acoustic_kit(n),
         n if super::real_drums::pack_of(n).is_some() => super::real_drums::kit(n),
@@ -3027,6 +3048,11 @@ pub struct DrumState {
     voices: [PadVoice; MAX_PADS],
     /// The keys held (an 808 slides while another of its keys is).
     held: u128,
+    /// The pad struck last, how many strikes so far, and how hard (for a
+    /// Video Rack's screen: a new strike starts its film again).
+    last_pad: u8,
+    strikes: u32,
+    last_vel: f32,
     /// The song's tempo (rolls keep it).
     pub bpm: f32,
 }
@@ -3052,7 +3078,16 @@ fn choke_group(pad: &DrumPad) -> u8 {
 impl DrumState {
     pub fn new() -> Self {
         let voices = std::array::from_fn(|i| PadVoice::new(0xC0FF_EE00 ^ (i as u32 * 104_729 + 7)));
-        Self { voices, held: 0, bpm: 120.0 }
+        Self { voices, held: 0, bpm: 120.0, last_pad: 0, strikes: 0, last_vel: 0.0 }
+    }
+
+    /// For the face: the pad struck last, the count of strikes, how hard.
+    pub fn visual(&self, out: &mut [f32]) {
+        if out.len() >= 3 {
+            out[0] = self.last_pad as f32;
+            out[1] = (self.strikes % 1_000_000) as f32;
+            out[2] = self.last_vel;
+        }
     }
 
     pub fn note_on(&mut self, pads: &[DrumPad], note: u8, vel: f32, sr: f32) {
@@ -3069,6 +3104,9 @@ impl DrumState {
             if pad.note == note {
                 self.hit(pads, i, vel, sr, None, legato && keys == Some(i));
                 played = true;
+                self.last_pad = i as u8;
+                self.strikes = self.strikes.wrapping_add(1);
+                self.last_vel = vel;
             }
         }
         if let (false, Some(k)) = (played, keys) {
@@ -3255,7 +3293,8 @@ mod tests {
 
     #[test]
     fn every_kit_loads_and_plays() {
-        for name in kit_names() {
+        // An empty Video Rack is silent until films are put on it.
+        for name in kit_names().into_iter().filter(|n| engine_of(n) != DrumEngine::Video) {
             let pads = kit(name);
             assert!((8..=MAX_PADS).contains(&pads.len()), "{name}");
             let mut d = DrumState::new();

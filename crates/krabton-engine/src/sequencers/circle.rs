@@ -42,6 +42,9 @@ pub const MAX_PHASES: usize = 4;
 pub const GATE_FROM: usize = 42;
 pub const OCTAVE_FROM: usize = 43;
 pub const MOD_FROM: usize = 44;
+/// What plays, each its own voice: the points' notes, then sin θ to cot θ.
+pub const PLAY_POINTS: usize = 45;
+pub const VOICES: usize = 7;
 
 pub const PERIODS: &[&str] = &["1/4 Beat", "1/2 Beat", "1 Beat", "2 Beats", "1 Bar", "2 Bars", "4 Bars", "8 Bars", "16 Bars"];
 const PERIOD_BEATS: [f64; 9] = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0];
@@ -71,7 +74,8 @@ pub static CIRCLE: &[ParamSpec] = &[
     ParamSpec::int("Phases", "Circle", 1.0, 4.0, 1.0, Unit::None),
     ParamSpec::toggle("Reverse", "Circle", false),
     ParamSpec::lin("Offset", "Circle", 0.0, 1.0, 0.0, Unit::Percent),
-    ParamSpec::choice("Pitch", "Function", PITCHES, 0),
+    // Was the one thing that played; now the Play switches say (old sets keep it).
+    ParamSpec::choice("Pitch", crate::params::SCREEN_ONLY, PITCHES, 0),
     ParamSpec::int("Harmonic", "Function", 1.0, 8.0, 1.0, Unit::None),
     ParamSpec::int("Range", "Function", 2.0, 24.0, 8.0, Unit::None),
     ParamSpec::choice("Vel From", "Function", VELOCITIES, 1),
@@ -108,6 +112,13 @@ pub static CIRCLE: &[ParamSpec] = &[
     ParamSpec::choice("Gate From", "Function", GATES, 0),
     ParamSpec::choice("Octave From", "Function", OCTAVES, 0),
     ParamSpec::choice("Mod From", "Function", MODS, 0),
+    ParamSpec::toggle("Play Points", crate::params::SCREEN_ONLY, true),
+    ParamSpec::toggle("Play sin θ", crate::params::SCREEN_ONLY, false),
+    ParamSpec::toggle("Play cos θ", crate::params::SCREEN_ONLY, false),
+    ParamSpec::toggle("Play tan θ", crate::params::SCREEN_ONLY, false),
+    ParamSpec::toggle("Play sec θ", crate::params::SCREEN_ONLY, false),
+    ParamSpec::toggle("Play csc θ", crate::params::SCREEN_ONLY, false),
+    ParamSpec::toggle("Play cot θ", crate::params::SCREEN_ONLY, false),
 ];
 
 /// N, the points on the circle.
@@ -315,11 +326,29 @@ pub fn passes(p: &[f32], b0: f64, b1: f64, out: &mut impl FnMut(f64, usize, usiz
     }
 }
 
-/// The step of the key a pass plays: the point's note, or the function's value
-/// at P's θ, and the climb so far.
+/// Which voices play: [0] the points' notes, then sin θ ... cot θ, each its
+/// own melody at once. A set from before the switches plays what its Pitch said.
+pub fn voices(p: &[f32]) -> [bool; VOICES] {
+    let old = (p[PITCH].round().max(0.0) as usize).min(PITCHES.len() - 1);
+    let on = |v: usize| p.get(PLAY_POINTS + v).is_some_and(|x| *x >= 0.5);
+    let mut out = [false; VOICES];
+    out[0] = on(0) && old == 0;
+    for (f, slot) in out.iter_mut().enumerate().skip(1) {
+        *slot = on(f) || old == f;
+    }
+    out
+}
+
+/// The step of the key a pass plays in the voice that Pitch names.
 pub fn pass_step(p: &[f32], k: usize, theta: f64, revolution: i64) -> Option<i32> {
+    voice_step(p, k, (p[PITCH].round().max(0.0) as usize).min(PITCHES.len() - 1), theta, revolution)
+}
+
+/// The step of the key voice `which` plays as P passes point `k`: the point's
+/// note (0), or the function's value at θ; with the climb so far. A rest is a
+/// rest in every voice.
+pub fn voice_step(p: &[f32], k: usize, which: usize, theta: f64, revolution: i64) -> Option<i32> {
     let note = point_note(p, k)?;
-    let which = (p[PITCH].round().max(0.0) as usize).min(PITCHES.len() - 1);
     let base = if which == 0 {
         note
     } else {
@@ -402,12 +431,20 @@ impl SeqState {
                     continue;
                 }
                 let theta = theta_at_beat(p, beat);
-                let Some(step) = pass_step(p, k, theta, revolution) else { continue };
                 let vel = p[VELOCITY] * pass_level(p, theta) as f32;
                 let octave = pass_octave(p, theta) * ctx.scale.len().max(1) as i32;
-                let pitch = ctx.scale.pitch_at(home + step + octave);
                 let gate = p[GATE] as f64 * pass_gate(p, theta);
-                self.play(ctx, frame_of(ctx, beat), pitch, vel, gate * ctx.samples_per_beat, out);
+                // Every voice that plays, each note once.
+                let mut sounded = [i32::MIN; VOICES];
+                for (v, on) in voices(p).into_iter().enumerate() {
+                    let Some(step) = voice_step(p, k, v, theta, revolution).filter(|_| on) else { continue };
+                    let pitch = ctx.scale.pitch_at(home + step + octave);
+                    if sounded.contains(&pitch) {
+                        continue;
+                    }
+                    sounded[v] = pitch;
+                    self.play(ctx, frame_of(ctx, beat), pitch, vel, gate * ctx.samples_per_beat, out);
+                }
             }
         }
         // For the editor: where in its revolution P is.
@@ -580,6 +617,25 @@ mod tests {
         }
         let (lo, hi) = seen.iter().fold((1.0f32, 0.0f32), |m, v| (m.0.min(*v), m.1.max(*v)));
         assert!(lo < 0.05 && hi > 0.95, "{lo} {hi}");
+    }
+
+    #[test]
+    fn several_voices_play_at_once_each_its_own_melody() {
+        let mut p = all_points(circle());
+        p[PERIOD] = 4.0;
+        let points_only = run(MidiFxKind::Circle, &p, &MidiFxKind::Circle.default_data(), 4.0).len();
+        p[PLAY_POINTS + 1] = 1.0;
+        p[PLAY_POINTS + 2] = 1.0;
+        p[PLAY_POINTS + 3] = 1.0;
+        let four = run(MidiFxKind::Circle, &p, &MidiFxKind::Circle.default_data(), 4.0).len();
+        assert!(four > points_only * 2, "{points_only} {four}");
+        assert_eq!(voices(&p), [true, true, true, true, false, false, false]);
+        p[PLAY_POINTS] = 0.0;
+        assert!(!voices(&p)[0], "the points' own notes can be left out");
+        // A set from before the switches: what its Pitch said, and not the points.
+        let mut old = circle();
+        old[PITCH] = 2.0;
+        assert_eq!(voices(&old), [false, false, true, false, false, false, false]);
     }
 
     #[test]

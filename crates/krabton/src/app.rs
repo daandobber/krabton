@@ -679,6 +679,8 @@ pub struct App {
     pub(crate) env_view: bool,
     /// The clip's Steps tab (see `ui::steps_view`).
     pub(crate) steps: crate::ui::steps_view::StepsState,
+    /// The Video Racks' films and screens (see `ui::video_rack`).
+    pub(crate) video_rack: crate::ui::video_rack::VideoRackState,
     /// Counting in, to record when it has.
     pub(crate) count_pending: bool,
     pub(crate) env_target: Option<krabton_engine::modulation::ModTarget>,
@@ -903,6 +905,7 @@ impl App {
             shot: None,
             env_view: false,
             steps: Default::default(),
+            video_rack: Default::default(),
             count_pending: false,
             env_target: None,
             env_draw: false,
@@ -5460,6 +5463,7 @@ impl eframe::App for App {
         self.poll_recording();
         self.tape_frame();
         self.follow_auto_arm();
+        self.poll_video_rack();
         self.grow_slot_takes();
         self.poll_count_in();
         self.poll_export();

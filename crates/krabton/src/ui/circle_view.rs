@@ -44,16 +44,22 @@ pub(crate) fn clicked_point(value: f32) -> f32 {
     }
 }
 
-/// The functions shown at first: sin and cos, and whatever the notes follow.
+/// The functions shown at first: sin and cos, what plays, what turns the wheel.
 pub(crate) fn shown_at_first(params: &[f32]) -> u8 {
-    let mut bits = 0b11u8;
-    for (param, offset) in [(uc::PITCH, 1usize), (uc::OCTAVE_FROM, 1), (uc::MOD_FROM, 1)] {
+    let mut bits = 0b11u8 | playing(params);
+    for (param, offset) in [(uc::OCTAVE_FROM, 1usize), (uc::MOD_FROM, 1)] {
         let w = params.get(param).map_or(0, |v| v.round().max(0.0) as usize);
         if w >= offset && w - offset < 6 {
             bits |= 1 << (w - offset);
         }
     }
     bits
+}
+
+/// The functions that play, as bits (sin first).
+pub(crate) fn playing(params: &[f32]) -> u8 {
+    let v = uc::voices(params);
+    (0..6).filter(|f| v[f + 1]).fold(0u8, |m, f| m | 1 << f)
 }
 
 pub(crate) fn circle(ui: &mut Ui, id: Id, params: &mut [f32], live: Live, height: f32) -> bool {
@@ -95,7 +101,28 @@ fn drawn(ui: &mut Ui, id: Id, params: &mut [f32], live: Live, height: f32) -> bo
             }
         }
         ui.add_space(8.0);
+        // What plays: a tick each; what is shown: its button.
+        let mut points = params[uc::PLAY_POINTS] >= 0.5;
+        if ui.checkbox(&mut points, RichText::new("Points").small()).on_hover_text("The points' own notes play").changed() {
+            params[uc::PLAY_POINTS] = if points { 1.0 } else { 0.0 };
+            if !points && params[uc::PITCH] >= 1.0 {
+                params[uc::PITCH] = 0.0;
+            }
+            changed = true;
+        }
         for (f, name) in uc::FUNCTIONS.iter().enumerate() {
+            let mut plays = uc::voices(params)[f + 1];
+            if ui.checkbox(&mut plays, "").on_hover_text(format!("{name} θ plays: its own melody, with the others ticked")).changed() {
+                params[uc::PLAY_POINTS + 1 + f] = if plays { 1.0 } else { 0.0 };
+                // An old set's Pitch gives way to the switches.
+                if params[uc::PITCH].round() as usize == f + 1 {
+                    params[uc::PITCH] = 0.0;
+                }
+                if plays {
+                    shown |= 1 << f;
+                }
+                changed = true;
+            }
             let on = shown & (1 << f) != 0;
             let text = RichText::new(*name).small().color(if on { COLORS[f] } else { TEXT_DIM });
             let button = egui::Button::new(text).fill(if on { PANEL3 } else { Color32::TRANSPARENT }).stroke(Stroke::new(1.0_f32, if on { COLORS[f] } else { LINE }));
@@ -150,11 +177,9 @@ fn drawn(ui: &mut Ui, id: Id, params: &mut [f32], live: Live, height: f32) -> bo
         }
     }
 
-    // Where the points played, on the wave the notes follow (else sin's).
-    let follow = match params[uc::PITCH].round() as usize {
-        w @ 1..=6 => w - 1,
-        _ => 0,
-    };
+    // Where the points played: on each wave that plays (else on sin's).
+    let plays = playing(params);
+    let follow: Vec<usize> = if plays == 0 { vec![0] } else { (0..6).filter(|f| plays & (1 << f) != 0).collect() };
     let now = frac * period;
     let mut played = Vec::new();
     let pieces = 160;
@@ -166,7 +191,10 @@ fn drawn(ui: &mut Ui, id: Id, params: &mut [f32], live: Live, height: f32) -> bo
     for (beat, k) in played {
         if uc::point_note(params, k).is_some() {
             let u = ((now - beat) / period) as f32;
-            p.circle_filled(pos2(x0 + u * span, wave_y(follow, uc::theta_at_beat(params, beat))), 3.5, Color32::WHITE);
+            let th = uc::theta_at_beat(params, beat);
+            for &f in &follow {
+                p.circle_filled(pos2(x0 + u * span, wave_y(f, th)), 3.5, Color32::WHITE);
+            }
         }
     }
 
@@ -304,8 +332,9 @@ mod tests {
     fn sin_cos_and_what_the_notes_follow_are_shown_at_first() {
         let mut p = krabton_engine::params::defaults(uc::CIRCLE);
         assert_eq!(shown_at_first(&p), 0b11);
-        p[uc::PITCH] = 3.0; // tan θ
+        p[uc::PLAY_POINTS + 3] = 1.0; // tan θ plays
         p[uc::MOD_FROM] = 6.0; // cot θ
         assert_eq!(shown_at_first(&p), 0b100111);
+        assert_eq!(playing(&p), 0b100);
     }
 }

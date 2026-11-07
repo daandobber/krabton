@@ -1257,6 +1257,26 @@ const GRANULATOR: Skin = Skin {
 
 /// Keytone: the light grey plastic of a toy keyboard, dark print, red
 /// lights, the speaker grille's slots.
+const VIDEO_RACK: Skin = Skin {
+    top: hex(0x141416),
+    bottom: hex(0x0b0b0c),
+    surface: Surface::Carbon,
+    stripes: &[hex(0xe8e8e8), hex(0x141416), hex(0xe8e8e8)],
+    ink: hex(0xf2f2f2),
+    dim: hex(0x9a9aa2),
+    well: hex(0x050506),
+    well_ink: hex(0xffd23a),
+    accent: hex(0xffd23a),
+    knob: Knob::Cap,
+    cap: hex(0x2a2a2e),
+    logo: Font::Wide,
+    logo_size: 18.0,
+    logo_ink: hex(0xffd23a),
+    logo_case: Case::Upper,
+    caps: true,
+    ..BASE
+};
+
 const KEYTONE: Skin = Skin {
     top: hex(0xc4c6c8),
     bottom: hex(0xa9abae),
@@ -1422,6 +1442,7 @@ pub fn for_instrument(name: &str) -> Option<Skin> {
         "Sampled Machines" => SAMPLER,
         "Drum Rack" => DRUM_RACK,
         "Keytone Drums" => KEYTONE,
+        "Video Rack" => VIDEO_RACK,
         _ => return None,
     })
 }
