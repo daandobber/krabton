@@ -2910,7 +2910,8 @@ impl Engine {
             post_r[..seg].copy_from_slice(&r[..seg]);
 
             let mm = mods.track_mix(ti);
-            let muted = track.mixer.mute || (any_solo && !track.mixer.solo);
+            // A solo is heard through the groups it is in.
+            let muted = track.mixer.mute || (any_solo && !project.heard_in_solo(ti));
             let vol = if muted { 0.0 } else { fader_gain(mm.volume(track.mixer.volume_db)) * mm.gain };
             let (pl, pr) = pan_gains((mm.pan_base(track.mixer.pan) + mm.pan).clamp(-1.0, 1.0));
             let (pk_l, pk_r) = apply_gain_ramp(&mut l[..seg], &mut r[..seg], gain_l, gain_r, vol * pl, vol * pr);
@@ -4706,6 +4707,40 @@ mod tests {
         assert!(sounding >= 3, "{sounding} tracks report their sound");
         // Both sequencers of a track, not only the first.
         assert!(h.status.seqs.read(ids.0).is_some() && h.status.seqs.read(ids.1).is_some());
+    }
+
+    #[test]
+    fn a_group_plays_its_tracks_and_its_mute_silences_them() {
+        let play = |mute_group: bool| {
+            let mut p = Project::new_default();
+            let t = p.add_midi_track(Some(Instrument::glide("Clean Sub")));
+            let id = p.tracks[t].id;
+            let gi = p.group_tracks(&[t]).unwrap();
+            p.tracks[gi].mixer.mute = mute_group;
+            for (k, tr) in p.tracks.iter_mut().enumerate() {
+                if k != gi && tr.id != id {
+                    tr.mixer.mute = true;
+                }
+            }
+            let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+            h.send(Command::NoteOn { track: id, pitch: 45, velocity: 1.0 });
+            run(&mut e, 0.4).iter().fold(0.0f32, |m, v| m.max(v.abs()))
+        };
+        assert!(play(false) > 0.05, "through the group: {}", play(false));
+        assert!(play(true) < 1e-4, "the group muted: {}", play(true));
+    }
+
+    #[test]
+    fn a_solo_in_a_group_is_heard() {
+        let mut p = Project::new_default();
+        let t = p.add_midi_track(Some(Instrument::glide("Clean Sub")));
+        let id = p.tracks[t].id;
+        let gi = p.group_tracks(&[t]).unwrap();
+        p.tracks[gi + 1].mixer.solo = true;
+        let (mut e, h) = Engine::new(48000.0, Arc::new(p));
+        h.send(Command::NoteOn { track: id, pitch: 45, velocity: 1.0 });
+        let top = run(&mut e, 0.4).iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!(top > 0.05, "{top}");
     }
 
     #[test]

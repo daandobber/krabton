@@ -325,6 +325,12 @@ pub enum Deferred {
     DeleteReturn(usize),
     /// A new armed audio track listening to this track.
     RecordIntoAudio(usize),
+    /// The selected tracks into a group (this one, if it is not selected).
+    Group(usize),
+    /// Lets the group go (this group, or the one this track is in).
+    Ungroup(usize),
+    /// Takes the track out of its group.
+    LeaveGroup(usize),
 }
 
 /// Drag payload: an arrangement clip being dragged (it can be dropped on a
@@ -1274,9 +1280,49 @@ impl App {
         i
     }
 
+    /// Gathers tracks in a new group (Ctrl+G).
+    pub(crate) fn group(&mut self, picked: &[usize]) {
+        if let Some(gi) = self.project.group_tracks(picked) {
+            self.sel_track = TrackSel::Track(gi);
+            self.sel_more.clear();
+            self.sel_clip = None;
+            self.toast("Grouped: its effects and fader work on all of them");
+        }
+    }
+
+    /// The selected tracks into a group.
+    pub(crate) fn group_selected(&mut self) {
+        let picked = self.selected_tracks();
+        self.group(&picked);
+    }
+
+    /// Lets a group go: this one, or the one track `i` is in (Ctrl+Shift+G).
+    pub(crate) fn ungroup_at(&mut self, i: usize) {
+        let gi = match self.project.tracks.get(i) {
+            Some(t) if t.is_group => Some(i),
+            Some(_) => self.project.group_of(i),
+            None => None,
+        };
+        if let Some(gi) = gi {
+            self.project.ungroup(gi);
+            self.sel_track = TrackSel::Track(gi.min(self.project.tracks.len().saturating_sub(1)));
+            self.sel_clip = None;
+            self.validate_selection();
+            self.toast("Ungrouped");
+        }
+    }
+
+    pub(crate) fn ungroup_selected(&mut self) {
+        if let TrackSel::Track(i) = self.sel_track {
+            self.ungroup_at(i);
+        }
+    }
+
     pub fn delete_track(&mut self, i: usize) {
         if i < self.project.tracks.len() {
             self.project.tracks.remove(i);
+            // A group gone lets its tracks go.
+            self.project.fix_groups();
             self.sel_clip = None;
             self.validate_selection();
         }
@@ -2841,6 +2887,15 @@ impl App {
                     self.project.fix_routing();
                 }
                 Deferred::DuplicateTrack(i) => self.duplicate_track(i),
+                Deferred::Group(i) => {
+                    let picked = if self.is_selected(i) { self.selected_tracks() } else { vec![i] };
+                    self.group(&picked);
+                }
+                Deferred::Ungroup(i) => self.ungroup_at(i),
+                Deferred::LeaveGroup(i) => {
+                    self.project.leave_group(i);
+                    self.toast("Out of its group");
+                }
                 Deferred::RecordIntoAudio(i) => {
                     self.route_into_new_audio_track(i);
                 }
@@ -3451,6 +3506,8 @@ impl App {
                 Key::O => self.open(),
                 Key::P => self.toggle_palette(),
                 Key::N => self.new_project(),
+                Key::G if m.shift => self.ungroup_selected(),
+                Key::G => self.group_selected(),
                 // The note editor clicked last: Ctrl+D is for its notes.
                 Key::D if self.view == View::Arrangement && !self.arr.picked.is_empty() && !self.notes_focus() => self.arr_duplicate_selection(),
                 Key::D => self.edit_duplicate(),
@@ -5075,6 +5132,15 @@ impl App {
                     self.project.scenes_to_arrangement();
                 }
                 "export" => self.export.open = true,
+                "group" => {
+                    let picked: Vec<usize> = nums.iter().map(|n| *n as usize).collect();
+                    self.group(&picked);
+                }
+                "groupfold" => {
+                    if let Some(t) = nums.first().and_then(|&i| self.project.tracks.get_mut(i as usize)) {
+                        t.folded = !t.folded;
+                    }
+                }
                 "steps" => self.steps.open = true,
                 "countin" => self.prefs.count_in = nums.first().copied().unwrap_or(0) as u8,
                 "stemsto" => self.export_stems_to(std::path::PathBuf::from(arg)),

@@ -238,6 +238,7 @@ impl Project {
 
     /// Drops routing to tracks that no longer exist (or to themselves).
     pub fn fix_routing(&mut self) {
+        self.fix_groups();
         let ids: Vec<(u64, TrackKind)> = self.tracks.iter().map(|t| (t.id, t.kind)).collect();
         for t in &mut self.tracks {
             let own = t.id;

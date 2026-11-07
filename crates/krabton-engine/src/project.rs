@@ -1745,6 +1745,15 @@ pub struct Track {
     /// Its height in the arrangement (0: the one all lanes have).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub lane_h: f32,
+    /// The group track it is in (see `groups`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<u64>,
+    /// A group track: the tracks in it play into it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_group: bool,
+    /// A group folded away in the views.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub folded: bool,
     /// A clock of its own (Sync off): its session clips, MIDI effects and
     /// effects that keep time run at this tempo instead of the project's,
     /// drifting against the other tracks. None: in sync with the project.
@@ -2385,7 +2394,7 @@ impl Project {
         }
     }
 
-    fn new_track(&mut self, kind: TrackKind, name: String, instrument: Option<Instrument>) -> Track {
+    pub(crate) fn new_track(&mut self, kind: TrackKind, name: String, instrument: Option<Instrument>) -> Track {
         let id = self.alloc_id();
         let color = PALETTE[(id as usize * 7) % PALETTE.len()];
         Track {
@@ -2414,6 +2423,9 @@ impl Project {
             auto_shown: None,
             auto_lanes: Vec::new(),
             lane_h: 0.0,
+            group: None,
+            is_group: false,
+            folded: false,
         }
     }
 

@@ -62,6 +62,8 @@ fn actions() -> Vec<Entry> {
     vec![
         e("Save", |a| a.save(false)),
         e("Save As", |a| a.save(true)),
+        e("Group Tracks", |a| a.group_selected()),
+        e("Ungroup Tracks", |a| a.ungroup_selected()),
         e("Save as Default Set", |a| a.save_default_set()),
         e("New Set", |a| a.new_project()),
         e("Open Set", |a| a.open()),

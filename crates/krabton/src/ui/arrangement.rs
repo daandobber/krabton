@@ -251,7 +251,8 @@ impl App {
         let mut acc = 0.0f32;
         for (k, tr) in self.project.tracks.iter().enumerate() {
             tops.push(acc);
-            acc += self.track_h(k) + if self.arr.automation { tr.auto_lanes.len() as f32 * auto_h } else { 0.0 };
+            let th = self.track_h(k);
+            acc += th + if self.arr.automation && th > 0.0 { tr.auto_lanes.len() as f32 * auto_h } else { 0.0 };
         }
         tops.push(acc);
         let content_h = acc + 60.0;
@@ -330,6 +331,9 @@ impl App {
         for i in 0..nt {
             let y = lane_y(i);
             let th = self.track_h(i);
+            if th <= 0.0 {
+                continue;
+            }
             let lane = Rect::from_min_size(pos2(lanes.left(), y), vec2(lanes.width(), th - 1.0));
             if !lane.intersects(lanes) && !(self.arr.automation && lane_y(i + 1) > lanes.top()) {
                 continue;
@@ -440,6 +444,9 @@ impl App {
         }
         for i in 0..nt {
             let th = self.track_h(i);
+            if th <= 0.0 {
+                continue;
+            }
             let y = lane_y(i) + th - 1.0;
             if y < heads.top() || y > heads.bottom() {
                 continue;
@@ -612,6 +619,10 @@ impl App {
 
     /// Track `i`'s lane height: its own, or the usual.
     pub(crate) fn track_h(&self, i: usize) -> f32 {
+        // Folded away in a group: no lane.
+        if self.project.hidden(i) {
+            return 0.0;
+        }
         match self.project.tracks.get(i).map(|t| t.lane_h) {
             Some(h) if h > 0.0 => h.clamp(28.0, 240.0),
             _ => self.lane_h(),
@@ -759,7 +770,23 @@ impl App {
         let resp = ui.interact(r, Id::new(("arr_head", id)), Sense::click());
         rect_fill(&p, r, 0.0, if selected { PANEL3 } else { PANEL2 });
         rect_fill(&p, Rect::from_min_size(r.min, vec2(5.0, r.height())), 0.0, color);
-        text_in(&p, Rect::from_min_max(pos2(r.left() + 8.0, r.top() + 2.0), pos2(r.right() - 4.0, r.top() + 22.0)), &name, body(), TEXT);
+        // In a group: set in a little, a step per group; a group's triangle folds it.
+        let indent = self.project.depth(i) as f32 * 8.0;
+        let is_group = self.project.tracks[i].is_group;
+        let folded = self.project.tracks[i].folded;
+        let name_left = r.left() + 8.0 + indent + if is_group { 14.0 } else { 0.0 };
+        text_in(&p, Rect::from_min_max(pos2(name_left, r.top() + 2.0), pos2(r.right() - 4.0, r.top() + 22.0)), &name, body(), TEXT);
+        if is_group {
+            let tri_r = Rect::from_min_size(pos2(r.left() + 6.0 + indent, r.top() + 2.0), vec2(14.0, 20.0));
+            let c = tri_r.center();
+            let shape = if folded { vec![c + vec2(-2.5, -4.5), c + vec2(4.0, 0.0), c + vec2(-2.5, 4.5)] } else { vec![c + vec2(-4.5, -2.5), c + vec2(4.5, -2.5), c + vec2(0.0, 4.0)] };
+            p.add(egui::Shape::convex_polygon(shape, TEXT, Stroke::NONE));
+            if ui.interact(tri_r, Id::new(("arr_group_fold", id)), Sense::click()).clicked() {
+                if let Some(t) = self.project.tracks.get_mut(i) {
+                    t.folded = !t.folded;
+                }
+            }
+        }
         if self.arr.automation {
             // What the line over the clips shows, and + for another lane.
             let cr = Rect::from_min_max(pos2(r.left() + 8.0, r.top() + 20.0), pos2(r.right() - 40.0, r.top() + 38.0));

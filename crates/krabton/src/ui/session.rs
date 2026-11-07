@@ -82,7 +82,10 @@ impl App {
         let full = ui.available_rect_before_wrap();
         ui.allocate_rect(full, Sense::hover());
         let status = self.status();
-        let nt = self.project.tracks.len();
+        let all = self.project.tracks.len();
+        // The columns: the tracks not folded away in a group.
+        let vis: Vec<usize> = (0..all).filter(|&i| !self.project.hidden(i)).collect();
+        let nt = vis.len();
         let nr = self.project.returns.len();
         let ns = self.project.scenes.len();
 
@@ -135,8 +138,8 @@ impl App {
         // Track and return headers.
         {
             let mut hui = child(ui, header);
-            for i in 0..nt {
-                let r = Rect::from_min_size(pos2(col_x(i), header.top()), vec2(col_w - 1.0, HEADER_H - 1.0));
+            for (c, &i) in vis.iter().enumerate() {
+                let r = Rect::from_min_size(pos2(col_x(c), header.top()), vec2(col_w - 1.0, HEADER_H - 1.0));
                 if r.intersects(header) {
                     self.track_header(&mut hui, i, r);
                 }
@@ -152,8 +155,8 @@ impl App {
         // Clip slots.
         {
             let mut sui = child(ui, slots);
-            for i in 0..nt {
-                let x = col_x(i);
+            for (c, &i) in vis.iter().enumerate() {
+                let x = col_x(c);
                 if x + col_w < slots.left() || x > slots.right() {
                     continue;
                 }
@@ -232,8 +235,8 @@ impl App {
         if io_h >= IO_H - 0.5 {
             let io_cols = Rect::from_min_max(io.min, pos2(cols_right, io.bottom()));
             let mut iui = child(ui, io_cols);
-            for i in 0..nt {
-                let r = Rect::from_min_size(pos2(col_x(i), io.top()), vec2(col_w - 1.0, io_h));
+            for (c, &i) in vis.iter().enumerate() {
+                let r = Rect::from_min_size(pos2(col_x(c), io.top()), vec2(col_w - 1.0, io_h));
                 if r.intersects(io_cols) {
                     self.track_io(&mut iui, i, r, &status);
                 }
@@ -252,8 +255,8 @@ impl App {
         // Mixer strips.
         {
             let mut xui = child(ui, mixer_cols);
-            for i in 0..nt {
-                let r = Rect::from_min_size(pos2(col_x(i), mixer.top() + 1.0), vec2(col_w - 1.0, mixer.height() - 1.0));
+            for (c, &i) in vis.iter().enumerate() {
+                let r = Rect::from_min_size(pos2(col_x(c), mixer.top() + 1.0), vec2(col_w - 1.0, mixer.height() - 1.0));
                 if r.intersects(mixer_cols) {
                     self.track_strip(&mut xui, i, r);
                 }
@@ -315,11 +318,33 @@ impl App {
         let color = rgb(t.color);
         let fill = if selected { color } else { shade(color, 0.72) };
         let name = t.name.clone();
+        let (is_group, folded) = (t.is_group, t.folded);
         let id = Id::new(("track_header", t.id));
         let resp = ui.interact(r, id, Sense::click());
-        let p = ui.painter();
-        rect_fill(p, r, 2.0, fill);
-        text_in(p, r.shrink2(vec2(2.0, 0.0)), &name, body(), text_on(fill));
+        let group_color = self.project.group_of(i).map(|g| rgb(self.project.tracks[g].color));
+        let p = ui.painter().clone();
+        rect_fill(&p, r, 2.0, fill);
+        // A group: its triangle folds its tracks away; a track in one: its colour along the foot.
+        let name_r = if is_group { Rect::from_min_max(pos2(r.left() + 16.0, r.top()), r.max) } else { r.shrink2(vec2(2.0, 0.0)) };
+        text_in(&p, name_r, &name, body(), text_on(fill));
+        if let Some(gc) = group_color {
+            p.rect_filled(Rect::from_min_max(pos2(r.left(), r.bottom() - 3.0), r.max), 0.0, gc);
+        }
+        let mut fold_click = false;
+        if is_group {
+            let tri_r = Rect::from_min_size(r.min, vec2(16.0, r.height()));
+            let tri = ui.interact(tri_r, Id::new(("group_fold", self.project.tracks[i].id)), Sense::click());
+            let c = tri_r.center();
+            let shape = if folded { vec![c + vec2(-2.5, -4.5), c + vec2(4.0, 0.0), c + vec2(-2.5, 4.5)] } else { vec![c + vec2(-4.5, -2.5), c + vec2(4.5, -2.5), c + vec2(0.0, 4.0)] };
+            p.add(egui::Shape::convex_polygon(shape, text_on(fill), Stroke::NONE));
+            fold_click = tri.on_hover_text(if folded { "Show the tracks in this group" } else { "Fold the tracks in this group away" }).clicked();
+        }
+        if fold_click {
+            if let Some(t) = self.project.tracks.get_mut(i) {
+                t.folded = !t.folded;
+            }
+        }
+        let p = &p;
         if selected {
             rect_line(p, r, 2.0, 1.5, egui::Color32::WHITE);
         }
@@ -354,6 +379,19 @@ impl App {
             }
             if ui.button("Delete").clicked() {
                 self.deferred.push(Deferred::DeleteTrack(i));
+                ui.close();
+            }
+            ui.separator();
+            if ui.button("Group Tracks      Ctrl+G").on_hover_text("Gathers the selected tracks (Ctrl+click to pick more) under a group track: its effects and fader work on all of them").clicked() {
+                self.deferred.push(Deferred::Group(i));
+                ui.close();
+            }
+            if is_group && ui.button("Ungroup             Ctrl+Shift+G").clicked() {
+                self.deferred.push(Deferred::Ungroup(i));
+                ui.close();
+            }
+            if group_color.is_some() && ui.button("Take Out of Group").clicked() {
+                self.deferred.push(Deferred::LeaveGroup(i));
                 ui.close();
             }
             ui.separator();
@@ -412,6 +450,10 @@ impl App {
 
     fn slot(&mut self, ui: &mut Ui, i: usize, s: usize, r: Rect, status: &EngineStatus) {
         if self.project.tracks.get(i).map(|t| s >= t.slots.len()).unwrap_or(true) {
+            return;
+        }
+        if self.project.tracks[i].is_group {
+            self.group_slot(ui, i, s, r, status);
             return;
         }
         let track = &self.project.tracks[i];
@@ -632,6 +674,29 @@ impl App {
         });
     }
 
+    /// A group's slot: it launches the clips its tracks have in that scene.
+    fn group_slot(&mut self, ui: &mut Ui, i: usize, s: usize, r: Rect, status: &EngineStatus) {
+        let clips = self.project.group_clips(i, s);
+        let members = self.project.members(i);
+        let playing = members.iter().any(|&m| status.tracks.get(m).is_some_and(|ts| ts.playing_slot.load(Ordering::Relaxed) == s as i32));
+        let color = rgb(self.project.tracks[i].color);
+        let resp = ui.interact(r, Id::new(("group_slot", self.project.tracks[i].id, s)), Sense::click());
+        let p = ui.painter();
+        if clips.is_empty() {
+            rect_fill(p, r, 2.0, shade(PANEL2, 0.9));
+            return;
+        }
+        rect_fill(p, r, 2.0, if playing { shade(color, 0.85) } else if resp.hovered() { shade(color, 0.55) } else { shade(color, 0.4) });
+        let c = pos2(r.left() + TRI_W * 0.5, r.center().y);
+        let tri = vec![c + vec2(-4.0, -5.0), c + vec2(5.0, 0.0), c + vec2(-4.0, 5.0)];
+        p.add(egui::Shape::convex_polygon(tri, if playing { egui::Color32::WHITE } else { text_on(shade(color, 0.4)) }, Stroke::NONE));
+        if resp.on_hover_text("Launches this scene's clips of the tracks in the group").clicked() {
+            for id in clips {
+                self.cmd(Command::LaunchClip { track: id, slot: s });
+            }
+        }
+    }
+
     fn track_stop_button(&mut self, ui: &mut Ui, i: usize, r: Rect, status: &EngineStatus) {
         if i >= self.project.tracks.len() {
             return;
@@ -657,6 +722,13 @@ impl App {
         stop_icon(p, r.center(), 8.0, c);
         if resp.on_hover_text("Stop clip on this track").clicked() {
             self.cmd(Command::StopTrack { track: id });
+            // A group stops all of its tracks.
+            if self.project.tracks[i].is_group {
+                for m in self.project.members(i) {
+                    let id = self.project.tracks[m].id;
+                    self.cmd(Command::StopTrack { track: id });
+                }
+            }
         }
     }
 
