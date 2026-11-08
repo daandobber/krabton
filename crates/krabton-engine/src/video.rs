@@ -65,6 +65,8 @@ pub struct VideoSet {
     /// Hits heard change the clip.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clip_hits: Option<HitTrigger>,
+    /// How a Look with other Visuals comes in over its morph: everywhere at once (Fade) or by a pattern.
+    pub look_change: Transition,
 }
 
 fn is_default_seq(s: &LookSeq) -> bool {
@@ -92,6 +94,7 @@ impl Default for VideoSet {
             look_notes: None,
             look_hits: None,
             clip_hits: None,
+            look_change: Transition::Fade,
         }
     }
 }
@@ -120,6 +123,7 @@ struct SetFile {
     look_notes: Option<u64>,
     look_hits: Option<HitTrigger>,
     clip_hits: Option<HitTrigger>,
+    look_change: Option<Transition>,
     // Older sets: one Look of links.
     links: Option<Vec<VideoLink>>,
     // Older sets: how every clip played.
@@ -172,6 +176,7 @@ impl From<SetFile> for VideoSet {
             look_notes: f.look_notes,
             look_hits: f.look_hits,
             clip_hits: f.clip_hits,
+            look_change: f.look_change.unwrap_or(d.look_change),
         }
     }
 }
@@ -1141,10 +1146,61 @@ pub enum Transition {
     Flash,
     /// Strips of the next tearing through.
     Glitch,
+    /// The next out from the middle.
+    Bloom,
+    /// The next in from the edges.
+    Iris,
+    /// The next wiping across.
+    Wipe,
+    /// The next coming round in a spiral.
+    Spiral,
+    /// The next coming through in patches.
+    Dissolve,
+    /// The next in stripes, each wiping down.
+    Blinds,
+    /// The next in rings.
+    Rings,
+    /// Into the last, closer and closer, to the next.
+    Zoom,
+    /// The next pushing the last off to the side.
+    Push,
 }
 
 impl Transition {
-    pub const ALL: [Transition; 4] = [Transition::Cut, Transition::Fade, Transition::Flash, Transition::Glitch];
+    pub const ALL: [Transition; 13] = [
+        Transition::Cut,
+        Transition::Fade,
+        Transition::Flash,
+        Transition::Glitch,
+        Transition::Bloom,
+        Transition::Iris,
+        Transition::Wipe,
+        Transition::Spiral,
+        Transition::Dissolve,
+        Transition::Blinds,
+        Transition::Rings,
+        Transition::Zoom,
+        Transition::Push,
+    ];
+
+    /// Its number in the stage's shader.
+    pub fn code(self) -> f32 {
+        Self::ALL.iter().position(|t| *t == self).unwrap_or(0) as f32
+    }
+
+    /// The pattern it comes in by (see the shaders' `tr_pattern`; 0: everywhere at once).
+    pub fn pattern(self) -> f32 {
+        match self {
+            Transition::Bloom => 1.0,
+            Transition::Iris => 2.0,
+            Transition::Wipe => 3.0,
+            Transition::Spiral => 4.0,
+            Transition::Dissolve => 5.0,
+            Transition::Blinds => 6.0,
+            Transition::Rings => 7.0,
+            _ => 0.0,
+        }
+    }
 
     pub fn name(self) -> &'static str {
         match self {
@@ -1152,6 +1208,15 @@ impl Transition {
             Transition::Fade => "Fade",
             Transition::Flash => "Flash",
             Transition::Glitch => "Glitch",
+            Transition::Bloom => "Bloom",
+            Transition::Iris => "Iris",
+            Transition::Wipe => "Wipe",
+            Transition::Spiral => "Spiral",
+            Transition::Dissolve => "Dissolve",
+            Transition::Blinds => "Blinds",
+            Transition::Rings => "Rings",
+            Transition::Zoom => "Zoom",
+            Transition::Push => "Push",
         }
     }
 
@@ -1161,6 +1226,15 @@ impl Transition {
             Transition::Fade => "The clip fades into the next",
             Transition::Flash => "To white and out of it on the next clip",
             Transition::Glitch => "Strips of the next clip tear through, more and more",
+            Transition::Bloom => "The next clip opens out from the middle",
+            Transition::Iris => "The next clip closes in from the edges",
+            Transition::Wipe => "The next clip wipes across",
+            Transition::Spiral => "The next clip comes round in a spiral",
+            Transition::Dissolve => "The next clip comes through in patches",
+            Transition::Blinds => "The next clip in stripes, as blinds",
+            Transition::Rings => "The next clip in rings",
+            Transition::Zoom => "Into the clip, closer and closer, and out of it on the next",
+            Transition::Push => "The next clip pushes the last off to the side",
         }
     }
 }

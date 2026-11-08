@@ -79,6 +79,14 @@ pub struct Params {
     /// Milk's values (see `krabton_engine::milk`), and how long this frame is (seconds).
     pub milk: [f32; MILK_N],
     pub vdt: f32,
+    /// While Milk changes preset: the last one's values, how far (1: done), by which pattern.
+    pub milk_old: [f32; MILK_N],
+    pub milk_mix: f32,
+    pub milk_style: f32,
+    /// While a Look with other Visuals comes in: the scene it comes from, how far (1: done), by which pattern.
+    pub vfrom: f32,
+    pub vmix: f32,
+    pub vstyle: f32,
 }
 
 impl Default for Params {
@@ -106,6 +114,12 @@ impl Default for Params {
             wave: [1.0; 3],
             milk: milk::defaults(),
             vdt: 1.0 / 60.0,
+            milk_old: milk::defaults(),
+            milk_mix: 1.0,
+            milk_style: 0.0,
+            vfrom: 0.0,
+            vmix: 1.0,
+            vstyle: 0.0,
         }
     }
 }
@@ -157,12 +171,22 @@ impl Params {
         out.vcol = l3(a.vcol, b.vcol);
         out.wave = l3(a.wave, b.wave);
         out.milk = milk::blend(&a.milk, &b.milk, t);
+        // Visuals going away keep their scene, blend and colours as they fade.
+        let v = Effect::Visuals.index();
+        if b.fx[v] < 0.001 && a.fx[v] > 0.001 {
+            out.p[v] = a.p[v];
+        } else if a.fx[v] > 0.001 && (a.p[v][0] - b.p[v][0]).abs() > 0.5 {
+            // From one scene to another: both drawn, the new coming in.
+            out.vfrom = a.p[v][0];
+            out.vmix = t;
+        }
         out
     }
 
     /// Whether the Visuals draw Milk.
     pub fn milk_on(&self) -> bool {
-        self.visuals_on() && self.p[Effect::Visuals.index()][0].round() as usize == MILK_SCENE
+        let milk = MILK_SCENE as f32;
+        self.visuals_on() && ((self.p[Effect::Visuals.index()][0] - milk).abs() < 0.5 || (self.vmix < 0.999 && (self.vfrom - milk).abs() < 0.5))
     }
 
     /// Whether the Visuals show.
@@ -173,7 +197,7 @@ impl Params {
     /// Whether only the graphics card draws it (the Visuals, the Feedback,
     /// the Wave): an export of it is drawn there too.
     pub fn needs_card(&self) -> bool {
-        self.visuals_on() || [Effect::Feedback, Effect::Wave].iter().any(|e| self.fx[e.index()] > 0.001)
+        self.visuals_on() || self.transition > 3.5 || [Effect::Feedback, Effect::Wave].iter().any(|e| self.fx[e.index()] > 0.001)
     }
 }
 
@@ -305,6 +329,23 @@ vec3 pick_film(vec2 st) {
     if (u_transition < 2.5) {
         vec3 c = m < 0.5 ? pick_old(st) : pick_new(st);
         return mix(c, vec3(1.0), peak);
+    }
+    // By a pattern: out from the middle, in from the edges, a wipe, a spiral, patches, blinds, rings.
+    if (u_transition > 3.5 && u_transition < 10.5) {
+        float w = tr_weight(st, u_stage.x / u_stage.y, m, u_transition - 3.0);
+        return mix(pick_old(st), pick_new(st), w);
+    }
+    // Zoom: into the last, closer and closer, and out of it on the next.
+    if (u_transition > 10.5 && u_transition < 11.5) {
+        float z = 1.0 + peak * peak * 7.0;
+        vec2 q = (st - 0.5) / z + 0.5;
+        vec3 c = m < 0.5 ? pick_old(q) : pick_new(q);
+        return c * (1.0 - peak * 0.35);
+    }
+    // Push: the next comes in from the right and pushes the last off to the left.
+    if (u_transition > 11.5) {
+        float x = st.x + m;
+        return x < 1.0 ? pick_old(vec2(x, st.y)) : pick_new(vec2(x - 1.0, st.y));
     }
     // Glitch: strips of the new clip, more and more, pushed about.
     float band = floor(st.y * 24.0 + hash(u_seed) * 3.0);
@@ -676,6 +717,15 @@ pub(crate) unsafe fn program(gl: &glow::Context, frag: &str) -> Result<glow::Pro
     Ok(prog)
 }
 
+/// Milk's values for a shader: the preset's, the last one's, how far the change is, its pattern.
+unsafe fn milk_uniforms(gl: &glow::Context, prog: glow::Program, p: &Params) {
+    let u = |name: &str| gl.get_uniform_location(prog, name);
+    gl.uniform_4_f32_slice(u("u_m[0]").as_ref(), &visuals::milk_packed(&p.milk));
+    gl.uniform_4_f32_slice(u("u_o[0]").as_ref(), &visuals::milk_packed(&p.milk_old));
+    gl.uniform_1_f32(u("u_mmix").as_ref(), p.milk_mix);
+    gl.uniform_1_f32(u("u_mstyle").as_ref(), p.milk_style);
+}
+
 /// A picture to draw into (or from), black, `w` by `h`.
 unsafe fn new_texture(gl: &glow::Context, w: i32, h: i32) -> Result<glow::Texture, String> {
     let t = gl.create_texture()?;
@@ -695,7 +745,7 @@ impl Gl {
     }
 
     unsafe fn sized(gl: &glow::Context, w: i32, h: i32) -> Result<Self, String> {
-        let fx = program(gl, &format!("{}{EFFECTS}", defines()))?;
+        let fx = program(gl, &format!("{}{}{EFFECTS}", defines(), visuals::PATTERNS))?;
         let show = program(gl, SHOW)?;
         let quad = gl.create_buffer()?;
         let corners: [f32; 8] = [-1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0, 1.0];
@@ -765,7 +815,7 @@ impl Gl {
         let u = |name: &str| gl.get_uniform_location(prog, name);
         gl.uniform_1_i32(u("u_prev").as_ref(), 0);
         gl.uniform_1_i32(u("u_scope").as_ref(), 1);
-        gl.uniform_4_f32_slice(u("u_m[0]").as_ref(), &visuals::milk_packed(&p.milk));
+        milk_uniforms(gl, prog, p);
         gl.uniform_2_f32(u("u_stage").as_ref(), self.w as f32, self.h as f32);
         gl.uniform_1_f32(u("u_time").as_ref(), p.vtime);
         gl.uniform_1_f32(u("u_k").as_ref(), (p.vdt * 60.0).clamp(0.25, 4.0));
@@ -804,7 +854,10 @@ impl Gl {
         gl.bind_texture(glow::TEXTURE_2D, Some(self.milk_tex[self.milk_cur]));
         gl.active_texture(glow::TEXTURE0);
         gl.uniform_1_i32(u("u_milk").as_ref(), 1);
-        gl.uniform_4_f32_slice(u("u_m[0]").as_ref(), &visuals::milk_packed(&p.milk));
+        milk_uniforms(gl, prog, p);
+        gl.uniform_1_f32(u("u_vfrom").as_ref(), p.vfrom);
+        gl.uniform_1_f32(u("u_vmix").as_ref(), p.vmix);
+        gl.uniform_1_f32(u("u_vstyle").as_ref(), p.vstyle);
         let _ = milk;
         gl.uniform_2_f32(u("u_stage").as_ref(), self.w as f32, self.h as f32);
         gl.uniform_4_f32_slice(u("u_fx[0]").as_ref(), &packed_amounts(&p.fx));

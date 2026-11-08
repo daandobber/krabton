@@ -163,9 +163,9 @@ pub struct Director {
     scratch: (Vec<f32>, Vec<f32>),
     /// What the Visuals hear and see of the music, and their time.
     pub ears: super::visuals::Ears,
-    /// Milk playing, and its values this frame.
+    /// Milk playing, and what it draws this frame.
     pub milk: krabton_engine::milk::MilkRun,
-    pub milk_vals: [f32; krabton_engine::milk::MILK_N],
+    pub milk_frame: krabton_engine::milk::MilkFrame,
 }
 
 impl Default for Director {
@@ -197,7 +197,7 @@ impl Default for Director {
             scratch: (Vec::new(), Vec::new()),
             ears: Default::default(),
             milk: Default::default(),
-            milk_vals: krabton_engine::milk::defaults(),
+            milk_frame: Default::default(),
         }
     }
 }
@@ -483,7 +483,7 @@ impl Director {
         let heard = |s: Source| self.master.as_ref().map_or(0.0, |e| e.listener.value(s));
         let input = krabton_engine::milk::MilkIn { bass: heard(Source::Bass), mid: heard(Source::Mids), treb: heard(Source::Highs), beat: self.clock.value(Source::Beat), bar: self.clock.value(Source::Bar), time: self.ears.time as f32, ..Default::default() };
         let dice = &mut self.dice;
-        self.milk_vals = self.milk.frame(&milk_look, input, dt, self.clock.bar_hit && playing, (bpm / 60.0) as f32, |n| ((dice.unit() * n as f32) as usize).min(n - 1));
+        self.milk_frame = self.milk.frame(&milk_look, input, dt, self.clock.bar_hit && playing, (bpm / 60.0) as f32, |n| ((dice.unit() * n as f32) as usize).min(n - 1));
         let edited = set.look.min(n_looks - 1);
         // The meters show the Look edited (read once a frame, as it plays or not).
         self.readings = if edited == now {

@@ -19,7 +19,7 @@ pub mod ytdl;
 use crate::app::App;
 use director::{Asks, Director, Shot};
 use krabton_engine::project::Project;
-use krabton_engine::video::{self as kv, Effect, Look, Transition, VideoClip, VideoLook, VideoSet};
+use krabton_engine::video::{self as kv, Effect, Look, VideoClip, VideoLook, VideoSet};
 use media::Media;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -274,12 +274,7 @@ pub fn stage_params(set: &VideoSet, project: &Project, def: &VideoLook, look: &L
     }
     let st = p.p[Effect::Strobe.index()];
     p.fx[Effect::Strobe.index()] = kv::strobe_light(fx(Effect::Strobe), shot.beat, 1.0 / director::length_beats(st[0]), st[1]);
-    p.transition = match (shot.from, set.transition) {
-        (None, _) | (_, Transition::Cut) => 0.0,
-        (_, Transition::Fade) => 1.0,
-        (_, Transition::Flash) => 2.0,
-        (_, Transition::Glitch) => 3.0,
-    };
+    p.transition = if shot.from.is_some() { set.transition.code() } else { 0.0 };
     p.mix = shot.from.map_or(1.0, |f| f.2);
     p.video_size = sizes.0.unwrap_or([0.0, 0.0]);
     p.old_size = sizes.1.unwrap_or([0.0, 0.0]);
@@ -304,13 +299,18 @@ pub fn frame_params(set: &VideoSet, project: &Project, dir: &mut Director, shot:
     p.vdt = dir.ears.dt;
     // Milk, and the Visuals' knobs on it: Burst kicks it closer, Warp warps it, Orbit turns it, Glow brightens it.
     use krabton_engine::milk::MilkParam as M;
-    let mut m = dir.milk_vals;
     let fx = |e: Effect| p.fx[e.index()];
-    m[M::Zoom.index()] += fx(Effect::Burst) * p.p[Effect::Burst.index()][0] * 0.08;
-    m[M::Warp.index()] += fx(Effect::Warp) * 1.5;
-    m[M::Rot.index()] += fx(Effect::Orbit) * p.p[Effect::Orbit.index()][0] * 0.05;
-    m[M::Gamma.index()] += fx(Effect::Glow) * 0.8;
-    p.milk = m;
+    let knobs = |mut m: [f32; krabton_engine::milk::MILK_N]| {
+        m[M::Zoom.index()] += fx(Effect::Burst) * p.p[Effect::Burst.index()][0] * 0.08;
+        m[M::Warp.index()] += fx(Effect::Warp) * 1.5;
+        m[M::Rot.index()] += fx(Effect::Orbit) * p.p[Effect::Orbit.index()][0] * 0.05;
+        m[M::Gamma.index()] += fx(Effect::Glow) * 0.8;
+        m
+    };
+    let f = dir.milk_frame;
+    (p.milk, p.milk_old, p.milk_mix, p.milk_style) = (knobs(f.now), knobs(f.old), f.mix, f.style as f32);
+    // A Look coming in over another with other Visuals: by the set's pattern.
+    p.vstyle = set.look_change.pattern();
     p
 }
 /// Each clip's film length (seconds; 0 for a picture or one not read yet).

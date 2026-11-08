@@ -225,6 +225,10 @@ fn look_head(ui: &mut Ui, set: &mut kv::VideoSet) {
     dropdown(ui, "video_look_launch", 84.0, &mut set.look_launch, &launches, "When a Look pad clicked takes over (while the song plays)");
     ui.label(RichText::new("Morph").small().color(TEXT_DIM)).on_hover_text("How long a change of Look takes");
     length_button(ui, &mut set.morph_beats, &MORPH_LENGTHS, "How long a change of Look takes: its amounts, settings and colours move over to the next (Cut: at once)");
+    if set.morph_beats > 0.0 {
+        let ways: Vec<(Transition, String)> = Transition::ALL.iter().filter(|t| **t == Transition::Fade || t.pattern() > 0.0).map(|t| (*t, t.name().to_string())).collect();
+        vj::chip(ui, "video_look_change", 74.0, &mut set.look_change, &ways, "How a Look with other Visuals comes in over its morph: everywhere at once (Fade), or out from the middle, in from the edges, a wipe, a spiral, patches, blinds, rings");
+    }
 }
 
 /// What hears the hits and what a hit does: the sound, the band, how
@@ -333,8 +337,9 @@ const GROUPS: [(&str, [u8; 3], &[Effect]); 7] = [
 ];
 
 /// Milk's faders: (value, its name on the fader).
-const MILK_MOTION: [(MilkParam, &str); 8] = [(MilkParam::Zoom, "Zoom"), (MilkParam::Rot, "Rotate"), (MilkParam::Warp, "Warp"), (MilkParam::Ripple, "Ripple"), (MilkParam::Decay, "Decay"), (MilkParam::Dx, "Move X"), (MilkParam::Dy, "Move Y"), (MilkParam::Sx, "Stretch")];
-const MILK_LOOK: [(MilkParam, &str); 10] = [(MilkParam::WaveAlpha, "Wave"), (MilkParam::WaveScale, "Wave Size"), (MilkParam::ShapeAlpha, "Shape"), (MilkParam::EchoAlpha, "Echo"), (MilkParam::EchoZoom, "Echo Zoom"), (MilkParam::Gamma, "Gamma"), (MilkParam::Solarize, "Solarize"), (MilkParam::Invert, "Invert"), (MilkParam::Hue, "Hue"), (MilkParam::DarkenCenter, "Dark Ctr")];
+const MILK_MOTION: [(MilkParam, &str); 10] = [(MilkParam::Zoom, "Zoom"), (MilkParam::Rot, "Rotate"), (MilkParam::Warp, "Warp"), (MilkParam::Ripple, "Ripple"), (MilkParam::Decay, "Decay"), (MilkParam::Dx, "Move X"), (MilkParam::Dy, "Move Y"), (MilkParam::Sx, "Stretch"), (MilkParam::Mirror, "Mirror"), (MilkParam::Tile, "Tiles")];
+const MILK_COLOUR: [(MilkParam, &str); 8] = [(MilkParam::Gamma, "Gamma"), (MilkParam::Solarize, "Solarize"), (MilkParam::Invert, "Invert"), (MilkParam::Hue, "Hue"), (MilkParam::HueDrift, "Hue Drift"), (MilkParam::Chroma, "Chroma"), (MilkParam::Blur, "Blur"), (MilkParam::DarkenCenter, "Dark Ctr")];
+const MILK_DRAW: [(MilkParam, &str); 8] = [(MilkParam::WaveAlpha, "Wave"), (MilkParam::WaveScale, "Wave Size"), (MilkParam::ShapeAlpha, "Shape"), (MilkParam::ShapeCount, "Shapes"), (MilkParam::ShapeRing, "Ring"), (MilkParam::EchoAlpha, "Echo"), (MilkParam::EchoZoom, "Echo Zoom"), (MilkParam::Sparkle, "Sparkle")];
 
 /// Milk's panel: its preset (and the one playing), how it goes on to the
 /// next, and faders that move the preset's values (in the middle: as it is).
@@ -370,12 +375,25 @@ fn milk_panel(ui: &mut Ui, m: &mut milk::MilkLook, now: Option<(&str, [f32; milk
                 if m.auto > 0 && choice(ui, "Random", m.random, "The next by chance, rather than in turn").clicked() {
                     m.random = !m.random;
                 }
-                ui.add_space(8.0);
-                ui.label(RichText::new("Melt").small().color(TEXT_DIM));
-                let blends: Vec<(f32, &str)> = milk::BLENDS.to_vec();
-                length_button(ui, &mut m.blend, &blends, "How long one preset takes to melt into the next");
+                if m.auto == 1 {
+                    let secs: Vec<(f32, &str)> = milk::SECONDS.to_vec();
+                    length_button(ui, &mut m.seconds, &secs, "About how long between presets (a little sooner or later each time)");
+                }
+                if choice(ui, "Cuts", m.cuts, "A big hit in the bass cuts to another preset at once").clicked() {
+                    m.cuts = !m.cuts;
+                }
             });
-            for (row_name, faders) in [("MOTION", &MILK_MOTION[..]), ("LOOK", &MILK_LOOK[..])] {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                ui.add_space(36.0);
+                ui.label(RichText::new("Change").small().color(TEXT_DIM));
+                let styles: Vec<(u8, String)> = milk::STYLES.iter().enumerate().map(|(i, n)| (i as u8, n.to_string())).collect();
+                vj::chip(ui, "video_milk_style", 86.0, &mut m.style, &styles, "How one preset gives way to the next: its values melting everywhere at once, or the new one coming in out from the middle, in from the edges, as a wipe, a spiral, a plasma, blinds or rings (Random: one of them each time); the last one goes on moving while it does");
+                ui.label(RichText::new("over").small().color(TEXT_DIM));
+                let blends: Vec<(f32, &str)> = milk::BLENDS.to_vec();
+                length_button(ui, &mut m.blend, &blends, "How long one preset takes to give way to the next");
+            });
+            for (row_name, faders) in [("MOTION", &MILK_MOTION[..]), ("COLOUR", &MILK_COLOUR[..]), ("DRAW", &MILK_DRAW[..])] {
                 ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
                     let (r, _) = ui.allocate_exact_size(vec2(40.0, 96.0), Sense::hover());
@@ -1096,7 +1114,7 @@ impl App {
         // Milk drawing: its presets and its faders first.
         let v = look.setting(Effect::Visuals);
         if v.base > 0.0 && !v.off && v.param(Effect::Visuals, 0).round() as usize == crate::video::stage::MILK_SCENE {
-            let now = live.is_some().then(|| (self.video.dir.milk.name(), self.video.dir.milk_vals));
+            let now = live.is_some().then(|| (self.video.dir.milk.name(), self.video.dir.milk_frame.now));
             milk_panel(ui, &mut look.milk, now);
             ui.add_space(8.0);
         }
