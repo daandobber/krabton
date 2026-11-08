@@ -95,15 +95,15 @@ pub struct VideoRuntime {
 /// and what moves them, what changes the clips and Looks, where it goes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum VideoTab {
-    #[default]
     Clip,
+    #[default]
     Look,
     Triggers,
     Output,
 }
 
 impl VideoTab {
-    pub const ALL: [VideoTab; 4] = [VideoTab::Clip, VideoTab::Look, VideoTab::Triggers, VideoTab::Output];
+    pub const ALL: [VideoTab; 4] = [VideoTab::Look, VideoTab::Clip, VideoTab::Triggers, VideoTab::Output];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -168,7 +168,7 @@ impl Default for VideoRuntime {
             rec: None,
             rec_done: None,
             side_scroll: None,
-            tab: VideoTab::Clip,
+            tab: VideoTab::Look,
         }
     }
 }
@@ -177,7 +177,7 @@ impl VideoRuntime {
     /// The clip that plays now (in the bank).
     /// Whether a picture is up (a clip's, or a Video Rack's film).
     pub fn has_picture(&self) -> bool {
-        self.shown.is_some() || self.params.visuals_on()
+        self.shown.is_some() || self.params.needs_card()
     }
 
     pub fn playing(&self) -> usize {
@@ -269,7 +269,7 @@ pub fn stage_params(set: &VideoSet, project: &Project, def: &VideoLook, look: &L
         (None, Some(l)) => rgb(l.from.and_then(|id| project.tracks.iter().find(|t| t.id == id)).map(|t| t.color).unwrap_or([0xff, 0x40, 0xa0])),
         (None, None) => rgb([0xff, 0x40, 0xa0]),
     };
-    for (e, slot) in [(Effect::Flash, &mut p.flash), (Effect::Strobe, &mut p.strobe), (Effect::Edges, &mut p.edges), (Effect::Visuals, &mut p.vcol)] {
+    for (e, slot) in [(Effect::Flash, &mut p.flash), (Effect::Strobe, &mut p.strobe), (Effect::Edges, &mut p.edges), (Effect::Visuals, &mut p.vcol), (Effect::Wave, &mut p.wave)] {
         *slot = rgb(set_of(e).color.or(e.color()).unwrap_or([0xff; 3]));
     }
     let st = p.p[Effect::Strobe.index()];

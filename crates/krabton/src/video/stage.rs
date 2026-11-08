@@ -70,6 +70,8 @@ pub struct Params {
     pub vtime: f32,
     pub vcol: [f32; 3],
     pub scope: Scope,
+    /// The Wave's colour.
+    pub wave: [f32; 3],
 }
 
 impl Default for Params {
@@ -94,6 +96,7 @@ impl Default for Params {
             vtime: 0.0,
             vcol: [1.0; 3],
             scope: Scope::default(),
+            wave: [1.0; 3],
         }
     }
 }
@@ -143,12 +146,19 @@ impl Params {
         out.strobe = l3(a.strobe, b.strobe);
         out.edges = l3(a.edges, b.edges);
         out.vcol = l3(a.vcol, b.vcol);
+        out.wave = l3(a.wave, b.wave);
         out
     }
 
     /// Whether the Visuals show.
     pub fn visuals_on(&self) -> bool {
         self.fx[Effect::Visuals.index()] > 0.001
+    }
+
+    /// Whether only the graphics card draws it (the Visuals, the Feedback,
+    /// the Wave): an export of it is drawn there too.
+    pub fn needs_card(&self) -> bool {
+        self.visuals_on() || [Effect::Feedback, Effect::Wave].iter().any(|e| self.fx[e.index()] > 0.001)
     }
 }
 
@@ -225,6 +235,9 @@ uniform vec3 u_edges;
 uniform float u_transition;
 uniform float u_mix;
 uniform sampler2D u_gen;
+uniform sampler2D u_scope;
+uniform float u_vtime;
+uniform vec3 u_wave_col;
 I vec2 v_uv;
 
 float hash(float n) { return fract(sin(n) * 43758.5453); }
@@ -444,6 +457,41 @@ void main() {
         vec2 q = v_uv - P_ECHO.xy;
         vec3 prev = texture2D(u_prev, vec2(q.x, 1.0 - q.y)).rgb * inside(q, vec4(0.0));
         c = mix(c, prev, A_ECHO * P_ECHO.z * 0.85);
+    }
+    // Wave: the sound's wave over it (and, with Feedback, carried on in it).
+    if (A_WAVE > 0.001) {
+        float px = 1.0 / u_stage.y;
+        vec2 q = vec2((v_uv.x - 0.5) * aspect, 0.5 - v_uv.y - P_WAVE.w);
+        float amp = 0.05 + 0.35 * P_WAVE.y;
+        float th = P_WAVE.z * px * 0.5;
+        float d = 1.0;
+        if (P_WAVE.x < 0.5) {
+            d = abs(q.y - (texture2D(u_scope, vec2(v_uv.x, 0.125)).r * 2.0 - 1.0) * amp);
+        } else if (P_WAVE.x < 1.5) {
+            float a = atan(q.y, q.x) / 6.2831853 + 0.5;
+            float rr = 0.08 + 0.3 * P_WAVE.y + (texture2D(u_scope, vec2(a, 0.125)).r * 2.0 - 1.0) * amp * 0.35;
+            d = abs(length(q) - rr);
+        } else if (P_WAVE.x < 2.5) {
+            float xi = (floor(v_uv.x * 64.0) + 0.5) / 64.0;
+            float w = (texture2D(u_scope, vec2(xi, 0.125)).r * 2.0 - 1.0) * amp;
+            d = max(length(vec2((v_uv.x - xi) * aspect, q.y - w)) - th * 2.0, 0.0);
+        } else {
+            float sx = abs(v_uv.x - 0.5) * 2.0;
+            float s = texture2D(u_scope, vec2(sx * (127.0 / 128.0) + 0.5 / 128.0, 0.375)).r;
+            d = (abs(q.y) < s * amp * 1.5 && fract(sx * 48.0) > 0.25) ? 0.0 : 1.0;
+        }
+        float line = smoothstep(th + px, max(th - px * 0.5, 0.0), d);
+        c = mix(c, u_wave_col, line * A_WAVE);
+    }
+    // Feedback: the last frame closer in, turned and stirred, fading under this one.
+    if (A_FEEDBACK > 0.001) {
+        vec2 q = (v_uv - 0.5) * vec2(aspect, 1.0);
+        q = turn2(q, -P_FEEDBACK.y * 6.2831853 * A_FEEDBACK) / mix(1.0, P_FEEDBACK.x, A_FEEDBACK);
+        float stir = P_FEEDBACK.z * 0.012 * A_FEEDBACK;
+        q += stir * vec2(sin(q.y * 7.0 + u_vtime * 1.3), cos(q.x * 7.0 - u_vtime * 1.1));
+        q = q / vec2(aspect, 1.0) + 0.5;
+        vec3 prev = texture2D(u_prev, vec2(q.x, 1.0 - q.y)).rgb * inside(q, vec4(0.0));
+        c = max(c, prev * P_FEEDBACK.w * A_FEEDBACK);
     }
     gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }
@@ -683,9 +731,6 @@ impl Gl {
             self.gen = Some(made);
         }
         let Some(Ok(prog)) = self.gen else { return false };
-        gl.bind_texture(glow::TEXTURE_2D, Some(self.scope_tex));
-        gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
-        gl.tex_sub_image_2d(glow::TEXTURE_2D, 0, 0, 0, SCOPE_W as i32, 4, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(Some(&p.scope.rgba())));
         gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
         gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(self.gen_tex), 0);
         gl.viewport(0, 0, self.w, self.h);
@@ -728,6 +773,11 @@ impl Gl {
 
     /// The effects, from the picture and the last stage into the other stage.
     unsafe fn draw_effects(&mut self, gl: &glow::Context, video: Option<glow::Texture>, old: Option<glow::Texture>, p: &Params) {
+        // What the music is now (for the Visuals and the Wave).
+        gl.bind_texture(glow::TEXTURE_2D, Some(self.scope_tex));
+        gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
+        gl.tex_sub_image_2d(glow::TEXTURE_2D, 0, 0, 0, SCOPE_W as i32, 4, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(Some(&p.scope.rgba())));
+        gl.bind_texture(glow::TEXTURE_2D, None);
         // The Visuals first (without them, or their shader, the effects see none).
         let mut p = *p;
         if p.visuals_on() && !self.draw_visuals(gl, &p) {
@@ -747,6 +797,8 @@ impl Gl {
         gl.bind_texture(glow::TEXTURE_2D, Some(old.unwrap_or(self.tex[self.cur])));
         gl.active_texture(glow::TEXTURE3);
         gl.bind_texture(glow::TEXTURE_2D, Some(self.gen_tex));
+        gl.active_texture(glow::TEXTURE4);
+        gl.bind_texture(glow::TEXTURE_2D, Some(self.scope_tex));
         gl.active_texture(glow::TEXTURE0);
         // Without a picture the shader reads nothing (it is multiplied by 0).
         gl.bind_texture(glow::TEXTURE_2D, Some(video.unwrap_or(self.tex[self.cur])));
@@ -755,6 +807,9 @@ impl Gl {
         gl.uniform_1_i32(u("u_prev").as_ref(), 1);
         gl.uniform_1_i32(u("u_old").as_ref(), 2);
         gl.uniform_1_i32(u("u_gen").as_ref(), 3);
+        gl.uniform_1_i32(u("u_scope").as_ref(), 4);
+        gl.uniform_1_f32(u("u_vtime").as_ref(), p.vtime);
+        gl.uniform_3_f32(u("u_wave_col").as_ref(), p.wave[0], p.wave[1], p.wave[2]);
         gl.uniform_2_f32(u("u_old_size").as_ref(), p.old_size[0].max(1.0), p.old_size[1].max(1.0));
         gl.uniform_1_f32(u("u_old_has").as_ref(), if old.is_some() && p.old_size[0] > 0.0 { 1.0 } else { 0.0 });
         gl.uniform_2_f32(u("u_stage").as_ref(), self.w as f32, self.h as f32);
@@ -778,6 +833,8 @@ impl Gl {
             gl.uniform_3_f32(u(name).as_ref(), c[0], c[1], c[2]);
         }
         self.quad(gl);
+        gl.active_texture(glow::TEXTURE4);
+        gl.bind_texture(glow::TEXTURE_2D, None);
         gl.active_texture(glow::TEXTURE3);
         gl.bind_texture(glow::TEXTURE_2D, None);
         gl.active_texture(glow::TEXTURE2);

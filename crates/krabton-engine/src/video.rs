@@ -1545,6 +1545,11 @@ pub enum Effect {
     Orbit,
     /// The Visuals broken into blocks, pushed about.
     Fracture,
+    /// The last frame fed back under this one, closer in, turned and
+    /// stirred, fading: tunnels and swirls.
+    Feedback,
+    /// The sound's wave drawn over the picture.
+    Wave,
 }
 
 /// The Visuals' scenes: what Krabton draws.
@@ -1556,7 +1561,7 @@ pub const VISUAL_PALETTES: [&str; 6] = ["Its colour", "Ice", "Ember", "Neon", "A
 
 impl Effect {
     /// In the order the lists show them: where the picture is, how it looks, its colours, what it leaves behind, the film.
-    pub const ALL: [Effect; 38] = [
+    pub const ALL: [Effect; 40] = [
         Effect::Zoom,
         Effect::Flash,
         Effect::Shake,
@@ -1595,8 +1600,10 @@ impl Effect {
         Effect::Glow,
         Effect::Orbit,
         Effect::Fracture,
+        Effect::Feedback,
+        Effect::Wave,
     ];
-    pub const COUNT: usize = 38;
+    pub const COUNT: usize = 40;
 
     /// Its place in [`Look::fx`].
     pub fn index(self) -> usize {
@@ -1643,6 +1650,8 @@ impl Effect {
             Effect::Glow => "Glow",
             Effect::Orbit => "Orbit",
             Effect::Fracture => "Fracture",
+            Effect::Feedback => "Feedback",
+            Effect::Wave => "Wave",
         }
     }
 
@@ -1686,6 +1695,8 @@ impl Effect {
             Effect::Glow => "The Visuals glow brighter",
             Effect::Orbit => "The Visuals' camera goes round",
             Effect::Fracture => "The Visuals broken into blocks, pushed about",
+            Effect::Feedback => "The last frame fed back under this one, closer in, turned and stirred, fading: tunnels and swirls",
+            Effect::Wave => "The sound's wave drawn over the picture: a line, a circle, dots or the spectrum's bars",
         }
     }
 
@@ -1836,6 +1847,24 @@ impl Effect {
                 const P: &[FxParam] = &[FxParam::range("Blocks", "How many blocks across", 2.0, 64.0, 14.0)];
                 P
             }
+            Effect::Feedback => {
+                const P: &[FxParam] = &[
+                    FxParam::range("Zoom", "How much closer the last frame comes each frame (below 1: further)", 0.9, 1.1, 1.02),
+                    FxParam::range("Turn", "How far it turns each frame (a turn: 1)", -0.05, 0.05, 0.004),
+                    FxParam::range("Stir", "How much it swirls", 0.0, 1.0, 0.3),
+                    FxParam::range("Keep", "How much of it stays each frame", 0.0, 1.0, 0.9),
+                ];
+                P
+            }
+            Effect::Wave => {
+                const P: &[FxParam] = &[
+                    FxParam::pick("Shape", "How the wave is drawn", &["Line", "Circle", "Dots", "Bars"], 0.0),
+                    FxParam::range("Size", "How big", 0.0, 1.0, 0.5),
+                    FxParam::range("Thickness", "How thick the line is (pixels)", 1.0, 8.0, 2.0),
+                    FxParam::range("Height", "Where it is, up and down", -0.45, 0.45, 0.0),
+                ];
+                P
+            }
             Effect::Invert | Effect::Freeze | Effect::Jump | Effect::NextClip => &[],
         }
     }
@@ -1843,7 +1872,7 @@ impl Effect {
     /// The colour it has unless one is picked (None: none, or Tint's track colour).
     pub fn color(self) -> Option<[u8; 3]> {
         match self {
-            Effect::Flash | Effect::Strobe | Effect::Edges | Effect::Visuals => Some([0xff, 0xff, 0xff]),
+            Effect::Flash | Effect::Strobe | Effect::Edges | Effect::Visuals | Effect::Wave => Some([0xff, 0xff, 0xff]),
             _ => None,
         }
     }

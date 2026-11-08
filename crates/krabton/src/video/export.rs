@@ -578,8 +578,8 @@ fn run(work: Work, st: &Arc<Mutex<State>>, stop: &Arc<AtomicBool>, gpu: &GpuFram
 
 #[allow(clippy::too_many_arguments)]
 fn encode(frames: &[Planned], audio: &[f32], sample_rate: u32, opts: Opts, out: &Path, ffmpeg: &Path, media: &[Option<Arc<Media>>], st: &Mutex<State>, stop: &AtomicBool, gpu: &GpuFrames) -> Result<(), String> {
-    // With the Visuals in it, the graphics card draws every frame (as the window does).
-    let on_card = frames.iter().any(|f| f.params.visuals_on());
+    // With the Visuals (or the Feedback, the Wave) in it, the graphics card draws every frame (as the window does).
+    let on_card = frames.iter().any(|f| f.params.needs_card());
     let tmp = std::env::temp_dir().join(format!("krabton-video-export-{}-{}", std::process::id(), out.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()));
     std::fs::create_dir_all(&tmp).map_err(|e| format!("{}: {e}", tmp.display()))?;
     let wav = tmp.join("sound.wav");
