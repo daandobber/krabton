@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// Clips in the bank.
 pub const MAX_CLIPS: usize = 8;
 /// Links at the same time.
-pub const MAX_LINKS: usize = 8;
+pub const MAX_LINKS: usize = 16;
 /// Parts kept of one film.
 pub const MAX_PARTS: usize = 64;
 
@@ -217,6 +217,7 @@ impl VideoSet {
     pub fn apply_preset(&mut self, p: &Preset) {
         let look = self.edited_look_mut();
         *look = VideoLook::new(p.name, p.links.clone());
+        look.fx = p.fx.iter().cloned().collect();
         if let Some(play) = p.play {
             let i = self.current.min(self.clips.len().saturating_sub(1));
             if let Some(c) = self.clips.get_mut(i) {
@@ -1528,11 +1529,34 @@ pub enum Effect {
     ZoomBlur,
     /// The last frame again under this one, moved a little: an echo.
     Echo,
+    /// Pictures made by Krabton itself, moving with the music (see `VISUAL_SCENES`).
+    Visuals,
+    /// The Visuals blown apart, out from the middle.
+    Burst,
+    /// The Visuals bent and twisted.
+    Warp,
+    /// More of the Visuals: lines, points, cells.
+    Density,
+    /// The Visuals move faster.
+    Rush,
+    /// The Visuals glow brighter.
+    Glow,
+    /// The Visuals' camera goes round.
+    Orbit,
+    /// The Visuals broken into blocks, pushed about.
+    Fracture,
 }
+
+/// The Visuals' scenes: what Krabton draws.
+pub const VISUAL_SCENES: [&str; 10] = ["Ridges", "Lattice", "Swarm", "Data", "Tunnel", "Scope", "Contours", "Shards", "Note Grid", "Strings"];
+/// How the Visuals go on the film.
+pub const VISUAL_BLENDS: [&str; 7] = ["Instead of the film", "Over the film", "Screen", "Multiply", "Difference", "The film inside it", "Bends the film"];
+/// The Visuals' colours.
+pub const VISUAL_PALETTES: [&str; 6] = ["Its colour", "Ice", "Ember", "Neon", "Acid", "Spectrum"];
 
 impl Effect {
     /// In the order the lists show them: where the picture is, how it looks, its colours, what it leaves behind, the film.
-    pub const ALL: [Effect; 30] = [
+    pub const ALL: [Effect; 38] = [
         Effect::Zoom,
         Effect::Flash,
         Effect::Shake,
@@ -1563,8 +1587,16 @@ impl Effect {
         Effect::Stutter,
         Effect::Scratch,
         Effect::NextClip,
+        Effect::Visuals,
+        Effect::Burst,
+        Effect::Warp,
+        Effect::Density,
+        Effect::Rush,
+        Effect::Glow,
+        Effect::Orbit,
+        Effect::Fracture,
     ];
-    pub const COUNT: usize = 30;
+    pub const COUNT: usize = 38;
 
     /// Its place in [`Look::fx`].
     pub fn index(self) -> usize {
@@ -1603,6 +1635,14 @@ impl Effect {
             Effect::Edges => "Edges",
             Effect::ZoomBlur => "Zoom Blur",
             Effect::Echo => "Echo",
+            Effect::Visuals => "Visuals",
+            Effect::Burst => "Burst",
+            Effect::Warp => "Warp",
+            Effect::Density => "Density",
+            Effect::Rush => "Rush",
+            Effect::Glow => "Glow",
+            Effect::Orbit => "Orbit",
+            Effect::Fracture => "Fracture",
         }
     }
 
@@ -1638,6 +1678,14 @@ impl Effect {
             Effect::Edges => "Only the outlines, lit",
             Effect::ZoomBlur => "Streaks out from a point, as when zooming during the exposure",
             Effect::Echo => "The last frame again under this one, moved a little, fading",
+            Effect::Visuals => "Pictures Krabton draws itself, moving with the music: with the film or instead of it",
+            Effect::Burst => "The Visuals blown apart, out from the middle (link it to the kick)",
+            Effect::Warp => "The Visuals bent and twisted",
+            Effect::Density => "More of the Visuals: more lines, points, cells",
+            Effect::Rush => "The Visuals move faster (at full as fast as its Top)",
+            Effect::Glow => "The Visuals glow brighter",
+            Effect::Orbit => "The Visuals' camera goes round",
+            Effect::Fracture => "The Visuals broken into blocks, pushed about",
         }
     }
 
@@ -1751,6 +1799,43 @@ impl Effect {
                 const P: &[FxParam] = &[FxParam::range("Across", "How far the echo moves each frame, across", -0.05, 0.05, 0.01), FxParam::range("Up and down", "How far it moves, up and down", -0.05, 0.05, 0.0), FxParam::range("Keep", "How much of the echo stays", 0.0, 1.0, 0.8)];
                 P
             }
+            Effect::Visuals => {
+                const P: &[FxParam] = &[
+                    FxParam::pick("Scene", "What Krabton draws", &VISUAL_SCENES, 0.0),
+                    FxParam::pick("Blend", "How it goes on the film (with no film: instead, over or screen show it on black)", &VISUAL_BLENDS, 0.0),
+                    FxParam::pick("Colours", "Its colours: its own colour (white to start with), or a range of them", &VISUAL_PALETTES, 0.0),
+                    FxParam::range("Speed", "How fast it moves by itself (Rush makes it faster)", 0.0, 4.0, 1.0),
+                ];
+                P
+            }
+            Effect::Burst => {
+                const P: &[FxParam] = &[FxParam::range("Size", "How far apart it is blown at full", 0.0, 1.0, 0.6)];
+                P
+            }
+            Effect::Warp => {
+                const P: &[FxParam] = &[FxParam::range("Scale", "How big the bends are (small: fine and fast)", 0.2, 4.0, 1.0)];
+                P
+            }
+            Effect::Density => {
+                const P: &[FxParam] = &[FxParam::range("Top", "How many times as much at full", 1.0, 4.0, 2.5)];
+                P
+            }
+            Effect::Rush => {
+                const P: &[FxParam] = &[FxParam::range("Top", "How many times as fast at full", 1.0, 12.0, 5.0)];
+                P
+            }
+            Effect::Glow => {
+                const P: &[FxParam] = &[FxParam::range("Spread", "How far the glow reaches", 0.0, 1.0, 0.5)];
+                P
+            }
+            Effect::Orbit => {
+                const P: &[FxParam] = &[FxParam::range("Turns", "How far round at full (1: all the way, below 0 the other way)", -1.0, 1.0, 0.25)];
+                P
+            }
+            Effect::Fracture => {
+                const P: &[FxParam] = &[FxParam::range("Blocks", "How many blocks across", 2.0, 64.0, 14.0)];
+                P
+            }
             Effect::Invert | Effect::Freeze | Effect::Jump | Effect::NextClip => &[],
         }
     }
@@ -1758,7 +1843,7 @@ impl Effect {
     /// The colour it has unless one is picked (None: none, or Tint's track colour).
     pub fn color(self) -> Option<[u8; 3]> {
         match self {
-            Effect::Flash | Effect::Strobe | Effect::Edges => Some([0xff, 0xff, 0xff]),
+            Effect::Flash | Effect::Strobe | Effect::Edges | Effect::Visuals => Some([0xff, 0xff, 0xff]),
             _ => None,
         }
     }
@@ -1772,6 +1857,11 @@ impl Effect {
     /// following the source.
     pub fn on_hits(self) -> bool {
         matches!(self, Effect::Jump | Effect::Stutter | Effect::NextClip)
+    }
+
+    /// Whether it is (or moves) the Visuals Krabton makes, rather than the film.
+    pub fn is_visual(self) -> bool {
+        matches!(self, Effect::Visuals | Effect::Burst | Effect::Warp | Effect::Density | Effect::Rush | Effect::Glow | Effect::Orbit | Effect::Fracture)
     }
 
     /// Whether it changes where the film is, not how it looks.
@@ -2089,15 +2179,38 @@ pub struct Preset {
     pub about: &'static str,
     pub play: Option<PlayMode>,
     pub links: Vec<VideoLink>,
+    /// Effects set as it says (the Visuals' scene and colours, ...).
+    pub fx: Vec<(Effect, FxSetting)>,
 }
 
-pub const PRESET_NAMES: [&str; 7] = ["Pulse", "Glitch", "Dream", "Strobe", "Kaleido", "Cutup", "Still"];
+pub const PRESET_NAMES: [&str; 17] = ["Pulse", "Glitch", "Dream", "Strobe", "Kaleido", "Cutup", "Still", "Ridges", "Lattice", "Swarm", "Data", "Tunnel", "Scope", "Contours", "Shards", "Note Grid", "Strings"];
+
+/// The Visuals on, in scene `scene` (see `VISUAL_SCENES`), in colours `palette`, over the film as `blend` says.
+fn visuals(scene: usize, blend: usize, palette: usize) -> (Effect, FxSetting) {
+    (Effect::Visuals, FxSetting { base: 1.0, params: vec![scene as f32, blend as f32, palette as f32, 1.0], color: None, off: false })
+}
 
 /// A preset by name.
 pub fn preset(name: &str) -> Option<Preset> {
     use Effect as E;
     use Source as S;
     let l = VideoLink::new;
+    if let Some(scene) = VISUAL_SCENES.iter().position(|s| *s == name) {
+        let (about, palette, links) = match name {
+            "Ridges" => ("Lines of a landscape rolling towards you: the bass lifts them, the kick blows them up, the highs light them", 0, vec![l(S::Bass, E::Warp, 0.7), l(S::Kick, E::Burst, 0.6), l(S::Highs, E::Glow, 0.5), l(S::Hits, E::Rush, 0.4), l(S::Lfo, E::Orbit, 0.3)]),
+            "Lattice" => ("Flying through a lattice of beams: the level drives it, the kick opens it, the bar turns it", 1, vec![l(S::Level, E::Rush, 0.6), l(S::Kick, E::Burst, 0.5), l(S::Bass, E::Warp, 0.4), l(S::Ramp, E::Orbit, 0.6), l(S::Highs, E::Glow, 0.5), l(S::Hits, E::Fracture, 0.25)]),
+            "Swarm" => ("A turning cloud of points, blown apart by the kick, thicker with the mids", 0, vec![l(S::Kick, E::Burst, 0.8), l(S::Mids, E::Density, 0.5), l(S::Ramp, E::Orbit, 1.0), l(S::Highs, E::Glow, 0.4), l(S::Hits, E::Fracture, 0.3)]),
+            "Data" => ("Bars and blocks of data with the spectrum, torn on every hit, negative on the bar", 0, vec![l(S::Hits, E::Fracture, 0.6), l(S::Highs, E::Density, 0.6), l(S::Kick, E::Burst, 0.5), l(S::Bar, E::Invert, 0.6), l(S::Level, E::Rush, 0.5)]),
+            "Tunnel" => ("Down a tunnel of rings lit by the sound: the level drives it, the kick shakes it, colours with the notes", 3, vec![l(S::Level, E::Rush, 0.8), l(S::Kick, E::Burst, 0.6), l(S::Lfo, E::Orbit, 0.5), l(S::Pitch, E::Hue, 0.5), l(S::Highs, E::Glow, 0.4)]),
+            "Scope" => ("The sound's own wave and spectrum, drawn as it plays: round with the bar, brighter with the level", 1, vec![l(S::Level, E::Glow, 0.6), l(S::Bass, E::Warp, 0.4), l(S::Ramp, E::Orbit, 0.6), l(S::Notes, E::Density, 0.4), l(S::Kick, E::Burst, 0.3)]),
+            "Contours" => ("The lines of a moving map, the bass bending it, the kick rippling out", 2, vec![l(S::Bass, E::Warp, 0.7), l(S::Kick, E::Burst, 0.6), l(S::Mids, E::Rush, 0.5), l(S::Highs, E::Glow, 0.4), l(S::Level, E::Trails, 0.5)]),
+            "Shards" => ("Cells breaking up on the kick, lit by the notes", 0, vec![l(S::Kick, E::Fracture, 0.6), l(S::Hits, E::Burst, 0.6), l(S::Notes, E::Glow, 0.6), l(S::Mids, E::Density, 0.4), l(S::Lfo, E::Orbit, 0.3)]),
+            "Note Grid" => ("A grid of every note: each lights as it is played (octaves up, notes across)", 3, vec![l(S::Notes, E::Glow, 0.6), l(S::Kick, E::Burst, 0.4), l(S::Bar, E::Orbit, 0.3), l(S::Hits, E::Fracture, 0.2)]),
+            _ => ("A string for every note that plays, shaking as long as it sounds", 5, vec![l(S::Notes, E::Burst, 0.5), l(S::Level, E::Glow, 0.5), l(S::Mids, E::Warp, 0.3), l(S::Ramp, E::Orbit, 0.4)]),
+        };
+        let name = PRESET_NAMES.iter().copied().find(|n| *n == name)?;
+        return Some(Preset { name, about, play: None, links, fx: vec![visuals(scene, 0, palette)] });
+    }
     let (about, play, links) = match name {
         "Pulse" => ("Jumps in on the kicks, shakes a little on the beat, splits on the highs", None, vec![l(S::Kick, E::Zoom, 0.35), l(S::Kick, E::Flash, 0.3), l(S::Highs, E::Split, 0.3), l(S::Beat, E::Shake, 0.15)]),
         "Glitch" => ("Cuts to another place on the kicks, tears on every hit, pixels with the level", None, vec![l(S::Kick, E::Jump, 0.7), l(S::Hits, E::Glitch, 0.6), l(S::Highs, E::Split, 0.5), l(S::Level, E::Pixels, 0.25), l(S::Bar, E::Invert, 0.5)]),
@@ -2108,7 +2221,7 @@ pub fn preset(name: &str) -> Option<Preset> {
         "Still" => ("Nothing moves it: the clip as it is", None, Vec::new()),
         _ => return None,
     };
-    Some(Preset { name: PRESET_NAMES.iter().copied().find(|n| *n == name)?, about, play, links })
+    Some(Preset { name: PRESET_NAMES.iter().copied().find(|n| *n == name)?, about, play, links, fx: Vec::new() })
 }
 
 // ----------------------------------------------------------------------
@@ -2479,7 +2592,7 @@ pub struct Reading {
 }
 
 /// What the links make of the picture this frame.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Look {
     /// How much of each effect (0..1), by [`Effect::index`].
     pub fx: [f32; Effect::COUNT],
@@ -2491,6 +2604,12 @@ pub struct Look {
     pub tint_link: Option<usize>,
     /// How far Spin's Speed has turned it (turns, kept by whoever plays it).
     pub turned: f32,
+}
+
+impl Default for Look {
+    fn default() -> Self {
+        Self { fx: [0.0; Effect::COUNT], jump: false, stutter: false, next_clip: false, tint_link: None, turned: 0.0 }
+    }
 }
 
 impl Look {
@@ -3648,6 +3767,28 @@ mod tests {
         // Eighths, lit a quarter of each.
         assert_eq!(strobe_light(1.0, 0.1, 2.0, 0.25), 1.0);
         assert_eq!(strobe_light(1.0, 0.2, 2.0, 0.25), 0.0);
+    }
+
+    #[test]
+    fn visuals_are_effects_of_their_own_and_their_presets_put_them_on() {
+        assert!(Effect::Visuals.is_visual() && Effect::Fracture.is_visual() && !Effect::Zoom.is_visual());
+        assert!(Effect::ALL.iter().filter(|e| e.is_visual()).all(|e| !e.moves_film() && !e.on_hits()));
+        assert_eq!(Effect::Visuals.params()[0].choices.len(), VISUAL_SCENES.len());
+        for (k, scene) in VISUAL_SCENES.iter().enumerate() {
+            let p = preset(scene).expect(scene);
+            let mut set = VideoSet::default();
+            set.apply_preset(&p);
+            let look = &set.looks[set.look];
+            let v = look.setting(Effect::Visuals);
+            assert_eq!(v.base, 1.0, "{scene}: on");
+            assert_eq!(v.param(Effect::Visuals, 0) as usize, k, "{scene}: its scene");
+            assert!(look.links.iter().any(|l| l.effect.is_visual()), "{scene}: the music moves them");
+        }
+        // A Look with them survives a save.
+        let mut set = VideoSet::default();
+        set.apply_preset(&preset("Swarm").unwrap());
+        let back: VideoSet = serde_json::from_str(&serde_json::to_string(&set).unwrap()).unwrap();
+        assert_eq!(back.looks, set.looks);
     }
 
     #[test]

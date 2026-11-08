@@ -3,12 +3,16 @@
 //! by 720, which also keeps the last frame for Trails and Echo); every
 //! place the Video shows (its window, the screen) then draws the stage. It
 //! runs in egui's OpenGL painter, through a paint callback. While the Video
-//! is recorded, the stage is read back after it is drawn.
+//! is recorded, the stage is read back after it is drawn. The Visuals (see
+//! `visuals`) are drawn first, into a picture of their own the effects
+//! take with the film's. An export with Visuals in it has its frames drawn
+//! here too (`GpuFrames`), at its own size.
 
 use eframe::egui_glow;
 use eframe::glow::{self, HasContext};
+use super::visuals::{self, Scope, SCOPE_W};
 use krabton_engine::video::{Effect, FxSetting};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 
 pub const STAGE_W: i32 = 1280;
 pub const STAGE_H: i32 = 720;
@@ -61,6 +65,11 @@ pub struct Params {
     pub mix: f32,
     pub old_size: [f32; 2],
     pub old_frame: Framing,
+    /// The Visuals: their own time (seconds, as fast as their Speed and
+    /// Rush say), their colour, and what they hear of the music.
+    pub vtime: f32,
+    pub vcol: [f32; 3],
+    pub scope: Scope,
 }
 
 impl Default for Params {
@@ -82,6 +91,9 @@ impl Default for Params {
             mix: 1.0,
             old_size: [0.0; 2],
             old_frame: Framing::default(),
+            vtime: 0.0,
+            vcol: [1.0; 3],
+            scope: Scope::default(),
         }
     }
 }
@@ -130,13 +142,19 @@ impl Params {
         out.flash = l3(a.flash, b.flash);
         out.strobe = l3(a.strobe, b.strobe);
         out.edges = l3(a.edges, b.edges);
+        out.vcol = l3(a.vcol, b.vcol);
         out
+    }
+
+    /// Whether the Visuals show.
+    pub fn visuals_on(&self) -> bool {
+        self.fx[Effect::Visuals.index()] > 0.001
     }
 }
 
 /// The shader's names for the effects' amounts and settings, by their
 /// place: `A_ZOOM` how much Zoom, `P_ZOOM` its settings (a vec4).
-fn defines() -> String {
+pub(crate) fn defines() -> String {
     let mut s = String::new();
     for e in Effect::ALL {
         let i = e.index();
@@ -206,6 +224,7 @@ uniform vec3 u_strobe;
 uniform vec3 u_edges;
 uniform float u_transition;
 uniform float u_mix;
+uniform sampler2D u_gen;
 I vec2 v_uv;
 
 float hash(float n) { return fract(sin(n) * 43758.5453); }
@@ -250,7 +269,7 @@ vec3 pick_old(vec2 st) {
 
 // The picture at a point of the stage: the clip that plays, or while it
 // changes, the two together.
-vec3 pick(vec2 st) {
+vec3 pick_film(vec2 st) {
     if (u_transition < 0.5) { return pick_new(st); }
     float m = clamp(u_mix, 0.0, 1.0);
     if (u_transition < 1.5) { return mix(pick_old(st), pick_new(st), m); }
@@ -263,6 +282,29 @@ vec3 pick(vec2 st) {
     float band = floor(st.y * 24.0 + hash(u_seed) * 3.0);
     vec2 q = st + vec2((hash(band * 1.31 + u_seed) - 0.5) * 0.3 * peak, 0.0);
     return hash(band * 7.13 + floor(u_seed)) < m ? pick_new(q) : pick_old(q);
+}
+
+vec3 gen_at(vec2 st) { return texture2D(u_gen, vec2(st.x, 1.0 - st.y)).rgb; }
+
+// The film with the Visuals on it, as their Blend says.
+vec3 pick(vec2 st) {
+    float a = A_VISUALS;
+    if (a < 0.001) { return pick_film(st); }
+    float mode = P_VISUALS.y;
+    if (mode > 5.5) {
+        // Bends the film: pushed along the Visuals' slopes.
+        float e = 2.0 / u_stage.y;
+        vec2 slope = vec2(luma(gen_at(st + vec2(e, 0.0))) - luma(gen_at(st - vec2(e, 0.0))), luma(gen_at(st + vec2(0.0, e))) - luma(gen_at(st - vec2(0.0, e))));
+        return pick_film(st + slope * 0.15 * a);
+    }
+    vec3 g = gen_at(st);
+    vec3 f = pick_film(st);
+    if (mode < 0.5) { return mix(f, g, a); }
+    if (mode < 1.5) { return f + g * a; }
+    if (mode < 2.5) { return mix(f, 1.0 - (1.0 - f) * (1.0 - g), a); }
+    if (mode < 3.5) { return mix(f, f * g, a); }
+    if (mode < 4.5) { return mix(f, abs(f - g), a); }
+    return mix(f, f * smoothstep(0.03, 0.4, luma(g)), a);
 }
 
 // A point around the middle (x in the stage's proportion), with red and blue pulled apart.
@@ -425,6 +467,14 @@ struct Gl {
     /// The stage, twice: the one drawn last and the one drawn into.
     tex: [glow::Texture; 2],
     cur: usize,
+    /// Its size (the stage's, or an export's).
+    w: i32,
+    h: i32,
+    /// The Visuals: their shader (made the first time they show; an error
+    /// if it could not be), their picture, and the music they are shown.
+    gen: Option<Result<glow::Program, String>>,
+    gen_tex: glow::Texture,
+    scope_tex: glow::Texture,
 }
 
 /// The stage, shared by every place that shows it.
@@ -559,8 +609,25 @@ pub(crate) unsafe fn program(gl: &glow::Context, frag: &str) -> Result<glow::Pro
     Ok(prog)
 }
 
+/// A picture to draw into (or from), black, `w` by `h`.
+unsafe fn new_texture(gl: &glow::Context, w: i32, h: i32) -> Result<glow::Texture, String> {
+    let t = gl.create_texture()?;
+    gl.bind_texture(glow::TEXTURE_2D, Some(t));
+    gl.tex_image_2d(glow::TEXTURE_2D, 0, glow::RGBA as i32, w, h, 0, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(None));
+    gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
+    gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
+    gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
+    gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+    gl.bind_texture(glow::TEXTURE_2D, None);
+    Ok(t)
+}
+
 impl Gl {
     unsafe fn new(gl: &glow::Context) -> Result<Self, String> {
+        Self::sized(gl, STAGE_W, STAGE_H)
+    }
+
+    unsafe fn sized(gl: &glow::Context, w: i32, h: i32) -> Result<Self, String> {
         let fx = program(gl, &format!("{}{EFFECTS}", defines()))?;
         let show = program(gl, SHOW)?;
         let quad = gl.create_buffer()?;
@@ -585,7 +652,7 @@ impl Gl {
         gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
         for t in &mut tex {
             gl.bind_texture(glow::TEXTURE_2D, Some(*t));
-            gl.tex_image_2d(glow::TEXTURE_2D, 0, glow::RGBA as i32, STAGE_W, STAGE_H, 0, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(None));
+            gl.tex_image_2d(glow::TEXTURE_2D, 0, glow::RGBA as i32, w, h, 0, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(None));
             gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
             gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
             gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
@@ -601,7 +668,44 @@ impl Gl {
         }
         gl.bind_texture(glow::TEXTURE_2D, None);
         gl.bind_framebuffer(glow::FRAMEBUFFER, None);
-        Ok(Self { fx, show, quad, vao, fbo, tex, cur: 0 })
+        let gen_tex = new_texture(gl, w, h)?;
+        let scope_tex = new_texture(gl, SCOPE_W as i32, 4)?;
+        Ok(Self { fx, show, quad, vao, fbo, tex, cur: 0, w, h, gen: None, gen_tex, scope_tex })
+    }
+
+    /// The Visuals, into their picture (made the first time; nothing when their shader could not be made).
+    unsafe fn draw_visuals(&mut self, gl: &glow::Context, p: &Params) -> bool {
+        if self.gen.is_none() {
+            let made = program(gl, &format!("{}{}", defines(), visuals::SHADER));
+            if let Err(e) = &made {
+                eprintln!("video: the Visuals: {e}");
+            }
+            self.gen = Some(made);
+        }
+        let Some(Ok(prog)) = self.gen else { return false };
+        gl.bind_texture(glow::TEXTURE_2D, Some(self.scope_tex));
+        gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
+        gl.tex_sub_image_2d(glow::TEXTURE_2D, 0, 0, 0, SCOPE_W as i32, 4, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(Some(&p.scope.rgba())));
+        gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
+        gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(self.gen_tex), 0);
+        gl.viewport(0, 0, self.w, self.h);
+        gl.disable(glow::SCISSOR_TEST);
+        gl.disable(glow::BLEND);
+        gl.use_program(Some(prog));
+        gl.active_texture(glow::TEXTURE0);
+        gl.bind_texture(glow::TEXTURE_2D, Some(self.scope_tex));
+        let u = |name: &str| gl.get_uniform_location(prog, name);
+        gl.uniform_1_i32(u("u_scope").as_ref(), 0);
+        gl.uniform_2_f32(u("u_stage").as_ref(), self.w as f32, self.h as f32);
+        gl.uniform_4_f32_slice(u("u_fx[0]").as_ref(), &packed_amounts(&p.fx));
+        let settings: Vec<f32> = p.p.iter().flatten().copied().collect();
+        gl.uniform_4_f32_slice(u("u_p[0]").as_ref(), &settings);
+        gl.uniform_1_f32(u("u_time").as_ref(), p.vtime);
+        gl.uniform_1_f32(u("u_seed").as_ref(), p.seed);
+        gl.uniform_3_f32(u("u_vcol").as_ref(), p.vcol[0], p.vcol[1], p.vcol[2]);
+        self.quad(gl);
+        gl.bind_texture(glow::TEXTURE_2D, None);
+        true
     }
 
     unsafe fn quad(&self, gl: &glow::Context) {
@@ -624,10 +728,16 @@ impl Gl {
 
     /// The effects, from the picture and the last stage into the other stage.
     unsafe fn draw_effects(&mut self, gl: &glow::Context, video: Option<glow::Texture>, old: Option<glow::Texture>, p: &Params) {
+        // The Visuals first (without them, or their shader, the effects see none).
+        let mut p = *p;
+        if p.visuals_on() && !self.draw_visuals(gl, &p) {
+            p.fx[Effect::Visuals.index()] = 0.0;
+        }
+        let p = &p;
         let next = 1 - self.cur;
         gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
         gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(self.tex[next]), 0);
-        gl.viewport(0, 0, STAGE_W, STAGE_H);
+        gl.viewport(0, 0, self.w, self.h);
         gl.disable(glow::SCISSOR_TEST);
         gl.disable(glow::BLEND);
         gl.use_program(Some(self.fx));
@@ -635,6 +745,8 @@ impl Gl {
         gl.bind_texture(glow::TEXTURE_2D, Some(self.tex[self.cur]));
         gl.active_texture(glow::TEXTURE2);
         gl.bind_texture(glow::TEXTURE_2D, Some(old.unwrap_or(self.tex[self.cur])));
+        gl.active_texture(glow::TEXTURE3);
+        gl.bind_texture(glow::TEXTURE_2D, Some(self.gen_tex));
         gl.active_texture(glow::TEXTURE0);
         // Without a picture the shader reads nothing (it is multiplied by 0).
         gl.bind_texture(glow::TEXTURE_2D, Some(video.unwrap_or(self.tex[self.cur])));
@@ -642,9 +754,10 @@ impl Gl {
         gl.uniform_1_i32(u("u_video").as_ref(), 0);
         gl.uniform_1_i32(u("u_prev").as_ref(), 1);
         gl.uniform_1_i32(u("u_old").as_ref(), 2);
+        gl.uniform_1_i32(u("u_gen").as_ref(), 3);
         gl.uniform_2_f32(u("u_old_size").as_ref(), p.old_size[0].max(1.0), p.old_size[1].max(1.0));
         gl.uniform_1_f32(u("u_old_has").as_ref(), if old.is_some() && p.old_size[0] > 0.0 { 1.0 } else { 0.0 });
-        gl.uniform_2_f32(u("u_stage").as_ref(), STAGE_W as f32, STAGE_H as f32);
+        gl.uniform_2_f32(u("u_stage").as_ref(), self.w as f32, self.h as f32);
         gl.uniform_2_f32(u("u_video_size").as_ref(), p.video_size[0].max(1.0), p.video_size[1].max(1.0));
         let has = video.is_some() && p.video_size[0] > 0.0;
         gl.uniform_1_f32(u("u_has_video").as_ref(), if has { 1.0 } else { 0.0 });
@@ -665,6 +778,8 @@ impl Gl {
             gl.uniform_3_f32(u(name).as_ref(), c[0], c[1], c[2]);
         }
         self.quad(gl);
+        gl.active_texture(glow::TEXTURE3);
+        gl.bind_texture(glow::TEXTURE_2D, None);
         gl.active_texture(glow::TEXTURE2);
         gl.bind_texture(glow::TEXTURE_2D, None);
         gl.active_texture(glow::TEXTURE1);
@@ -682,5 +797,175 @@ impl Gl {
         gl.uniform_1_i32(gl.get_uniform_location(self.show, "u_stage_tex").as_ref(), 0);
         self.quad(gl);
         gl.bind_texture(glow::TEXTURE_2D, None);
+    }
+}
+
+// ----------------------------------------------------------------------
+// An export's frames on the graphics card
+// ----------------------------------------------------------------------
+
+/// A picture of an export's (RGB, top row first).
+#[derive(Clone, Debug, Default)]
+pub struct Rgb {
+    pub w: usize,
+    pub h: usize,
+    pub px: Vec<u8>,
+}
+
+/// A frame an export asks for: its size, the pictures, the effects; and
+/// whether it is the film's first (the trails start black).
+pub struct Ask {
+    pub w: usize,
+    pub h: usize,
+    pub new: Option<Arc<Rgb>>,
+    pub old: Option<Arc<Rgb>>,
+    pub params: Params,
+    pub first: bool,
+}
+
+#[derive(Default)]
+struct Frames {
+    ask: Option<Ask>,
+    done: Option<Result<Vec<u8>, String>>,
+    gl: Option<(Gl, [glow::Texture; 2])>,
+    failed: Option<String>,
+}
+
+/// Frames of an export drawn on the graphics card (an export with Visuals
+/// in it: they are drawn nowhere else). The export's thread asks
+/// (`draw`), the window's painter draws (`paint`, while the export goes on).
+#[derive(Clone, Default)]
+pub struct GpuFrames {
+    inner: Arc<(Mutex<Frames>, Condvar)>,
+}
+
+impl GpuFrames {
+    /// Frame `ask` drawn (RGB, top row first), waiting for the window to draw
+    /// it; an error when it cannot be, or `stop` says to stop.
+    pub fn draw(&self, ask: Ask, stop: &std::sync::atomic::AtomicBool) -> Result<Vec<u8>, String> {
+        let (lock, cv) = &*self.inner;
+        let mut f = lock.lock().map_err(|_| "lost")?;
+        if let Some(e) = &f.failed {
+            return Err(e.clone());
+        }
+        f.ask = Some(ask);
+        f.done = None;
+        cv.notify_all();
+        let mut waited = std::time::Duration::ZERO;
+        loop {
+            if let Some(done) = f.done.take() {
+                return done;
+            }
+            if stop.load(std::sync::atomic::Ordering::Relaxed) {
+                f.ask = None;
+                return Err("Export cancelled".into());
+            }
+            if waited > std::time::Duration::from_secs(60) {
+                f.ask = None;
+                return Err("The graphics card drew nothing for a minute: keep Krabton's window open (not minimised) while a film with Visuals is exported".into());
+            }
+            let step = std::time::Duration::from_millis(50);
+            f = cv.wait_timeout(f, step).map_err(|_| "lost")?.0;
+            waited += step;
+        }
+    }
+
+    /// While an export goes on: the window's painter draws the frames asked
+    /// for (a few each time it paints).
+    pub fn paint(&self, painter: &egui::Painter) {
+        let inner = self.inner.clone();
+        let cb = egui_glow::CallbackFn::new(move |_info, p| {
+            let (lock, cv) = &*inner;
+            let Ok(mut f) = lock.lock() else { return };
+            let gl = p.gl();
+            let start = std::time::Instant::now();
+            // A few frames a paint, while it is quick.
+            while let Some(ask) = f.ask.take() {
+                // SAFETY: on the painter's thread with its context current, as egui_glow calls back.
+                let done = unsafe { draw_frame(gl, &mut f.gl, &ask) };
+                if let Err(e) = &done {
+                    f.failed = Some(e.clone());
+                }
+                f.done = Some(done);
+                cv.notify_all();
+                // The export's thread asks for the next (while there is time this paint).
+                let Some(left) = std::time::Duration::from_millis(12).checked_sub(start.elapsed()) else { break };
+                let Ok((g, _)) = cv.wait_timeout_while(f, left, |f| f.ask.is_none() && f.failed.is_none()) else { return };
+                f = g;
+            }
+            // SAFETY: as above.
+            unsafe { gl.bind_framebuffer(glow::FRAMEBUFFER, p.intermediate_fbo()) };
+        });
+        let at = painter.clip_rect().left_top();
+        painter.add(egui::PaintCallback { rect: egui::Rect::from_min_size(at, egui::vec2(1.0, 1.0)), callback: Arc::new(cb) });
+    }
+}
+
+/// Draws one frame of an export (its pipeline made, at its size, the first time).
+unsafe fn draw_frame(gl: &glow::Context, slot: &mut Option<(Gl, [glow::Texture; 2])>, ask: &Ask) -> Result<Vec<u8>, String> {
+    let (w, h) = (ask.w as i32, ask.h as i32);
+    if slot.as_ref().is_none_or(|s| s.0.w != w || s.0.h != h) {
+        *slot = Some((Gl::sized(gl, w, h)?, [new_texture(gl, 1, 1)?, new_texture(gl, 1, 1)?]));
+    }
+    let Some((g, pics)) = slot.as_mut() else { return Err("no graphics".into()) };
+    if ask.first {
+        gl.bind_framebuffer(glow::FRAMEBUFFER, Some(g.fbo));
+        for t in g.tex {
+            gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(t), 0);
+            gl.disable(glow::SCISSOR_TEST);
+            gl.clear_color(0.0, 0.0, 0.0, 1.0);
+            gl.clear(glow::COLOR_BUFFER_BIT);
+        }
+    }
+    // The film's pictures onto the card.
+    let up = |k: usize, pic: &Option<Arc<Rgb>>| -> Option<glow::Texture> {
+        let pic = pic.as_ref().filter(|p| p.w > 0 && p.h > 0 && p.px.len() >= p.w * p.h * 3)?;
+        gl.bind_texture(glow::TEXTURE_2D, Some(pics[k]));
+        gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
+        gl.tex_image_2d(glow::TEXTURE_2D, 0, glow::RGB as i32, pic.w as i32, pic.h as i32, 0, glow::RGB, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(Some(&pic.px)));
+        gl.bind_texture(glow::TEXTURE_2D, None);
+        Some(pics[k])
+    };
+    let new = up(0, &ask.new);
+    let old = up(1, &ask.old);
+    g.draw_effects(gl, new, old, &ask.params);
+    let mut rgba = vec![0u8; ask.w * ask.h * 4];
+    gl.pixel_store_i32(glow::PACK_ALIGNMENT, 1);
+    gl.read_pixels(0, 0, w, h, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelPackData::Slice(Some(&mut rgba)));
+    Ok(rgb_top_first(&rgba, ask.w, ask.h))
+}
+
+/// RGBA read back (bottom row first) as RGB, top row first.
+pub fn rgb_top_first(rgba: &[u8], w: usize, h: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(w * h * 3);
+    for y in (0..h).rev() {
+        for px in rgba[y * w * 4..(y + 1) * w * 4].chunks_exact(4) {
+            out.extend_from_slice(&px[..3]);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_frame_read_back_is_turned_the_right_way_up() {
+        // Two rows read back: the bottom one (blue) first.
+        let rgba = [0, 0, 255, 255, 0, 0, 255, 255, 255, 0, 0, 255, 255, 0, 0, 255];
+        assert_eq!(rgb_top_first(&rgba, 2, 2), [255, 0, 0, 255, 0, 0, 0, 0, 255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn the_visuals_morph_their_colour_and_show_when_up() {
+        let mut a = Params::default();
+        let b = Params { vcol: [0.0, 0.0, 1.0], ..Default::default() };
+        a.vcol = [1.0, 0.0, 0.0];
+        assert_eq!(Params::morph(&a, &b, 0.5).vcol, [0.5, 0.0, 0.5]);
+        assert!(!a.visuals_on());
+        a.fx[Effect::Visuals.index()] = 0.5;
+        assert!(a.visuals_on());
+        assert!(defines().contains("#define A_VISUALS") && defines().contains("#define P_FRACTURE"));
     }
 }

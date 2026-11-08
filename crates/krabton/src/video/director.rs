@@ -161,6 +161,8 @@ pub struct Director {
     free_beat: f64,
     pub dice: Dice,
     scratch: (Vec<f32>, Vec<f32>),
+    /// What the Visuals hear and see of the music, and their time.
+    pub ears: super::visuals::Ears,
 }
 
 impl Default for Director {
@@ -190,6 +192,7 @@ impl Default for Director {
             free_beat: 0.0,
             dice: Dice::new(0x5EED),
             scratch: (Vec::new(), Vec::new()),
+            ears: Default::default(),
         }
     }
 }
@@ -363,6 +366,8 @@ impl Director {
         if let Some(ear) = self.master.as_mut() {
             ear.hear(&status.listen_master, 0, &mut self.scratch);
         }
+        // The master's new sound, for the Visuals.
+        let master_new = self.scratch.0.clone();
         for (k, slot) in self.tracks.iter_mut().enumerate() {
             if let Some((_, ear)) = slot {
                 ear.hear(&status.listen[k], moved, &mut self.scratch);
@@ -462,6 +467,12 @@ impl Director {
             let a = self.make_look(set, f.from, &r, dt, bpm, bpb);
             self.look_from = Some((f.from, a, f.mix()));
         }
+        // The Visuals: what they hear, and their time, as fast as their Speed and Rush say.
+        let def = set.looks.get(now);
+        let speed = def.map_or(1.0, |d| d.setting(Effect::Visuals).param(Effect::Visuals, 3));
+        let top = def.map_or(1.0, |d| d.setting(Effect::Rush).param(Effect::Rush, 0));
+        let rush = 1.0 + self.look.get(Effect::Rush) * (top - 1.0);
+        self.ears.frame(&master_new, all.0, all.1, dt, sr, speed * rush);
         let edited = set.look.min(n_looks - 1);
         // The meters show the Look edited (read once a frame, as it plays or not).
         self.readings = if edited == now {

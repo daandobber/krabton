@@ -3,12 +3,14 @@
 //! stopping at every frame of the film to let the Video's reckoning (the
 //! same `Director` the window uses) hear it, follow its notes and beat, and
 //! say which clip shows where and how the links move it. Then every frame
-//! is drawn by a copy of the stage's shader that runs on the processor, and
-//! ffmpeg makes the film of the frames and the sound.
+//! is drawn by a copy of the stage's shader that runs on the processor (or,
+//! when the Visuals are in it, by the graphics card through the window's
+//! painter: `stage::GpuFrames`), and ffmpeg makes the film of the frames
+//! and the sound.
 
 use super::director::{Asks, Director, Shot};
 use super::media::Media;
-use super::stage::Params;
+use super::stage::{Ask, GpuFrames, Params, Rgb};
 use krabton_engine::project::Project;
 use krabton_engine::render::{self, RenderProgress, RenderSource};
 use krabton_engine::video::VideoSet;
@@ -461,6 +463,8 @@ pub struct Job {
     pub handle: Option<std::thread::JoinHandle<Vec<Box<dyn krabton_engine::plugin::AudioProcessor>>>>,
     /// Plugin instances used by the render; dropped on the UI thread afterwards.
     pub plugin_instances: Vec<krabton_clap::PluginInstance>,
+    /// Frames with the Visuals, drawn by the window's painter.
+    pub gpu: GpuFrames,
 }
 
 impl Job {
@@ -515,8 +519,10 @@ pub fn start(work: Work, plugin_instances: Vec<krabton_clap::PluginInstance>) ->
     let state = Arc::new(Mutex::new(State::Reading));
     let cancel = Arc::new(AtomicBool::new(false));
     let (st, stop) = (state.clone(), cancel.clone());
+    let gpu = GpuFrames::default();
+    let card = gpu.clone();
     let handle = std::thread::spawn(move || {
-        let (result, left) = run(work, &st, &stop);
+        let (result, left) = run(work, &st, &stop, &card);
         if let Ok(mut s) = st.lock() {
             *s = match result {
                 Ok(p) => State::Done(p),
@@ -525,7 +531,7 @@ pub fn start(work: Work, plugin_instances: Vec<krabton_clap::PluginInstance>) ->
         }
         left
     });
-    Job { state, cancel, handle: Some(handle), plugin_instances }
+    Job { state, cancel, handle: Some(handle), plugin_instances, gpu }
 }
 
 fn set_state(st: &Mutex<State>, s: State) {
@@ -536,7 +542,7 @@ fn set_state(st: &Mutex<State>, s: State) {
 
 type Leftovers = Vec<Box<dyn krabton_engine::plugin::AudioProcessor>>;
 
-fn run(work: Work, st: &Arc<Mutex<State>>, stop: &Arc<AtomicBool>) -> (Result<PathBuf, String>, Leftovers) {
+fn run(work: Work, st: &Arc<Mutex<State>>, stop: &Arc<AtomicBool>, gpu: &GpuFrames) -> (Result<PathBuf, String>, Leftovers) {
     let Work { project, source, sample_rate, opts, out, ffmpeg, media, processors } = work;
     // The films, all of them read.
     while media.iter().flatten().any(|m| !m.is_done()) {
@@ -566,12 +572,14 @@ fn run(work: Work, st: &Arc<Mutex<State>>, stop: &Arc<AtomicBool>) -> (Result<Pa
     watch.0.store(true, Ordering::Relaxed);
     let _ = watch.1.join();
     let Some((frames, audio)) = planned else { return (Err("Export cancelled".into()), left) };
-    let result = encode(&frames, &audio, sample_rate, opts, &out, &ffmpeg, &media, st, stop);
+    let result = encode(&frames, &audio, sample_rate, opts, &out, &ffmpeg, &media, st, stop, gpu);
     (result.map(|_| out), left)
 }
 
 #[allow(clippy::too_many_arguments)]
-fn encode(frames: &[Planned], audio: &[f32], sample_rate: u32, opts: Opts, out: &Path, ffmpeg: &Path, media: &[Option<Arc<Media>>], st: &Mutex<State>, stop: &AtomicBool) -> Result<(), String> {
+fn encode(frames: &[Planned], audio: &[f32], sample_rate: u32, opts: Opts, out: &Path, ffmpeg: &Path, media: &[Option<Arc<Media>>], st: &Mutex<State>, stop: &AtomicBool, gpu: &GpuFrames) -> Result<(), String> {
+    // With the Visuals in it, the graphics card draws every frame (as the window does).
+    let on_card = frames.iter().any(|f| f.params.visuals_on());
     let tmp = std::env::temp_dir().join(format!("krabton-video-export-{}-{}", std::process::id(), out.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()));
     std::fs::create_dir_all(&tmp).map_err(|e| format!("{}: {e}", tmp.display()))?;
     let wav = tmp.join("sound.wav");
@@ -592,6 +600,7 @@ fn encode(frames: &[Planned], audio: &[f32], sample_rate: u32, opts: Opts, out: 
         let mut prev = vec![0u8; w * h * 3];
         // The last frame unpacked of each clip (most frames show the same one again).
         let mut cache: Vec<Option<(usize, Pic)>> = (0..media.len()).map(|_| None).collect();
+        let mut card_pics: Vec<Option<Arc<Rgb>>> = (0..media.len()).map(|_| None).collect();
         let mut written = Ok(());
         {
             let mut stdin = child.stdin.take().ok_or("ffmpeg takes no frames")?;
@@ -605,11 +614,27 @@ fn encode(frames: &[Planned], audio: &[f32], sample_rate: u32, opts: Opts, out: 
                     let Some(i) = m.frame_at(at) else { continue };
                     if cache[clip].as_ref().map(|c| c.0) != Some(i) {
                         cache[clip] = m.image(i).map(|img| (i, Pic::from_image(&img)));
+                        card_pics[clip] = None;
                     }
                 }
-                let pic = |c: usize| cache.get(c).and_then(|p| p.as_ref()).map(|p| &p.1);
                 std::mem::swap(&mut px, &mut prev);
-                draw(&mut px, &prev, w, h, pic(f.shot.clip), f.shot.from.and_then(|(c, _, _)| pic(c)), &f.params);
+                if on_card {
+                    let mut card = |c: usize| -> Option<Arc<Rgb>> {
+                        let (_, p) = cache.get(c)?.as_ref()?;
+                        Some(card_pics[c].get_or_insert_with(|| Arc::new(Rgb { w: p.w, h: p.h, px: p.rgb.clone() })).clone())
+                    };
+                    let ask = Ask { w, h, new: card(f.shot.clip), old: f.shot.from.and_then(|(c, _, _)| card(c)), params: f.params, first: k == 0 };
+                    match gpu.draw(ask, stop) {
+                        Ok(drawn) => px = drawn,
+                        Err(e) => {
+                            written = Err(e);
+                            break;
+                        }
+                    }
+                } else {
+                    let pic = |c: usize| cache.get(c).and_then(|p| p.as_ref()).map(|p| &p.1);
+                    draw(&mut px, &prev, w, h, pic(f.shot.clip), f.shot.from.and_then(|(c, _, _)| pic(c)), &f.params);
+                }
                 if let Err(e) = stdin.write_all(&px) {
                     written = Err(format!("ffmpeg stopped taking frames: {e}"));
                     break;

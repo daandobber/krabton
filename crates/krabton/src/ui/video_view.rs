@@ -563,7 +563,9 @@ impl App {
     /// Export Video finished (or failed): says so.
     fn poll_video_export(&mut self, ctx: &Context) {
         let Some(job) = &mut self.video.export else { return };
-        ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        // The graphics card draws the frames with Visuals in them, a few each time the window paints.
+        job.gpu.paint(&ctx.layer_painter(egui::LayerId::background()));
+        ctx.request_repaint();
         if !job.handle.as_ref().is_some_and(|h| h.is_finished()) {
             return;
         }
@@ -1145,6 +1147,11 @@ impl App {
         if ui.add(link).on_hover_text("Paste a link: the film comes into the bank (fetched with yt-dlp, up to 720p)").clicked() {
             self.video.link_open = true;
         }
+        ui.add_space(4.0);
+        let vis = egui::Button::new(RichText::new("Visuals: no film needed").size(14.0)).fill(PANEL3).min_size(vec2(220.0, 30.0));
+        if ui.add(vis).on_hover_text("Krabton draws the pictures itself, moving with the music: ridges, a lattice, a swarm, data, a tunnel, the sound's wave, contours, shards, the notes, strings. Pick another in the Look tab's presets").clicked() {
+            self.video_visuals_preset("Lattice");
+        }
         ui.add_space(6.0);
         ui.label(RichText::new("or drop files anywhere on this view").small().color(TEXT_DIM));
         if ffmpeg::find().is_none() {
@@ -1152,6 +1159,13 @@ impl App {
             ui.label(RichText::new("Films need ffmpeg, a free program. Pictures and GIFs play without it.").small().color(TEXT_DIM));
             ui.add_space(4.0);
             self.ffmpeg_fetch_row(ui);
+        }
+    }
+
+    /// The Look edited becomes preset `name` (its links fitted to the tracks).
+    pub(crate) fn video_visuals_preset(&mut self, name: &str) {
+        if let Some(pr) = kv::preset(name) {
+            self.video_preset(&pr);
         }
     }
 
@@ -2112,17 +2126,21 @@ impl App {
             egui::ComboBox::from_id_salt("video_preset")
                 .width(150.0)
                 .selected_text("Fill from a preset...")
+                .height(460.0)
                 .show_ui(ui, |ui| {
-                    for name in kv::PRESET_NAMES {
-                        if let Some(pr) = kv::preset(name) {
-                            if ui.selectable_label(kv::same_links(set.links(), &pr.links), name).on_hover_text(pr.about).clicked() {
-                                pick = Some(name);
+                    for (visuals, title) in [(false, "THE FILM"), (true, "VISUALS (no film needed)")] {
+                        ui.label(RichText::new(title).small().color(TEXT_DIM));
+                        for name in kv::PRESET_NAMES {
+                            if let Some(pr) = kv::preset(name).filter(|p| p.fx.is_empty() != visuals) {
+                                if ui.selectable_label(kv::same_links(set.links(), &pr.links), name).on_hover_text(pr.about).clicked() {
+                                    pick = Some(name);
+                                }
                             }
                         }
                     }
                 })
                 .response
-                .on_hover_text("Puts a preset's links in this Look (its effects as they start)");
+                .on_hover_text("Puts a preset in this Look: its links, and for the Visuals their scene and colours");
             if let Some(pr) = pick.and_then(kv::preset) {
                 set.apply_preset(&pr);
                 let mut links = std::mem::take(&mut set.edited_look_mut().links);
@@ -2332,9 +2350,10 @@ impl App {
             .height(420.0)
             .selected_text(RichText::new("+ Add effect...").color(TEXT))
             .show_ui(ui, |ui| {
-                for (film, title) in [(false, "THE PICTURE"), (true, "WHERE THE FILM IS (moved by a link)")] {
+                for (group, title) in [(0, "THE PICTURE"), (1, "WHERE THE FILM IS (moved by a link)"), (2, "VISUALS (Krabton draws them; the music moves them)")] {
                     ui.label(RichText::new(title).small().color(TEXT_DIM));
-                    for e in Effect::ALL.iter().filter(|e| e.moves_film() == film && !in_use.contains(e)) {
+                    let of = |e: &Effect| if e.is_visual() { 2 } else if e.moves_film() { 1 } else { 0 };
+                    for e in Effect::ALL.iter().filter(|e| of(e) == group && !in_use.contains(e)) {
                         if ui.selectable_label(false, e.name()).on_hover_text(e.about()).clicked() {
                             add = Some(*e);
                         }
@@ -2344,9 +2363,21 @@ impl App {
             .response
             .on_hover_text("An effect for this Look: the picture's are there at half to start with, the film's are moved by the kick");
         if let Some(e) = add {
-            if e.moves_film() {
+            if e == Effect::Visuals {
+                look.setting_mut(e).base = 1.0;
+            } else if e.moves_film() || e.is_visual() {
+                // Moved by what suits it: the Visuals' knobs each by a part of the music.
+                let src = match e {
+                    Effect::Warp => Source::Bass,
+                    Effect::Density => Source::Mids,
+                    Effect::Rush => Source::Level,
+                    Effect::Glow => Source::Highs,
+                    Effect::Orbit => Source::Lfo,
+                    Effect::Fracture => Source::Hits,
+                    _ => Source::Kick,
+                };
                 if look.links.len() < kv::MAX_LINKS {
-                    let mut link = [VideoLink::new(Source::Kick, e, 0.5)];
+                    let mut link = [VideoLink::new(src, e, 0.5)];
                     self.video_fit_links(&mut link);
                     look.links.extend(link);
                 }

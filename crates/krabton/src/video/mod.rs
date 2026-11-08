@@ -13,6 +13,7 @@ pub mod media;
 pub mod record;
 pub mod stage;
 pub mod strip;
+pub mod visuals;
 pub mod ytdl;
 
 use crate::app::App;
@@ -176,7 +177,7 @@ impl VideoRuntime {
     /// The clip that plays now (in the bank).
     /// Whether a picture is up (a clip's, or a Video Rack's film).
     pub fn has_picture(&self) -> bool {
-        self.shown.is_some()
+        self.shown.is_some() || self.params.visuals_on()
     }
 
     pub fn playing(&self) -> usize {
@@ -268,7 +269,7 @@ pub fn stage_params(set: &VideoSet, project: &Project, def: &VideoLook, look: &L
         (None, Some(l)) => rgb(l.from.and_then(|id| project.tracks.iter().find(|t| t.id == id)).map(|t| t.color).unwrap_or([0xff, 0x40, 0xa0])),
         (None, None) => rgb([0xff, 0x40, 0xa0]),
     };
-    for (e, slot) in [(Effect::Flash, &mut p.flash), (Effect::Strobe, &mut p.strobe), (Effect::Edges, &mut p.edges)] {
+    for (e, slot) in [(Effect::Flash, &mut p.flash), (Effect::Strobe, &mut p.strobe), (Effect::Edges, &mut p.edges), (Effect::Visuals, &mut p.vcol)] {
         *slot = rgb(set_of(e).color.or(e.color()).unwrap_or([0xff; 3]));
     }
     let st = p.p[Effect::Strobe.index()];
@@ -294,10 +295,13 @@ pub fn frame_params(set: &VideoSet, project: &Project, dir: &mut Director, shot:
     let none = VideoLook::default();
     let def = |i: usize| set.looks.get(i).unwrap_or(&none);
     let b = stage_params(set, project, def(shot.look), &dir.look, shot, sizes, noise);
-    match &dir.look_from {
+    let mut p = match &dir.look_from {
         Some((from, a, m)) => stage::Params::morph(&stage_params(set, project, def(*from), a, shot, sizes, noise), &b, *m),
         None => b,
-    }
+    };
+    p.vtime = dir.ears.time as f32;
+    p.scope = dir.ears.scope();
+    p
 }
 /// Each clip's film length (seconds; 0 for a picture or one not read yet).
 pub fn durations(set: &VideoSet, media: &HashMap<PathBuf, Arc<Media>>) -> Vec<f32> {
