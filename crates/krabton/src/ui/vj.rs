@@ -307,12 +307,26 @@ pub(crate) fn scene_icon(p: &Painter, r: Rect, k: usize, c: Color32) {
             }
         }
         // Strings: lines, one shaking.
-        _ => {
+        9 => {
             for i in 0..5 {
                 let y = 0.15 + i as f32 * 0.17;
                 let shake = if i == 2 { 0.12 } else { 0.0 };
                 line(p, (0..=30).map(|s| at(s as f32 / 30.0, y + (s as f32 / 30.0 * TAU * 3.0).sin() * shake * (s as f32 / 30.0 * std::f32::consts::PI).sin())).collect(), if i == 2 { c } else { dim }, 1.0);
             }
+        }
+        // Milk: a picture inside itself, turned a little each time.
+        _ => {
+            let m = r.center();
+            for i in 0..7 {
+                let s = 0.95f32.powi(i * 2) * r.height() * 0.48;
+                let a = i as f32 * 0.22;
+                let pts: Vec<Pos2> = (0..=4).map(|k| {
+                    let t = a + k as f32 / 4.0 * TAU + TAU / 8.0;
+                    m + vec2(t.cos() * s * 1.5, t.sin() * s)
+                }).collect();
+                line(p, pts, if i % 2 == 0 { c } else { dim }, 1.0);
+            }
+            line(p, (0..=40).map(|s| at(s as f32 / 40.0, 0.5 + (s as f32 * 0.7).sin() * 0.12)).collect(), c, 1.0);
         }
     }
 }

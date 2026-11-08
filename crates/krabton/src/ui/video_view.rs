@@ -16,6 +16,7 @@ use crate::video::{export, ffmpeg, media, strip, ytdl, VideoTab};
 use crate::widgets::*;
 use super::vj;
 use egui::{pos2, vec2, Align2, Color32, Context, Id, Key, Rect, RichText, Sense, Stroke, Ui, UiBuilder};
+use krabton_engine::milk::{self, MilkParam};
 use krabton_engine::video::{self as kv, Effect, HitTrigger, Launch, PlayMode, Source, Transition, VideoLink};
 use std::path::PathBuf;
 
@@ -330,6 +331,83 @@ const GROUPS: [(&str, [u8; 3], &[Effect]); 7] = [
     ("TIME", [0x60, 0x90, 0xff], &[Effect::Trails, Effect::Echo, Effect::Wave]),
     ("FILM", [0xff, 0x60, 0xa0], &[Effect::Speed, Effect::Freeze, Effect::Jump, Effect::Stutter, Effect::Scratch, Effect::NextClip]),
 ];
+
+/// Milk's faders: (value, its name on the fader).
+const MILK_MOTION: [(MilkParam, &str); 8] = [(MilkParam::Zoom, "Zoom"), (MilkParam::Rot, "Rotate"), (MilkParam::Warp, "Warp"), (MilkParam::Ripple, "Ripple"), (MilkParam::Decay, "Decay"), (MilkParam::Dx, "Move X"), (MilkParam::Dy, "Move Y"), (MilkParam::Sx, "Stretch")];
+const MILK_LOOK: [(MilkParam, &str); 10] = [(MilkParam::WaveAlpha, "Wave"), (MilkParam::WaveScale, "Wave Size"), (MilkParam::ShapeAlpha, "Shape"), (MilkParam::EchoAlpha, "Echo"), (MilkParam::EchoZoom, "Echo Zoom"), (MilkParam::Gamma, "Gamma"), (MilkParam::Solarize, "Solarize"), (MilkParam::Invert, "Invert"), (MilkParam::Hue, "Hue"), (MilkParam::DarkenCenter, "Dark Ctr")];
+
+/// Milk's panel: its preset (and the one playing), how it goes on to the
+/// next, and faders that move the preset's values (in the middle: as it is).
+fn milk_panel(ui: &mut Ui, m: &mut milk::MilkLook, now: Option<(&str, [f32; milk::MILK_N])>) {
+    let col = Color32::from_rgb(0xe8, 0xe0, 0xd0);
+    egui::Frame::new().fill(mix(PANEL2, col, 0.05)).stroke(Stroke::new(1.0_f32, mix(LINE_SOFT, col, 0.3))).corner_radius(5).inner_margin(egui::Margin::symmetric(6, 5)).show(ui, |ui| {
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 4.0;
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                ui.label(RichText::new("MILK").small().strong().color(col));
+                ui.add_space(4.0);
+                let n = milk::presets().len();
+                let mut k = m.place();
+                if ui.small_button("<").on_hover_text("The preset before").clicked() {
+                    k = (k + n - 1) % n;
+                }
+                let opts: Vec<(usize, String)> = milk::presets().iter().enumerate().map(|(i, p)| (i, p.name.to_string())).collect();
+                vj::chip(ui, "video_milk_preset", 120.0, &mut k, &opts, "Milk's preset: what moves how, and what is drawn");
+                if ui.small_button(">").on_hover_text("The next preset").clicked() {
+                    k = (k + 1) % n;
+                }
+                if k != m.place() {
+                    m.preset = milk::presets()[k].name.to_string();
+                }
+                if let Some((name, _)) = now.filter(|(name, _)| *name != m.preset) {
+                    ui.label(RichText::new(format!("now {name}")).small().color(TEXT_DIM)).on_hover_text("The preset it went on to by itself");
+                }
+                ui.add_space(8.0);
+                ui.label(RichText::new("Next").small().color(TEXT_DIM));
+                let autos: Vec<(u32, String)> = milk::AUTO.iter().map(|(n, b)| (*b, n.to_string())).collect();
+                vj::segmented(ui, &mut m.auto, &autos, "Every so many bars it goes on to another preset by itself (while the song plays)");
+                if m.auto > 0 && choice(ui, "Random", m.random, "The next by chance, rather than in turn").clicked() {
+                    m.random = !m.random;
+                }
+                ui.add_space(8.0);
+                ui.label(RichText::new("Melt").small().color(TEXT_DIM));
+                let blends: Vec<(f32, &str)> = milk::BLENDS.to_vec();
+                length_button(ui, &mut m.blend, &blends, "How long one preset takes to melt into the next");
+            });
+            for (row_name, faders) in [("MOTION", &MILK_MOTION[..]), ("LOOK", &MILK_LOOK[..])] {
+                ui.horizontal_top(|ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    let (r, _) = ui.allocate_exact_size(vec2(40.0, 96.0), Sense::hover());
+                    ui.painter().text(pos2(r.left(), r.top() + 6.0), Align2::LEFT_CENTER, row_name, small(), TEXT_DIM);
+                    for (param, name) in faders {
+                        let d = param.def();
+                        let mut t = m.tweaks.get(param).copied().unwrap_or(0.5);
+                        let live = now.map_or(t, |(_, v)| (v[param.index()] - d.min) / (d.max - d.min));
+                        ui.vertical(|ui| {
+                            ui.set_width(46.0);
+                            ui.vertical_centered(|ui| {
+                                let tip = format!("{}: moves the preset's value either way (the middle: as the preset has it)", d.name);
+                                let rest = (t - 0.5).abs() < 1e-3;
+                                if vj::fader(ui, &mut t, live, 0.5, vec2(28.0, 80.0), col, rest, &tip).changed() {
+                                    if (t - 0.5).abs() < 1e-3 {
+                                        m.tweaks.remove(param);
+                                    } else {
+                                        m.tweaks.insert(*param, t);
+                                    }
+                                }
+                                ui.add(egui::Label::new(RichText::new(*name).small().color(TEXT)).truncate());
+                            });
+                        });
+                    }
+                    if !m.tweaks.is_empty() && ui.small_button("Reset").on_hover_text("The preset as it is").clicked() {
+                        m.tweaks.clear();
+                    }
+                });
+            }
+        });
+    });
+}
 
 /// The Visuals' blend and colours, in their group's head.
 fn visuals_head(ui: &mut Ui, look: &mut kv::VideoLook) {
@@ -1015,6 +1093,13 @@ impl App {
         let open_id = Id::new("video_fx_open");
         let mut open: Option<(usize, [f32; 2])> = ui.ctx().data(|d| d.get_temp(open_id)).flatten();
         let look = set.edited_look_mut();
+        // Milk drawing: its presets and its faders first.
+        let v = look.setting(Effect::Visuals);
+        if v.base > 0.0 && !v.off && v.param(Effect::Visuals, 0).round() as usize == crate::video::stage::MILK_SCENE {
+            let now = live.is_some().then(|| (self.video.dir.milk.name(), self.video.dir.milk_vals));
+            milk_panel(ui, &mut look.milk, now);
+            ui.add_space(8.0);
+        }
         // The groups in rows, as many to a row as fit.
         let room = ui.available_width();
         let width = |effects: &[Effect]| {

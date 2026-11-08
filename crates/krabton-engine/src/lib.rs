@@ -15,6 +15,7 @@ pub mod groove;
 pub mod midi_file;
 pub mod midi_fx;
 pub mod midi_tools;
+pub mod milk;
 pub mod note_edit;
 pub mod mp3_decode;
 pub mod modular;

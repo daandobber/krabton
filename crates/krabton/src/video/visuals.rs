@@ -51,11 +51,13 @@ pub struct Ears {
     gain: f32,
     /// The Visuals' own time: it runs as fast as their Speed and Rush say (seconds, wrapped at an hour).
     pub time: f64,
+    /// How long the last frame was (seconds).
+    pub dt: f32,
 }
 
 impl Default for Ears {
     fn default() -> Self {
-        Self { tail: Vec::with_capacity(TAIL * 2), spec: [0.0; SCOPE_W], notes: [0.0; SCOPE_W], gain: 0.0, time: 0.0 }
+        Self { tail: Vec::with_capacity(TAIL * 2), spec: [0.0; SCOPE_W], notes: [0.0; SCOPE_W], gain: 0.0, time: 0.0, dt: 1.0 / 60.0 }
     }
 }
 
@@ -90,6 +92,7 @@ impl Ears {
         let peak = self.tail.iter().rev().take(512).fold(0.0f32, |m, v| m.max(v.abs()));
         self.gain = if peak > self.gain { peak } else { self.gain * fall(dt, 1.5) + peak * (1.0 - fall(dt, 1.5)) };
         self.time = (self.time + dt as f64 * speed.max(0.0) as f64).rem_euclid(3600.0);
+        self.dt = dt;
     }
 
     /// What the Visuals are shown now.
@@ -192,6 +195,8 @@ uniform float u_time;
 uniform float u_seed;
 uniform vec3 u_vcol;
 uniform sampler2D u_scope;
+uniform sampler2D u_milk;
+uniform vec4 u_m[MILK_VEC4];
 I vec2 v_uv;
 
 #define TAU 6.2831853
@@ -490,6 +495,29 @@ vec3 strings(vec2 p) {
     return col;
 }
 
+// Milk's feedback as it is shown: an echo of it, gamma, brighter, darker, solarized, negative, its colours turned.
+vec3 milk(vec2 uv) {
+    vec3 c = texture2D(u_milk, vec2(uv.x, 1.0 - uv.y)).rgb;
+    if (ECHO_ALPHA > 0.001) {
+        vec2 e = (uv - 0.5) / max(ECHO_ZOOM, 0.05) + 0.5;
+        if (mod(ECHO_ORIENT, 2.0) > 0.5) { e.x = 1.0 - e.x; }
+        if (ECHO_ORIENT > 1.5) { e.y = 1.0 - e.y; }
+        vec3 ec = texture2D(u_milk, vec2(fract(e.x), 1.0 - fract(e.y))).rgb;
+        c = mix(c, max(c, ec), ECHO_ALPHA);
+    }
+    c *= GAMMA;
+    c = mix(c, sqrt(clamp(c, 0.0, 1.0)), BRIGHTEN);
+    c = mix(c, c * c, DARKEN);
+    c = mix(c, clamp(c, 0.0, 1.0) * (1.0 - clamp(c, 0.0, 1.0)) * 4.0, SOLARIZE);
+    c = mix(c, 1.0 - clamp(c, 0.0, 1.0), INVERT);
+    if (HUE > 0.001) {
+        vec3 k = vec3(0.57735);
+        float a = HUE * TAU;
+        c = c * cos(a) + cross(k, c) * sin(a) + k * dot(k, c) * (1.0 - cos(a));
+    }
+    return c;
+}
+
 void main() {
     aspect = u_stage.x / u_stage.y;
     T = u_time;
@@ -518,9 +546,156 @@ void main() {
     else if (scene < 6.5) { c = contours(p); }
     else if (scene < 7.5) { c = shards(p); }
     else if (scene < 8.5) { c = notegrid(uv); }
-    else { c = strings(p); }
+    else if (scene < 9.5) { c = strings(p); }
+    else { c = milk(uv); }
     c *= 1.0 + A_GLOW * 0.5;
     gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
+}
+"#;
+
+/// The Milk values' names in the shaders: `ZOOM` for `u_m[0].x`, ...
+pub fn milk_defines() -> String {
+    use krabton_engine::milk::{MilkParam, MILK_N};
+    let mut s = format!("#define MILK_VEC4 {}\n", MILK_N.div_ceil(4));
+    for m in MilkParam::ALL {
+        let i = m.index();
+        s.push_str(&format!("#define {} u_m[{}].{}\n", m.glsl(), i / 4, ["x", "y", "z", "w"][i % 4]));
+    }
+    s
+}
+
+/// Milk's values packed four to a vec4, for `u_m`.
+pub fn milk_packed(v: &[f32; krabton_engine::milk::MILK_N]) -> Vec<f32> {
+    let mut out = v.to_vec();
+    out.resize(v.len().div_ceil(4) * 4, 0.0);
+    out
+}
+
+/// Milk's feedback, into a picture of its own: the last frame pulled
+/// through the field of motion and faded, the wave, the shape (which can
+/// hold the last frame), motion dots and borders over it. `u_k` is the
+/// frames of 60 a second this frame is (so it moves alike at any rate).
+pub const MILK_SHADER: &str = r#"
+uniform sampler2D u_prev;
+uniform sampler2D u_scope;
+uniform vec4 u_m[MILK_VEC4];
+uniform vec2 u_stage;
+uniform float u_time;
+uniform float u_k;
+I vec2 v_uv;
+
+#define TAU 6.2831853
+
+float wave(float x) { return texture2D(u_scope, vec2(fract(x), 0.125)).r * 2.0 - 1.0; }
+float spec(float x) { return texture2D(u_scope, vec2(clamp(x, 0.0, 1.0) * (127.0 / 128.0) + 0.5 / 128.0, 0.375)).r; }
+vec3 hsv(float h, float s, float v) {
+    vec3 k = clamp(abs(fract(h + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, 0.0, 1.0);
+    return v * mix(vec3(1.0), k, s);
+}
+vec2 rot(vec2 p, float a) { return vec2(cos(a) * p.x - sin(a) * p.y, sin(a) * p.x + cos(a) * p.y); }
+
+float aspect;
+
+// Where a point of this frame comes from in the last one.
+vec2 source(vec2 uv) {
+    vec2 c = vec2(CX, CY);
+    vec2 q = (uv - c) * vec2(aspect, 1.0);
+    float rad = length((uv - 0.5) * vec2(aspect, 1.0)) / (0.5 * length(vec2(aspect, 1.0)));
+    float zoom = pow(max(ZOOM + ZOOM_RAD * rad, 0.05), u_k);
+    q = rot(q, -(ROT + ROT_RAD * rad) * u_k) / zoom;
+    q /= vec2(pow(SX, u_k), pow(SY, u_k));
+    float wt = u_time * WARP_SPEED;
+    q += WARP * 0.012 * u_k * vec2(sin(wt * 0.71 + q.y * 7.0 * WARP_SCALE + 1.3) + sin(wt * 0.37 + q.x * 3.0 * WARP_SCALE), cos(wt * 0.63 + q.x * 6.0 * WARP_SCALE + 0.4) + cos(wt * 0.29 + q.y * 3.7 * WARP_SCALE));
+    float l = length(q);
+    if (RIPPLE > 0.0005 && l > 0.0001) {
+        q += q / l * RIPPLE * 0.006 * u_k * sin(l * 30.0 * RIPPLE_FREQ - u_time * 5.0);
+    }
+    return q / vec2(aspect, 1.0) + c - vec2(DX, DY) * u_k;
+}
+
+void main() {
+    aspect = u_stage.x / u_stage.y;
+    vec2 uv = v_uv;
+    float px = 1.0 / u_stage.y;
+    vec2 src = fract(source(uv));
+    vec3 col = texture2D(u_prev, vec2(src.x, 1.0 - src.y)).rgb * pow(DECAY, u_k);
+    vec2 pc = (uv - 0.5) * vec2(aspect, 1.0);
+    col *= 1.0 - DARKEN_CENTER * 0.7 * exp(-dot(pc, pc) * 30.0);
+    // Motion dots: where the field takes each point of a grid.
+    if (MV_ALPHA > 0.001 && MV_X >= 1.0 && MV_Y >= 1.0) {
+        vec2 n = vec2(MV_X, MV_Y);
+        vec2 cell = (floor(uv * n) + 0.5) / n;
+        vec2 to = cell + (cell - source(cell)) * 6.0;
+        float d = length((uv - to) * vec2(aspect, 1.0));
+        col += vec3(MV_ALPHA) * smoothstep(px * 2.2, px * 0.5, d);
+    }
+    // The wave.
+    if (WAVE_ALPHA > 0.001) {
+        vec3 wc = hsv(WAVE_HUE, WAVE_SAT, 1.0) * WAVE_ALPHA;
+        float th = WAVE_THICK * px * 0.5;
+        vec2 q = (uv - vec2(WAVE_X, WAVE_Y)) * vec2(aspect, 1.0);
+        float s = WAVE_SCALE;
+        float m = WAVE_MODE;
+        float d = 1.0;
+        if (m < 0.5) {
+            d = abs(q.y + wave(uv.x) * 0.2 * s);
+        } else if (m < 1.5) {
+            float a = atan(q.y, q.x) / TAU + 0.5;
+            d = abs(length(q) - (0.18 * s + wave(a) * 0.06 * s));
+        } else if (m < 2.5) {
+            // The wave against itself a quarter later: an oscilloscope's figures.
+            vec2 last = vec2(wave(0.0), wave(0.25)) * 0.3 * s;
+            for (int i = 1; i <= 48; i++) {
+                float t = float(i) / 96.0;
+                vec2 pt = vec2(wave(t), wave(t + 0.25)) * 0.3 * s;
+                vec2 ab = pt - last;
+                vec2 ap = q - last;
+                float h = clamp(dot(ap, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
+                d = min(d, length(ap - ab * h));
+                last = pt;
+            }
+        } else if (m < 3.5) {
+            float sx = abs(uv.x - 0.5) * 2.0;
+            float h = spec(sx) * 0.35 * s;
+            d = (-q.y > 0.0 && -q.y < h && fract(sx * 48.0) > 0.25) ? 0.0 : 1.0;
+        } else if (m < 4.5) {
+            float wv = wave(uv.x) * 0.12 * s;
+            d = min(abs(q.y - 0.12 - wv), abs(q.y + 0.12 + wv));
+        } else {
+            float a = atan(q.y, q.x) / TAU + 0.5;
+            float step_ = 0.06 * s + 0.001;
+            float k = (length(q) - wave(a) * 0.02 * s) / step_ - a;
+            d = length(q) < 0.45 ? abs(fract(k + 0.5) - 0.5) * step_ : 1.0;
+        }
+        col += wc * smoothstep(th + px, max(th - px * 0.5, 0.0), d);
+    }
+    // The shape (holding the whole last frame, when it does: pictures in pictures).
+    if (SHAPE_ALPHA > 0.001 && SHAPE_RAD > 0.001) {
+        vec2 q = rot((uv - vec2(SHAPE_X, SHAPE_Y)) * vec2(aspect, 1.0), -(SHAPE_ANG + u_time * SHAPE_SPIN));
+        float seg = TAU / max(SHAPE_SIDES, 3.0);
+        float a = atan(q.y, q.x);
+        float dd = cos(floor(0.5 + a / seg) * seg - a) * length(q) - SHAPE_RAD * 0.5;
+        if (dd < 0.0) {
+            if (SHAPE_TEX > 0.5) {
+                vec2 t = 0.5 + q / vec2(aspect, 1.0) / max(SHAPE_RAD, 0.05);
+                col = mix(col, texture2D(u_prev, vec2(t.x, 1.0 - t.y)).rgb, SHAPE_ALPHA);
+            } else {
+                col += hsv(SHAPE_HUE, 0.7, 1.0) * SHAPE_ALPHA * 0.35;
+            }
+        }
+        col += hsv(SHAPE_HUE, 0.5, 1.0) * SHAPE_ALPHA * smoothstep(px * 2.0, 0.0, abs(dd));
+    }
+    // Borders.
+    if (BORDER_ALPHA > 0.001) {
+        float e = min(min(uv.x, 1.0 - uv.x) * aspect, min(uv.y, 1.0 - uv.y));
+        vec3 bc = hsv(BORDER_HUE, 0.7, 1.0);
+        if (e < OUTER_BORDER) {
+            col = mix(col, bc, BORDER_ALPHA);
+        } else if (e < OUTER_BORDER + INNER_BORDER) {
+            col = mix(col, bc * 0.5, BORDER_ALPHA);
+        }
+    }
+    gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }
 "#;
 
@@ -584,9 +759,15 @@ mod tests {
         for knob in ["A_BURST", "A_WARP", "A_DENSITY", "A_GLOW", "A_ORBIT", "A_FRACTURE", "P_VISUALS"] {
             assert!(SHADER.contains(knob), "{knob}");
         }
-        for f in ["ridges(", "lattice(", "swarm(", "data(", "tunnel(", "scope(", "contours(", "shards(", "notegrid(", "strings("] {
+        for f in ["ridges(", "lattice(", "swarm(", "data(", "tunnel(", "scope(", "contours(", "shards(", "notegrid(", "strings(", "milk("] {
             assert!(SHADER.matches(f).count() >= 2, "{f} drawn");
         }
-        assert_eq!(krabton_engine::video::VISUAL_SCENES.len(), 10);
+        assert_eq!(krabton_engine::video::VISUAL_SCENES.len(), 11);
+        // Every Milk value the shaders use has its name.
+        let names = milk_defines();
+        for word in ["ZOOM", "WAVE_MODE", "SHAPE_TEX", "ECHO_ORIENT", "SOLARIZE", "MV_ALPHA", "DARKEN_CENTER"] {
+            assert!(names.contains(&format!("#define {word} ")), "{word}");
+            assert!(MILK_SHADER.contains(word) || SHADER.contains(word), "{word} used");
+        }
     }
 }

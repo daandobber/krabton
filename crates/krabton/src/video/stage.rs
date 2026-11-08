@@ -11,7 +11,11 @@
 use eframe::egui_glow;
 use eframe::glow::{self, HasContext};
 use super::visuals::{self, Scope, SCOPE_W};
+use krabton_engine::milk::{self, MILK_N};
 use krabton_engine::video::{Effect, FxSetting};
+
+/// Milk's place among the Visuals' scenes.
+pub const MILK_SCENE: usize = 10;
 use std::sync::{Arc, Condvar, Mutex};
 
 pub const STAGE_W: i32 = 1280;
@@ -72,6 +76,9 @@ pub struct Params {
     pub scope: Scope,
     /// The Wave's colour.
     pub wave: [f32; 3],
+    /// Milk's values (see `krabton_engine::milk`), and how long this frame is (seconds).
+    pub milk: [f32; MILK_N],
+    pub vdt: f32,
 }
 
 impl Default for Params {
@@ -97,6 +104,8 @@ impl Default for Params {
             vcol: [1.0; 3],
             scope: Scope::default(),
             wave: [1.0; 3],
+            milk: milk::defaults(),
+            vdt: 1.0 / 60.0,
         }
     }
 }
@@ -147,7 +156,13 @@ impl Params {
         out.edges = l3(a.edges, b.edges);
         out.vcol = l3(a.vcol, b.vcol);
         out.wave = l3(a.wave, b.wave);
+        out.milk = milk::blend(&a.milk, &b.milk, t);
         out
+    }
+
+    /// Whether the Visuals draw Milk.
+    pub fn milk_on(&self) -> bool {
+        self.visuals_on() && self.p[Effect::Visuals.index()][0].round() as usize == MILK_SCENE
     }
 
     /// Whether the Visuals show.
@@ -523,6 +538,10 @@ struct Gl {
     gen: Option<Result<glow::Program, String>>,
     gen_tex: glow::Texture,
     scope_tex: glow::Texture,
+    /// Milk: its shader, and its feedback (the frame drawn last and the one drawn into).
+    milk: Option<Result<glow::Program, String>>,
+    milk_tex: [glow::Texture; 2],
+    milk_cur: usize,
 }
 
 /// The stage, shared by every place that shows it.
@@ -718,19 +737,59 @@ impl Gl {
         gl.bind_framebuffer(glow::FRAMEBUFFER, None);
         let gen_tex = new_texture(gl, w, h)?;
         let scope_tex = new_texture(gl, SCOPE_W as i32, 4)?;
-        Ok(Self { fx, show, quad, vao, fbo, tex, cur: 0, w, h, gen: None, gen_tex, scope_tex })
+        let milk_tex = [new_texture(gl, w, h)?, new_texture(gl, w, h)?];
+        Ok(Self { fx, show, quad, vao, fbo, tex, cur: 0, w, h, gen: None, gen_tex, scope_tex, milk: None, milk_tex, milk_cur: 0 })
+    }
+
+    /// Milk's feedback, one frame on (made the first time; false when its shader could not be).
+    unsafe fn draw_milk(&mut self, gl: &glow::Context, p: &Params) -> bool {
+        if self.milk.is_none() {
+            let made = program(gl, &format!("{}{}", visuals::milk_defines(), visuals::MILK_SHADER));
+            if let Err(e) = &made {
+                eprintln!("video: Milk: {e}");
+            }
+            self.milk = Some(made);
+        }
+        let Some(Ok(prog)) = self.milk else { return false };
+        let next = 1 - self.milk_cur;
+        gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
+        gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(self.milk_tex[next]), 0);
+        gl.viewport(0, 0, self.w, self.h);
+        gl.disable(glow::SCISSOR_TEST);
+        gl.disable(glow::BLEND);
+        gl.use_program(Some(prog));
+        gl.active_texture(glow::TEXTURE1);
+        gl.bind_texture(glow::TEXTURE_2D, Some(self.scope_tex));
+        gl.active_texture(glow::TEXTURE0);
+        gl.bind_texture(glow::TEXTURE_2D, Some(self.milk_tex[self.milk_cur]));
+        let u = |name: &str| gl.get_uniform_location(prog, name);
+        gl.uniform_1_i32(u("u_prev").as_ref(), 0);
+        gl.uniform_1_i32(u("u_scope").as_ref(), 1);
+        gl.uniform_4_f32_slice(u("u_m[0]").as_ref(), &visuals::milk_packed(&p.milk));
+        gl.uniform_2_f32(u("u_stage").as_ref(), self.w as f32, self.h as f32);
+        gl.uniform_1_f32(u("u_time").as_ref(), p.vtime);
+        gl.uniform_1_f32(u("u_k").as_ref(), (p.vdt * 60.0).clamp(0.25, 4.0));
+        self.quad(gl);
+        gl.active_texture(glow::TEXTURE1);
+        gl.bind_texture(glow::TEXTURE_2D, None);
+        gl.active_texture(glow::TEXTURE0);
+        gl.bind_texture(glow::TEXTURE_2D, None);
+        self.milk_cur = next;
+        true
     }
 
     /// The Visuals, into their picture (made the first time; nothing when their shader could not be made).
     unsafe fn draw_visuals(&mut self, gl: &glow::Context, p: &Params) -> bool {
         if self.gen.is_none() {
-            let made = program(gl, &format!("{}{}", defines(), visuals::SHADER));
+            let made = program(gl, &format!("{}{}{}", defines(), visuals::milk_defines(), visuals::SHADER));
             if let Err(e) = &made {
                 eprintln!("video: the Visuals: {e}");
             }
             self.gen = Some(made);
         }
         let Some(Ok(prog)) = self.gen else { return false };
+        // Milk first: its feedback goes on a frame.
+        let milk = p.milk_on() && self.draw_milk(gl, p);
         gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
         gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(self.gen_tex), 0);
         gl.viewport(0, 0, self.w, self.h);
@@ -741,6 +800,12 @@ impl Gl {
         gl.bind_texture(glow::TEXTURE_2D, Some(self.scope_tex));
         let u = |name: &str| gl.get_uniform_location(prog, name);
         gl.uniform_1_i32(u("u_scope").as_ref(), 0);
+        gl.active_texture(glow::TEXTURE1);
+        gl.bind_texture(glow::TEXTURE_2D, Some(self.milk_tex[self.milk_cur]));
+        gl.active_texture(glow::TEXTURE0);
+        gl.uniform_1_i32(u("u_milk").as_ref(), 1);
+        gl.uniform_4_f32_slice(u("u_m[0]").as_ref(), &visuals::milk_packed(&p.milk));
+        let _ = milk;
         gl.uniform_2_f32(u("u_stage").as_ref(), self.w as f32, self.h as f32);
         gl.uniform_4_f32_slice(u("u_fx[0]").as_ref(), &packed_amounts(&p.fx));
         let settings: Vec<f32> = p.p.iter().flatten().copied().collect();
@@ -749,6 +814,9 @@ impl Gl {
         gl.uniform_1_f32(u("u_seed").as_ref(), p.seed);
         gl.uniform_3_f32(u("u_vcol").as_ref(), p.vcol[0], p.vcol[1], p.vcol[2]);
         self.quad(gl);
+        gl.active_texture(glow::TEXTURE1);
+        gl.bind_texture(glow::TEXTURE_2D, None);
+        gl.active_texture(glow::TEXTURE0);
         gl.bind_texture(glow::TEXTURE_2D, None);
         true
     }
@@ -967,7 +1035,7 @@ unsafe fn draw_frame(gl: &glow::Context, slot: &mut Option<(Gl, [glow::Texture; 
     let Some((g, pics)) = slot.as_mut() else { return Err("no graphics".into()) };
     if ask.first {
         gl.bind_framebuffer(glow::FRAMEBUFFER, Some(g.fbo));
-        for t in g.tex {
+        for t in g.tex.into_iter().chain(g.milk_tex) {
             gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(t), 0);
             gl.disable(glow::SCISSOR_TEST);
             gl.clear_color(0.0, 0.0, 0.0, 1.0);

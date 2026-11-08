@@ -301,6 +301,16 @@ pub fn frame_params(set: &VideoSet, project: &Project, dir: &mut Director, shot:
     };
     p.vtime = dir.ears.time as f32;
     p.scope = dir.ears.scope();
+    p.vdt = dir.ears.dt;
+    // Milk, and the Visuals' knobs on it: Burst kicks it closer, Warp warps it, Orbit turns it, Glow brightens it.
+    use krabton_engine::milk::MilkParam as M;
+    let mut m = dir.milk_vals;
+    let fx = |e: Effect| p.fx[e.index()];
+    m[M::Zoom.index()] += fx(Effect::Burst) * p.p[Effect::Burst.index()][0] * 0.08;
+    m[M::Warp.index()] += fx(Effect::Warp) * 1.5;
+    m[M::Rot.index()] += fx(Effect::Orbit) * p.p[Effect::Orbit.index()][0] * 0.05;
+    m[M::Gamma.index()] += fx(Effect::Glow) * 0.8;
+    p.milk = m;
     p
 }
 /// Each clip's film length (seconds; 0 for a picture or one not read yet).

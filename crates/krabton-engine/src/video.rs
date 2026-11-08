@@ -218,6 +218,10 @@ impl VideoSet {
         let look = self.edited_look_mut();
         *look = VideoLook::new(p.name, p.links.clone());
         look.fx = p.fx.iter().cloned().collect();
+        // Milk goes on to another preset every eight bars.
+        if p.name == "Milk" {
+            look.milk.auto = 8;
+        }
         if let Some(play) = p.play {
             let i = self.current.min(self.clips.len().saturating_sub(1));
             if let Some(c) = self.clips.get_mut(i) {
@@ -717,11 +721,14 @@ pub struct VideoLook {
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub fx: std::collections::BTreeMap<Effect, FxSetting>,
     pub links: Vec<VideoLink>,
+    /// The Visuals' Milk scene: its preset, tweaks and changes (see `milk`).
+    #[serde(skip_serializing_if = "crate::milk::MilkLook::is_default")]
+    pub milk: crate::milk::MilkLook,
 }
 
 impl VideoLook {
     pub fn new(name: impl Into<String>, links: Vec<VideoLink>) -> Self {
-        Self { name: name.into(), fx: Default::default(), links }
+        Self { name: name.into(), fx: Default::default(), links, milk: Default::default() }
     }
 
     /// How effect `e` is set (as it starts when it is not).
@@ -1553,7 +1560,7 @@ pub enum Effect {
 }
 
 /// The Visuals' scenes: what Krabton draws.
-pub const VISUAL_SCENES: [&str; 10] = ["Ridges", "Lattice", "Swarm", "Data", "Tunnel", "Scope", "Contours", "Shards", "Note Grid", "Strings"];
+pub const VISUAL_SCENES: [&str; 11] = ["Ridges", "Lattice", "Swarm", "Data", "Tunnel", "Scope", "Contours", "Shards", "Note Grid", "Strings", "Milk"];
 /// How the Visuals go on the film.
 pub const VISUAL_BLENDS: [&str; 7] = ["Instead of the film", "Over the film", "Screen", "Multiply", "Difference", "The film inside it", "Bends the film"];
 /// The Visuals' colours.
@@ -2212,7 +2219,7 @@ pub struct Preset {
     pub fx: Vec<(Effect, FxSetting)>,
 }
 
-pub const PRESET_NAMES: [&str; 17] = ["Pulse", "Glitch", "Dream", "Strobe", "Kaleido", "Cutup", "Still", "Ridges", "Lattice", "Swarm", "Data", "Tunnel", "Scope", "Contours", "Shards", "Note Grid", "Strings"];
+pub const PRESET_NAMES: [&str; 18] = ["Pulse", "Glitch", "Dream", "Strobe", "Kaleido", "Cutup", "Still", "Ridges", "Lattice", "Swarm", "Data", "Tunnel", "Scope", "Contours", "Shards", "Note Grid", "Strings", "Milk"];
 
 /// The Visuals on, in scene `scene` (see `VISUAL_SCENES`), in colours `palette`, over the film as `blend` says.
 fn visuals(scene: usize, blend: usize, palette: usize) -> (Effect, FxSetting) {
@@ -2235,6 +2242,7 @@ pub fn preset(name: &str) -> Option<Preset> {
             "Contours" => ("The lines of a moving map, the bass bending it, the kick rippling out", 2, vec![l(S::Bass, E::Warp, 0.7), l(S::Kick, E::Burst, 0.6), l(S::Mids, E::Rush, 0.5), l(S::Highs, E::Glow, 0.4), l(S::Level, E::Trails, 0.5)]),
             "Shards" => ("Cells breaking up on the kick, lit by the notes", 0, vec![l(S::Kick, E::Fracture, 0.6), l(S::Hits, E::Burst, 0.6), l(S::Notes, E::Glow, 0.6), l(S::Mids, E::Density, 0.4), l(S::Lfo, E::Orbit, 0.3)]),
             "Note Grid" => ("A grid of every note: each lights as it is played (octaves up, notes across)", 3, vec![l(S::Notes, E::Glow, 0.6), l(S::Kick, E::Burst, 0.4), l(S::Bar, E::Orbit, 0.3), l(S::Hits, E::Fracture, 0.2)]),
+            "Milk" => ("Feedback in the manner of the classic music visualisers: the last frame pulled through a field of motion, waves and shapes over it, a preset melting into the next every eight bars", 0, vec![l(S::Kick, E::Burst, 0.3), l(S::Highs, E::Glow, 0.3)]),
             _ => ("A string for every note that plays, shaking as long as it sounds", 5, vec![l(S::Notes, E::Burst, 0.5), l(S::Level, E::Glow, 0.5), l(S::Mids, E::Warp, 0.3), l(S::Ramp, E::Orbit, 0.4)]),
         };
         let name = PRESET_NAMES.iter().copied().find(|n| *n == name)?;
