@@ -466,6 +466,7 @@ enum GarbageInner {
     Input(Arc<InputRing>),
     PianoLibrary(Arc<PianoLibrary>),
     Loop(Arc<crate::dsp::fx::looper::LoopMemory>),
+    Brain(Arc<crate::dsp::fx::brain::BrainData>),
 }
 
 /// A MIDI message for a track's MIDI To port, and when to send it: `at`
@@ -3241,6 +3242,12 @@ fn sync_devices(devs: &[Device], rts: &mut Vec<(u64, EffectState)>, sr: f32, tra
     for (d, (_, st)) in devs.iter().zip(rts.iter_mut()) {
         if let EffectState::Convolution(c) = st {
             c.set_file(d.sample.as_ref());
+        }
+        // A Brain's brain (one let go of is dropped elsewhere).
+        if let EffectState::Brain(b) = st {
+            if let Some(old) = b.attach(d.brain.0.as_ref()) {
+                trash.push(GarbageInner::Brain(old));
+            }
         }
         // A Looper's memory too (one let go of is dropped elsewhere).
         if let EffectState::Looper(lp) = st {

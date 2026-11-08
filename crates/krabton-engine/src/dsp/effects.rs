@@ -110,6 +110,8 @@ pub enum EffectKind {
     DeEsser,
     /// Ring.
     Ring,
+    /// Brain: what goes in played again out of other sounds.
+    Brain,
     /// Tune: pitch correction, in the song's key.
     Tune,
     /// Rackverb: the little rack reverbs of the late eighties.
@@ -225,7 +227,7 @@ static UTILITY: &[ParamSpec] = &[
 ];
 
 impl EffectKind {
-    pub const ALL: [EffectKind; 96] = [
+    pub const ALL: [EffectKind; 97] = [
         EffectKind::Eq3,
         EffectKind::AutoFilter,
         EffectKind::VaFilter,
@@ -322,6 +324,7 @@ impl EffectKind {
         EffectKind::Halt,
         EffectKind::DeEsser,
         EffectKind::Ring,
+        EffectKind::Brain,
     ];
 
     /// Where it goes in the browser and the effect menu.
@@ -423,6 +426,7 @@ impl EffectKind {
             EffectKind::Halt => "Delay",
             EffectKind::DeEsser => "Dynamics",
             EffectKind::Ring => "Modulation",
+            EffectKind::Brain => "Delay & Loop",
         }
     }
 
@@ -431,7 +435,7 @@ impl EffectKind {
 
     /// Devices with their own display (they send audio and meters to the UI).
     pub fn has_display(self) -> bool {
-        matches!(self, EffectKind::Scope | EffectKind::LensEq | EffectKind::LensComp | EffectKind::LensLimiter | EffectKind::Grains | EffectKind::Glitch | EffectKind::Rackverb)
+        matches!(self, EffectKind::Scope | EffectKind::LensEq | EffectKind::LensComp | EffectKind::LensLimiter | EffectKind::Grains | EffectKind::Glitch | EffectKind::Rackverb | EffectKind::Brain)
     }
 
     pub fn name(self) -> &'static str {
@@ -486,6 +490,7 @@ impl EffectKind {
             EffectKind::Halt => "Halt",
             EffectKind::DeEsser => "De-Esser",
             EffectKind::Ring => "Ring",
+            EffectKind::Brain => "Brain",
             EffectKind::AwGalactic => "Galactic",
             EffectKind::AwVerbity2 => "Verbity2",
             EffectKind::AwChamber => "Chamber",
@@ -588,6 +593,7 @@ impl EffectKind {
             EffectKind::Halt => "Someone leans on the reel: press Stop and the sound slows down to nothing, as a tape or a record would; let go and it spins back up and joins the song where it is by now",
             EffectKind::DeEsser => "Tames the sharp s of a voice and the fizz on a cymbal, only when they are there. Listen lets you hear what it takes away",
             EffectKind::Ring => "The sound multiplied by a tone: the notes go, the sum and the difference stay. Bells out of pads, robots out of voices, and with Key on the tone is a note of the song's key",
+            EffectKind::Brain => "Plays what goes in again out of other sounds: give it sounds (its brain), cut into short blocks and joined to those like them, and each block of the track is played by the block of the brain most like it. A beat as a cappellas, a voice as bubbling mud. Search, novelty, stickiness and autotune change how it picks",
             EffectKind::Looper => "A loop pedal: one button records a loop, overdubs onto it and plays it; Stop, Clear, Undo and Redo of the last overdub, Multiply, half and double speed, Reverse, Feedback, and the input heard always, never or while recording. With the song it starts and ends on the bar and follows the tempo (or the first loop sets it); drag the loop out as a clip",
             EffectKind::AwGalactic => "A huge, lush, slowly drifting stereo reverb for pads and ambient spaces (Airwindows)",
             EffectKind::AwVerbity2 => "A smooth, dense room-to-hall reverb with size, sustain and darkness (Airwindows)",
@@ -691,6 +697,7 @@ impl EffectKind {
             EffectKind::Halt => super::fx::halt::SPECS,
             EffectKind::DeEsser => super::fx::de_esser::SPECS,
             EffectKind::Ring => super::fx::ring::SPECS,
+            EffectKind::Brain => super::fx::brain::SPECS,
             EffectKind::AwGalactic => super::fx::airwindows::GALACTIC,
             EffectKind::AwVerbity2 => super::fx::airwindows::VERBITY2,
             EffectKind::AwChamber => super::fx::airwindows::CHAMBER,
@@ -806,6 +813,7 @@ pub enum EffectState {
     Halt(Box<super::fx::halt::Halt>),
     DeEsser(Box<super::fx::de_esser::DeEsser>),
     Ring(Box<super::fx::ring::Ring>),
+    Brain(Box<super::fx::brain::Brain>),
     Rings(Box<super::rings_synth::RingsFx>),
     Clouds(Box<super::fx::clouds::CloudsFx>),
     Beads(Box<super::fx::beads::BeadsFx>),
@@ -913,6 +921,7 @@ impl EffectState {
             EffectKind::Halt => EffectState::Halt(Box::new(super::fx::halt::Halt::new(sr))),
             EffectKind::DeEsser => EffectState::DeEsser(Box::new(super::fx::de_esser::DeEsser::new(sr))),
             EffectKind::Ring => EffectState::Ring(Box::new(super::fx::ring::Ring::new(sr))),
+            EffectKind::Brain => EffectState::Brain(Box::new(super::fx::brain::Brain::new(sr))),
             EffectKind::AwGalactic => Self::airwindows(kind, "Galactic", sr),
             EffectKind::AwVerbity2 => Self::airwindows(kind, "Verbity2", sr),
             EffectKind::AwChamber => Self::airwindows(kind, "Chamber", sr),
@@ -991,6 +1000,7 @@ impl EffectState {
             EffectState::Glitch(s) => Some(&mut s.taps),
             EffectState::OpenAir(s) => Some(&mut s.taps),
             EffectState::Beads(s) => Some(&mut s.taps),
+            EffectState::Brain(s) => Some(&mut s.taps),
             _ => None,
         }
     }
@@ -1047,6 +1057,7 @@ impl EffectState {
             EffectState::Halt(_) => EffectKind::Halt,
             EffectState::DeEsser(_) => EffectKind::DeEsser,
             EffectState::Ring(_) => EffectKind::Ring,
+            EffectState::Brain(_) => EffectKind::Brain,
             EffectState::Airwindows(kind, _) => *kind,
             EffectState::Rings(_) => EffectKind::Rings,
             EffectState::Clouds(_) => EffectKind::Clouds,
@@ -1313,6 +1324,7 @@ impl EffectState {
             EffectState::Halt(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::DeEsser(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Ring(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
+            EffectState::Brain(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Airwindows(_, e) => e.process(p, &mut l[..n], &mut r[..n]),
             EffectState::Rings(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Clouds(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),

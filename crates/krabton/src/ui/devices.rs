@@ -954,6 +954,9 @@ impl App {
         let preset_name = dev.preset.clone();
         let conv_file = dev.sample.clone();
         let loop_mem = dev.looper.0.clone();
+        let (brain_sounds, brain) = (dev.sounds.clone(), dev.brain.0.clone());
+        let brain_making = kind == EffectKind::Brain && self.brain_making(dev_id);
+        let mut brain_act = None;
         let mut looper_act = None;
         let _skin = crate::skin::Scope::new(crate::skin::for_effect(kind));
         let mut conv_act = None;
@@ -972,6 +975,7 @@ impl App {
             EffectKind::Beads => 400.0,
             EffectKind::Convolution => 340.0,
             EffectKind::Looper => 700.0,
+            EffectKind::Brain => 420.0,
             _ => 400.0,
         };
         let mut width = self.prefs.layout.display(kind.name(), default_w);
@@ -1059,6 +1063,10 @@ impl App {
                 c
             } else if kind == EffectKind::Fryer {
                 crate::ui::fryer_view::fryer_panel(ui, id, &mut params, h, mv.as_mut())
+            } else if kind == EffectKind::Brain {
+                let (c, act) = crate::ui::brain_view::brain_panel(ui, id, dev_id, &mut params, &brain_sounds, brain.as_ref(), brain_making, accent, h, mv.as_mut(), &status, &mut width);
+                brain_act = act;
+                c
             } else if kind == EffectKind::Convolution {
                 let (c, act) = convolution_face(ui, id, &mut params, conv_file.as_ref(), accent, h, mv.as_mut(), &mut width);
                 conv_act = act;
@@ -1103,6 +1111,28 @@ impl App {
                 Err(e) => self.toast(e),
             },
             Some(ConvAct::Clear) => self.chain_mut(sel)?.get_mut(d)?.sample = None,
+            None => {}
+        }
+        // The Brain's sounds: read, added, taken out (its brain is made again by `poll_brains`).
+        match brain_act {
+            Some(crate::ui::brain_view::BrainAct::Add(paths)) => {
+                let mut added = Vec::new();
+                for p in &paths {
+                    match SampleRef::load(p) {
+                        Ok(s) => added.push(s),
+                        Err(e) => self.toast(e),
+                    }
+                }
+                let dev = self.chain_mut(sel)?.get_mut(d)?;
+                dev.sounds.extend(added);
+            }
+            Some(crate::ui::brain_view::BrainAct::Remove(k)) => {
+                let dev = self.chain_mut(sel)?.get_mut(d)?;
+                if k < dev.sounds.len() {
+                    dev.sounds.remove(k);
+                }
+            }
+            Some(crate::ui::brain_view::BrainAct::Clear) => self.chain_mut(sel)?.get_mut(d)?.sounds.clear(),
             None => {}
         }
         match looper_act {

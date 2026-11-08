@@ -6,6 +6,7 @@ pub mod audio_clip;
 pub mod automation;
 pub mod band_view;
 pub mod beads_view;
+pub mod brain_view;
 pub mod browser;
 pub mod chime_view;
 pub mod chords_view;

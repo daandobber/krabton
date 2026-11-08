@@ -118,9 +118,10 @@ fn places() -> Vec<(String, PathBuf)> {
             }
         }
     }
-    let links = crate::video::ytdl::films_dir();
-    if links.is_dir() {
-        v.push(("From links".to_string(), links));
+    for (name, dir) in [("Films", crate::video::ytdl::films_dir()), ("From links (old)", crate::video::ytdl::old_films_dir())] {
+        if dir.is_dir() {
+            v.push((name.to_string(), dir));
+        }
     }
     v
 }

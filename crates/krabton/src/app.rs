@@ -622,6 +622,8 @@ pub struct App {
     /// Convert to MIDI under way, and how it is asked (see `ui::convert`).
     pub convert: crate::ui::convert::ConvertState,
     pub export_job: Option<ExportJob>,
+    /// Brains being made, by their Brain device.
+    pub(crate) brain_jobs: std::collections::HashMap<u64, crate::ui::brain_view::BrainJob>,
     pub show_about: bool,
     /// The clip Ctrl+C put away.
     pub clipboard: Option<krabton_engine::Clip>,
@@ -881,6 +883,7 @@ impl App {
             slicing: None,
             convert: Default::default(),
             export_job: None,
+            brain_jobs: Default::default(),
             show_about: false,
             clipboard: None,
             note_clipboard: None,
@@ -5203,6 +5206,15 @@ impl App {
                     }
                     self.detail = DetailTab::Devices;
                 }
+                // brainadd=PATH: a sound into the brain of the first Brain on the selected track.
+                "brainadd" => match krabton_engine::sample::SampleRef::load(std::path::Path::new(arg.trim())) {
+                    Ok(snd) => {
+                        if let Some(d) = self.chain_mut(self.sel_track).and_then(|c| c.iter_mut().find(|d| d.kind == krabton_engine::dsp::effects::EffectKind::Brain)) {
+                            d.sounds.push(snd);
+                        }
+                    }
+                    Err(e) => eprintln!("brainadd: {e}"),
+                },
                 // looper=pedal|record|overdub|play|stop|clear|undo|redo|multiply|toclip|state:
                 // the first Looper on the selected track (or in the set).
                 "looper" => {

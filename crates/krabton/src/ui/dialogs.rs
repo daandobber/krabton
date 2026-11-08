@@ -63,6 +63,7 @@ impl App {
         self.map_follow_scenes();
         self.ui_map_window(ctx);
         self.ui_video(ctx);
+        self.poll_brains();
         if self.show_about {
             let mut open = true;
             egui::Window::new("About Krabton").collapsible(false).resizable(false).open(&mut open).show(ctx, |ui| {

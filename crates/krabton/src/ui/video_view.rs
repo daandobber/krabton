@@ -813,7 +813,7 @@ impl App {
             Some(ytdl::Grab::Ready(path)) => {
                 self.video.grab = None;
                 let title = ytdl::title_of(&path);
-                self.toast(format!("{title} is in the Video"));
+                self.toast(format!("{title} is in the Video (and in Documents/Krabton/Films)"));
                 let before = self.project.video.clips.len();
                 self.video_add(std::slice::from_ref(&path));
                 if let Some(c) = self.project.video.clips.get_mut(before) {
@@ -1619,8 +1619,11 @@ impl App {
                     if ui.button("Paste").on_hover_text("The link on the clipboard").clicked() {
                         ui.ctx().send_viewport_cmd(egui::ViewportCommand::RequestPaste);
                     }
+                    if ui.button("Open folder").on_hover_text(format!("Where the films go: {}", ytdl::films_dir().display())).clicked() {
+                        ytdl::open_films_dir();
+                    }
                 });
-                ui.label(RichText::new("Fetched with yt-dlp (it comes the first time), up to 720p, into Documents/Krabton/Library/Links. Only take what you may use").small().color(TEXT_DIM));
+                ui.label(RichText::new("Fetched with yt-dlp (it comes the first time), up to 720p, into Documents/Krabton/Films. Only take what you may use").small().color(TEXT_DIM));
             });
         });
         if get {

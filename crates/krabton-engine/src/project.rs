@@ -1645,6 +1645,35 @@ pub struct Device {
     /// the loop is saved as `sample`).
     #[serde(skip)]
     pub looper: crate::dsp::fx::looper::LoopHandle,
+    /// A Brain's sounds (saved by their paths), and the brain made of them
+    /// (by the app, away from the audio; not saved).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sounds: Vec<SampleRef>,
+    #[serde(skip)]
+    pub brain: BrainRef,
+}
+
+/// A brain made of a Brain's sounds (see `dsp::fx::brain`), shared with the engine.
+#[derive(Clone, Default)]
+pub struct BrainRef(pub Option<std::sync::Arc<crate::dsp::fx::brain::BrainData>>);
+
+impl PartialEq for BrainRef {
+    fn eq(&self, other: &Self) -> bool {
+        match (&self.0, &other.0) {
+            (Some(a), Some(b)) => std::sync::Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+}
+
+impl std::fmt::Debug for BrainRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.0 {
+            Some(b) => write!(f, "Brain({} blocks)", b.blocks.len()),
+            None => write!(f, "Brain(none)"),
+        }
+    }
 }
 
 impl Device {
@@ -2331,13 +2360,13 @@ impl Project {
 
     pub fn make_device(&mut self, kind: EffectKind) -> Device {
         let data = if kind == EffectKind::Glitch { crate::dsp::fx::glitch::default_data() } else { Vec::new() };
-        Device { id: self.alloc_id(), kind, enabled: true, params: params::defaults(kind.specs()), plugin: None, data, children: Vec::new(), preset: String::new(), sample: None, looper: Default::default() }
+        Device { id: self.alloc_id(), kind, enabled: true, params: params::defaults(kind.specs()), plugin: None, data, children: Vec::new(), preset: String::new(), sample: None, looper: Default::default(), sounds: Vec::new(), brain: Default::default() }
     }
 
     /// A device for an effect plug-in; `plugin.instance` is set here.
     pub fn make_plugin_device(&mut self, mut plugin: PluginInstrument) -> Device {
         plugin.instance = self.alloc_id();
-        Device { id: self.alloc_id(), kind: EffectKind::Plugin, enabled: true, params: Vec::new(), plugin: Some(plugin), data: Vec::new(), children: Vec::new(), preset: String::new(), sample: None, looper: Default::default() }
+        Device { id: self.alloc_id(), kind: EffectKind::Plugin, enabled: true, params: Vec::new(), plugin: Some(plugin), data: Vec::new(), children: Vec::new(), preset: String::new(), sample: None, looper: Default::default(), sounds: Vec::new(), brain: Default::default() }
     }
 
     /// Every hosted plug-in (instruments and effects) by instance.
@@ -3290,7 +3319,7 @@ mod tests {
         let dev = p.make_plugin_device(fx);
         assert_eq!(dev.name(), "Verb");
         p.tracks[t].devices.push(dev);
-        p.master.devices.push(Device { id: 999, kind: EffectKind::Plugin, enabled: true, params: Vec::new(), plugin: None, data: Vec::new(), children: Vec::new() , preset: String::new(), sample: None, looper: Default::default() });
+        p.master.devices.push(Device { id: 999, kind: EffectKind::Plugin, enabled: true, params: Vec::new(), plugin: None, data: Vec::new(), children: Vec::new() , preset: String::new(), sample: None, looper: Default::default(), sounds: Vec::new(), brain: Default::default() });
         let json = serde_json::to_string(&p).unwrap();
         let mut back: Project = serde_json::from_str(&json).unwrap();
         back.sanitize();

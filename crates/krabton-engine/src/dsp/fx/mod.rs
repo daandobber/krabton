@@ -11,6 +11,7 @@ pub mod lattice;
 pub mod massive;
 pub mod beads;
 pub mod beat_repeat;
+pub mod brain;
 pub mod clouds;
 pub mod comb;
 pub mod convolution;

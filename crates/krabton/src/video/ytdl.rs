@@ -1,5 +1,5 @@
 //! Films from a link (YouTube and the many sites yt-dlp knows): yt-dlp
-//! fetches the film into Documents/Krabton/Library/Links and the Video
+//! fetches the film into Documents/Krabton/Films and the Video
 //! plays it from there. Krabton does not ship yt-dlp; it uses the one it
 //! finds (next to itself, in its Library, or on the PATH) or fetches the
 //! single program from yt-dlp's own releases the first time it is needed.
@@ -26,9 +26,22 @@ pub fn tool_dir() -> PathBuf {
     ffmpeg::library_dir().with_file_name("yt-dlp")
 }
 
-/// Where films from links go.
+/// Where films from links go: Documents/Krabton/Films, beside Recorded, to find them easily.
 pub fn films_dir() -> PathBuf {
+    let lib = ffmpeg::library_dir();
+    lib.parent().and_then(|p| p.parent()).map_or_else(|| PathBuf::from("Films"), |k| k.join("Films"))
+}
+
+/// Where films from links went before (Documents/Krabton/Library/Links): still shown, not moved (sets name them there).
+pub fn old_films_dir() -> PathBuf {
     ffmpeg::library_dir().with_file_name("Links")
+}
+
+/// Opens the folder films from links go into (made if it is not there yet).
+pub fn open_films_dir() {
+    let dir = films_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::process::Command::new(crate::update::opener()).arg(&dir).spawn();
 }
 
 /// The places to look, in order (the PATH last, as a bare name).
