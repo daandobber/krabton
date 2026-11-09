@@ -269,7 +269,7 @@ pub fn stage_params(set: &VideoSet, project: &Project, def: &VideoLook, look: &L
         (None, Some(l)) => rgb(l.from.and_then(|id| project.tracks.iter().find(|t| t.id == id)).map(|t| t.color).unwrap_or([0xff, 0x40, 0xa0])),
         (None, None) => rgb([0xff, 0x40, 0xa0]),
     };
-    for (e, slot) in [(Effect::Flash, &mut p.flash), (Effect::Strobe, &mut p.strobe), (Effect::Edges, &mut p.edges), (Effect::Visuals, &mut p.vcol), (Effect::Wave, &mut p.wave)] {
+    for (e, slot) in [(Effect::Flash, &mut p.flash), (Effect::Strobe, &mut p.strobe), (Effect::Edges, &mut p.edges), (Effect::Visuals, &mut p.vcol), (Effect::Wave, &mut p.wave), (Effect::Map, &mut p.mapc)] {
         *slot = rgb(set_of(e).color.or(e.color()).unwrap_or([0xff; 3]));
     }
     let st = p.p[Effect::Strobe.index()];

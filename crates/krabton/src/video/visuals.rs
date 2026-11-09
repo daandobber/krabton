@@ -497,6 +497,103 @@ vec3 strings(vec2 p) {
     return col;
 }
 
+vec3 starfield(vec2 p) {
+    vec3 col = vec3(0.0);
+    vec2 q = rot(p, orbit * 0.5);
+    for (int i = 0; i < 6; i++) {
+        float fi = float(i);
+        float depth = fract(T * 0.25 + fi / 6.0);
+        float scale = mix(18.0, 0.6, depth) * (0.6 + 0.4 * dens);
+        vec2 g = q * scale + vec2(fi * 7.3, fi * 3.1);
+        vec2 id = floor(g);
+        vec2 at = h22(id + fi * 13.0) - 0.5;
+        vec2 d = fract(g) - 0.5 - at * 0.8;
+        float fade = smoothstep(0.0, 0.25, depth) * smoothstep(1.0, 0.85, depth);
+        // Streaks out from the middle as it rushes (and blown by Burst).
+        vec2 out_ = normalize(q + 0.0001);
+        float along = dot(d, out_);
+        float across = length(d - out_ * along);
+        float streak = (0.02 + burst * 0.25 + A_RUSH * 0.15) * depth * scale;
+        float star = smoothstep(0.06 * (1.0 - depth * 0.5), 0.0, across) * smoothstep(streak + 0.05, 0.0, abs(along + streak * 0.5));
+        float flick = 0.6 + 0.4 * spec(h21(id + fi));
+        col += palette(h21(id + 3.0)) * star * fade * flick;
+    }
+    return col * (1.0 + A_GLOW);
+}
+
+vec3 fractal(vec2 p) {
+    vec2 z = rot(p, orbit) * (2.6 / (1.0 + 0.6 * (dens - 1.0)));
+    vec2 c = vec2(-0.76 + 0.12 * sin(T * 0.11), 0.17 + 0.08 * cos(T * 0.07)) + vec2(warp * 0.05 * sin(T), burst * 0.04);
+    float it = 0.0;
+    float m = 0.0;
+    for (int i = 0; i < 64; i++) {
+        z = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;
+        m = dot(z, z);
+        if (m > 64.0) { break; }
+        it += 1.0;
+    }
+    if (it >= 63.5) { return palette(0.02) * 0.08; }
+    float s = it - log2(log2(max(m, 1.0001))) + 4.0;
+    float t = fract(s * 0.035 + T * 0.02);
+    return palette(t) * (0.35 + 0.65 * sin(s * 0.3) * sin(s * 0.3)) * (1.0 + A_GLOW);
+}
+
+vec3 plexus(vec2 p) {
+    vec3 col = vec3(0.0);
+    vec2 q = rot(p, orbit) * (3.5 * dens);
+    vec2 cell = floor(q);
+    float px = 3.5 * dens / u_stage.y;
+    // The points of this cell and those round it, drifting.
+    vec2 pts[9];
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            vec2 c = cell + vec2(float(x), float(y));
+            vec2 o = h22(c);
+            vec2 pt = c + 0.5 + 0.4 * sin(T * (0.3 + o) + o * 6.2831853);
+            pt += normalize(pt - q + 0.001) * burst * 0.3 * h21(c);
+            pts[(y + 1) * 3 + (x + 1)] = pt;
+            col += palette(h21(c + 2.0)) * smoothstep(px * 3.0, 0.0, length(q - pt) - 0.03) * (0.7 + 0.6 * spec(h21(c)));
+        }
+    }
+    // Lines between points that are near each other.
+    for (int i = 0; i < 9; i++) {
+        for (int j = 0; j < 9; j++) {
+            if (j <= i) { continue; }
+            vec2 a = pts[i];
+            vec2 b = pts[j];
+            float len = length(b - a);
+            if (len > 1.3) { continue; }
+            vec2 ab = b - a;
+            float h = clamp(dot(q - a, ab) / dot(ab, ab), 0.0, 1.0);
+            float d = length(q - a - ab * h);
+            col += palette(h * 0.5 + 0.2) * smoothstep(px * 1.5, 0.0, d) * (1.0 - len / 1.3) * 0.8;
+        }
+    }
+    return col * (1.0 + A_GLOW);
+}
+
+vec3 metaballs(vec2 p) {
+    vec2 q = rot(p, orbit);
+    float f = 0.0;
+    vec2 grad = vec2(0.0);
+    float hue = 0.0;
+    for (int i = 0; i < 8; i++) {
+        float fi = float(i);
+        vec2 c = vec2(sin(T * (0.31 + fi * 0.07) + fi * 1.7) * 0.55, cos(T * (0.27 + fi * 0.05) + fi * 2.3) * 0.32);
+        c *= 1.0 + burst * 0.8;
+        c += warp * 0.1 * vec2(sin(q.y * 6.0 + T), cos(q.x * 6.0 - T));
+        float r = (0.07 + 0.09 * spec(fi / 8.0)) * (0.8 + 0.3 * dens);
+        vec2 d = q - c;
+        float v = r * r / max(dot(d, d), 1e-5);
+        f += v;
+        hue += v * fi / 8.0;
+    }
+    hue /= max(f, 1e-5);
+    float inside = smoothstep(0.95, 1.05, f);
+    float edge = smoothstep(0.08, 0.0, abs(f - 1.0)) ;
+    return palette(hue) * (inside * 0.35 + edge * 1.2 + smoothstep(0.3, 1.0, f) * 0.15) * (1.0 + A_GLOW);
+}
+
 // Milk's feedback as it is shown: an echo of it, gamma, brighter, darker, solarized, negative, its colours turned.
 vec3 milk(vec2 uv) {
     milk_params(tr_weight(uv, aspect, u_mmix, u_mstyle));
@@ -532,7 +629,11 @@ vec3 scene_at(float scene, vec2 p, vec2 uv) {
     if (scene < 7.5) { return shards(p); }
     if (scene < 8.5) { return notegrid(uv); }
     if (scene < 9.5) { return strings(p); }
-    return milk(uv);
+    if (scene < 10.5) { return milk(uv); }
+    if (scene < 11.5) { return starfield(p); }
+    if (scene < 12.5) { return fractal(p); }
+    if (scene < 13.5) { return plexus(p); }
+    return metaballs(p);
 }
 
 void main() {
@@ -894,10 +995,10 @@ mod tests {
         for knob in ["A_BURST", "A_WARP", "A_DENSITY", "A_GLOW", "A_ORBIT", "A_FRACTURE", "P_VISUALS"] {
             assert!(SHADER.contains(knob), "{knob}");
         }
-        for f in ["ridges(", "lattice(", "swarm(", "data(", "tunnel(", "scope(", "contours(", "shards(", "notegrid(", "strings(", "milk("] {
+        for f in ["ridges(", "lattice(", "swarm(", "data(", "tunnel(", "scope(", "contours(", "shards(", "notegrid(", "strings(", "milk(", "starfield(", "fractal(", "plexus(", "metaballs("] {
             assert!(SHADER.matches(f).count() >= 2, "{f} drawn");
         }
-        assert_eq!(krabton_engine::video::VISUAL_SCENES.len(), 11);
+        assert_eq!(krabton_engine::video::VISUAL_SCENES.len(), 15);
         // Every Milk value the shaders use has its name.
         let names = milk_defines();
         assert!(names.contains("P[4].x = w < 0.5 ? u_o[4].x : u_m[4].x"), "Wave Shape (16) changes at half way");

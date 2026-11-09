@@ -74,8 +74,9 @@ pub struct Params {
     pub vtime: f32,
     pub vcol: [f32; 3],
     pub scope: Scope,
-    /// The Wave's colour.
+    /// The Wave's colour, and Colour Map's (for Duotone).
     pub wave: [f32; 3],
+    pub mapc: [f32; 3],
     /// Milk's values (see `krabton_engine::milk`), and how long this frame is (seconds).
     pub milk: [f32; MILK_N],
     pub vdt: f32,
@@ -112,6 +113,7 @@ impl Default for Params {
             vcol: [1.0; 3],
             scope: Scope::default(),
             wave: [1.0; 3],
+            mapc: [1.0, 0.55, 0.16],
             milk: milk::defaults(),
             vdt: 1.0 / 60.0,
             milk_old: milk::defaults(),
@@ -170,6 +172,7 @@ impl Params {
         out.edges = l3(a.edges, b.edges);
         out.vcol = l3(a.vcol, b.vcol);
         out.wave = l3(a.wave, b.wave);
+        out.mapc = l3(a.mapc, b.mapc);
         out.milk = milk::blend(&a.milk, &b.milk, t);
         // Visuals going away keep their scene, blend and colours as they fade.
         let v = Effect::Visuals.index();
@@ -197,7 +200,7 @@ impl Params {
     /// Whether only the graphics card draws it (the Visuals, the Feedback,
     /// the Wave): an export of it is drawn there too.
     pub fn needs_card(&self) -> bool {
-        self.visuals_on() || self.transition > 3.5 || [Effect::Feedback, Effect::Wave].iter().any(|e| self.fx[e.index()] > 0.001)
+        self.visuals_on() || self.transition > 3.5 || Effect::ALL.iter().any(|e| e.card_only() && self.fx[e.index()] > 0.001)
     }
 }
 
@@ -277,6 +280,7 @@ uniform sampler2D u_gen;
 uniform sampler2D u_scope;
 uniform float u_vtime;
 uniform vec3 u_wave_col;
+uniform vec3 u_map_col;
 I vec2 v_uv;
 
 float hash(float n) { return fract(sin(n) * 43758.5453); }
@@ -421,6 +425,43 @@ void main() {
     p = (p - centre) / (1.0 + pow(A_ZOOM, P_ZOOM.w) * P_ZOOM.x) + centre;
     p = turn2(p, u_spin * 6.2831853);
     p -= u_shake * vec2(aspect, 1.0);
+    // Tile: repeated across and down (every other mirrored).
+    if (A_TILE > 0.001) {
+        float n = 1.0 + floor(A_TILE * (P_TILE.x - 1.0) + 0.5);
+        vec2 q = (p / vec2(aspect, 1.0) + 0.5) * n;
+        vec2 cell = floor(q);
+        vec2 f = fract(q);
+        if (P_TILE.y > 0.5) {
+            if (mod(cell.x, 2.0) > 0.5) { f.x = 1.0 - f.x; }
+            if (mod(cell.y, 2.0) > 0.5) { f.y = 1.0 - f.y; }
+        }
+        p = (f - 0.5) * vec2(aspect, 1.0);
+    }
+    // Swirl: turned round the middle, more near it.
+    if (A_SWIRL > 0.001) {
+        float r = length(p);
+        float k = smoothstep(P_SWIRL.y, 0.0, r);
+        p = turn2(p, A_SWIRL * P_SWIRL.x * 6.2831853 * k * k);
+    }
+    // Fisheye: bulged out (or pinched in).
+    if (A_FISHEYE > 0.001) {
+        float k = A_FISHEYE * P_FISHEYE.x;
+        float r2 = dot(p, p);
+        p = p / (1.0 + k * (1.2 - 2.4 * r2));
+    }
+    // Ripple: rings running out from the middle.
+    if (A_RIPPLE > 0.001) {
+        float r = length(p);
+        if (r > 0.0001) {
+            p += p / r * sin(r * P_RIPPLE.x * 12.0 - u_vtime * P_RIPPLE.y * 6.0) * 0.015 * A_RIPPLE;
+        }
+    }
+    // VHS: the lines wobbling, a band of noise rolling down, pushing them aside.
+    if (A_VHS > 0.001) {
+        float y = 0.5 - p.y;
+        float band = smoothstep(0.06, 0.0, abs(fract(u_vtime * 0.12) - y)) * P_VHS.y;
+        p.x += (sin(y * 90.0 + u_vtime * 7.0) * 0.0015 + sin(y * 9.0 + u_vtime * 1.3) * 0.004) * P_VHS.x * A_VHS * aspect + band * 0.03 * A_VHS * (hash(floor(y * 200.0) + floor(u_vtime * 30.0)) - 0.5);
+    }
     vec3 c = at(p);
     // Zoom Blur: streaks out from its point.
     if (A_ZOOMBLUR > 0.001) {
@@ -485,6 +526,113 @@ void main() {
     c = mix(c, tinted, A_TINT);
     c = mix(c, 1.0 - c, A_INVERT);
     c = mix(c, u_flash, A_FLASH * P_FLASH.x);
+    // VHS: the colours bleeding sideways, noise over it.
+    if (A_VHS > 0.001) {
+        float b = P_VHS.z * 0.012 * A_VHS;
+        vec3 bled = vec3(at(p + vec2(b, 0.0)).r, c.g, at(p - vec2(b * 0.6, 0.0)).b);
+        c = mix(c, bled, A_VHS);
+        float y = v_uv.y;
+        float band = smoothstep(0.06, 0.0, abs(fract(u_vtime * 0.12) - y));
+        float n = hash(floor(v_uv.x * u_stage.x * 0.5) * 3.1 + floor(y * u_stage.y * 0.5) * 7.7 + floor(u_vtime * 30.0) * 13.0);
+        c += (n - 0.5) * P_VHS.y * A_VHS * (0.12 + band * 0.6);
+        c = mix(c, c * vec3(1.05, 0.95, 1.08), A_VHS * 0.5);
+    }
+    // Smear: the bright parts dragged along (as pixels sorted).
+    if (A_SMEAR > 0.001) {
+        float a = P_SMEAR.z * 6.2831853;
+        vec2 dir = vec2(sin(a) * aspect, cos(a)) * P_SMEAR.y * A_SMEAR / 10.0;
+        for (int k = 1; k <= 10; k++) {
+            vec3 s = at(p + dir * float(k));
+            if (luma(s) > P_SMEAR.x && luma(s) > luma(c)) {
+                c = mix(c, s, 1.0 - float(k) / 11.0);
+            }
+        }
+    }
+    // Bloom: the bright parts glowing over the rest.
+    if (A_BLOOM > 0.001) {
+        vec3 glow = vec3(0.0);
+        float reach = 0.01 + 0.05 * P_BLOOM.y;
+        for (int k = 0; k < 12; k++) {
+            float a = float(k) * 0.5235988;
+            float d = reach * (0.35 + 0.65 * fract(float(k) * 0.618));
+            vec3 s = at(p + vec2(cos(a), sin(a)) * d);
+            glow += max(s - P_BLOOM.x, 0.0);
+        }
+        c += glow / 12.0 * 2.5 * A_BLOOM;
+    }
+    // Colour Map: its light as other colours.
+    if (A_MAP > 0.001) {
+        float l = clamp(luma(c), 0.0, 1.0);
+        float m = P_MAP.x;
+        vec3 mapped;
+        if (m < 0.5) {
+            mapped = clamp(vec3(1.5 * l - 0.2, sin(l * 3.14159) * 1.1 - 0.1, 0.9 - 1.6 * l) + vec3(0.0, 0.0, smoothstep(0.85, 1.0, l)), 0.0, 1.0);
+            mapped = mix(vec3(0.05, 0.0, 0.25), mapped, smoothstep(0.0, 0.2, l));
+        } else if (m < 1.5) {
+            mapped = vec3(0.15, 1.0, 0.25) * (0.15 + 1.1 * l) + (hash(v_uv.x * 731.0 + v_uv.y * 977.0 + u_grain) - 0.5) * 0.12;
+        } else if (m < 2.5) {
+            mapped = vec3(1.0, 0.85, 0.62) * l + vec3(0.08, 0.04, 0.0);
+        } else if (m < 3.5) {
+            mapped = mix(vec3(0.05, 0.05, 0.12), u_map_col, l);
+        } else if (m < 4.5) {
+            mapped = vec3(0.0, 1.0, 0.35) * l * (0.6 + 0.4 * step(0.5, fract(v_uv.y * u_stage.y / 3.0)));
+        } else {
+            mapped = vec3(1.0 - l * 0.2, 0.25 + 0.6 * (1.0 - l), 0.6 + 0.4 * l) * (0.4 + 0.8 * luma(vec3(c.g, c.g, c.r)));
+        }
+        c = mix(c, mapped, A_MAP);
+    }
+    // Halftone: in dots, as printed.
+    if (A_HALFTONE > 0.001) {
+        float size = P_HALFTONE.x / u_stage.y;
+        vec2 q = turn2(p, P_HALFTONE.y * 6.2831853) / size;
+        vec2 cell = floor(q) + 0.5;
+        vec3 ink = at(turn2(cell * size, -P_HALFTONE.y * 6.2831853));
+        float l = luma(ink);
+        float ink_mode = P_HALFTONE.z;
+        float r = sqrt(ink_mode > 1.5 ? l : (ink_mode > 0.5 ? 1.0 - l : l)) * 0.7;
+        float dot_ = smoothstep(r + 0.06, r - 0.06, length(q - cell));
+        vec3 h;
+        if (ink_mode < 0.5) { h = ink * dot_ * 1.2; }
+        else if (ink_mode < 1.5) { h = vec3(1.0 - dot_) * vec3(0.98, 0.96, 0.9); }
+        else { h = vec3(dot_); }
+        c = mix(c, h, A_HALFTONE);
+    }
+    // ASCII: in signs, by how light each cell is.
+    if (A_ASCII > 0.001) {
+        float size = P_ASCII.x / u_stage.y;
+        vec2 q = (p + vec2(aspect, 1.0) * 0.5) / size;
+        vec2 cell = floor(q);
+        vec2 f = fract(q) - 0.5;
+        vec3 ink = at((cell + 0.5) * size - vec2(aspect, 1.0) * 0.5);
+        float l = luma(ink);
+        float k = floor(clamp(l, 0.0, 0.999) * 10.0);
+        float w = 0.09;
+        float on = 0.0;
+        vec2 a = abs(f);
+        if (k < 0.5) { on = 0.0; }
+        else if (k < 1.5) { on = step(length(f - vec2(0.0, 0.3)), 0.08); }
+        else if (k < 2.5) { on = step(a.y, w) * step(a.x, 0.3); }
+        else if (k < 3.5) { on = max(step(a.y, w) * step(a.x, 0.32), step(a.x, w) * step(a.y, 0.32)); }
+        else if (k < 4.5) { on = step(abs(f.x - f.y), w * 1.4) * step(a.x, 0.32) + step(abs(f.x + f.y), w * 1.4) * step(a.x, 0.32); }
+        else if (k < 5.5) { on = step(abs(length(f) - 0.28), w); }
+        else if (k < 6.5) { on = max(step(abs(a.x - 0.16), w) * step(a.y, 0.38), step(abs(a.y - 0.14), w) * step(a.x, 0.38)); }
+        else if (k < 7.5) { on = max(step(abs(max(a.x, a.y) - 0.3), w), step(length(f), 0.1)); }
+        else if (k < 8.5) { on = step(length(f), 0.32); }
+        else { on = step(max(a.x, a.y), 0.38); }
+        on = clamp(on, 0.0, 1.0);
+        vec3 ink_c = P_ASCII.y < 0.5 ? ink * 1.4 : (P_ASCII.y < 1.5 ? vec3(0.2, 1.0, 0.35) : vec3(1.0));
+        c = mix(c, ink_c * on, A_ASCII);
+    }
+    // Dither: few shades, dithered with a pattern of dots.
+    if (A_DITHER > 0.001) {
+        vec2 px = floor(v_uv * u_stage / max(P_DITHER.y, 1.0));
+        vec2 a = mod(px, 2.0);
+        vec2 b = mod(floor(px / 2.0), 2.0);
+        float bayer = (4.0 * mod(a.x * 2.0 + a.y * 3.0, 4.0) + mod(b.x * 2.0 + b.y * 3.0, 4.0)) / 16.0;
+        float levels = max(P_DITHER.x - 1.0, 1.0);
+        vec3 d = floor(clamp(c, 0.0, 1.0) * levels + bayer) / levels;
+        c = mix(c, d, A_DITHER);
+    }
     // Vignette: darker towards the corners.
     if (A_VIGNETTE > 0.001) {
         float r = length((v_uv - 0.5) * 2.0) * 0.70710678;
@@ -513,6 +661,17 @@ void main() {
         vec2 q = v_uv - P_ECHO.xy;
         vec3 prev = texture2D(u_prev, vec2(q.x, 1.0 - q.y)).rgb * inside(q, vec4(0.0));
         c = mix(c, prev, A_ECHO * P_ECHO.z * 0.85);
+    }
+    // Datamosh: blocks of the last frame left behind, drifting.
+    if (A_DATAMOSH > 0.001) {
+        vec2 n = vec2(P_DATAMOSH.x, floor(P_DATAMOSH.x / aspect + 0.5));
+        vec2 blk = floor(v_uv * n);
+        float h = hash(blk.x * 17.13 + blk.y * 3.71 + floor(u_vtime * 8.0) * 0.37);
+        if (h < A_DATAMOSH * 0.85) {
+            vec2 drift = (vec2(hash(blk.x + blk.y * 9.1), hash(blk.y + blk.x * 5.3)) - 0.5) * P_DATAMOSH.y * 0.02;
+            vec2 q = v_uv + drift;
+            c = texture2D(u_prev, vec2(q.x, 1.0 - q.y)).rgb;
+        }
     }
     // Wave: the sound's wave over it (and, with Feedback, carried on in it).
     if (A_WAVE > 0.001) {
@@ -931,6 +1090,7 @@ impl Gl {
         gl.uniform_1_i32(u("u_scope").as_ref(), 4);
         gl.uniform_1_f32(u("u_vtime").as_ref(), p.vtime);
         gl.uniform_3_f32(u("u_wave_col").as_ref(), p.wave[0], p.wave[1], p.wave[2]);
+        gl.uniform_3_f32(u("u_map_col").as_ref(), p.mapc[0], p.mapc[1], p.mapc[2]);
         gl.uniform_2_f32(u("u_old_size").as_ref(), p.old_size[0].max(1.0), p.old_size[1].max(1.0));
         gl.uniform_1_f32(u("u_old_has").as_ref(), if old.is_some() && p.old_size[0] > 0.0 { 1.0 } else { 0.0 });
         gl.uniform_2_f32(u("u_stage").as_ref(), self.w as f32, self.h as f32);

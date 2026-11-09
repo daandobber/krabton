@@ -326,11 +326,13 @@ fn link_response(ui: &mut Ui, i: usize, l: &mut VideoLink) {
 }
 
 /// The Look's faders, in groups: (name, colour, effects).
-const GROUPS: [(&str, [u8; 3], &[Effect]); 7] = [
+const GROUPS: [(&str, [u8; 3], &[Effect]); 9] = [
     ("VISUALS", [0xa0, 0x78, 0xff], &[Effect::Visuals, Effect::Burst, Effect::Warp, Effect::Density, Effect::Rush, Effect::Glow, Effect::Orbit, Effect::Fracture]),
     ("MOTION", [0x40, 0xc8, 0xdc], &[Effect::Zoom, Effect::Shake, Effect::Spin, Effect::ZoomBlur, Effect::Feedback]),
-    ("COLOUR", [0xff, 0x9a, 0x40], &[Effect::Hue, Effect::Tint, Effect::Grade, Effect::Poster, Effect::Invert, Effect::Edges]),
-    ("SHAPE", [0x5c, 0xd0, 0x7a], &[Effect::Mirror, Effect::Kaleido, Effect::Pixels, Effect::Split, Effect::Glitch, Effect::Blur]),
+    ("SHAPE", [0x5c, 0xd0, 0x7a], &[Effect::Mirror, Effect::Kaleido, Effect::Tile, Effect::Swirl, Effect::Fisheye, Effect::Ripple, Effect::Blur]),
+    ("COLOUR", [0xff, 0x9a, 0x40], &[Effect::Hue, Effect::Tint, Effect::Grade, Effect::Invert, Effect::Map]),
+    ("STYLE", [0xe0, 0x70, 0xe0], &[Effect::Halftone, Effect::Ascii, Effect::Dither, Effect::Poster, Effect::Edges, Effect::Bloom]),
+    ("GLITCH", [0xff, 0x50, 0x50], &[Effect::Glitch, Effect::Split, Effect::Pixels, Effect::Smear, Effect::Datamosh, Effect::Vhs]),
     ("LIGHT", [0xf0, 0xd0, 0x40], &[Effect::Flash, Effect::Strobe, Effect::Gate, Effect::Vignette, Effect::Scanlines, Effect::Grain]),
     ("TIME", [0x60, 0x90, 0xff], &[Effect::Trails, Effect::Echo, Effect::Wave]),
     ("FILM", [0xff, 0x60, 0xa0], &[Effect::Speed, Effect::Freeze, Effect::Jump, Effect::Stutter, Effect::Scratch, Effect::NextClip]),
@@ -1089,7 +1091,7 @@ impl App {
                 ui.horizontal_wrapped(|ui| {
                     ui.set_max_width(420.0);
                     for name in kv::PRESET_NAMES {
-                        if let Some(pr) = kv::preset(name).filter(|p| p.fx.is_empty()) {
+                        if let Some(pr) = kv::preset(name).filter(|_| !kv::VISUAL_SCENES.contains(&name)) {
                             if vj::word_tile(ui, name, true, pr.about).clicked() {
                                 pick = Some(name);
                                 ui.close();
@@ -3199,6 +3201,14 @@ pub(crate) enum VideoAct {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_effect_has_its_fader_once() {
+        for e in Effect::ALL {
+            let n = GROUPS.iter().filter(|g| g.2.contains(&e)).count();
+            assert_eq!(n, 1, "{e:?} in {n} groups");
+        }
+    }
 
     #[test]
     fn a_press_near_a_parts_edge_trims_it_and_inside_moves_it() {

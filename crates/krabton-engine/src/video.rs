@@ -1631,10 +1631,34 @@ pub enum Effect {
     Feedback,
     /// The sound's wave drawn over the picture.
     Wave,
+    /// The picture repeated across and down (or mirrored).
+    Tile,
+    /// Turned round the middle, more near it: a whirlpool.
+    Swirl,
+    /// Bulged out as through a fisheye lens (or pinched in).
+    Fisheye,
+    /// Rings running out from the middle, as on water.
+    Ripple,
+    /// Its bright parts dragged along in streaks, as pixels sorted.
+    Smear,
+    /// Blocks of the last frame left behind and drifting, as a film's frames gone wrong.
+    Datamosh,
+    /// Its bright parts glowing over the rest.
+    Bloom,
+    /// Its light as other colours: thermal, night vision, sepia, duotone, matrix, infrared.
+    Map,
+    /// In dots, as printed.
+    Halftone,
+    /// In letters and signs, as a terminal shows it.
+    Ascii,
+    /// In few colours, dithered with a pattern of dots.
+    Dither,
+    /// As an old tape: lines wobbling, colours bleeding, a band of noise rolling down.
+    Vhs,
 }
 
 /// The Visuals' scenes: what Krabton draws.
-pub const VISUAL_SCENES: [&str; 11] = ["Ridges", "Lattice", "Swarm", "Data", "Tunnel", "Scope", "Contours", "Shards", "Note Grid", "Strings", "Milk"];
+pub const VISUAL_SCENES: [&str; 15] = ["Ridges", "Lattice", "Swarm", "Data", "Tunnel", "Scope", "Contours", "Shards", "Note Grid", "Strings", "Milk", "Starfield", "Fractal", "Plexus", "Metaballs"];
 /// How the Visuals go on the film.
 pub const VISUAL_BLENDS: [&str; 7] = ["Instead of the film", "Over the film", "Screen", "Multiply", "Difference", "The film inside it", "Bends the film"];
 /// The Visuals' colours.
@@ -1642,7 +1666,7 @@ pub const VISUAL_PALETTES: [&str; 6] = ["Its colour", "Ice", "Ember", "Neon", "A
 
 impl Effect {
     /// In the order the lists show them: where the picture is, how it looks, its colours, what it leaves behind, the film.
-    pub const ALL: [Effect; 40] = [
+    pub const ALL: [Effect; 52] = [
         Effect::Zoom,
         Effect::Flash,
         Effect::Shake,
@@ -1683,8 +1707,20 @@ impl Effect {
         Effect::Fracture,
         Effect::Feedback,
         Effect::Wave,
+        Effect::Tile,
+        Effect::Swirl,
+        Effect::Fisheye,
+        Effect::Ripple,
+        Effect::Smear,
+        Effect::Datamosh,
+        Effect::Bloom,
+        Effect::Map,
+        Effect::Halftone,
+        Effect::Ascii,
+        Effect::Dither,
+        Effect::Vhs,
     ];
-    pub const COUNT: usize = 40;
+    pub const COUNT: usize = 52;
 
     /// Its place in [`Look::fx`].
     pub fn index(self) -> usize {
@@ -1733,6 +1769,18 @@ impl Effect {
             Effect::Fracture => "Fracture",
             Effect::Feedback => "Feedback",
             Effect::Wave => "Wave",
+            Effect::Tile => "Tile",
+            Effect::Swirl => "Swirl",
+            Effect::Fisheye => "Fisheye",
+            Effect::Ripple => "Ripple",
+            Effect::Smear => "Smear",
+            Effect::Datamosh => "Datamosh",
+            Effect::Bloom => "Bloom",
+            Effect::Map => "Colour Map",
+            Effect::Halftone => "Halftone",
+            Effect::Ascii => "ASCII",
+            Effect::Dither => "Dither",
+            Effect::Vhs => "VHS",
         }
     }
 
@@ -1778,6 +1826,18 @@ impl Effect {
             Effect::Fracture => "The Visuals broken into blocks, pushed about",
             Effect::Feedback => "The last frame fed back under this one, closer in, turned and stirred, fading: tunnels and swirls",
             Effect::Wave => "The sound's wave drawn over the picture: a line, a circle, dots or the spectrum's bars",
+            Effect::Tile => "The picture repeated across and down (or mirrored)",
+            Effect::Swirl => "Turned round the middle, more near it: a whirlpool",
+            Effect::Fisheye => "Bulged out as through a fisheye lens (or pinched in)",
+            Effect::Ripple => "Rings running out from the middle, as on water",
+            Effect::Smear => "Its bright parts dragged along in streaks, as pixels sorted",
+            Effect::Datamosh => "Blocks of the last frame left behind and drifting, as a film's frames gone wrong",
+            Effect::Bloom => "Its bright parts glowing over the rest",
+            Effect::Map => "Its light as other colours: thermal, night vision, sepia, duotone, matrix, infrared",
+            Effect::Halftone => "In dots, as printed",
+            Effect::Ascii => "In letters and signs, as a terminal shows it",
+            Effect::Dither => "In few colours, dithered with a pattern of dots",
+            Effect::Vhs => "As an old tape: lines wobbling, colours bleeding, a band of noise rolling down",
         }
     }
 
@@ -1946,6 +2006,54 @@ impl Effect {
                 ];
                 P
             }
+            Effect::Tile => {
+                const P: &[FxParam] = &[FxParam::range("Count", "How many across at full", 2.0, 8.0, 3.0), FxParam::pick("Way", "Each the same, or every other mirrored", &["Repeat", "Mirror"], 1.0)];
+                P
+            }
+            Effect::Swirl => {
+                const P: &[FxParam] = &[FxParam::range("Turns", "How far round in the middle at full (below 0 the other way)", -2.0, 2.0, 1.0), FxParam::range("Reach", "How far out it turns", 0.1, 1.0, 0.6)];
+                P
+            }
+            Effect::Fisheye => {
+                const P: &[FxParam] = &[FxParam::range("Bulge", "Out (above 0) or in, at full", -1.0, 1.0, 0.7)];
+                P
+            }
+            Effect::Ripple => {
+                const P: &[FxParam] = &[FxParam::range("Rings", "How many rings", 1.0, 20.0, 8.0), FxParam::range("Speed", "How fast they run out", 0.0, 4.0, 1.0)];
+                P
+            }
+            Effect::Smear => {
+                const P: &[FxParam] = &[FxParam::range("Threshold", "Only what is brighter than this is dragged", 0.0, 1.0, 0.5), FxParam::range("Length", "How far at full", 0.0, 0.5, 0.15), FxParam::range("Angle", "Which way (0: down, 0.25: across)", 0.0, 1.0, 0.0)];
+                P
+            }
+            Effect::Datamosh => {
+                const P: &[FxParam] = &[FxParam::range("Blocks", "How many blocks across", 8.0, 64.0, 24.0), FxParam::range("Drift", "How far the blocks left behind drift", 0.0, 1.0, 0.4)];
+                P
+            }
+            Effect::Bloom => {
+                const P: &[FxParam] = &[FxParam::range("Threshold", "What is brighter than this glows", 0.0, 1.0, 0.6), FxParam::range("Size", "How far the glow reaches", 0.0, 1.0, 0.5)];
+                P
+            }
+            Effect::Map => {
+                const P: &[FxParam] = &[FxParam::pick("Colours", "The colours its light becomes", &["Thermal", "Night Vision", "Sepia", "Duotone", "Matrix", "Infrared"], 0.0)];
+                P
+            }
+            Effect::Halftone => {
+                const P: &[FxParam] = &[FxParam::range("Size", "How big the dots' grid is (pixels)", 4.0, 40.0, 10.0), FxParam::range("Angle", "The grid turned (a turn: 1)", 0.0, 0.25, 0.125), FxParam::pick("Ink", "The dots' colours", &["Its colours", "Black on white", "White on black"], 0.0)];
+                P
+            }
+            Effect::Ascii => {
+                const P: &[FxParam] = &[FxParam::range("Size", "How big a sign is (pixels)", 6.0, 32.0, 10.0), FxParam::pick("Ink", "The signs' colour", &["Its colours", "Green", "White"], 1.0)];
+                P
+            }
+            Effect::Dither => {
+                const P: &[FxParam] = &[FxParam::range("Levels", "How many shades of each colour", 2.0, 8.0, 2.0), FxParam::range("Pixel", "How big the dots are (pixels)", 1.0, 8.0, 2.0)];
+                P
+            }
+            Effect::Vhs => {
+                const P: &[FxParam] = &[FxParam::range("Wobble", "How much the lines wobble", 0.0, 1.0, 0.5), FxParam::range("Noise", "How much noise, and its band", 0.0, 1.0, 0.5), FxParam::range("Bleed", "How far the colours bleed", 0.0, 1.0, 0.5)];
+                P
+            }
             Effect::Invert | Effect::Freeze | Effect::Jump | Effect::NextClip => &[],
         }
     }
@@ -1954,6 +2062,8 @@ impl Effect {
     pub fn color(self) -> Option<[u8; 3]> {
         match self {
             Effect::Flash | Effect::Strobe | Effect::Edges | Effect::Visuals | Effect::Wave => Some([0xff, 0xff, 0xff]),
+            // Duotone's colour.
+            Effect::Map => Some([0xff, 0x8c, 0x28]),
             _ => None,
         }
     }
@@ -1967,6 +2077,14 @@ impl Effect {
     /// following the source.
     pub fn on_hits(self) -> bool {
         matches!(self, Effect::Jump | Effect::Stutter | Effect::NextClip)
+    }
+
+    /// Whether only the graphics card draws it (an export with it is drawn there too).
+    pub fn card_only(self) -> bool {
+        matches!(
+            self,
+            Effect::Feedback | Effect::Wave | Effect::Tile | Effect::Swirl | Effect::Fisheye | Effect::Ripple | Effect::Smear | Effect::Datamosh | Effect::Bloom | Effect::Map | Effect::Halftone | Effect::Ascii | Effect::Dither | Effect::Vhs
+        )
     }
 
     /// Whether it is (or moves) the Visuals Krabton makes, rather than the film.
@@ -2293,7 +2411,15 @@ pub struct Preset {
     pub fx: Vec<(Effect, FxSetting)>,
 }
 
-pub const PRESET_NAMES: [&str; 18] = ["Pulse", "Glitch", "Dream", "Strobe", "Kaleido", "Cutup", "Still", "Ridges", "Lattice", "Swarm", "Data", "Tunnel", "Scope", "Contours", "Shards", "Note Grid", "Strings", "Milk"];
+pub const PRESET_NAMES: [&str; 27] = [
+    "Pulse", "Glitch", "Dream", "Strobe", "Kaleido", "Cutup", "Still", "VHS Tape", "Terminal", "Comic", "Heatmap", "Datamosh", "Ridges", "Lattice", "Swarm", "Data", "Tunnel", "Scope", "Contours", "Shards", "Note Grid", "Strings", "Milk", "Starfield",
+    "Fractal", "Plexus", "Metaballs",
+];
+
+/// An effect always there, at `base` (for presets).
+fn always(e: Effect, base: f32) -> (Effect, FxSetting) {
+    (e, FxSetting { base, ..Default::default() })
+}
 
 /// The Visuals on, in scene `scene` (see `VISUAL_SCENES`), in colours `palette`, over the film as `blend` says.
 fn visuals(scene: usize, blend: usize, palette: usize) -> (Effect, FxSetting) {
@@ -2316,6 +2442,10 @@ pub fn preset(name: &str) -> Option<Preset> {
             "Contours" => ("The lines of a moving map, the bass bending it, the kick rippling out", 2, vec![l(S::Bass, E::Warp, 0.7), l(S::Kick, E::Burst, 0.6), l(S::Mids, E::Rush, 0.5), l(S::Highs, E::Glow, 0.4), l(S::Level, E::Trails, 0.5)]),
             "Shards" => ("Cells breaking up on the kick, lit by the notes", 0, vec![l(S::Kick, E::Fracture, 0.6), l(S::Hits, E::Burst, 0.6), l(S::Notes, E::Glow, 0.6), l(S::Mids, E::Density, 0.4), l(S::Lfo, E::Orbit, 0.3)]),
             "Note Grid" => ("A grid of every note: each lights as it is played (octaves up, notes across)", 3, vec![l(S::Notes, E::Glow, 0.6), l(S::Kick, E::Burst, 0.4), l(S::Bar, E::Orbit, 0.3), l(S::Hits, E::Fracture, 0.2)]),
+            "Starfield" => ("Stars rushing past at warp speed: the level drives them, the kick throws them out, the highs light them", 1, vec![l(S::Level, E::Rush, 0.8), l(S::Kick, E::Burst, 0.7), l(S::Highs, E::Glow, 0.5), l(S::Lfo, E::Orbit, 0.3)]),
+            "Fractal" => ("A fractal of its own, changing shape with the bass, deeper with the mids, turning with the bar", 5, vec![l(S::Bass, E::Warp, 0.6), l(S::Kick, E::Burst, 0.4), l(S::Mids, E::Density, 0.5), l(S::Ramp, E::Orbit, 0.5), l(S::Highs, E::Glow, 0.3)]),
+            "Plexus" => ("Points drifting, joined by lines when near: more with the mids, flung on the kick", 1, vec![l(S::Mids, E::Density, 0.5), l(S::Kick, E::Burst, 0.6), l(S::Highs, E::Glow, 0.5), l(S::Level, E::Rush, 0.4)]),
+            "Metaballs" => ("Blobs that melt into each other, swelling with the spectrum, thrown apart on the kick", 3, vec![l(S::Kick, E::Burst, 0.6), l(S::Bass, E::Warp, 0.5), l(S::Highs, E::Glow, 0.4), l(S::Lfo, E::Orbit, 0.4)]),
             "Milk" => ("Feedback in the manner of the classic music visualisers: the last frame pulled through a field of motion, waves and shapes over it, a preset melting into the next every eight bars", 0, vec![l(S::Kick, E::Burst, 0.3), l(S::Highs, E::Glow, 0.3)]),
             _ => ("A string for every note that plays, shaking as long as it sounds", 5, vec![l(S::Notes, E::Burst, 0.5), l(S::Level, E::Glow, 0.5), l(S::Mids, E::Warp, 0.3), l(S::Ramp, E::Orbit, 0.4)]),
         };
@@ -2330,9 +2460,23 @@ pub fn preset(name: &str) -> Option<Preset> {
         "Kaleido" => ("A kaleidoscope turning once a bar, colours with the notes", None, vec![l(S::Bass, E::Kaleido, 1.0), l(S::Ramp, E::Spin, 1.0), l(S::Pitch, E::Hue, 0.5), l(S::Kick, E::Zoom, 0.3), l(S::Mids, E::Trails, 0.4)]),
         "Cutup" => ("Played by the notes, slice by slice, as a drum rack of film", Some(PlayMode::Slices), vec![l(S::Notes, E::Flash, 0.25), l(S::Hits, E::Stutter, 0.4), l(S::Kick, E::Zoom, 0.2)]),
         "Still" => ("Nothing moves it: the clip as it is", None, Vec::new()),
+        "VHS Tape" => ("An old tape: wobbling, bleeding, noise rolling down, worse on the kicks", None, vec![l(S::Kick, E::Vhs, 0.4), l(S::Hits, E::Glitch, 0.25), l(S::Bass, E::Bloom, 0.3)]),
+        "Terminal" => ("The film in green letters, as a terminal shows it, glowing with the level", None, vec![l(S::Level, E::Bloom, 0.5), l(S::Hits, E::Glitch, 0.2), l(S::Kick, E::Zoom, 0.15)]),
+        "Comic" => ("Printed dots and outlines, as a comic, jumping in on the kicks", None, vec![l(S::Kick, E::Zoom, 0.25), l(S::Highs, E::Split, 0.2), l(S::Bar, E::Invert, 0.3)]),
+        "Heatmap" => ("As a thermal camera sees it, glowing hot on the kicks, rippling with the bass", None, vec![l(S::Kick, E::Bloom, 0.6), l(S::Bass, E::Ripple, 0.4), l(S::Hits, E::Swirl, 0.2)]),
+        "Datamosh" => ("Frames gone wrong: blocks left behind on the hits, smeared with the highs", None, vec![l(S::Hits, E::Datamosh, 0.8), l(S::Highs, E::Smear, 0.5), l(S::Kick, E::Split, 0.3)]),
         _ => return None,
     };
-    Some(Preset { name: PRESET_NAMES.iter().copied().find(|n| *n == name)?, about, play, links, fx: Vec::new() })
+    // The film's looks that are there all the time.
+    let fx = match name {
+        "VHS Tape" => vec![always(E::Vhs, 0.6), always(E::Scanlines, 0.4), always(E::Grain, 0.3)],
+        "Terminal" => vec![always(E::Ascii, 1.0), always(E::Scanlines, 0.3)],
+        "Comic" => vec![always(E::Halftone, 0.9), always(E::Edges, 0.5)],
+        "Heatmap" => vec![always(E::Map, 1.0)],
+        "Datamosh" => vec![always(E::Datamosh, 0.2)],
+        _ => Vec::new(),
+    };
+    Some(Preset { name: PRESET_NAMES.iter().copied().find(|n| *n == name)?, about, play, links, fx })
 }
 
 // ----------------------------------------------------------------------

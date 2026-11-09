@@ -314,6 +314,45 @@ pub(crate) fn scene_icon(p: &Painter, r: Rect, k: usize, c: Color32) {
                 line(p, (0..=30).map(|s| at(s as f32 / 30.0, y + (s as f32 / 30.0 * TAU * 3.0).sin() * shake * (s as f32 / 30.0 * std::f32::consts::PI).sin())).collect(), if i == 2 { c } else { dim }, 1.0);
             }
         }
+        // Starfield: streaks out from the middle.
+        11 => {
+            for i in 0..26 {
+                let a = h(i) * TAU;
+                let (d0, d1) = (0.05 + h(i + 40) * 0.25, 0.12 + h(i + 80) * 0.38);
+                let dir = vec2(a.cos() * r.width(), a.sin() * r.height());
+                p.line_segment([r.center() + dir * d0, r.center() + dir * d1], Stroke::new(1.0_f32, if i % 3 == 0 { c } else { dim }));
+            }
+        }
+        // Fractal: a spiral of spirals.
+        12 => {
+            for arm in 0..2 {
+                let pts: Vec<Pos2> = (0..60).map(|k| {
+                    let t = k as f32 / 60.0;
+                    let a = t * TAU * 1.6 + arm as f32 * std::f32::consts::PI;
+                    let rr = (1.0 - t) * 0.48;
+                    r.center() + vec2(a.cos() * rr * r.width(), a.sin() * rr * r.height())
+                }).collect();
+                line(p, pts, if arm == 0 { c } else { dim }, 1.2);
+            }
+        }
+        // Plexus: points joined when near.
+        13 => {
+            let pts: Vec<Pos2> = (0..12).map(|i| at(0.08 + h(i) * 0.84, 0.1 + h(i + 30) * 0.8)).collect();
+            for (i, a) in pts.iter().enumerate() {
+                for b in pts.iter().skip(i + 1) {
+                    if (*a - *b).length() < r.width() * 0.3 {
+                        p.line_segment([*a, *b], Stroke::new(1.0_f32, dim));
+                    }
+                }
+                p.circle_filled(*a, 1.6, c);
+            }
+        }
+        // Metaballs: blobs melting together.
+        14 => {
+            for (x, y, rad) in [(0.32, 0.5, 0.2), (0.55, 0.42, 0.16), (0.7, 0.6, 0.13)] {
+                p.circle_stroke(at(x, y), rad * r.height(), Stroke::new(1.2_f32, c));
+            }
+        }
         // Milk: a picture inside itself, turned a little each time.
         _ => {
             let m = r.center();
