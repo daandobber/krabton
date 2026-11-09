@@ -1237,6 +1237,28 @@ const AIRWINDOWS: Skin = Skin {
     ..BASE
 };
 
+/// Breaks: a hardcore flyer photocopied once too often: grainy black,
+/// hazard stripes, acid yellow print and a red that hits.
+const BREAKS: Skin = Skin {
+    top: hex(0x1a1a17),
+    bottom: hex(0x0a0a09),
+    surface: Surface::Grain,
+    stripes: &[hex(0xe6ff1a), hex(0x0a0a09), hex(0xe6ff1a), hex(0x0a0a09)],
+    ink: hex(0xf4f4e8),
+    dim: hex(0xa8a894),
+    well: hex(0x050504),
+    well_ink: hex(0xe6ff1a),
+    accent: hex(0xff2d3c),
+    knob: Knob::Cap,
+    cap: hex(0x2c2c26),
+    logo: Font::Block,
+    logo_size: 20.0,
+    logo_ink: hex(0xe6ff1a),
+    logo_case: Case::Upper,
+    heroes: &["Shuffle", "Ratchet"],
+    ..BASE
+};
+
 /// Granulator: a night-blue panel, light print, amber lights for the grains.
 const GRANULATOR: Skin = Skin {
     top: hex(0x1b2130),
@@ -1420,6 +1442,7 @@ pub fn for_instrument(name: &str) -> Option<Skin> {
         "Quartet" => QUARTET,
         "Orchestra" | "Soloists" => ORCHESTRA,
         "Granulator" => GRANULATOR,
+        "Breaks" => BREAKS,
         "Keytone" => KEYTONE,
         "Turntable" => TURNTABLE,
         "Grit" => GRIT,

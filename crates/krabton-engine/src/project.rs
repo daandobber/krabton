@@ -1135,6 +1135,15 @@ pub enum Instrument {
         #[serde(default)]
         sample: Option<SampleRef>,
     },
+    /// Breaks: a break cut on the grid and played again on the song's,
+    /// shuffled, repeated, rolled, backwards, pitched (see `dsp::breaks`);
+    /// without a sample, a break of its own.
+    Breaks {
+        preset: String,
+        params: Vec<f32>,
+        #[serde(default)]
+        sample: Option<SampleRef>,
+    },
     /// Keytone: a toy sampling keyboard, its 8-bit sounds and a sample of
     /// your own in the user slot (see `dsp::keytone`).
     Keytone {
@@ -1445,6 +1454,12 @@ impl Instrument {
         Instrument::Granulator { preset: preset.to_string(), params: crate::dsp::granulator::preset(preset), sample: None }
     }
 
+    pub fn breaks(preset: &str) -> Self {
+        // Its own break made now, not on the audio thread.
+        crate::dsp::breaks::warm();
+        Instrument::Breaks { preset: preset.to_string(), params: crate::dsp::breaks::preset(preset), sample: None }
+    }
+
     pub fn keytone(preset: &str) -> Self {
         // Its sounds made now, not on the audio thread.
         crate::dsp::keytone::warm();
@@ -1534,6 +1549,7 @@ impl Instrument {
             Instrument::Hyper { .. } => "Hyper",
             Instrument::Theremin { .. } => "Theremin",
             Instrument::Granulator { .. } => "Granulator",
+            Instrument::Breaks { .. } => "Breaks",
             Instrument::Keytone { .. } => "Keytone",
             Instrument::Princess { .. } => "Analog Princess",
             Instrument::Stretch { .. } => "Stretch",
@@ -1562,6 +1578,7 @@ impl Instrument {
             Instrument::Silicon { preset, .. } => preset.clone(),
             Instrument::Theremin { preset, .. } => preset.clone(),
             Instrument::Granulator { preset, .. } => preset.clone(),
+            Instrument::Breaks { preset, .. } => preset.clone(),
             Instrument::Keytone { preset, .. } => preset.clone(),
             Instrument::Princess { preset, .. } => preset.clone(),
             Instrument::Stretch { preset, .. } => preset.clone(),
@@ -2815,6 +2832,13 @@ impl Project {
                     Some(Instrument::Granulator { params, .. }) => {
                         params::fix_len(params, crate::dsp::granulator::SPECS);
                         crate::dsp::granulator::warm();
+                    }
+                    Some(Instrument::Breaks { params, sample, .. }) => {
+                        params::fix_len(params, crate::dsp::breaks::SPECS);
+                        crate::dsp::breaks::warm();
+                        if let Some(s) = sample {
+                            let _ = s.analysis();
+                        }
                     }
                     Some(Instrument::Keytone { params, .. }) => {
                         params::fix_len(params, crate::dsp::keytone::SPECS);

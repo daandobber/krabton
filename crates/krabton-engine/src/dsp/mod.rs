@@ -77,6 +77,7 @@ pub mod chipfm;
 pub mod tides;
 pub mod theremin;
 pub mod granulator;
+pub mod breaks;
 pub mod princess;
 pub mod keytone;
 pub mod princess_machine;

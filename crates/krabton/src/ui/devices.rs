@@ -2200,6 +2200,11 @@ impl App {
                             self.toast(msg);
                         }
                     }
+                    Instrument::Breaks { preset, params, sample } => {
+                        if let Some(msg) = super::breaks_view::breaks_panel(ui, Id::new(("breaks", track_id)), preset, params, sample, &live, h - 36.0, mv.as_mut()) {
+                            self.toast(msg);
+                        }
+                    }
                     Instrument::Keytone { preset, params, sample } => {
                         if let Some(msg) = super::faces::keytone::panel(ui, Id::new(("keytone", track_id)), preset, params, sample, &live, h - 36.0, mv.as_mut()) {
                             self.toast(msg);
