@@ -1237,6 +1237,27 @@ const AIRWINDOWS: Skin = Skin {
     ..BASE
 };
 
+/// Airway: an anatomy plate: bone-white paper, a sepia print, the red of
+/// a drawn artery.
+const AIRWAY: Skin = Skin {
+    top: hex(0xece4d4),
+    bottom: hex(0xd9cfbb),
+    surface: Surface::Grain,
+    ink: hex(0x3a2a1c),
+    dim: hex(0x7a6650),
+    well: hex(0x2a1f17),
+    well_ink: hex(0xf3e9d6),
+    accent: hex(0xb3262e),
+    knob: Knob::Vintage,
+    cap: hex(0xc9bda6),
+    logo: Font::Space,
+    logo_size: 19.0,
+    logo_ink: hex(0x3a2a1c),
+    logo_case: Case::Upper,
+    heroes: &["Morph", "Breath"],
+    ..BASE
+};
+
 /// Breaks: a hardcore flyer photocopied once too often: grainy black,
 /// hazard stripes, acid yellow print and a red that hits.
 const BREAKS: Skin = Skin {
@@ -1443,6 +1464,7 @@ pub fn for_instrument(name: &str) -> Option<Skin> {
         "Orchestra" | "Soloists" => ORCHESTRA,
         "Granulator" => GRANULATOR,
         "Breaks" => BREAKS,
+        "Airway" => AIRWAY,
         "Keytone" => KEYTONE,
         "Turntable" => TURNTABLE,
         "Grit" => GRIT,

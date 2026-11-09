@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/krabton-engine", "crates/krabton-clap", "crates/krabton-monome", "crates/krabton-braids", "crates/krabton-elements", "crates/krabton-airwindows", "crates/krabton-clouds", "crates/krabton-beads", "crates/krabton-stk", "crates/krabton-rings", "crates/krabton-warps", "crates/krabton-sf2", "crates/krabton-rackverb", "crates/krabton-virus", "crates/krabton"]
+members = ["crates/krabton-engine", "crates/krabton-clap", "crates/krabton-monome", "crates/krabton-braids", "crates/krabton-elements", "crates/krabton-airwindows", "crates/krabton-clouds", "crates/krabton-beads", "crates/krabton-stk", "crates/krabton-rings", "crates/krabton-warps", "crates/krabton-sf2", "crates/krabton-rackverb", "crates/krabton-virus", "crates/krabton-chimera", "crates/krabton"]
 
 [workspace.package]
 version = "0.143.0"
@@ -49,6 +49,10 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package.krabton-warps]
+opt-level = 3
+
+# Airway simulates a whole airway per voice: unusable slow without optimizations.
+[profile.dev.package.krabton-chimera]
 opt-level = 3
 
 [profile.release]

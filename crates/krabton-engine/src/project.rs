@@ -1135,6 +1135,16 @@ pub enum Instrument {
         #[serde(default)]
         sample: Option<SampleRef>,
     },
+    /// Airway: a voice from a simulated throat and mouth (see `dsp::airway`):
+    /// vowels, a lyric sung a syllable a key, or a creature's calls.
+    Airway {
+        preset: String,
+        params: Vec<f32>,
+        #[serde(default)]
+        text: String,
+        #[serde(skip)]
+        plans: crate::dsp::airway::PlansRef,
+    },
     /// Breaks: a break cut on the grid and played again on the song's,
     /// shuffled, repeated, rolled, backwards, pitched (see `dsp::breaks`);
     /// without a sample, a break of its own.
@@ -1454,6 +1464,14 @@ impl Instrument {
         Instrument::Granulator { preset: preset.to_string(), params: crate::dsp::granulator::preset(preset), sample: None }
     }
 
+    pub fn airway(preset: &str) -> Self {
+        crate::dsp::airway::warm();
+        let params = crate::dsp::airway::preset(preset);
+        let text = "hello and welcome, sing along with me".to_string();
+        let plans = crate::dsp::airway::prepare(&text, params[crate::dsp::airway::BODY].round() as u8);
+        Instrument::Airway { preset: preset.to_string(), params, text, plans }
+    }
+
     pub fn breaks(preset: &str) -> Self {
         // Its own break made now, not on the audio thread.
         crate::dsp::breaks::warm();
@@ -1550,6 +1568,7 @@ impl Instrument {
             Instrument::Theremin { .. } => "Theremin",
             Instrument::Granulator { .. } => "Granulator",
             Instrument::Breaks { .. } => "Breaks",
+            Instrument::Airway { .. } => "Airway",
             Instrument::Keytone { .. } => "Keytone",
             Instrument::Princess { .. } => "Analog Princess",
             Instrument::Stretch { .. } => "Stretch",
@@ -1579,6 +1598,7 @@ impl Instrument {
             Instrument::Theremin { preset, .. } => preset.clone(),
             Instrument::Granulator { preset, .. } => preset.clone(),
             Instrument::Breaks { preset, .. } => preset.clone(),
+            Instrument::Airway { preset, .. } => preset.clone(),
             Instrument::Keytone { preset, .. } => preset.clone(),
             Instrument::Princess { preset, .. } => preset.clone(),
             Instrument::Stretch { preset, .. } => preset.clone(),
@@ -2832,6 +2852,10 @@ impl Project {
                     Some(Instrument::Granulator { params, .. }) => {
                         params::fix_len(params, crate::dsp::granulator::SPECS);
                         crate::dsp::granulator::warm();
+                    }
+                    Some(Instrument::Airway { params, text, plans, .. }) => {
+                        params::fix_len(params, crate::dsp::airway::SPECS);
+                        *plans = crate::dsp::airway::prepare(text, params[crate::dsp::airway::BODY].round() as u8);
                     }
                     Some(Instrument::Breaks { params, sample, .. }) => {
                         params::fix_len(params, crate::dsp::breaks::SPECS);

@@ -1694,6 +1694,15 @@ name = "krabton-braids"
 version = "0.143.0"
 
 [[package]]
+name = "krabton-chimera"
+version = "0.1.0"
+dependencies = [
+ "libm",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "krabton-clap"
 version = "0.143.0"
 dependencies = [
@@ -1722,6 +1731,7 @@ dependencies = [
  "krabton-airwindows",
  "krabton-beads",
  "krabton-braids",
+ "krabton-chimera",
  "krabton-clouds",
  "krabton-elements",
  "krabton-rackverb",

@@ -200,6 +200,8 @@ pub enum BrowserItem {
     Granulator(&'static str),
     /// A Breaks preset.
     Breaks(&'static str),
+    /// An Airway preset.
+    Airway(&'static str),
     /// A Keytone preset.
     Keytone(&'static str),
     /// An Analog Princess preset (the machine).
@@ -296,6 +298,7 @@ impl BrowserItem {
             BrowserItem::Theremin(p) => format!("Theremin: {p}"),
             BrowserItem::Granulator(p) => format!("Granulator: {p}"),
             BrowserItem::Breaks(p) => format!("Breaks: {p}"),
+            BrowserItem::Airway(p) => format!("Airway: {p}"),
             BrowserItem::Keytone(p) => format!("Keytone: {p}"),
             BrowserItem::Princess(p) => format!("Analog Princess: {p}"),
             BrowserItem::Stretch(p) => format!("Stretch: {p}"),
@@ -1516,7 +1519,7 @@ impl App {
                 }
                 self.toast(format!("Loading {} ...", info.name));
             }
-            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Munich(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::StreetOrgan(_) | BrowserItem::Harmonica(_) | BrowserItem::Calculator(_) | BrowserItem::Console(_) | BrowserItem::Handheld(_) | BrowserItem::Glide(_) | BrowserItem::StringMachine(_) | BrowserItem::Tines(_) | BrowserItem::Sweeps(_) | BrowserItem::Micro(_) | BrowserItem::Warp(_) | BrowserItem::Hybrid(_) | BrowserItem::Quartet(_) | BrowserItem::ChipFm(_) | BrowserItem::V2(_) | BrowserItem::Oidos(_) | BrowserItem::Orchestra(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) | BrowserItem::Coast(_) | BrowserItem::Crimson(_) | BrowserItem::Silicon(_) | BrowserItem::Theremin(_) | BrowserItem::Granulator(_) | BrowserItem::Breaks(_) | BrowserItem::Keytone(_) | BrowserItem::Princess(_) | BrowserItem::Turntable(_) | BrowserItem::Grit(_) | BrowserItem::Stretch(_) | BrowserItem::Flip(_) => {
+            BrowserItem::Synth(_) | BrowserItem::Drums(_) | BrowserItem::Sampler | BrowserItem::Macro(_) | BrowserItem::Braids(_) | BrowserItem::Elements(_) | BrowserItem::Analog(_) | BrowserItem::Modular(_) | BrowserItem::Shakers(_) | BrowserItem::Voice(_) | BrowserItem::Mallets(_) | BrowserItem::Strings(_) | BrowserItem::Winds(_) | BrowserItem::Organ(_) | BrowserItem::Rings(_) | BrowserItem::Monk(_) | BrowserItem::Piano(_) | BrowserItem::Bassline(_) | BrowserItem::Mono101(_) | BrowserItem::Munich(_) | BrowserItem::Drone(_) | BrowserItem::Waves(_) | BrowserItem::Guitar(_) | BrowserItem::WindChimes(_) | BrowserItem::Birds(_) | BrowserItem::Nature(_) | BrowserItem::PanFlute(_) | BrowserItem::Melodica(_) | BrowserItem::StreetOrgan(_) | BrowserItem::Harmonica(_) | BrowserItem::Calculator(_) | BrowserItem::Console(_) | BrowserItem::Handheld(_) | BrowserItem::Glide(_) | BrowserItem::StringMachine(_) | BrowserItem::Tines(_) | BrowserItem::Sweeps(_) | BrowserItem::Micro(_) | BrowserItem::Warp(_) | BrowserItem::Hybrid(_) | BrowserItem::Quartet(_) | BrowserItem::ChipFm(_) | BrowserItem::V2(_) | BrowserItem::Oidos(_) | BrowserItem::Orchestra(_) | BrowserItem::BeadsSynth(_) | BrowserItem::Facet(_) | BrowserItem::Coast(_) | BrowserItem::Crimson(_) | BrowserItem::Silicon(_) | BrowserItem::Theremin(_) | BrowserItem::Granulator(_) | BrowserItem::Breaks(_) | BrowserItem::Airway(_) | BrowserItem::Keytone(_) | BrowserItem::Princess(_) | BrowserItem::Turntable(_) | BrowserItem::Grit(_) | BrowserItem::Stretch(_) | BrowserItem::Flip(_) => {
                 let inst = match item {
                     BrowserItem::Synth(p) => Instrument::synth(p),
                     BrowserItem::Macro(p) => Instrument::macro_osc(p),
@@ -1569,6 +1572,7 @@ impl App {
                     BrowserItem::Theremin(p) => Instrument::theremin(p),
                     BrowserItem::Granulator(p) => Instrument::granulator(p),
                     BrowserItem::Breaks(p) => Instrument::breaks(p),
+                    BrowserItem::Airway(p) => Instrument::airway(p),
                     BrowserItem::Keytone(p) => Instrument::keytone(p),
                     BrowserItem::Princess(p) => Instrument::princess(p),
                     BrowserItem::Stretch(p) => Instrument::stretch(p),
@@ -4770,6 +4774,12 @@ impl App {
                     let names = krabton_engine::dsp::granulator::preset_names();
                     let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
                     self.apply_item(&BrowserItem::Granulator(p), DropTarget::NewTrack);
+                    self.detail = DetailTab::Devices;
+                }
+                "airway" => {
+                    let names = krabton_engine::dsp::airway::preset_names();
+                    let p = names[nums.first().copied().unwrap_or(0).min(names.len() - 1)];
+                    self.apply_item(&BrowserItem::Airway(p), DropTarget::NewTrack);
                     self.detail = DetailTab::Devices;
                 }
                 "breaks" => {

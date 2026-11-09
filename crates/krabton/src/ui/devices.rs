@@ -2200,6 +2200,11 @@ impl App {
                             self.toast(msg);
                         }
                     }
+                    Instrument::Airway { preset, params, text, plans } => {
+                        if let Some(msg) = super::airway_view::panel(ui, Id::new(("airway", track_id)), preset, params, text, plans, &live, h - 36.0, mv.as_mut()) {
+                            self.toast(msg);
+                        }
+                    }
                     Instrument::Breaks { preset, params, sample } => {
                         if let Some(msg) = super::breaks_view::breaks_panel(ui, Id::new(("breaks", track_id)), preset, params, sample, &live, h - 36.0, mv.as_mut()) {
                             self.toast(msg);

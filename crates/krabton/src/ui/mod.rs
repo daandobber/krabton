@@ -87,6 +87,7 @@ pub mod video_view;
 pub mod vj;
 pub mod granulator_view;
 pub mod breaks_view;
+pub mod airway_view;
 pub mod looper_view;
 pub mod fryer_view;
 pub mod stretch_view;

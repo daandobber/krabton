@@ -600,6 +600,7 @@ enum InstState {
     Hyper(Box<crate::hyper::HyperState>),
     Granulator(Box<crate::dsp::granulator::GranulatorState>),
     Breaks(Box<crate::dsp::breaks::BreaksState>),
+    Airway(Box<crate::dsp::airway::AirwayState>),
     Keytone(Box<crate::dsp::keytone::KeytoneState>),
     Princess(Box<crate::dsp::princess_machine::PrincessState>),
     Stretch(Box<crate::dsp::stretch::StretchState>),
@@ -659,6 +660,7 @@ impl InstState {
             InstState::Hyper(s) => s.pitch_bend = semis,
             InstState::Theremin(s) => s.pitch_bend = semis,
             InstState::Granulator(s) => s.pitch_bend = semis,
+            InstState::Airway(s) => s.pitch_bend = semis,
             InstState::Keytone(s) => s.pitch_bend = semis,
             InstState::Stretch(s) => s.pitch_bend = semis,
             _ => {}
@@ -726,6 +728,7 @@ impl InstState {
             Some(Instrument::Theremin { .. }) => InstState::Theremin(Box::new(ThereminState::new(sr))),
             Some(Instrument::Granulator { .. }) => InstState::Granulator(Box::new(crate::dsp::granulator::GranulatorState::new(sr))),
             Some(Instrument::Breaks { .. }) => InstState::Breaks(Box::new(crate::dsp::breaks::BreaksState::new(sr))),
+            Some(Instrument::Airway { .. }) => InstState::Airway(Box::new(crate::dsp::airway::AirwayState::new(sr))),
             Some(Instrument::Keytone { .. }) => InstState::Keytone(Box::new(crate::dsp::keytone::KeytoneState::new(sr))),
             Some(Instrument::Princess { .. }) => InstState::Princess(Box::new(crate::dsp::princess_machine::PrincessState::new(sr))),
             Some(Instrument::Stretch { .. }) => InstState::Stretch(Box::new(crate::dsp::stretch::StretchState::new(sr))),
@@ -809,6 +812,7 @@ impl InstState {
                 | (InstState::Theremin(_), Some(Instrument::Theremin { .. }))
                 | (InstState::Granulator(_), Some(Instrument::Granulator { .. }))
                 | (InstState::Breaks(_), Some(Instrument::Breaks { .. }))
+                | (InstState::Airway(_), Some(Instrument::Airway { .. }))
                 | (InstState::Keytone(_), Some(Instrument::Keytone { .. }))
                 | (InstState::Princess(_), Some(Instrument::Princess { .. }))
                 | (InstState::Stretch(_), Some(Instrument::Stretch { .. }))
@@ -883,6 +887,7 @@ impl InstState {
             (InstState::Theremin(s), Instrument::Theremin { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Granulator(s), Instrument::Granulator { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Breaks(s), Instrument::Breaks { .. }) => s.note_on(pitch),
+            (InstState::Airway(s), Instrument::Airway { params, plans, .. }) => s.note_on(ov.unwrap_or(params), plans, pitch, vel),
             (InstState::Keytone(s), Instrument::Keytone { params, sample, .. }) => s.note_on(ov.unwrap_or(params), sample.as_ref(), pitch, vel),
             (InstState::Princess(s), Instrument::Princess { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
             (InstState::Stretch(s), Instrument::Stretch { params, .. }) => s.note_on(ov.unwrap_or(params), pitch, vel),
@@ -953,6 +958,7 @@ impl InstState {
             (InstState::Theremin(s), Instrument::Theremin { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Granulator(s), Instrument::Granulator { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Breaks(s), Instrument::Breaks { .. }) => s.note_off(pitch),
+            (InstState::Airway(s), Instrument::Airway { params, plans, .. }) => s.note_off(ov.unwrap_or(params), plans, pitch),
             (InstState::Keytone(s), Instrument::Keytone { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
             (InstState::Princess(s), Instrument::Princess { .. }) => s.note_off(pitch),
             (InstState::Stretch(s), Instrument::Stretch { params, .. }) => s.note_off(ov.unwrap_or(params), pitch),
@@ -1023,6 +1029,7 @@ impl InstState {
             InstState::Theremin(s) => s.all_off(),
             InstState::Granulator(s) => s.all_off(),
             InstState::Breaks(s) => s.all_off(),
+            InstState::Airway(s) => s.all_off(),
             InstState::Keytone(s) => s.all_off(),
             InstState::Princess(s) => s.all_off(),
             InstState::Stretch(s) => s.all_off(),
@@ -1079,6 +1086,7 @@ impl InstState {
             InstState::Hyper(s) => s.visual(out),
             InstState::Granulator(s) => s.visual(out),
             InstState::Breaks(s) => s.visual(out),
+            InstState::Airway(s) => s.visual(out),
             InstState::Keytone(s) => s.visual(out),
             InstState::Princess(s) => s.visual(out),
             InstState::Stretch(s) => s.visual(out),
@@ -1149,6 +1157,7 @@ impl InstState {
             (InstState::Theremin(s), Instrument::Theremin { params, .. }) => s.render(ov.unwrap_or(params), l, r),
             (InstState::Granulator(s), Instrument::Granulator { params, sample, .. }) => s.render(ov.unwrap_or(params), sample.as_ref(), l, r),
             (InstState::Breaks(s), Instrument::Breaks { params, sample, .. }) => s.render(ov.unwrap_or(params), sample.as_ref(), l, r),
+            (InstState::Airway(s), Instrument::Airway { params, plans, .. }) => s.render(ov.unwrap_or(params), plans, l, r),
             (InstState::Keytone(s), Instrument::Keytone { params, sample, .. }) => s.render(ov.unwrap_or(params), sample.as_ref(), l, r),
             (InstState::Princess(s), Instrument::Princess { params, machine, .. }) => s.render(ov.unwrap_or(params), machine, l, r),
             (InstState::Stretch(s), Instrument::Stretch { params, sample, .. }) => s.render(ov.unwrap_or(params), sample.as_ref(), l, r),
