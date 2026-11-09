@@ -1237,24 +1237,23 @@ const AIRWINDOWS: Skin = Skin {
     ..BASE
 };
 
-/// Airway: an anatomy plate: bone-white paper, a sepia print, the red of
-/// a drawn artery.
+/// Airway: CHIMERA's lab: neon lines on black, thin blue frames.
 const AIRWAY: Skin = Skin {
-    top: hex(0xece4d4),
-    bottom: hex(0xd9cfbb),
-    surface: Surface::Grain,
-    ink: hex(0x3a2a1c),
-    dim: hex(0x7a6650),
-    well: hex(0x2a1f17),
-    well_ink: hex(0xf3e9d6),
-    accent: hex(0xb3262e),
-    knob: Knob::Vintage,
-    cap: hex(0xc9bda6),
+    top: hex(0x050b14),
+    bottom: hex(0x02050a),
+    surface: Surface::Flat,
+    stripes: &[hex(0x4fd8ff), hex(0x02050a)],
+    ink: hex(0xcfe8ff),
+    dim: hex(0x6f93b5),
+    well: hex(0x02040a),
+    well_ink: hex(0x4fd8ff),
+    accent: hex(0x4fd8ff),
+    knob: Knob::Led,
+    cap: hex(0x0e1a2a),
     logo: Font::Space,
-    logo_size: 19.0,
-    logo_ink: hex(0x3a2a1c),
+    logo_size: 18.0,
+    logo_ink: hex(0x4fd8ff),
     logo_case: Case::Upper,
-    heroes: &["Morph", "Breath"],
     ..BASE
 };
 

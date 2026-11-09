@@ -305,61 +305,152 @@ pub fn ambient_project() -> Project {
     p
 }
 
-/// Munich at work: the galloping octave bass of late seventies disco over a
-/// straight beat, in C and on B flat.
+/// Munich at work: a whole late-seventies disco track of its own around the
+/// galloping octave bass, in C minor at 127. Eight scenes go through it:
+/// Intro (the kick and the bass), Pulse (the beat and an arpeggio high up),
+/// Verse (string pads), Lift (sixteenths, a riser), Chorus (a lead's hook
+/// over C minor, A flat, E flat and B flat), Break (the pads swelling alone),
+/// Build (a snare roll over the pedal) and Finale (everything, the hook an
+/// octave up).
 pub fn gallop_project() -> Project {
+    const SNARE: u8 = 38;
+    const CRASH: u8 = 49;
     let mut p = Project::blank();
     p.name = "Gallop".into();
     p.bpm = 127.0;
     p.scale = crate::scale::Scale::new(0, crate::scale::ScaleKind::Minor);
-    for (i, name) in ["Pulse", "Beat", "Lift", "Down"].iter().enumerate() {
+    for (i, name) in ["Intro", "Pulse", "Verse", "Lift", "Chorus", "Break", "Build", "Finale"].iter().enumerate() {
         p.scenes[i].name = name.to_string();
     }
-    // Two Cs, a G and a B flat in eighths, the repeat falling on the sixteenths between.
-    let line = |root: u8| {
-        every(0.5, 4.0, move |t| {
+    // The chords, a bar each: C minor, A flat, E flat, B flat (roots, and the pads' voicing).
+    const ROOT: [u8; 4] = [48, 44, 51, 46];
+    const PAD: [[u8; 4]; 4] = [[60, 63, 67, 72], [56, 60, 63, 68], [58, 63, 67, 70], [58, 62, 65, 70]];
+    // Two of a root, its fifth and its seventh in eighths, the repeat on the sixteenths between.
+    let gallop = |roots: &[u8]| {
+        let bars = roots.len();
+        every(0.5, 4.0 * bars as f64, |t| {
+            let root = roots[(t / 4.0) as usize % bars];
             let offset = [0u8, 12, 7, 10][((t * 2.0).round() as usize) % 4];
             Some(n(root + offset, t, 0.22, if offset == 0 { 1.0 } else { 0.85 }))
         })
     };
+
+    // --- Bass -----------------------------------------------------------
     let bass = p.add_midi_track(Some(Instrument::munich("Gallop")));
     p.tracks[bass].name = "Bass".into();
     p.tracks[bass].color = PALETTE[0];
     p.tracks[bass].mixer.volume_db = -3.0;
-    for scene in 0..3 {
-        set_clip(&mut p, bass, scene, "C", 4.0, line(48));
-    }
-    set_clip(&mut p, bass, 3, "B flat", 4.0, line(46));
+    set_clip(&mut p, bass, 0, "C", 4.0, gallop(&[48]));
+    set_clip(&mut p, bass, 1, "C", 4.0, gallop(&[48]));
+    set_clip(&mut p, bass, 2, "C - A flat", 16.0, gallop(&[48, 48, 44, 44]));
+    set_clip(&mut p, bass, 3, "A flat - B flat", 8.0, gallop(&[44, 46]));
+    set_clip(&mut p, bass, 4, "Chorus", 16.0, gallop(&ROOT));
+    set_clip(&mut p, bass, 6, "Pedal", 8.0, gallop(&[48, 48]));
+    set_clip(&mut p, bass, 7, "Chorus", 16.0, gallop(&ROOT));
 
+    // --- Drums ----------------------------------------------------------
     let drums = p.add_midi_track(Some(Instrument::drums("Classic 909")));
     p.tracks[drums].name = "Drums".into();
     p.tracks[drums].color = PALETTE[1];
     p.tracks[drums].mixer.volume_db = -5.0;
     let kick = every(1.0, 4.0, |t| Some(n(KICK, t, 0.25, 1.0)));
-    set_clip(&mut p, drums, 0, "Kick", 4.0, kick.clone());
-    let mut beat = kick;
+    let mut beat = kick.clone();
     beat.extend(every(0.5, 4.0, |t| if t.fract() == 0.0 { None } else { Some(n(OHAT, t, 0.2, 0.55)) }));
     beat.extend([n(CLAP, 1.0, 0.25, 0.85), n(CLAP, 3.0, 0.25, 0.85)]);
     let mut lift = beat.clone();
-    lift.extend(every(0.25, 4.0, |t| if t.fract() == 0.25 || t.fract() == 0.75 { Some(n(CHAT, t, 0.1, 0.4)) } else { None }));
+    lift.extend(every(0.25, 4.0, |t| if is(t.fract(), 0.25) || is(t.fract(), 0.75) { Some(n(CHAT, t, 0.1, 0.4)) } else { None }));
+    // The chorus: four bars, a crash on the one, a fill of toms at the end.
+    let mut chorus = Vec::new();
+    for bar in 0..4 {
+        let o = bar as f64 * 4.0;
+        chorus.extend(lift.iter().map(|x| Note { start: x.start + o, ..x.clone() }));
+    }
+    chorus.push(n(CRASH, 0.0, 1.0, 0.8));
+    for (i, t) in [14.5, 14.75, 15.0, 15.25, 15.5, 15.75].iter().enumerate() {
+        chorus.push(n(TOM, *t, 0.2, 0.55 + i as f32 * 0.07));
+    }
+    // The build: the kick, and a snare roll speeding up over two bars.
+    let mut build = every(1.0, 8.0, |t| Some(n(KICK, t, 0.25, 1.0)));
+    build.extend(every(1.0, 4.0, |t| Some(n(SNARE, t, 0.2, 0.5))));
+    build.extend(every(0.5, 2.0, |t| Some(n(SNARE, 4.0 + t, 0.15, 0.6 + t as f32 * 0.05))));
+    build.extend(every(0.25, 2.0, |t| Some(n(SNARE, 6.0 + t, 0.1, 0.7 + t as f32 * 0.12))));
+    set_clip(&mut p, drums, 0, "Kick", 4.0, kick);
     set_clip(&mut p, drums, 1, "Beat", 4.0, beat.clone());
-    set_clip(&mut p, drums, 2, "Lift", 4.0, lift.clone());
+    set_clip(&mut p, drums, 2, "Beat", 4.0, beat);
     set_clip(&mut p, drums, 3, "Lift", 4.0, lift);
+    set_clip(&mut p, drums, 4, "Chorus", 16.0, chorus.clone());
+    set_clip(&mut p, drums, 6, "Build", 8.0, build);
+    set_clip(&mut p, drums, 7, "Chorus", 16.0, chorus);
 
-    // High up, the same machine on sixteenths.
+    // --- Pads -----------------------------------------------------------
+    let pads = p.add_midi_track(Some(Instrument::string_machine("Full Section")));
+    p.tracks[pads].name = "Strings".into();
+    p.tracks[pads].color = PALETTE[3];
+    p.tracks[pads].mixer.volume_db = -11.0;
+    p.tracks[pads].mixer.sends = vec![0.35, 0.0];
+    let chords = |order: &[usize], each: f64, vel: f32| {
+        let mut v = Vec::new();
+        for (k, c) in order.iter().enumerate() {
+            for pitch in PAD[*c] {
+                v.push(n(pitch, k as f64 * each, each * 0.98, vel));
+            }
+        }
+        v
+    };
+    set_clip(&mut p, pads, 2, "C - A flat", 16.0, chords(&[0, 1], 8.0, 0.55));
+    set_clip(&mut p, pads, 3, "A flat - B flat", 8.0, chords(&[1, 3], 4.0, 0.6));
+    set_clip(&mut p, pads, 4, "Chorus", 16.0, chords(&[0, 1, 2, 3], 4.0, 0.65));
+    set_clip(&mut p, pads, 5, "Swell", 16.0, chords(&[0, 1, 2, 3], 4.0, 0.8));
+    set_clip(&mut p, pads, 6, "Held", 8.0, chords(&[0], 8.0, 0.5));
+    set_clip(&mut p, pads, 7, "Chorus", 16.0, chords(&[0, 1, 2, 3], 4.0, 0.7));
+
+    // --- High: the same machine on sixteenths, through the chords -------------
     let high = p.add_midi_track(Some(Instrument::munich("Reedy Pulse")));
-    p.tracks[high].name = "High".into();
+    p.tracks[high].name = "Arp".into();
     p.tracks[high].color = PALETTE[5];
-    p.tracks[high].mixer.volume_db = -14.0;
-    p.tracks[high].mixer.sends = vec![0.25, 0.0];
-    let arp = |root: u8| {
-        every(0.25, 4.0, move |t| {
-            let offset = [0u8, 7, 12, 15, 19, 15, 12, 7][((t * 4.0).round() as usize) % 8];
-            Some(n(root + offset, t, 0.18, 0.7))
+    p.tracks[high].mixer.volume_db = -15.0;
+    p.tracks[high].mixer.sends = vec![0.25, 0.2];
+    let arp = |order: &[usize]| {
+        let bars = order.len();
+        every(0.25, 4.0 * bars as f64, |t| {
+            let c = PAD[order[(t / 4.0) as usize % bars]];
+            let i = ((t * 4.0).round() as usize) % 8;
+            let pitch = [c[0], c[1], c[2], c[3], c[2] + 12, c[3], c[2], c[1]][i] + 12;
+            Some(n(pitch, t, 0.18, if i == 0 { 0.8 } else { 0.6 }))
         })
     };
-    set_clip(&mut p, high, 2, "Up", 4.0, arp(60));
-    set_clip(&mut p, high, 3, "Down", 4.0, arp(58));
+    set_clip(&mut p, high, 1, "C", 4.0, arp(&[0]));
+    set_clip(&mut p, high, 2, "C - A flat", 16.0, arp(&[0, 0, 1, 1]));
+    set_clip(&mut p, high, 3, "A flat - B flat", 8.0, arp(&[1, 3]));
+    set_clip(&mut p, high, 4, "Chorus", 16.0, arp(&[0, 1, 2, 3]));
+    set_clip(&mut p, high, 5, "Chorus", 16.0, arp(&[0, 1, 2, 3]));
+    set_clip(&mut p, high, 7, "Chorus", 16.0, arp(&[0, 1, 2, 3]));
+
+    // --- Lead: the hook of the chorus -----------------------------------------
+    let lead = p.add_midi_track(Some(Instrument::munich("Glide Lead")));
+    p.tracks[lead].name = "Lead".into();
+    p.tracks[lead].color = PALETTE[7];
+    p.tracks[lead].mixer.volume_db = -9.0;
+    p.tracks[lead].mixer.sends = vec![0.2, 0.3];
+    // (start, length, pitch) over the four chords.
+    let hook: [(f64, f64, u8); 16] = [
+        (0.0, 1.5, 79), (1.5, 0.5, 75), (2.0, 1.0, 77), (3.0, 1.0, 79),
+        (4.0, 1.0, 80), (5.0, 1.0, 79), (6.0, 1.0, 77), (7.0, 1.0, 75),
+        (8.0, 1.5, 79), (9.5, 0.5, 82), (10.0, 1.0, 79), (11.0, 1.0, 77),
+        (12.0, 2.5, 75), (14.5, 0.5, 74), (15.0, 0.5, 72), (15.5, 0.5, 74),
+    ];
+    let line = |up: u8| hook.iter().map(|&(s, l, k)| n(k + up, s, l * 0.92, 0.8)).collect::<Vec<_>>();
+    set_clip(&mut p, lead, 4, "Hook", 16.0, line(0));
+    set_clip(&mut p, lead, 7, "Hook Up", 16.0, line(12));
+
+    // --- Sweeps: up into the chorus, a hit on its one -------------------------
+    let fx = p.add_midi_track(Some(Instrument::sweeps("Long Riser")));
+    p.tracks[fx].name = "Riser".into();
+    p.tracks[fx].color = PALETTE[11 % PALETTE.len()];
+    p.tracks[fx].mixer.volume_db = -12.0;
+    p.tracks[fx].mixer.sends = vec![0.3, 0.0];
+    set_clip(&mut p, fx, 3, "Up", 8.0, vec![n(60, 0.0, 8.0, 0.8)]);
+    set_clip(&mut p, fx, 6, "Up", 8.0, vec![n(60, 0.0, 8.0, 0.9)]);
     p
 }
 
@@ -376,7 +467,21 @@ mod gallop_tests {
         let pitches: Vec<u8> = notes.iter().take(4).map(|n| n.pitch).collect();
         assert_eq!(pitches, [48, 60, 55, 58]);
         assert_eq!(notes.len(), 8);
-        // Every scene has its bass.
-        assert!((0..4).all(|s| p.tracks[0].slots[s].is_some()));
+    }
+
+    #[test]
+    fn the_gallop_set_is_a_whole_track() {
+        let p = gallop_project();
+        assert!(p.tracks.len() >= 6, "bass, drums, strings, arp, lead, riser");
+        // The chorus has every part but the riser; the break only the pads and the arp.
+        let chorus = p.tracks.iter().filter(|t| t.slots[4].is_some()).count();
+        assert!(chorus >= 5, "{chorus}");
+        let names: Vec<&str> = p.tracks.iter().filter(|t| t.slots[5].is_some()).map(|t| t.name.as_str()).collect();
+        assert_eq!(names, ["Strings", "Arp"]);
+        // The bass follows the chords in the chorus: C, A flat, E flat, B flat.
+        let Some(c) = &p.tracks[0].slots[4] else { panic!() };
+        let crate::project::ClipContent::Midi { notes } = &c.content else { panic!() };
+        let roots: Vec<u8> = [0.0, 4.0, 8.0, 12.0].iter().map(|b| notes.iter().find(|x| (x.start - b).abs() < 1e-6).unwrap().pitch).collect();
+        assert_eq!(roots, [48, 44, 51, 46]);
     }
 }

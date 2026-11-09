@@ -2863,6 +2863,9 @@ impl Engine {
                         if let InstState::Singer(s) = &mut *instrument {
                             s.set_lyric(ev.lyric);
                         }
+                        if let InstState::Airway(s) = &mut *instrument {
+                            s.set_lyric(ev.lyric);
+                        }
                         instrument.note_on(inst, ov, np, ev.vel, sr);
                     } else {
                         *n = n.saturating_sub(1);

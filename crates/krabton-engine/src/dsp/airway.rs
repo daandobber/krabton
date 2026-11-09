@@ -28,6 +28,27 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crate::params::{ParamSpec, Unit, SCREEN_ONLY};
+use chimera::voice::human_voice::VoiceTelemetry;
+
+/// The engine, for the face (its anatomy drawn as it moves).
+pub use chimera;
+
+/// Where the face finds what the voice does now, in its visual values:
+/// the articulators (`ArticKey` order), the pitch, the lungs, voicing,
+/// the nose's opening, the output, the tract's length, its areas glottis to
+/// lips, the glottis' opening over two cycles, how far along the velum is.
+pub const VIS_ARTIC: usize = 9;
+pub const VIS_F0: usize = 26;
+pub const VIS_LUNGS: usize = 27;
+pub const VIS_VOICING: usize = 28;
+pub const VIS_NOSE: usize = 29;
+pub const VIS_OUT: usize = 30;
+pub const VIS_LENGTH: usize = 31;
+pub const VIS_AREAS: usize = 32;
+pub const N_AREAS: usize = 16;
+pub const VIS_GLOTTIS: usize = 48;
+pub const N_GLOTTIS: usize = 15;
+pub const VIS_VELUM_AT: usize = 63;
 
 pub const MODE: usize = 0;
 pub const VOICES: usize = 1;
@@ -93,7 +114,7 @@ pub static SPECS: &[ParamSpec] = &[
 ];
 
 const PRESETS: &[(&str, &[(usize, f32)])] = &[
-    ("Choir Ah", &[(VOICES, 2.0), (VIBRATO, 30.0)]),
+    ("Choir Ah", &[(VOICES, 1.0), (VIBRATO, 30.0)]),
     ("Talking Bass", &[(MORPH, 0.0), (VOWEL, 9.0), (MORPH_TO, 0.0), (GLIDE, 0.12), (TENSION, 0.7), (FRY, 0.2), (VIBRATO, 0.0)]),
     ("Sung Words", &[(MODE, 1.0), (BODY, 1.0), (VIBRATO, 35.0)]),
     ("Whisper", &[(BREATH, 1.0), (PRESSURE, 5.0), (TENSION, 0.1), (VIBRATO, 0.0)]),
@@ -143,6 +164,9 @@ pub struct Plans {
     pub body: u8,
     pub syls: Vec<SylPlan>,
     pub vowels: Vec<ArticPatch>,
+    /// The lyrics notes may bring (a Sing sequencer's syllables), each
+    /// sung whole on its note, looked up by its text.
+    pub words: Vec<SylPlan>,
 }
 
 /// Plans shared with the audio thread; equal when they are the same.
@@ -226,6 +250,12 @@ pub fn reload_dictionary() {
 /// Plans lyric `text` for body `body` (0 male, 1 female, 2 child): every
 /// syllable's press and release at middle C, and the vowels' mouths.
 pub fn prepare(text: &str, body: u8) -> PlansRef {
+    prepare_with(text, body, &[])
+}
+
+/// `prepare`, and every one of `words` (lyrics notes may bring) as one
+/// syllable of its own: its first vowel held, the rest sung when the key is let go.
+pub fn prepare_with(text: &str, body: u8, words: &[String]) -> PlansRef {
     chimera::init();
     let mix = match body {
         1 => BodyMix::FEMALE,
@@ -242,7 +272,45 @@ pub fn prepare(text: &str, body: u8) -> PlansRef {
         })
         .collect();
     let vowels = VOWEL_IPA.iter().map(|v| vowel_artic(v, mix).unwrap_or_default()).collect();
-    PlansRef(Arc::new(Plans { text: text.to_string(), body, syls, vowels }))
+    let g = g2p();
+    let mut keys: Vec<String> = words.iter().map(|w| chimera_key(w)).collect();
+    keys.sort();
+    keys.dedup();
+    let words = keys
+        .iter()
+        .map(|w| {
+            let parts = lyrics_to_syllables(w, &*g);
+            // A word with no vowel to sing: kept, with nothing to sing.
+            let Some(first) = parts.first() else { return SylPlan { text: w.clone(), on: Vec::new(), off: Vec::new() } };
+            // One syllable of the whole word: the first's onset and vowel, then the rest as its coda.
+            let mut s = first.clone();
+            s.text = chimera_key(w);
+            for q in &parts[1..] {
+                s.coda.extend(q.onset.iter().cloned());
+                s.coda.push(q.nucleus.clone());
+                s.coda.extend(q.coda.iter().cloned());
+            }
+            let on = plan_note_on(&s, REF_MIDI, &NoteOnOptions { body: mix, vibrato: 1.0, tag: 0.0, legato_from: None });
+            let off = plan_note_off(&s, REF_MIDI, mix);
+            SylPlan { text: s.text.clone(), on, off }
+        })
+        .collect();
+    PlansRef(Arc::new(Plans { text: text.to_string(), body, syls, vowels, words }))
+}
+
+/// A lyric as a note carries it (cut to what fits), to find its plan by.
+pub fn chimera_key(w: &str) -> String {
+    crate::midi_fx::Lyric::new(w, false).as_str().to_lowercase()
+}
+
+/// Whether `plans` already has exactly these words.
+pub fn has_words(plans: &Plans, words: &[String]) -> bool {
+    let mut keys: Vec<String> = words.iter().map(|w| chimera_key(w)).collect();
+    keys.sort();
+    keys.dedup();
+    let mut have: Vec<&str> = plans.words.iter().map(|w| w.text.as_str()).collect();
+    have.sort();
+    have.len() == keys.len() && have.iter().zip(&keys).all(|(a, b)| *a == b.as_str())
 }
 
 // ---------------------------------------------------------------- playing
@@ -254,6 +322,8 @@ struct Voice {
     age: u64,
     tag: f64,
     syl: usize,
+    /// Its syllable is one of the words a note brought (not the lyric's).
+    word: bool,
     /// Samples since it went quiet (it stops being rendered a while after).
     quiet: usize,
     on: bool,
@@ -275,9 +345,14 @@ pub struct AirwayState {
     last: Vec<f32>,
     pub pitch_bend: f32,
     bend_was: f32,
+    /// The lyric the next note brings (a Sing sequencer's syllable).
+    lyric: crate::midi_fx::Lyric,
     /// For the face: each voice's level, its note, the syllable sung last.
     meters: [f32; MAX_VOICES],
     pub sung: usize,
+    /// What the voice shown does now (see `VIS_ARTIC` on).
+    tel: VoiceTelemetry,
+    shown: [f32; 55],
 }
 
 impl AirwayState {
@@ -299,9 +374,42 @@ impl AirwayState {
             last: Vec::with_capacity(SPECS.len()),
             pitch_bend: 0.0,
             bend_was: 0.0,
+            lyric: crate::midi_fx::Lyric::new("", false),
             meters: [0.0; MAX_VOICES],
             sung: 0,
+            tel: VoiceTelemetry::default(),
+            shown: [0.0; 55],
         }
+    }
+
+    /// Reads what voice `i` does now into `shown` (the face's values from `VIS_ARTIC`).
+    fn look(&mut self, i: usize) {
+        self.engines[i].telemetry(&mut self.tel);
+        let t = &self.tel;
+        let s = &mut self.shown;
+        for (k, a) in t.artic.iter().take(17).enumerate() {
+            s[k] = *a;
+        }
+        s[VIS_F0 - VIS_ARTIC] = t.f0 as f32;
+        s[VIS_LUNGS - VIS_ARTIC] = t.p_lung as f32;
+        s[VIS_VOICING - VIS_ARTIC] = t.voicing as f32;
+        s[VIS_NOSE - VIS_ARTIC] = t.velum_port as f32;
+        s[VIS_OUT - VIS_ARTIC] = t.out_rms as f32;
+        s[VIS_LENGTH - VIS_ARTIC] = (t.ph_len + t.or_len) as f32;
+        let n = t.ph_areas.len() + t.or_areas.len();
+        if n > 0 {
+            for k in 0..N_AREAS {
+                let j = k * n / N_AREAS;
+                s[VIS_AREAS - VIS_ARTIC + k] = if j < t.ph_areas.len() { t.ph_areas[j] } else { t.or_areas.get(j - t.ph_areas.len()).copied().unwrap_or(0.0) };
+            }
+        }
+        let g = t.glottal_area.len();
+        if g > 0 {
+            for k in 0..N_GLOTTIS {
+                s[VIS_GLOTTIS - VIS_ARTIC + k] = t.glottal_area[k * g / N_GLOTTIS];
+            }
+        }
+        s[VIS_VELUM_AT - VIS_ARTIC] = (t.ph_len / (t.ph_len + t.or_len).max(1e-6)) as f32;
     }
 
     fn voices_n(p: &[f32]) -> usize {
@@ -385,6 +493,11 @@ impl AirwayState {
         (0..n).min_by_key(|i| self.voices[*i].age).unwrap_or(0)
     }
 
+    /// The lyric the next note brings (set just before it).
+    pub fn set_lyric(&mut self, l: crate::midi_fx::Lyric) {
+        self.lyric = l;
+    }
+
     pub fn note_on(&mut self, p: &[f32], plans: &Plans, pitch: u8, vel: f32) {
         if p.len() < SPECS.len() {
             return;
@@ -396,8 +509,16 @@ impl AirwayState {
         self.clock += 1;
         let hz = self.hz(pitch);
         let vel = vel.clamp(0.05, 1.0) as f64;
+        // A lyric the note brings, if it is one planned: sung whole (but by a creature).
+        let brought = std::mem::replace(&mut self.lyric, crate::midi_fx::Lyric::new("", false));
+        let word = if self.mode != 2 && !brought.as_str().is_empty() {
+            let key = brought.as_str();
+            plans.words.iter().position(|w| !w.on.is_empty() && w.text.len() == key.len() && w.text.eq_ignore_ascii_case(key))
+        } else {
+            None
+        };
         // A voice still singing a syllable lets it go first.
-        if self.voices[i].note.is_some() && self.mode == 1 {
+        if self.voices[i].note.is_some() && (self.mode == 1 || self.voices[i].word) {
             let t = self.voices[i].tag;
             self.engines[i].release(t);
             self.engines[i].release(t + 1.0);
@@ -407,18 +528,26 @@ impl AirwayState {
         v.age = self.clock;
         v.quiet = 0;
         v.on = true;
+        v.word = word.is_some();
         let e = &mut self.engines[i];
-        match self.mode {
-            1 if !plans.syls.is_empty() => {
-                let s = self.next_syl % plans.syls.len();
-                self.next_syl += 1;
-                self.sung = s;
+        let mode = if word.is_some() { 1 } else { self.mode };
+        match mode {
+            1 if word.is_some() || !plans.syls.is_empty() => {
+                let (s, plan) = match word {
+                    Some(w) => (w, &plans.words[w]),
+                    None => {
+                        let s = self.next_syl % plans.syls.len();
+                        self.next_syl += 1;
+                        self.sung = s;
+                        (s, &plans.syls[s])
+                    }
+                };
                 v.syl = s;
                 self.tags += 2.0;
                 v.tag = self.tags;
                 let ratio = hz / (440.0 * 2f64.powf((REF_MIDI - 69.0) / 12.0));
                 self.scratch.clear();
-                for g in plans.syls[s].on.iter().take(self.scratch.capacity()) {
+                for g in plan.on.iter().take(self.scratch.capacity()) {
                     let mut g = *g;
                     if let Some(f) = g.targets.get(ControlKey::F0) {
                         g.targets.set(ControlKey::F0, f * ratio);
@@ -458,11 +587,13 @@ impl AirwayState {
             let v = &mut self.voices[i];
             v.note = None;
             let e = &mut self.engines[i];
-            match self.mode {
+            let mode = if v.word { 1 } else { self.mode };
+            match mode {
                 1 => {
                     e.release(v.tag);
                     e.release(v.tag + 1.0);
-                    if let Some(s) = plans.syls.get(v.syl) {
+                    let plan = if v.word { plans.words.get(v.syl) } else { plans.syls.get(v.syl) };
+                    if let Some(s) = plan {
                         let ratio = self_ratio(pitch, self.pitch_bend);
                         self.scratch.clear();
                         for g in s.off.iter().take(self.scratch.capacity()) {
@@ -508,6 +639,11 @@ impl AirwayState {
                 *o = v.note.map_or(-1.0, |n| n as f32);
             }
         }
+        for (k, v) in self.shown.iter().enumerate() {
+            if let Some(o) = out.get_mut(VIS_ARTIC + k) {
+                *o = *v;
+            }
+        }
     }
 
     pub fn render(&mut self, p: &[f32], plans: &Plans, l: &mut [f32], r: &mut [f32]) {
@@ -527,6 +663,11 @@ impl AirwayState {
             }
         }
         let n = Self::voices_n(p);
+        // The face shows the voice started last (the human one: a creature has no mouth to show).
+        if self.creature.is_none() {
+            let i = (0..n).filter(|i| self.voices[*i].on).max_by_key(|i| self.voices[*i].age).unwrap_or(0);
+            self.look(i);
+        }
         let level = 10f32.powf(p[LEVEL] / 20.0) * if n > 1 { 0.8 } else { 1.0 };
         let len = l.len().min(self.buf.len());
         let quiet_after = (self.sr * 1.5) as usize;
@@ -628,6 +769,33 @@ mod tests {
         assert!(plans.syls.iter().all(|s| !s.on.is_empty()));
         let (peak, _) = play(&p, &plans, &[(64, 0, 12000), (67, 14000, 26000), (60, 28000, 40000)], 1.2);
         assert!(peak > 0.02, "it sings the words: {peak}");
+    }
+
+    #[test]
+    fn a_note_that_brings_a_lyric_sings_it() {
+        let p = preset("Choir Ah");
+        let words: Vec<String> = ["sa", "ku", "ra", "hello"].iter().map(|s| s.to_string()).collect();
+        let plans = prepare_with("", 0, &words);
+        assert_eq!(plans.words.len(), 4);
+        assert!(has_words(&plans, &words));
+        assert!(!has_words(&plans, &words[..2]));
+        let mut st = AirwayState::new(48000.0);
+        st.set_lyric(crate::midi_fx::Lyric::new("ku", true));
+        st.note_on(&p, &plans, 60, 0.9);
+        assert!(st.voices[0].word, "sung as a word, though it plays vowels");
+        let (mut l, mut r) = (vec![0.0f32; 512], vec![0.0f32; 512]);
+        let mut peak = 0.0f32;
+        for _ in 0..40 {
+            l.fill(0.0);
+            st.render(&p, &plans, &mut l, &mut r);
+            peak = l.iter().fold(peak, |m, v| m.max(v.abs()));
+        }
+        assert!(peak > 0.01, "{peak}");
+        st.note_off(&p, &plans, 60);
+        // A lyric not planned: the vowel, as ever.
+        st.set_lyric(crate::midi_fx::Lyric::new("zzz", true));
+        st.note_on(&p, &plans, 62, 0.9);
+        assert!(!st.voices.iter().any(|v| v.note == Some(62) && v.word));
     }
 
     #[test]

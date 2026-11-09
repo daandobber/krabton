@@ -64,6 +64,7 @@ impl App {
         self.ui_map_window(ctx);
         self.ui_video(ctx);
         self.poll_brains();
+        self.sync_airways();
         if self.show_about {
             let mut open = true;
             egui::Window::new("About Krabton").collapsible(false).resizable(false).open(&mut open).show(ctx, |ui| {
