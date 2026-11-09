@@ -738,6 +738,7 @@ struct Gl {
     gen: Option<Result<glow::Program, String>>,
     gen_tex: glow::Texture,
     scope_tex: glow::Texture,
+    hist_tex: glow::Texture,
     /// Milk: its shader, and its feedback (the frame drawn last and the one drawn into).
     milk: Option<Result<glow::Program, String>>,
     milk_tex: [glow::Texture; 2],
@@ -946,8 +947,9 @@ impl Gl {
         gl.bind_framebuffer(glow::FRAMEBUFFER, None);
         let gen_tex = new_texture(gl, w, h)?;
         let scope_tex = new_texture(gl, SCOPE_W as i32, 4)?;
+        let hist_tex = new_texture(gl, SCOPE_W as i32, visuals::HIST as i32)?;
         let milk_tex = [new_texture(gl, w, h)?, new_texture(gl, w, h)?];
-        Ok(Self { fx, show, quad, vao, fbo, tex, cur: 0, w, h, gen: None, gen_tex, scope_tex, milk: None, milk_tex, milk_cur: 0 })
+        Ok(Self { fx, show, quad, vao, fbo, tex, cur: 0, w, h, gen: None, gen_tex, scope_tex, hist_tex, milk: None, milk_tex, milk_cur: 0 })
     }
 
     /// Milk's feedback, one frame on (made the first time; false when its shader could not be).
@@ -1013,6 +1015,13 @@ impl Gl {
         gl.bind_texture(glow::TEXTURE_2D, Some(self.milk_tex[self.milk_cur]));
         gl.active_texture(glow::TEXTURE0);
         gl.uniform_1_i32(u("u_milk").as_ref(), 1);
+        // The spectrum's history.
+        gl.active_texture(glow::TEXTURE2);
+        gl.bind_texture(glow::TEXTURE_2D, Some(self.hist_tex));
+        gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
+        gl.tex_sub_image_2d(glow::TEXTURE_2D, 0, 0, 0, SCOPE_W as i32, visuals::HIST as i32, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(Some(&p.scope.hist_rgba())));
+        gl.active_texture(glow::TEXTURE0);
+        gl.uniform_1_i32(u("u_hist").as_ref(), 2);
         milk_uniforms(gl, prog, p);
         gl.uniform_1_f32(u("u_vfrom").as_ref(), p.vfrom);
         gl.uniform_1_f32(u("u_vmix").as_ref(), p.vmix);
@@ -1026,6 +1035,8 @@ impl Gl {
         gl.uniform_1_f32(u("u_seed").as_ref(), p.seed);
         gl.uniform_3_f32(u("u_vcol").as_ref(), p.vcol[0], p.vcol[1], p.vcol[2]);
         self.quad(gl);
+        gl.active_texture(glow::TEXTURE2);
+        gl.bind_texture(glow::TEXTURE_2D, None);
         gl.active_texture(glow::TEXTURE1);
         gl.bind_texture(glow::TEXTURE_2D, None);
         gl.active_texture(glow::TEXTURE0);

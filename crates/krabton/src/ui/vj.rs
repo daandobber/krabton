@@ -353,6 +353,62 @@ pub(crate) fn scene_icon(p: &Painter, r: Rect, k: usize, c: Color32) {
                 p.circle_stroke(at(x, y), rad * r.height(), Stroke::new(1.2_f32, c));
             }
         }
+        // Point Terrain: rows of points going away, a sweep over them.
+        15 => {
+            for row in 0..7 {
+                let z = 1.0 + row as f32 * 0.5;
+                for i in -8..=8 {
+                    let x = 0.5 + i as f32 * 0.07 / z;
+                    let y = 0.95 - 0.55 * (1.0 - 1.0 / z) - (i as f32 * 0.9 + row as f32).sin().abs() * 0.12 / z;
+                    p.circle_filled(at(x, y), 0.9, if row == 3 { c } else { dim });
+                }
+            }
+        }
+        // Mesh: a grid of lines going away, raised in the middle.
+        16 => {
+            for row in 0..6 {
+                let z = 1.0 + row as f32 * 0.6;
+                let pts: Vec<Pos2> = (0..=16).map(|i| {
+                    let x = (i as f32 - 8.0) / 8.0;
+                    at(0.5 + x * 0.5 / z, 0.95 - 0.6 * (1.0 - 1.0 / z) - (-x * x * 4.0).exp() * 0.25 / z)
+                }).collect();
+                line(p, pts, if row % 2 == 0 { c } else { dim }, 1.0);
+            }
+        }
+        // Waterfall: ridges of a spectrum, one behind the other.
+        17 => {
+            for row in 0..7 {
+                let y0 = 0.25 + row as f32 * 0.1;
+                let pts: Vec<Pos2> = (0..=24).map(|i| {
+                    let x = i as f32 / 24.0;
+                    at(x, y0 - h(i + row * 31) * 0.12 * (1.0 - (x - 0.5).abs() * 1.6).max(0.0))
+                }).collect();
+                line(p, pts, if row > 4 { c } else { dim }, 1.0);
+            }
+        }
+        // Flow: streams curving round.
+        18 => {
+            for k in 0..9 {
+                let y0 = 0.1 + k as f32 * 0.1;
+                line(p, (0..=20).map(|i| { let x = i as f32 / 20.0; at(x, y0 + (x * 5.0 + k as f32).sin() * 0.06) }).collect(), if k % 3 == 0 { c } else { dim }, 1.0);
+            }
+        }
+        // Strata: many fine lines, bent, slipped.
+        19 => {
+            for k in 0..14 {
+                let y0 = 0.08 + k as f32 * 0.065;
+                let slip = if k > 6 && k < 10 { 0.08 } else { 0.0 };
+                line(p, (0..=20).map(|i| { let x = i as f32 / 20.0; at(x + slip, y0 + (x * 3.0 + k as f32 * 0.4).sin() * 0.02) }).collect(), if k % 4 == 0 { c } else { dim }, 1.0);
+            }
+        }
+        // Dust: a cloud of points, thick in the middle.
+        20 => {
+            for i in 0..110 {
+                let a = h(i) * TAU;
+                let d = h(i + 300).powf(0.6) * 0.45;
+                p.circle_filled(at(0.5 + a.cos() * d * 0.9 + (h(i + 7) - 0.5) * 0.1, 0.5 + a.sin() * d * 0.8), 0.8, if i % 4 == 0 { c } else { dim });
+            }
+        }
         // Milk: a picture inside itself, turned a little each time.
         _ => {
             let m = r.center();

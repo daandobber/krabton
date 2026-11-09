@@ -9,6 +9,9 @@
 
 /// The width of the scope (its rows: the wave, the spectrum, the notes).
 pub const SCOPE_W: usize = 128;
+/// Rows of the spectrum's history (one every `HIST_SECS`).
+pub const HIST: usize = 64;
+const HIST_SECS: f32 = 1.0 / 24.0;
 /// Samples kept of the master, and the size of the spectrum's FFT.
 const TAIL: usize = 4096;
 const FFT: usize = 2048;
@@ -20,11 +23,13 @@ pub struct Scope {
     pub wave: [u8; SCOPE_W],
     pub spec: [u8; SCOPE_W],
     pub notes: [u8; SCOPE_W],
+    /// The spectrum lately, a row every 24th of a second (the newest first).
+    pub hist: [u8; SCOPE_W * HIST],
 }
 
 impl Default for Scope {
     fn default() -> Self {
-        Self { wave: [128; SCOPE_W], spec: [0; SCOPE_W], notes: [0; SCOPE_W] }
+        Self { wave: [128; SCOPE_W], spec: [0; SCOPE_W], notes: [0; SCOPE_W], hist: [0; SCOPE_W * HIST] }
     }
 }
 
@@ -40,6 +45,11 @@ impl Scope {
         }
         out
     }
+
+    /// The spectrum's history as a picture: 128 by `HIST`, RGBA.
+    pub fn hist_rgba(&self) -> Vec<u8> {
+        self.hist.iter().flat_map(|v| [*v, *v, *v, 255]).collect()
+    }
 }
 
 /// The Visuals' ears, between frames.
@@ -53,11 +63,15 @@ pub struct Ears {
     pub time: f64,
     /// How long the last frame was (seconds).
     pub dt: f32,
+    /// The spectrum's history (a ring, `hist_at` the newest), and the time since its last row.
+    hist: Vec<[u8; SCOPE_W]>,
+    hist_at: usize,
+    hist_due: f32,
 }
 
 impl Default for Ears {
     fn default() -> Self {
-        Self { tail: Vec::with_capacity(TAIL * 2), spec: [0.0; SCOPE_W], notes: [0.0; SCOPE_W], gain: 0.0, time: 0.0, dt: 1.0 / 60.0 }
+        Self { tail: Vec::with_capacity(TAIL * 2), spec: [0.0; SCOPE_W], notes: [0.0; SCOPE_W], gain: 0.0, time: 0.0, dt: 1.0 / 60.0, hist: vec![[0; SCOPE_W]; HIST], hist_at: 0, hist_due: 0.0 }
     }
 }
 
@@ -93,6 +107,16 @@ impl Ears {
         self.gain = if peak > self.gain { peak } else { self.gain * fall(dt, 1.5) + peak * (1.0 - fall(dt, 1.5)) };
         self.time = (self.time + dt as f64 * speed.max(0.0) as f64).rem_euclid(3600.0);
         self.dt = dt;
+        // The spectrum's history: a row every so often (at most a few a frame).
+        self.hist_due += dt;
+        let mut rows = 0;
+        while self.hist_due >= HIST_SECS && rows < 4 {
+            self.hist_due -= HIST_SECS;
+            rows += 1;
+            self.hist_at = (self.hist_at + 1) % HIST;
+            self.hist[self.hist_at] = self.spec.map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8);
+        }
+        self.hist_due = self.hist_due.min(HIST_SECS);
     }
 
     /// What the Visuals are shown now.
@@ -114,6 +138,10 @@ impl Ears {
         }
         for (o, v) in s.notes.iter_mut().zip(self.notes) {
             *o = (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+        }
+        for r in 0..HIST {
+            let row = &self.hist[(self.hist_at + HIST - r) % HIST];
+            s.hist[r * SCOPE_W..(r + 1) * SCOPE_W].copy_from_slice(row);
         }
         s
     }
@@ -196,6 +224,7 @@ uniform float u_seed;
 uniform vec3 u_vcol;
 uniform sampler2D u_scope;
 uniform sampler2D u_milk;
+uniform sampler2D u_hist;
 uniform float u_vfrom;
 uniform float u_vmix;
 uniform float u_vstyle;
@@ -243,9 +272,18 @@ vec3 palette(float t) {
 // A line `d` away (in heights of the stage): sharp, and glowing as Glow says.
 float lit(float d, float w) {
     float px = 1.0 / u_stage.y;
+    w *= 1.0 + 3.0 * A_THICKNESS;
     float core = smoothstep(w * px + px, w * px - px * 0.5, abs(d));
     float reach = px * (2.0 + 18.0 * P_GLOW.x);
-    return core + exp(-abs(d) / reach) * (0.05 + 0.45 * A_GLOW);
+    float v = core + exp(-abs(d) / reach) * (0.05 + 0.45 * A_GLOW);
+    // Scatter: the line falling apart into points.
+    if (A_SCATTER > 0.001) {
+        float size = 1.0 + 2.0 * A_SCATTER;
+        vec2 cell = floor(v_uv * u_stage / size);
+        float keep = step(h21(cell * 0.731), 1.0 - 0.85 * A_SCATTER);
+        v *= mix(1.0, keep * (1.0 + 1.5 * A_SCATTER), A_SCATTER);
+    }
+    return v;
 }
 
 float T;
@@ -594,6 +632,177 @@ vec3 metaballs(vec2 p) {
     return palette(hue) * (inside * 0.35 + edge * 1.2 + smoothstep(0.3, 1.0, f) * 0.15) * (1.0 + A_GLOW);
 }
 
+// The spectrum some frames ago (row 0: now, 63: about three seconds back), at x (0..1, low to high).
+float hist(float x, float row) { return texture2D(u_hist, vec2(clamp(x, 0.0, 1.0) * (127.0 / 128.0) + 0.5 / 128.0, (row + 0.5) / 64.0)).r; }
+
+// A landscape: its height at a point of the ground (x across, z away).
+float terrain(vec2 w) {
+    float d = 1.0 + 2.0 * A_DETAIL;
+    float n = vnoise(w * 1.3 * d) * 0.6 + vnoise(w * 3.1 * d + 7.0) * 0.3;
+    return n * (0.22 + 0.5 * warp) + spec(clamp(abs(w.x) * 0.45, 0.0, 1.0)) * 0.22;
+}
+
+vec3 pointterrain(vec2 p) {
+    vec3 col = vec3(0.0);
+    float px = 1.0 / u_stage.y;
+    float camh = 0.55 + 0.35 * A_DEPTH;
+    float rows = floor(56.0 * dens);
+    float step_ = 0.1 / sqrt(dens);
+    float scroll = T * 0.5;
+    float back = floor(scroll / step_);
+    float near = 0.5;
+    float scan = near + fract(T * 0.12) * rows * step_;
+    p = rot(p, orbit * 0.1);
+    for (int i = 0; i < 128; i++) {
+        float fi = float(i);
+        if (fi >= rows) { break; }
+        float zl = fi * step_ - fract(scroll / step_) * step_ + near;
+        float persp = 1.0 / zl;
+        float ylo = -camh * persp * 0.9 + 0.25;
+        float yhi = (0.8 - camh) * persp * 0.9 + 0.25;
+        if (p.y < ylo - 0.03 || p.y > yhi + 0.03) { continue; }
+        float wz = (fi + back) * step_;
+        float sp = 0.012 * zl;
+        float xw = p.x / persp;
+        float xg = (floor(xw / sp) + 0.5) * sp;
+        vec2 w = vec2(xg, wz);
+        float h = terrain(w) + burst * 0.5 * h21(w * 13.0 + floor(T * 4.0)) * h21(w * 7.0);
+        vec2 at = vec2(xg * persp, (h - camh) * persp * 0.9 + 0.25);
+        float size = px * (0.8 + 0.5 * persp) * (1.0 + 2.5 * A_THICKNESS);
+        float d = length(p - at);
+        float fog = exp(-(zl - near) * 0.35);
+        float sweep = exp(-abs(zl - scan) * 10.0);
+        col += palette(fract(h * 1.2 + 0.1)) * smoothstep(size * 1.6, size * 0.3, d) * fog * (0.7 + 1.8 * sweep);
+    }
+    return col * (1.0 + A_GLOW);
+}
+
+vec3 mesh(vec2 p) {
+    vec3 col = vec3(0.0);
+    float camh = 0.42 + 0.5 * A_DEPTH;
+    float rows = floor(30.0 * dens);
+    float step_ = 0.16 / sqrt(dens);
+    float scroll = T * 0.45;
+    float back = floor(scroll / step_);
+    // Far to near, the nearer covering what is behind it.
+    for (int k = 0; k < 96; k++) {
+        float fi = float(95 - k);
+        if (fi >= rows) { continue; }
+        float zl = fi * step_ - fract(scroll / step_) * step_ + 0.3;
+        float persp = 1.0 / zl;
+        float yhi = (0.9 - camh) * persp * 0.8 + 0.08;
+        if (p.y > yhi + 0.03) { continue; }
+        float wz = (fi + back) * step_;
+        float fog = exp(-zl * 0.3);
+        float xw = p.x / persp;
+        float h = terrain(vec2(xw, wz)) + burst * 0.2 * sin(xw * 9.0 + T * 5.0);
+        float y = (h - camh) * persp * 0.8 + 0.08;
+        if (p.y < y) { col *= 0.0; }
+        col += palette(fi / max(rows, 1.0)) * lit(p.y - y, 0.8) * fog;
+        // Across to the nearer row, where the grid is.
+        float zn = zl - step_;
+        if (zn > 0.25) {
+            float pn = 1.0 / zn;
+            float sp = step_ * 0.8;
+            float xg = (floor(xw / sp + 0.5)) * sp;
+            vec2 a = vec2(xg * persp, (terrain(vec2(xg, wz)) - camh) * persp * 0.8 + 0.08);
+            vec2 b = vec2(xg * pn, (terrain(vec2(xg, wz - step_)) - camh) * pn * 0.8 + 0.08);
+            vec2 ab = b - a;
+            float t = clamp(dot(p - a, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
+            col += palette(fi / max(rows, 1.0)) * lit(length(p - a - ab * t), 0.6) * fog * 0.6;
+        }
+    }
+    return col * (1.0 + A_GLOW * 0.5);
+}
+
+vec3 waterfall(vec2 p) {
+    vec3 col = vec3(0.0);
+    float camh = 0.45 + 0.3 * A_DEPTH;
+    p = rot(p, orbit * 0.1);
+    // The oldest at the back, now at the front.
+    for (int k = 0; k < 64; k++) {
+        float fi = float(63 - k);
+        float z = 0.4 + fi * 0.04 * (1.0 + A_DEPTH);
+        float persp = 1.0 / z;
+        float xw = p.x / persp;
+        if (abs(xw) > 1.2) { continue; }
+        float edge = smoothstep(1.2, 0.85, abs(xw));
+        float h = (hist(abs(xw) * 0.85, fi) * (0.3 + 0.5 * warp) + burst * 0.15 * h11(fi + floor(T * 4.0))) * edge;
+        float y = (h * 1.6 - camh) * persp * 0.55 + 0.22;
+        if (p.y < y - 0.002) { col *= 0.0; }
+        col += palette(fi / 63.0) * lit(p.y - y, 1.0) * exp(-fi * 0.02);
+    }
+    return col;
+}
+
+vec2 flow_at(vec2 q) {
+    float e = 0.02;
+    float t = T * 0.07;
+    float a = vnoise(q + vec2(0.0, e) + t) + 0.5 * vnoise(q * 2.1 + vec2(0.0, e) - t);
+    float b = vnoise(q - vec2(0.0, e) + t) + 0.5 * vnoise(q * 2.1 - vec2(0.0, e) - t);
+    float c = vnoise(q + vec2(e, 0.0) + t) + 0.5 * vnoise(q * 2.1 + vec2(e, 0.0) - t);
+    float d = vnoise(q - vec2(e, 0.0) + t) + 0.5 * vnoise(q * 2.1 - vec2(e, 0.0) - t);
+    return vec2(a - b, -(c - d)) / (2.0 * e);
+}
+
+vec3 flow(vec2 p) {
+    vec2 q = rot(p, orbit) * (1.6 * (1.0 + A_DETAIL)) * (1.0 + warp * 0.6);
+    float acc = 0.0;
+    vec2 a = q;
+    float grid = 160.0 * dens;
+    for (int k = 0; k < 16; k++) {
+        vec2 v = flow_at(a);
+        a += v / max(length(v), 1e-4) * 0.011;
+        // Sparse points, streaked along the flow (and moving along it with time).
+        vec2 g = floor(a * grid + vec2(0.0, T * 0.0));
+        float pt = step(0.965 - burst * 0.05, h21(g + floor(T * 3.0 + float(k) * 0.0)));
+        acc += pt * (1.0 - float(k) / 16.0);
+    }
+    float shade = vnoise(q * 0.7 + T * 0.05);
+    return palette(shade) * acc * 0.55 * (1.0 + A_GLOW);
+}
+
+vec3 strata(vec2 uv) {
+    float n = floor(110.0 * dens);
+    // Bands slipping sideways on the kick.
+    float band = floor(uv.y * 7.0);
+    float x = uv.x + (h11(band + floor(T * 2.0)) - 0.5) * 0.25 * burst;
+    float i = floor(uv.y * n + 0.5);
+    float base = i / n;
+    float det = 1.0 + 2.0 * A_DETAIL;
+    float bend = (vnoise(vec2(x * 3.0 * det, i * 0.05 + T * 0.15)) - 0.5) * (0.5 + 2.5 * warp) * 4.0 / n;
+    bend += (spec(x) - 0.2) * 3.0 / n * sin(x * 25.0 + i * 0.7 + T);
+    float d = uv.y - base - bend;
+    float bright = 0.5 + 0.7 * vnoise(vec2(i * 0.31, T * 0.4));
+    return palette(base) * lit(d, 0.55) * bright;
+}
+
+vec3 dust(vec2 p) {
+    vec3 col = vec3(0.0);
+    float a = orbit + T * 0.12;
+    float ca = cos(a);
+    float sa = sin(a);
+    float det = 1.6 * (1.0 + A_DETAIL);
+    for (int k = 0; k < 9; k++) {
+        float fk = float(k);
+        float z = mix(-0.6, 0.6, fk / 8.0);
+        float scale = 70.0 * dens * (1.0 + z * 0.3 * (1.0 + A_DEPTH));
+        vec2 g = p * scale + fk * 17.0;
+        vec2 id = floor(g);
+        vec2 off = h22(id);
+        vec2 pt = (id + off - fk * 17.0) / scale;
+        vec3 w = vec3(pt.x, pt.y, z);
+        vec3 r = vec3(w.x * ca + w.z * sa, w.y, -w.x * sa + w.z * ca);
+        // Clouds: where the noise is thick, and thinning away from the middle.
+        float den = fbm(r.xz * det + vec2(0.0, T * 0.05)) + fbm(r.yz * det + 5.0 - T * 0.04) - 0.9 * length(r);
+        float show = smoothstep(0.62 - 0.15 * burst - 0.08 * warp, 0.85, den);
+        float d = length(g - id - off);
+        float size = 0.22 * (1.0 + 2.0 * A_THICKNESS);
+        col += palette(fk / 8.0) * smoothstep(size, 0.0, d) * show * (0.8 + 0.6 * spec(h21(id))) * 1.6;
+    }
+    return col * (1.0 + A_GLOW);
+}
+
 // Milk's feedback as it is shown: an echo of it, gamma, brighter, darker, solarized, negative, its colours turned.
 vec3 milk(vec2 uv) {
     milk_params(tr_weight(uv, aspect, u_mmix, u_mstyle));
@@ -633,7 +842,13 @@ vec3 scene_at(float scene, vec2 p, vec2 uv) {
     if (scene < 11.5) { return starfield(p); }
     if (scene < 12.5) { return fractal(p); }
     if (scene < 13.5) { return plexus(p); }
-    return metaballs(p);
+    if (scene < 14.5) { return metaballs(p); }
+    if (scene < 15.5) { return pointterrain(p); }
+    if (scene < 16.5) { return mesh(p); }
+    if (scene < 17.5) { return waterfall(p); }
+    if (scene < 18.5) { return flow(p); }
+    if (scene < 19.5) { return strata(uv); }
+    return dust(p);
 }
 
 void main() {
@@ -975,6 +1190,23 @@ mod tests {
     }
 
     #[test]
+    fn the_spectrum_is_kept_a_row_every_24th_of_a_second() {
+        let mut ears = Ears::default();
+        let tone = sine(1000.0, 48000.0, 4096, 0.3);
+        ears.frame(&tone, 0, 0.0, 0.25, 48000.0, 1.0);
+        let s = ears.scope();
+        assert!(s.hist[..SCOPE_W].iter().any(|v| *v > 100), "now: the tone");
+        // Silence for a second: the tone goes back in the history, 24 rows a second.
+        for _ in 0..24 {
+            ears.frame(&vec![0.0; 2000], 0, 0.0, 1.0 / 24.0, 48000.0, 1.0);
+        }
+        let s = ears.scope();
+        let loud = |r: usize| s.hist[r * SCOPE_W..(r + 1) * SCOPE_W].iter().copied().max().unwrap();
+        assert!(loud(0) < loud(25), "the newest quieter than a second ago: {} {}", loud(0), loud(25));
+        assert_eq!(s.hist_rgba().len(), SCOPE_W * HIST * 4);
+    }
+
+    #[test]
     fn notes_light_and_fall_and_time_runs_with_speed() {
         let mut ears = Ears::default();
         ears.frame(&[], 1u128 << 60 | 1u128 << 64, 0.9, 0.02, 48000.0, 2.0);
@@ -995,10 +1227,10 @@ mod tests {
         for knob in ["A_BURST", "A_WARP", "A_DENSITY", "A_GLOW", "A_ORBIT", "A_FRACTURE", "P_VISUALS"] {
             assert!(SHADER.contains(knob), "{knob}");
         }
-        for f in ["ridges(", "lattice(", "swarm(", "data(", "tunnel(", "scope(", "contours(", "shards(", "notegrid(", "strings(", "milk(", "starfield(", "fractal(", "plexus(", "metaballs("] {
+        for f in ["ridges(", "lattice(", "swarm(", "data(", "tunnel(", "scope(", "contours(", "shards(", "notegrid(", "strings(", "milk(", "starfield(", "fractal(", "plexus(", "metaballs(", "pointterrain(", "mesh(", "waterfall(", "flow(", "strata(", "dust("] {
             assert!(SHADER.matches(f).count() >= 2, "{f} drawn");
         }
-        assert_eq!(krabton_engine::video::VISUAL_SCENES.len(), 15);
+        assert_eq!(krabton_engine::video::VISUAL_SCENES.len(), 21);
         // Every Milk value the shaders use has its name.
         let names = milk_defines();
         assert!(names.contains("P[4].x = w < 0.5 ? u_o[4].x : u_m[4].x"), "Wave Shape (16) changes at half way");

@@ -1655,10 +1655,20 @@ pub enum Effect {
     Dither,
     /// As an old tape: lines wobbling, colours bleeding, a band of noise rolling down.
     Vhs,
+    /// The Visuals' camera lower or higher, looking further (the 3D scenes).
+    Depth,
+    /// The Visuals finer: more of their small shapes.
+    Detail,
+    /// The Visuals' lines and points thicker.
+    Thickness,
+    /// The Visuals' lines falling apart into points, as a scan of points.
+    Scatter,
 }
 
 /// The Visuals' scenes: what Krabton draws.
-pub const VISUAL_SCENES: [&str; 15] = ["Ridges", "Lattice", "Swarm", "Data", "Tunnel", "Scope", "Contours", "Shards", "Note Grid", "Strings", "Milk", "Starfield", "Fractal", "Plexus", "Metaballs"];
+pub const VISUAL_SCENES: [&str; 21] = [
+    "Ridges", "Lattice", "Swarm", "Data", "Tunnel", "Scope", "Contours", "Shards", "Note Grid", "Strings", "Milk", "Starfield", "Fractal", "Plexus", "Metaballs", "Point Terrain", "Mesh", "Waterfall", "Flow", "Strata", "Dust",
+];
 /// How the Visuals go on the film.
 pub const VISUAL_BLENDS: [&str; 7] = ["Instead of the film", "Over the film", "Screen", "Multiply", "Difference", "The film inside it", "Bends the film"];
 /// The Visuals' colours.
@@ -1666,7 +1676,7 @@ pub const VISUAL_PALETTES: [&str; 6] = ["Its colour", "Ice", "Ember", "Neon", "A
 
 impl Effect {
     /// In the order the lists show them: where the picture is, how it looks, its colours, what it leaves behind, the film.
-    pub const ALL: [Effect; 52] = [
+    pub const ALL: [Effect; 56] = [
         Effect::Zoom,
         Effect::Flash,
         Effect::Shake,
@@ -1719,8 +1729,12 @@ impl Effect {
         Effect::Ascii,
         Effect::Dither,
         Effect::Vhs,
+        Effect::Depth,
+        Effect::Detail,
+        Effect::Thickness,
+        Effect::Scatter,
     ];
-    pub const COUNT: usize = 52;
+    pub const COUNT: usize = 56;
 
     /// Its place in [`Look::fx`].
     pub fn index(self) -> usize {
@@ -1781,6 +1795,10 @@ impl Effect {
             Effect::Ascii => "ASCII",
             Effect::Dither => "Dither",
             Effect::Vhs => "VHS",
+            Effect::Depth => "Depth",
+            Effect::Detail => "Detail",
+            Effect::Thickness => "Thickness",
+            Effect::Scatter => "Scatter",
         }
     }
 
@@ -1838,6 +1856,10 @@ impl Effect {
             Effect::Ascii => "In letters and signs, as a terminal shows it",
             Effect::Dither => "In few colours, dithered with a pattern of dots",
             Effect::Vhs => "As an old tape: lines wobbling, colours bleeding, a band of noise rolling down",
+            Effect::Depth => "The Visuals' camera lower or higher, looking further (the 3D scenes)",
+            Effect::Detail => "The Visuals finer: more of their small shapes",
+            Effect::Thickness => "The Visuals' lines and points thicker",
+            Effect::Scatter => "The Visuals' lines falling apart into points, as a scan of points",
         }
     }
 
@@ -2054,7 +2076,7 @@ impl Effect {
                 const P: &[FxParam] = &[FxParam::range("Wobble", "How much the lines wobble", 0.0, 1.0, 0.5), FxParam::range("Noise", "How much noise, and its band", 0.0, 1.0, 0.5), FxParam::range("Bleed", "How far the colours bleed", 0.0, 1.0, 0.5)];
                 P
             }
-            Effect::Invert | Effect::Freeze | Effect::Jump | Effect::NextClip => &[],
+            Effect::Invert | Effect::Freeze | Effect::Jump | Effect::NextClip | Effect::Depth | Effect::Detail | Effect::Thickness | Effect::Scatter => &[],
         }
     }
 
@@ -2089,7 +2111,7 @@ impl Effect {
 
     /// Whether it is (or moves) the Visuals Krabton makes, rather than the film.
     pub fn is_visual(self) -> bool {
-        matches!(self, Effect::Visuals | Effect::Burst | Effect::Warp | Effect::Density | Effect::Rush | Effect::Glow | Effect::Orbit | Effect::Fracture)
+        matches!(self, Effect::Visuals | Effect::Burst | Effect::Warp | Effect::Density | Effect::Rush | Effect::Glow | Effect::Orbit | Effect::Fracture | Effect::Depth | Effect::Detail | Effect::Thickness | Effect::Scatter)
     }
 
     /// Whether it changes where the film is, not how it looks.
@@ -2411,9 +2433,9 @@ pub struct Preset {
     pub fx: Vec<(Effect, FxSetting)>,
 }
 
-pub const PRESET_NAMES: [&str; 27] = [
+pub const PRESET_NAMES: [&str; 33] = [
     "Pulse", "Glitch", "Dream", "Strobe", "Kaleido", "Cutup", "Still", "VHS Tape", "Terminal", "Comic", "Heatmap", "Datamosh", "Ridges", "Lattice", "Swarm", "Data", "Tunnel", "Scope", "Contours", "Shards", "Note Grid", "Strings", "Milk", "Starfield",
-    "Fractal", "Plexus", "Metaballs",
+    "Fractal", "Plexus", "Metaballs", "Point Terrain", "Mesh", "Waterfall", "Flow", "Strata", "Dust",
 ];
 
 /// An effect always there, at `base` (for presets).
@@ -2446,6 +2468,12 @@ pub fn preset(name: &str) -> Option<Preset> {
             "Fractal" => ("A fractal of its own, changing shape with the bass, deeper with the mids, turning with the bar", 5, vec![l(S::Bass, E::Warp, 0.6), l(S::Kick, E::Burst, 0.4), l(S::Mids, E::Density, 0.5), l(S::Ramp, E::Orbit, 0.5), l(S::Highs, E::Glow, 0.3)]),
             "Plexus" => ("Points drifting, joined by lines when near: more with the mids, flung on the kick", 1, vec![l(S::Mids, E::Density, 0.5), l(S::Kick, E::Burst, 0.6), l(S::Highs, E::Glow, 0.5), l(S::Level, E::Rush, 0.4)]),
             "Metaballs" => ("Blobs that melt into each other, swelling with the spectrum, thrown apart on the kick", 3, vec![l(S::Kick, E::Burst, 0.6), l(S::Bass, E::Warp, 0.5), l(S::Highs, E::Glow, 0.4), l(S::Lfo, E::Orbit, 0.4)]),
+            "Point Terrain" => ("A landscape as a scan of points, a sweep of light running over it: the bass lifts it, the kick throws its points up, the camera swings with the bars", 0, vec![l(S::Bass, E::Warp, 0.6), l(S::Kick, E::Burst, 0.5), l(S::Highs, E::Glow, 0.4), l(S::Level, E::Rush, 0.5), l(S::Ramp, E::Depth, 0.4)]),
+            "Mesh" => ("Flying over a landscape of lines: the bass lifts it, the mids make it finer, the kick shakes it", 1, vec![l(S::Bass, E::Warp, 0.6), l(S::Kick, E::Burst, 0.4), l(S::Mids, E::Detail, 0.4), l(S::Lfo, E::Depth, 0.4), l(S::Level, E::Rush, 0.4)]),
+            "Waterfall" => ("The music's spectrum, minute by minute, as ridges going away: what it was, still there behind what it is", 0, vec![l(S::Level, E::Glow, 0.4), l(S::Kick, E::Burst, 0.3), l(S::Lfo, E::Depth, 0.4), l(S::Hits, E::Scatter, 0.3)]),
+            "Flow" => ("Streams through a field that moves: the mids stir it, the level drives it, the kick breaks it into points", 3, vec![l(S::Mids, E::Warp, 0.6), l(S::Level, E::Rush, 0.5), l(S::Highs, E::Glow, 0.4), l(S::Kick, E::Scatter, 0.4)]),
+            "Strata" => ("Hundreds of fine lines as layers of rock, bent by the bass, slipping on the hits", 0, vec![l(S::Bass, E::Warp, 0.6), l(S::Kick, E::Burst, 0.6), l(S::Hits, E::Fracture, 0.5), l(S::Highs, E::Thickness, 0.3)]),
+            "Dust" => ("A cloud of dust in points, turning, thicker with the mids, blown open on the kick", 1, vec![l(S::Kick, E::Burst, 0.6), l(S::Mids, E::Density, 0.5), l(S::Ramp, E::Orbit, 1.0), l(S::Bass, E::Warp, 0.4), l(S::Highs, E::Glow, 0.3)]),
             "Milk" => ("Feedback in the manner of the classic music visualisers: the last frame pulled through a field of motion, waves and shapes over it, a preset melting into the next every eight bars", 0, vec![l(S::Kick, E::Burst, 0.3), l(S::Highs, E::Glow, 0.3)]),
             _ => ("A string for every note that plays, shaking as long as it sounds", 5, vec![l(S::Notes, E::Burst, 0.5), l(S::Level, E::Glow, 0.5), l(S::Mids, E::Warp, 0.3), l(S::Ramp, E::Orbit, 0.4)]),
         };

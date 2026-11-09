@@ -327,7 +327,7 @@ fn link_response(ui: &mut Ui, i: usize, l: &mut VideoLink) {
 
 /// The Look's faders, in groups: (name, colour, effects).
 const GROUPS: [(&str, [u8; 3], &[Effect]); 9] = [
-    ("VISUALS", [0xa0, 0x78, 0xff], &[Effect::Visuals, Effect::Burst, Effect::Warp, Effect::Density, Effect::Rush, Effect::Glow, Effect::Orbit, Effect::Fracture]),
+    ("VISUALS", [0xa0, 0x78, 0xff], &[Effect::Visuals, Effect::Burst, Effect::Warp, Effect::Density, Effect::Rush, Effect::Glow, Effect::Orbit, Effect::Fracture, Effect::Depth, Effect::Detail, Effect::Thickness, Effect::Scatter]),
     ("MOTION", [0x40, 0xc8, 0xdc], &[Effect::Zoom, Effect::Shake, Effect::Spin, Effect::ZoomBlur, Effect::Feedback]),
     ("SHAPE", [0x5c, 0xd0, 0x7a], &[Effect::Mirror, Effect::Kaleido, Effect::Tile, Effect::Swirl, Effect::Fisheye, Effect::Ripple, Effect::Blur]),
     ("COLOUR", [0xff, 0x9a, 0x40], &[Effect::Hue, Effect::Tint, Effect::Grade, Effect::Invert, Effect::Map]),
