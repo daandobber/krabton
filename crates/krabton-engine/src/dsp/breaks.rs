@@ -6,7 +6,8 @@
 //! rising or falling as they go (*Ramp*), backwards (*Reverse*), pitched up
 //! or down (*Pitch Jumps*: the snare runs), at half speed (*Half*), a roll
 //! that speeds up to close every 2, 4 or 8 bars (*Fill*); the dice thrown
-//! again every bar, 2 or 4 (*Mutate*) or never, from a *Seed*. Each cut
+//! again every bar, 2 or 4 (*Mutate*) or never (as it starts: the
+//! cut-up stays as it is, more of it the further a fader goes), from a *Seed*. Each cut
 //! plays at its own speed, whatever the song's tempo, cut off at the next
 //! (or sooner, *Gate*); *Swing*, the break's *Pitch*, *Tone* and *Level*.
 //! It plays by itself while the song plays; a held key moves it up or down
@@ -36,6 +37,24 @@ pub const PITCH: usize = 15;
 pub const TONE: usize = 16;
 pub const LEVEL: usize = 17;
 pub const SEED: usize = 18;
+/// Two LFOs, each moving one of its settings on the song's beat: what, how slowly, how, how far.
+pub const LFO1_TARGET: usize = 19;
+pub const LFO1_RATE: usize = 20;
+pub const LFO1_SHAPE: usize = 21;
+pub const LFO1_DEPTH: usize = 22;
+pub const LFO2_TARGET: usize = 23;
+pub const LFO2_RATE: usize = 24;
+pub const LFO2_SHAPE: usize = 25;
+pub const LFO2_DEPTH: usize = 26;
+/// The first of each LFO's four settings.
+pub const LFOS: [usize; 2] = [LFO1_TARGET, LFO2_TARGET];
+
+pub const LFO_TARGETS: &[&str] = &["Off", "Pitch", "Shuffle", "Repeat", "Ratchet", "Ramp", "Reverse", "Pitch Jumps", "Half", "Swing", "Gate", "Tone", "Level"];
+/// The setting each target moves.
+pub const LFO_PARAMS: [usize; 13] = [usize::MAX, PITCH, SHUFFLE, REPEAT, RATCHET, RAMP, REVERSE, JUMPS, HALF, SWING, GATE, TONE, LEVEL];
+pub const LFO_RATES: &[&str] = &["1/4", "1/2", "1 bar", "2 bars", "4 bars", "8 bars", "16 bars"];
+const LFO_BEATS: [f64; 7] = [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0];
+pub const LFO_SHAPES: &[&str] = &["Sine", "Triangle", "Ramp up", "Ramp down", "Square", "Random"];
 
 pub const BAR_NAMES: &[&str] = &["Auto", "1", "2", "4", "8"];
 pub const GRIDS: &[&str] = &["1/16", "1/32"];
@@ -64,17 +83,65 @@ pub static SPECS: &[ParamSpec] = &[
     ParamSpec::log("Tone", "Sound", 300.0, 20000.0, 20000.0, Unit::Hz),
     ParamSpec::lin("Level", "Sound", -24.0, 12.0, 0.0, Unit::Db),
     ParamSpec::lin("Seed", "Dice", 0.0, 999.0, 1.0, Unit::None),
+    ParamSpec::choice("LFO 1 To", "LFO", LFO_TARGETS, 0),
+    ParamSpec::choice("LFO 1 Rate", "LFO", LFO_RATES, 2),
+    ParamSpec::choice("LFO 1 Shape", "LFO", LFO_SHAPES, 0),
+    ParamSpec::lin("LFO 1 Depth", "LFO", -1.0, 1.0, 0.5, Unit::Percent),
+    ParamSpec::choice("LFO 2 To", "LFO", LFO_TARGETS, 0),
+    ParamSpec::choice("LFO 2 Rate", "LFO", LFO_RATES, 4),
+    ParamSpec::choice("LFO 2 Shape", "LFO", LFO_SHAPES, 1),
+    ParamSpec::lin("LFO 2 Depth", "LFO", -1.0, 1.0, 0.5, Unit::Percent),
 ];
+
+/// An LFO's shape at `phase` (0..1) of cycle `cycle`: -1..1.
+pub fn lfo_shape(shape: usize, phase: f64, cycle: i64) -> f32 {
+    let t = phase.rem_euclid(1.0) as f32;
+    match shape {
+        0 => (t * std::f32::consts::TAU).sin(),
+        1 => 1.0 - 4.0 * (t - 0.5).abs(),
+        2 => t * 2.0 - 1.0,
+        3 => 1.0 - t * 2.0,
+        4 => {
+            if t < 0.5 {
+                1.0
+            } else {
+                -1.0
+            }
+        }
+        _ => hash((cycle as u32).wrapping_mul(0x9E37_79B9) ^ 0x51ED_270B) * 2.0 - 1.0,
+    }
+}
+
+/// The settings as the LFOs move them at `beat` (into `out`, as long as `SPECS`).
+pub fn modulated(p: &[f32], beat: f64, out: &mut [f32]) {
+    let n = out.len().min(p.len());
+    out[..n].copy_from_slice(&p[..n]);
+    if p.len() < SPECS.len() || out.len() < SPECS.len() {
+        return;
+    }
+    for first in LFOS {
+        let target = (p[first].round().max(0.0) as usize).min(LFO_PARAMS.len() - 1);
+        let k = LFO_PARAMS[target];
+        if k == usize::MAX {
+            continue;
+        }
+        let beats = LFO_BEATS[(p[first + 1].round().max(0.0) as usize).min(LFO_BEATS.len() - 1)];
+        let at = beat / beats;
+        let v = lfo_shape(p[first + 2].round().max(0.0) as usize, at.fract(), at.floor() as i64);
+        let spec = &SPECS[k];
+        out[k] = spec.from_norm((spec.to_norm(out[k]) + p[first + 3] * v * 0.5).clamp(0.0, 1.0));
+    }
+}
 
 /// Its presets: (name, settings changed from where they start).
 const PRESETS: &[(&str, &[(usize, f32)])] = &[
     ("Clean", &[]),
-    ("Amen Mash", &[(SHUFFLE, 0.35), (REPEAT, 0.15), (RATCHET, 0.12), (REVERSE, 0.05), (FILL, 2.0), (MUTATE, 2.0)]),
-    ("Drill", &[(SHUFFLE, 0.25), (RATCHET, 0.35), (RATCHET_MAX, 4.0), (RAMP, 12.0), (GRID, 1.0), (FILL, 1.0), (MUTATE, 1.0), (JUMPS, 0.1)]),
-    ("Breakcore", &[(SHUFFLE, 0.6), (REPEAT, 0.25), (RATCHET, 0.3), (RATCHET_MAX, 4.0), (RAMP, 7.0), (REVERSE, 0.15), (JUMPS, 0.3), (JUMP_RANGE, 12.0), (FILL, 1.0), (MUTATE, 1.0)]),
-    ("Snare Runs", &[(JUMPS, 0.55), (JUMP_RANGE, 12.0), (RATCHET, 0.2), (RAMP, 5.0), (MUTATE, 2.0)]),
+    ("Amen Mash", &[(SHUFFLE, 0.35), (REPEAT, 0.15), (RATCHET, 0.12), (REVERSE, 0.05), (FILL, 2.0)]),
+    ("Drill", &[(SHUFFLE, 0.25), (RATCHET, 0.35), (RATCHET_MAX, 4.0), (RAMP, 12.0), (GRID, 1.0), (FILL, 1.0), (JUMPS, 0.1)]),
+    ("Breakcore", &[(SHUFFLE, 0.6), (REPEAT, 0.25), (RATCHET, 0.3), (RATCHET_MAX, 4.0), (RAMP, 7.0), (REVERSE, 0.15), (JUMPS, 0.3), (JUMP_RANGE, 12.0), (FILL, 1.0)]),
+    ("Snare Runs", &[(JUMPS, 0.55), (JUMP_RANGE, 12.0), (RATCHET, 0.2), (RAMP, 5.0)]),
     ("Half-Time", &[(HALF, 0.6), (SHUFFLE, 0.15), (PITCH, -3.0), (TONE, 6000.0)]),
-    ("Stutter", &[(REPEAT, 0.45), (RATCHET, 0.25), (RATCHET_MAX, 2.0), (GATE, 0.55), (MUTATE, 1.0)]),
+    ("Stutter", &[(REPEAT, 0.45), (RATCHET, 0.25), (RATCHET_MAX, 2.0), (GATE, 0.55)]),
 ];
 
 pub fn preset_names() -> &'static [&'static str] {
@@ -148,6 +215,14 @@ pub fn bars_of(p: &[f32], sample: &SampleData) -> usize {
 
 /// What bar `bar` of the song plays, of a break `bars` bars long.
 pub fn plan(p: &[f32], bars: usize, bar: i64) -> Vec<Step> {
+    let mut out = Vec::with_capacity(32);
+    plan_into(&mut out, p, bars, bar);
+    out
+}
+
+/// `plan`, into `out` (cleared first; with room for 32 it never allocates).
+pub fn plan_into(out: &mut Vec<Step>, p: &[f32], bars: usize, bar: i64) {
+    out.clear();
     let n = steps_per_bar(p);
     let cuts = n * bars.max(1);
     let seed = p[SEED].round() as u32;
@@ -161,7 +236,6 @@ pub fn plan(p: &[f32], bars: usize, bar: i64) -> Vec<Step> {
     let most = RATCHETS.iter().position(|r| *r == RATCHETS[(p[RATCHET_MAX].round() as usize).min(4)]).unwrap_or(2);
     // The snare: the cut on the second beat of the break's first bar.
     let snare = n / 4;
-    let mut out: Vec<Step> = Vec::with_capacity(n);
     for k in 0..n {
         let natural = (within * n + k) % cuts;
         let mut s = Step { cut: natural, play: true, ratchet: 1, ramp: 0.0, reverse: false, semis: 0.0, half: false };
@@ -198,7 +272,6 @@ pub fn plan(p: &[f32], bars: usize, bar: i64) -> Vec<Step> {
         }
         out.push(s);
     }
-    out
 }
 
 /// Where cut `k` of `cuts` starts and ends in a break of `frames` frames:
@@ -279,6 +352,9 @@ pub fn builtin() -> &'static SampleRef {
     })
 }
 
+/// Where in its visual values the moved settings start.
+pub const VIS_PARAMS: usize = 5;
+
 /// A cut sounding (or fading out, cut off by the next).
 #[derive(Clone, Copy, Debug, Default)]
 struct Voice {
@@ -301,7 +377,7 @@ pub struct BreaksState {
     bpm: f64,
     beat: f64,
     playing: bool,
-    /// The step it is on (song steps), the sub-hit of a ratchet, the bar planned and its plan.
+    /// The step it is on (song steps), the sub-hit of a ratchet, the step planned and its plan.
     step: Option<i64>,
     hit: Option<(i64, u8)>,
     planned: Option<i64>,
@@ -313,11 +389,13 @@ pub struct BreaksState {
     /// For the face: the step playing, the cut, the bar; how many bars the break is.
     pub shown: (i64, usize, i64),
     bars: usize,
+    /// The settings as the LFOs move them now.
+    eff: Vec<f32>,
 }
 
 impl BreaksState {
     pub fn new(sr: f32) -> Self {
-        Self { sr, bpm: 120.0, beat: 0.0, playing: false, step: None, hit: None, planned: None, plan: Vec::with_capacity(32), voices: [Voice::default(); 2], lp: [0.0; 2], held: Vec::with_capacity(16), shown: (-1, 0, 0), bars: 0 }
+        Self { sr, bpm: 120.0, beat: 0.0, playing: false, step: None, hit: None, planned: None, plan: Vec::with_capacity(32), voices: [Voice::default(); 2], lp: [0.0; 2], held: Vec::with_capacity(16), shown: (-1, 0, 0), bars: 0, eff: vec![0.0; SPECS.len()] }
     }
 
     /// The song's tempo and place (each block).
@@ -351,14 +429,17 @@ impl BreaksState {
         }
     }
 
-    /// What the face is told: the step playing (-1: none), the cut, the bar, the break's bars, playing.
+    /// What the face is told: the step playing (-1: none), the cut, the
+    /// bar, the break's bars, playing; from `VIS_PARAMS` on, the settings as
+    /// the LFOs move them.
     pub fn visual(&self, out: &mut [f32]) {
-        if out.len() >= 5 {
+        if out.len() >= VIS_PARAMS + SPECS.len() {
             out[0] = if self.playing { self.shown.0 as f32 } else { -1.0 };
             out[1] = self.shown.1 as f32;
             out[2] = self.shown.2 as f32;
             out[3] = self.bars as f32;
             out[4] = if self.playing { 1.0 } else { 0.0 };
+            out[VIS_PARAMS..VIS_PARAMS + SPECS.len()].copy_from_slice(&self.eff);
         }
     }
 
@@ -385,12 +466,23 @@ impl BreaksState {
         self.voices[free] = Voice { on: true, pos: if s.reverse { b as f64 - 1.0 } else { a as f64 }, rate, from: a as f64, to: b as f64, age: 0, gate, fade: 0.0, fading: false };
     }
 
-    pub fn render(&mut self, p: &[f32], sample: Option<&SampleRef>, l: &mut [f32], r: &mut [f32]) {
+    pub fn render(&mut self, params: &[f32], sample: Option<&SampleRef>, l: &mut [f32], r: &mut [f32]) {
         let sample: &SampleData = sample.unwrap_or_else(|| builtin());
         let frames = sample.frames();
-        if frames < 2 {
+        if frames < 2 || params.len() < SPECS.len() {
             return;
         }
+        // The settings as the LFOs have them this block.
+        let mut eff = std::mem::take(&mut self.eff);
+        if eff.len() != SPECS.len() {
+            eff.resize(SPECS.len(), 0.0);
+        }
+        modulated(params, self.beat, &mut eff);
+        self.render_with(&eff, sample, frames, l, r);
+        self.eff = eff;
+    }
+
+    fn render_with(&mut self, p: &[f32], sample: &SampleData, frames: usize, l: &mut [f32], r: &mut [f32]) {
         let bars = bars_of(p, sample);
         self.bars = bars;
         let n = steps_per_bar(p);
@@ -415,9 +507,10 @@ impl BreaksState {
                 let late = if step.rem_euclid(2) == 1 { swing } else { 0.0 };
                 if into >= late {
                     let bar = (beat / 4.0).floor() as i64;
-                    if self.planned != Some(bar) {
-                        self.plan = plan(p, bars, bar);
-                        self.planned = Some(bar);
+                    // Planned again every step, so what the LFOs move is heard at once.
+                    if self.planned != Some(step) {
+                        plan_into(&mut self.plan, p, bars, bar);
+                        self.planned = Some(step);
                     }
                     let k = step.rem_euclid(n as i64) as usize;
                     if let Some(s) = self.plan.get(k).copied() {
@@ -504,6 +597,66 @@ mod tests {
     }
 
     #[test]
+    fn more_shuffle_keeps_what_it_swapped_and_swaps_more() {
+        let mut p = p();
+        p[SHUFFLE] = 0.3;
+        let a = plan(&p, 1, 0);
+        p[SHUFFLE] = 0.7;
+        let b = plan(&p, 1, 0);
+        let moved = |v: &[Step]| v.iter().enumerate().filter(|(k, s)| s.cut != *k).count();
+        assert!(moved(&b) >= moved(&a));
+        for (k, (x, y)) in a.iter().zip(&b).enumerate() {
+            if x.cut != k {
+                assert_eq!(x.cut, y.cut, "step {k} keeps its cut");
+            }
+        }
+        assert_eq!(plan(&p, 1, 9), b, "and stays so, bar after bar");
+    }
+
+    #[test]
+    fn lfos_move_pitch_and_shuffle_on_the_beat() {
+        let mut p = p();
+        p[LFO1_TARGET] = 1.0; // Pitch
+        p[LFO1_RATE] = 2.0; // a bar
+        p[LFO1_SHAPE] = 2.0; // ramp up
+        p[LFO1_DEPTH] = 1.0;
+        p[LFO2_TARGET] = 2.0; // Shuffle
+        p[LFO2_SHAPE] = 4.0; // square
+        p[LFO2_DEPTH] = 1.0;
+        let mut out = vec![0.0; SPECS.len()];
+        modulated(&p, 0.0, &mut out);
+        assert!((out[PITCH] + 24.0).abs() < 0.01, "a ramp starts low: {}", out[PITCH]);
+        assert!((out[SHUFFLE] - 0.5).abs() < 0.01, "the square up: {}", out[SHUFFLE]);
+        modulated(&p, 2.0, &mut out);
+        assert!(out[PITCH].abs() < 0.01, "half way: {}", out[PITCH]);
+        modulated(&p, 9.0, &mut out);
+        assert_eq!(out[SHUFFLE], 0.0, "the square down, half way through its 4 bars");
+        // Off: as set.
+        let q = super::tests::p();
+        modulated(&q, 3.3, &mut out);
+        assert_eq!(out, q);
+        for k in 0..6 {
+            for t in [0.0, 0.25, 0.5, 0.99] {
+                let v = lfo_shape(k, t, 3);
+                assert!((-1.0..=1.0).contains(&v), "{k} {t} {v}");
+            }
+        }
+        // It plays, the plan moving with them.
+        let mut st = BreaksState::new(48000.0);
+        st.set_transport(170.0, 0.0, true);
+        let (mut l, mut r) = (vec![0.0f32; 256], vec![0.0f32; 256]);
+        for _ in 0..200 {
+            st.render(&p, None, &mut l, &mut r);
+        }
+        let mut vis = [0.0f32; 64];
+        st.visual(&mut vis);
+        assert!(vis[VIS_PARAMS + PITCH] != 0.0 && vis[4] == 1.0);
+        // An old set, without LFO settings, still plays.
+        let old: Vec<f32> = super::tests::p()[..19].to_vec();
+        st.render(&old, None, &mut l, &mut r);
+    }
+
+    #[test]
     fn a_fill_rolls_faster_on_the_snare_at_the_end() {
         let mut p = p();
         p[FILL] = 2.0; // every 4 bars
@@ -552,6 +705,7 @@ mod tests {
         assert!(peak > 0.1 && peak < 2.0, "{peak}");
         for name in preset_names() {
             assert_eq!(preset(name).len(), SPECS.len());
+            assert_eq!(preset(name)[MUTATE], 0.0, "{name}: it stays as it is until asked to change");
         }
     }
 

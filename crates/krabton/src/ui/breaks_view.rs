@@ -20,12 +20,24 @@ const BACKWARD: Color32 = Color32::from_rgb(0x6f, 0xb4, 0xff);
 const UP: Color32 = Color32::from_rgb(0xff, 0x6f, 0x8a);
 
 /// The pages of faders: a name and the parameters on it.
+/// (The LFO page, empty here, has its own controls.)
 const PAGES: &[(&str, &[usize])] = &[
     ("Cut", &[SHUFFLE, REPEAT, REVERSE, HALF]),
-    ("Roll", &[RATCHET, RAMP, JUMPS, JUMP_RANGE]),
-    ("Groove", &[SWING, GATE]),
-    ("Sound", &[PITCH, TONE, LEVEL]),
+    ("Roll", &[RATCHET, RAMP, SWING, GATE]),
+    ("Pitch", &[PITCH, JUMPS, JUMP_RANGE]),
+    ("Sound", &[TONE, LEVEL]),
+    ("LFO", &[]),
 ];
+const LFO_PAGE: usize = 4;
+
+/// The settings as they are now: as the LFOs move them while it plays, else as set.
+fn moved(p: &[f32], live: &InstLive) -> Vec<f32> {
+    if live.vals[4] > 0.0 && live.vals.len() >= VIS_PARAMS + SPECS.len() {
+        live.vals[VIS_PARAMS..VIS_PARAMS + SPECS.len()].to_vec()
+    } else {
+        p.to_vec()
+    }
+}
 
 /// Breaks' panel. Returns a message for the player (a break that would not load, say).
 #[allow(clippy::too_many_arguments)]
@@ -100,7 +112,7 @@ pub(crate) fn breaks_panel(ui: &mut Ui, id: Id, preset: &mut String, params: &mu
         ui.add_space(8.0);
         switches(ui, id, params, h);
         ui.add_space(8.0);
-        faders(ui, id, params, h, mv.as_deref_mut());
+        faders(ui, id, params, live, h, mv.as_deref_mut());
     });
     if live.vals[4] > 0.0 {
         ui.ctx().request_repaint();
@@ -118,7 +130,8 @@ fn screen(ui: &mut Ui, rect: Rect, p: &[f32], src: &SampleData, live: &InstLive)
     let cuts = n * bars;
     let bar = live.vals[2] as i64;
     let now = live.vals[0];
-    let plan = plan(p, bars, bar);
+    let now_p = moved(p, live);
+    let plan = plan(&now_p, bars, bar);
     let ink = crate::skin::ink_dim();
     let inner = rect.shrink(8.0);
     let wave_r = Rect::from_min_max(inner.min, pos2(inner.right(), inner.top() + inner.height() * 0.42));
@@ -221,7 +234,7 @@ fn switches(ui: &mut Ui, id: Id, p: &mut [f32], h: f32) {
     row(ui, &mut y, "Grid", GRID, GRIDS, &["Cut on sixteenths", "Cut on thirty-seconds"]);
     row(ui, &mut y, "Most hits a roll", RATCHET_MAX, RATCHET_NAMES, &[]);
     row(ui, &mut y, "Fill", FILL, &["Off", "2", "4", "8"], &["No fill", "A roll to close every 2 bars", "Every 4 bars", "Every 8 bars"]);
-    row(ui, &mut y, "Mutate", MUTATE, &["Never", "1", "2", "4"], &["The same dice every time round", "New dice every bar", "Every 2 bars", "Every 4 bars"]);
+    row(ui, &mut y, "Mutate", MUTATE, &["Stay", "1", "2", "4"], &["The cut-up stays as it is (the faders say how much)", "Cut it up anew every bar", "Every 2 bars", "Every 4 bars"]);
     // The dice: another throw (right-click: the one before).
     let r = Rect::from_min_size(pos2(rect.left(), y), vec2(w - 3.0, row_h + 4.0));
     let seed = p[SEED].round() as i32;
@@ -234,7 +247,7 @@ fn switches(ui: &mut Ui, id: Id, p: &mut [f32], h: f32) {
 }
 
 /// The faders of one page, the pages picked from a column beside them.
-fn faders(ui: &mut Ui, id: Id, p: &mut [f32], h: f32, mut mv: Option<&mut ModView>) {
+fn faders(ui: &mut Ui, id: Id, p: &mut [f32], live: &InstLive, h: f32, mut mv: Option<&mut ModView>) {
     let tab_key = id.with("page");
     let mut page = ui.data(|d| d.get_temp::<usize>(tab_key).unwrap_or(0)).min(PAGES.len() - 1);
     let fw = 44.0;
@@ -250,6 +263,18 @@ fn faders(ui: &mut Ui, id: Id, p: &mut [f32], h: f32, mut mv: Option<&mut ModVie
             ui.data_mut(|d| d.insert_temp(tab_key, k));
         }
     }
+    let now_p = moved(p, live);
+    // A fader an LFO moves shows where it is now, a line across it.
+    let show_moved = |ui: &Ui, track: Rect, set: f32, now: f32| {
+        if (set - now).abs() > 1e-3 {
+            let y = track.bottom() - now * track.height();
+            ui.painter().line_segment([pos2(track.left() - 5.0, y), pos2(track.right() + 5.0, y)], Stroke::new(2.0_f32, LIT));
+        }
+    };
+    if page == LFO_PAGE {
+        lfos(ui, id, p, Rect::from_min_max(pos2(rect.left() + tab_w, rect.top()), rect.max), mv.as_deref_mut());
+        return;
+    }
     for (k, &pi) in PAGES[page].1.iter().enumerate() {
         let r = Rect::from_min_size(pos2(rect.left() + tab_w + k as f32 * fw, rect.top()), vec2(fw - 4.0, h));
         let spec = &SPECS[pi];
@@ -258,8 +283,67 @@ fn faders(ui: &mut Ui, id: Id, p: &mut [f32], h: f32, mut mv: Option<&mut ModVie
         if changed {
             p[pi] = v;
         }
+        show_moved(ui, track, SPECS[pi].to_norm(p[pi]), SPECS[pi].to_norm(now_p[pi]));
         if let Some(mv) = mv.as_deref_mut() {
             slider_overlay(ui, r, track, id.with(("mod", pi)), spec, p[pi], pi, mv);
+        }
+    }
+}
+
+/// The two LFOs side by side: what each moves, how slowly, its shape, and how far (a fader; below the middle it moves the other way).
+fn lfos(ui: &mut Ui, id: Id, p: &mut [f32], rect: Rect, mut mv: Option<&mut ModView>) {
+    let accent = accent_now();
+    let cw = rect.width() / 2.0;
+    for (j, first) in LFOS.into_iter().enumerate() {
+        let col = Rect::from_min_size(pos2(rect.left() + j as f32 * cw, rect.top()), vec2(cw - 6.0, rect.height()));
+        let mut combos_bottom = col.top();
+        ui.scope_builder(egui::UiBuilder::new().max_rect(col).layout(egui::Layout::top_down(egui::Align::Min)), |ui| {
+            ui.spacing_mut().item_spacing.y = 3.0;
+            let on = p[first].round() as usize > 0;
+            ui.label(RichText::new(format!("LFO {}", j + 1)).small().color(if on { accent } else { crate::skin::ink_dim() }));
+            for (k, names, tip) in [
+                (first, LFO_TARGETS, "What it moves"),
+                (first + 1, LFO_RATES, "How long one sweep takes, on the song's beat"),
+                (first + 2, LFO_SHAPES, "Its shape (Random: a new value every sweep)"),
+            ] {
+                let cur = (p[k].round().max(0.0) as usize).min(names.len() - 1);
+                egui::ComboBox::from_id_salt(id.with(("lfo", k))).width(col.width() - 8.0).selected_text(names[cur]).show_ui(ui, |ui| {
+                    for (i, name) in names.iter().enumerate() {
+                        if ui.selectable_label(i == cur, *name).clicked() {
+                            p[k] = i as f32;
+                        }
+                    }
+                })
+                .response
+                .on_hover_text(tip);
+            }
+            combos_bottom = ui.min_rect().bottom();
+        });
+        let pi = first + 3;
+        let r = Rect::from_min_max(pos2(col.left(), combos_bottom + 6.0), pos2(col.left() + 40.0, col.bottom()));
+        let spec = &SPECS[pi];
+        let mut v = p[pi];
+        let (changed, track) = param_slider(ui, r, id.with(("fader", pi)), spec, &mut v, accent);
+        if changed {
+            p[pi] = v;
+        }
+        if let Some(mv) = mv.as_deref_mut() {
+            slider_overlay(ui, r, track, id.with(("mod", pi)), spec, p[pi], pi, mv);
+        }
+        // Its shape, drawn beside the fader.
+        let shape_r = Rect::from_min_max(pos2(r.right() + 6.0, r.top() + 14.0), pos2(col.right() - 2.0, (r.top() + 60.0).min(col.bottom())));
+        if shape_r.width() > 10.0 && shape_r.height() > 10.0 {
+            let shape = p[first + 2].round().max(0.0) as usize;
+            let pts: Vec<_> = (0..=40)
+                .map(|i| {
+                    let t = i as f64 / 40.0;
+                    let cyc = (t * 2.0).floor() as i64;
+                    let v = lfo_shape(shape, (t * 2.0).fract(), cyc) * p[pi].signum().max(-1.0) * if p[pi] == 0.0 { 0.0 } else { 1.0 };
+                    pos2(shape_r.left() + t as f32 * shape_r.width(), shape_r.center().y - v * shape_r.height() * 0.45)
+                })
+                .collect();
+            let c = if p[first].round() as usize > 0 { accent } else { crate::skin::ink_dim() };
+            ui.painter().add(egui::Shape::line(pts, Stroke::new(1.5_f32, c)));
         }
     }
 }
