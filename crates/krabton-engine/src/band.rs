@@ -42,7 +42,7 @@ pub const FOLLOWS: &[&str] = &["Root", "Chord", "Bass"];
 pub const NONE: u8 = 0xff;
 
 /// The sequencers that can follow the band (they have Band and Follow, last).
-pub const FOLLOWERS: [MidiFxKind; 44] = {
+pub const FOLLOWERS: [MidiFxKind; 45] = {
     use MidiFxKind as K;
     [
         K::Step,
@@ -89,6 +89,7 @@ pub const FOLLOWERS: [MidiFxKind; 44] = {
         K::Call,
         K::Hook,
         K::SlideBass,
+        K::Breakline,
     ]
 };
 
