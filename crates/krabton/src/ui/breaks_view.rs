@@ -26,9 +26,10 @@ const PAGES: &[(&str, &[usize])] = &[
     ("Roll", &[RATCHET, RAMP, SWING, GATE]),
     ("Pitch", &[PITCH, JUMPS, JUMP_RANGE]),
     ("Sound", &[TONE, LEVEL]),
+    ("Phrase", &[VARY]),
     ("LFO", &[]),
 ];
-const LFO_PAGE: usize = 4;
+const LFO_PAGE: usize = 5;
 
 /// The settings as they are now: as the LFOs move them while it plays, else as set.
 fn moved(p: &[f32], live: &InstLive) -> Vec<f32> {
@@ -71,13 +72,42 @@ pub(crate) fn breaks_panel(ui: &mut Ui, id: Id, preset: &mut String, params: &mu
                 load(&path, sample);
             }
         }
-        if ui.selectable_label(sample.is_none(), "Own break").on_hover_text("Its own break: two bars at 170").clicked() {
-            *sample = None;
+        if let Some(k) = library(ui, id, sample) {
+            fetch(ui, id, k);
         }
         if let Some(s) = sample.as_ref() {
-            ui.label(RichText::new(format!("{}  {:.2} s", s.name, s.duration())).color(accent_now()));
+            ui.label(RichText::new(format!("{:.2} s", s.duration())).small().color(crate::skin::ink_dim()));
+        }
+        // The dice: another throw (right-click: the one before).
+        let seed = params[SEED].round() as i32;
+        let resp = ui.button(format!("Dice #{seed}")).on_hover_text("Throw the dice again: another way to cut it (right-click: the one before)");
+        if resp.clicked() {
+            params[SEED] = ((seed + 1) % 1000) as f32;
+        } else if resp.secondary_clicked() {
+            params[SEED] = ((seed + 999) % 1000) as f32;
         }
     });
+    // A break from the library arriving: it plays, cut on its own bars.
+    let mut lib_err = None;
+    let key = id.with("lib_fetch");
+    if let Some((k, state)) = ui.data(|d| d.get_temp::<(usize, crate::breaks_lib::Fetch)>(key)) {
+        let now = state.lock().map(|s| s.clone()).unwrap_or(crate::breaks_lib::State::Downloading);
+        match now {
+            crate::breaks_lib::State::Downloading => ui.ctx().request_repaint_after(std::time::Duration::from_millis(100)),
+            crate::breaks_lib::State::Ready => {
+                ui.data_mut(|d| d.remove::<(usize, crate::breaks_lib::Fetch)>(key));
+                let b = &crate::breaks_lib::BREAKS[k];
+                load(&b.path(), sample);
+                if sample.as_ref().is_some_and(|s| s.path.as_deref() == Some(b.path().as_path())) {
+                    params[BARS] = b.bars_setting();
+                }
+            }
+            crate::breaks_lib::State::Failed(e) => {
+                ui.data_mut(|d| d.remove::<(usize, crate::breaks_lib::Fetch)>(key));
+                lib_err = Some(format!("Could not get the break: {e}"));
+            }
+        }
+    }
     let playing = sample.clone();
     let src: &SampleData = match playing.as_ref() {
         Some(s) => s,
@@ -117,7 +147,7 @@ pub(crate) fn breaks_panel(ui: &mut Ui, id: Id, preset: &mut String, params: &mu
     if live.vals[4] > 0.0 {
         ui.ctx().request_repaint();
     }
-    said
+    said.or(lib_err)
 }
 
 /// The break and its cuts above, the bar as it plays below.
@@ -164,7 +194,11 @@ fn screen(ui: &mut Ui, rect: Rect, p: &[f32], src: &SampleData, live: &InstLive)
         let c = if strong { ink } else { ink.gamma_multiply(0.35) };
         painter.line_segment([pos2(x, wave_r.top()), pos2(x, wave_r.bottom())], Stroke::new(if strong { 1.2_f32 } else { 0.6 }, c));
     }
-    let label = if live.vals[4] > 0.0 { format!("bar {}  of a {}-bar break, {} cuts", bar + 1, bars, cuts) } else { format!("a {}-bar break, {} cuts: plays while the song plays", bars, cuts) };
+    let phrase = match p[PHRASE].round() as usize {
+        0 => bars,
+        k => [1, 1, 2, 4, 8, 16][k.min(5)],
+    };
+    let label = if live.vals[4] > 0.0 { format!("bar {} of {}  ({}-bar break, {} cuts)", bar.rem_euclid(phrase as i64) + 1, phrase, bars, cuts) } else { format!("a {}-bar break, {} cuts: plays while the song plays", bars, cuts) };
     text(&painter, pos2(inner.left(), wave_r.bottom() + 9.0), Align2::LEFT_CENTER, label, small(), ink);
     // The bar: a column a step.
     let sw = grid_r.width() / n as f32;
@@ -211,9 +245,9 @@ fn switches(ui: &mut Ui, id: Id, p: &mut [f32], h: f32) {
     let painter = ui.painter().clone();
     let ink = crate::skin::ink_dim();
     let accent = accent_now();
-    let row_h = ((h - 5.0 * 13.0 - 5.0 * 4.0) / 6.0).clamp(16.0, 26.0);
+    let row_h = ((h - 6.0 * 13.0 - 6.0 * 4.0) / 6.0).clamp(13.0, 26.0);
     let mut y = rect.top();
-    let mut row = |ui: &mut Ui, y: &mut f32, title: &str, pi: usize, names: &[&str], tips: &[&str]| {
+    let row = |ui: &mut Ui, p: &mut [f32], y: &mut f32, title: &str, pi: usize, names: &[&str], tips: &[&str]| {
         text(&painter, pos2(rect.left(), *y + 6.0), Align2::LEFT_CENTER, title, small(), ink);
         *y += 13.0;
         let bw = w / names.len() as f32;
@@ -230,20 +264,23 @@ fn switches(ui: &mut Ui, id: Id, p: &mut [f32], h: f32) {
         }
         *y += row_h + 4.0;
     };
-    row(ui, &mut y, "Bars", BARS, BAR_NAMES, &["As long as the break is at the song's tempo"]);
-    row(ui, &mut y, "Grid", GRID, GRIDS, &["Cut on sixteenths", "Cut on thirty-seconds"]);
-    row(ui, &mut y, "Most hits a roll", RATCHET_MAX, RATCHET_NAMES, &[]);
-    row(ui, &mut y, "Fill", FILL, &["Off", "2", "4", "8"], &["No fill", "A roll to close every 2 bars", "Every 4 bars", "Every 8 bars"]);
-    row(ui, &mut y, "Mutate", MUTATE, &["Stay", "1", "2", "4"], &["The cut-up stays as it is (the faders say how much)", "Cut it up anew every bar", "Every 2 bars", "Every 4 bars"]);
-    // The dice: another throw (right-click: the one before).
-    let r = Rect::from_min_size(pos2(rect.left(), y), vec2(w - 3.0, row_h + 4.0));
-    let seed = p[SEED].round() as i32;
-    let resp = button(ui, r, id.with("dice"), &format!("Dice  #{seed}"), false, accent).on_hover_text("Throw the dice again: another way to cut it (right-click: the one before)");
-    if resp.clicked() {
-        p[SEED] = ((seed + 1) % 1000) as f32;
-    } else if resp.secondary_clicked() {
-        p[SEED] = ((seed + 999) % 1000) as f32;
+    row(ui, p, &mut y, "Bars", BARS, BAR_NAMES, &["As long as the break is at the song's tempo"]);
+    // The grid, coarse to fine (1/8 is the last choice of the three).
+    text(&painter, pos2(rect.left(), y + 6.0), Align2::LEFT_CENTER, "Grid", small(), ink);
+    y += 13.0;
+    let bw = w / 3.0;
+    for (k, (v, name, tip)) in [(2usize, "1/8", "Cut on eighths: eight cuts a bar"), (0, "1/16", "Cut on sixteenths"), (1, "1/32", "Cut on thirty-seconds")].into_iter().enumerate() {
+        let r = Rect::from_min_size(pos2(rect.left() + k as f32 * bw, y), vec2(bw - 3.0, row_h));
+        if button(ui, r, id.with(("grid", v)), name, p[GRID].round() as usize == v, accent).on_hover_text(tip).clicked() {
+            p[GRID] = v as f32;
+        }
     }
+    y += row_h + 4.0;
+    row(ui, p, &mut y, "Most hits a roll", RATCHET_MAX, RATCHET_NAMES, &[]);
+    row(ui, p, &mut y, "Fill", FILL, &["Off", "2", "4", "8"], &["No fill", "A roll to close every 2 bars", "Every 4 bars", "Every 8 bars"]);
+    row(ui, p, &mut y, "Mutate", MUTATE, &["Stay", "1", "2", "4"], &["The cut-up stays as it is (the faders say how much)", "Cut it up anew every bar", "Every 2 bars", "Every 4 bars"]);
+    row(ui, p, &mut y, "Phrase", PHRASE, &["Brk", "1", "2", "4", "8", "16"], &["The pattern as long as the break", "A pattern of 1 bar, over and over", "2 bars, then round again", "4 bars", "8 bars", "16 bars"]);
+    let _ = y;
 }
 
 /// The faders of one page, the pages picked from a column beside them.
@@ -346,4 +383,57 @@ fn lfos(ui: &mut Ui, id: Id, p: &mut [f32], rect: Rect, mut mv: Option<&mut ModV
             ui.painter().add(egui::Shape::line(pts, Stroke::new(1.5_f32, c)));
         }
     }
+}
+
+/// The library break `sample` is, if it is one.
+fn lib_index(sample: &Option<SampleRef>) -> Option<usize> {
+    let path = sample.as_ref()?.path.clone()?;
+    crate::breaks_lib::BREAKS.iter().position(|b| b.path() == path)
+}
+
+/// Starts getting library break `k` (it loads when it is here).
+fn fetch(ui: &Ui, id: Id, k: usize) {
+    ui.data_mut(|d| d.insert_temp(id.with("lib_fetch"), (k, crate::breaks_lib::start(k))));
+}
+
+/// The breaks to pick from: its own, and the library's (those not here yet
+/// are downloaded when picked), with a step back and on through them.
+/// Returns the library break picked; Own sets `sample` itself.
+fn library(ui: &mut Ui, id: Id, sample: &mut Option<SampleRef>) -> Option<usize> {
+    use crate::breaks_lib::{Group, BREAKS};
+    let now = lib_index(sample);
+    let getting = ui.data(|d| d.get_temp::<(usize, crate::breaks_lib::Fetch)>(id.with("lib_fetch"))).map(|(k, _)| k);
+    let mut picked = None;
+    let shown = match (getting, now, sample.as_ref()) {
+        (Some(k), _, _) => format!("{}...", BREAKS[k].name),
+        (None, Some(k), _) => BREAKS[k].name.to_string(),
+        (None, None, Some(s)) => s.name.clone(),
+        (None, None, None) => "Own break".to_string(),
+    };
+    let at = getting.or(now);
+    if ui.small_button("<").on_hover_text("The break before, from the library").clicked() {
+        picked = Some(at.map_or(BREAKS.len() - 1, |k| (k + BREAKS.len() - 1) % BREAKS.len()));
+    }
+    egui::ComboBox::from_id_salt(id.with("library")).width(150.0).selected_text(shown).height(520.0).show_ui(ui, |ui| {
+        if ui.selectable_label(sample.is_none() && getting.is_none(), "Own break").on_hover_text("Its own break: two bars at 170").clicked() {
+            *sample = None;
+            ui.data_mut(|d| d.remove::<(usize, crate::breaks_lib::Fetch)>(id.with("lib_fetch")));
+        }
+        for g in Group::ALL {
+            ui.separator();
+            ui.label(RichText::new(g.name()).small().color(crate::skin::ink_dim()));
+            for (k, b) in BREAKS.iter().enumerate().filter(|(_, b)| b.group == g) {
+                let label = format!("{}{}  {}", if b.have() { "" } else { "\u{2193} " }, b.name, if b.bars > 0 { format!("{} \u{00b7} {:.0}", b.bars, b.bpm) } else { format!("{:.0}", b.bpm) });
+                if ui.selectable_label(now == Some(k), label).on_hover_text(b.credit()).clicked() {
+                    picked = Some(k);
+                }
+            }
+        }
+    })
+    .response
+    .on_hover_text("A break to cut up: its own, or a free one from the library (an arrow: downloaded when picked, into Documents/Krabton/Library/Breaks)");
+    if ui.small_button(">").on_hover_text("The next break, from the library").clicked() {
+        picked = Some(at.map_or(0, |k| (k + 1) % BREAKS.len()));
+    }
+    picked
 }

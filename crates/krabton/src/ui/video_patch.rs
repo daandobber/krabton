@@ -4,7 +4,7 @@
 //! modulators (a kick, the bass, an LFO...) as round modules under them,
 //! each with a cable to the effects it moves and a small knob on the cable
 //! for how much. Only what the Look uses is there: *+ Add* puts more in,
-//! a module's x (or Delete) takes it out; drag from a modulator to an
+//! a module's x, a right-click on it, Delete or its panel's Remove take it out; drag from a modulator to an
 //! effect to make it move that too; click a module for its settings.
 
 use super::video_view::{effect_detail, milk_panel, track_name, visuals_head, GROUPS};
@@ -441,8 +441,8 @@ impl App {
                         }
                         Node::Mod(..) => {}
                     }
-                    // Taken out with its x.
-                    if matches!(n, Node::Fx(_) | Node::Visuals) && (resp.hovered() || picked) {
+                    // Taken out with its x (shown while the pointer is anywhere on it, the x included).
+                    if matches!(n, Node::Fx(_) | Node::Visuals) && (pointer.is_some_and(|pt| r.contains(pt)) || picked) {
                         let x = Rect::from_center_size(pos2(r.right() - 9.0, r.top() + 10.0), vec2(14.0, 14.0));
                         let xr = ui.interact(x, Id::new(("video_patch_x", format!("{n:?}"))), Sense::click());
                         text(&p, x.center(), Align2::CENTER_CENTER, "x", small(), if xr.hovered() { TEXT } else { TEXT_DIM });
@@ -451,6 +451,15 @@ impl App {
                         }
                     }
                 }
+            }
+            // Right-click: take it out.
+            if matches!(n, Node::Fx(_) | Node::Visuals | Node::Mod(..)) {
+                resp.context_menu(|ui| {
+                    if ui.button("Remove").on_hover_text("Take it out of the Look, with its cables").clicked() {
+                        remove = Some(n);
+                        ui.close();
+                    }
+                });
             }
             if resp.clicked() && n != Node::Film {
                 selected = if selected == Some(n) { None } else { Some(n) };
@@ -462,7 +471,8 @@ impl App {
         if bg.clicked() {
             selected = None;
         }
-        if bg.hovered() && ui.input(|i| i.key_pressed(Key::Delete)) {
+        // Delete (or Backspace) takes the module picked out, unless a text is being typed.
+        if selected.is_some() && !ui.ctx().wants_keyboard_input() && ui.input(|i| i.key_pressed(Key::Delete) || i.key_pressed(Key::Backspace)) {
             remove = selected;
         }
         if used.is_empty() {
@@ -479,7 +489,13 @@ impl App {
                     egui::Frame::new().fill(PANEL).stroke(Stroke::new(1.0_f32, LINE)).corner_radius(6).inner_margin(egui::Margin::same(8)).shadow(egui::Shadow { offset: [0, 4], blur: 12, spread: 0, color: Color32::from_black_alpha(120) }).show(ui, |ui| {
                         ui.set_width(300.0);
                         match n {
-                            Node::Fx(e) => close = effect_detail(ui, look, e, &readings, tracks, &mut add_src),
+                            Node::Fx(e) => {
+                                close = effect_detail(ui, look, e, &readings, tracks, &mut add_src);
+                                ui.add_space(4.0);
+                                if ui.small_button("Remove").on_hover_text("Take it out of the Look, with its cables (or Delete)").clicked() {
+                                    remove = Some(n);
+                                }
+                            }
                             Node::Visuals | Node::Mix => {
                                 ui.horizontal(|ui| {
                                     ui.label(RichText::new("Visuals").strong().color(TEXT));
@@ -509,6 +525,10 @@ impl App {
                                 vj::bar(ui, &mut s.base, 0.0, 1.0, 1.0, "Amount", vj::pct, 0.0, None, "How much of the Visuals there are, with the film");
                                 if scene == crate::video::stage::MILK_SCENE {
                                     milk_panel(ui, &mut look.milk, milk_now);
+                                }
+                                ui.add_space(4.0);
+                                if ui.small_button("Remove").on_hover_text("Take the Visuals out of the Look, with their effects and cables (or Delete)").clicked() {
+                                    remove = Some(Node::Visuals);
                                 }
                             }
                             Node::Mod(s, from) => {

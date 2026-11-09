@@ -46,18 +46,26 @@ pub const LFO2_TARGET: usize = 23;
 pub const LFO2_RATE: usize = 24;
 pub const LFO2_SHAPE: usize = 25;
 pub const LFO2_DEPTH: usize = 26;
+/// How many bars the pattern is before it comes round again (0: as long as
+/// the break), and how much its later bars differ from its first (0: the
+/// first bar again, 1: each its own).
+pub const PHRASE: usize = 27;
+pub const VARY: usize = 28;
+pub const PHRASES: &[&str] = &["Break", "1", "2", "4", "8", "16"];
+const PHRASE_BARS: [usize; 6] = [0, 1, 2, 4, 8, 16];
 /// The first of each LFO's four settings.
 pub const LFOS: [usize; 2] = [LFO1_TARGET, LFO2_TARGET];
 
-pub const LFO_TARGETS: &[&str] = &["Off", "Pitch", "Shuffle", "Repeat", "Ratchet", "Ramp", "Reverse", "Pitch Jumps", "Half", "Swing", "Gate", "Tone", "Level"];
+pub const LFO_TARGETS: &[&str] = &["Off", "Pitch", "Shuffle", "Repeat", "Ratchet", "Ramp", "Reverse", "Pitch Jumps", "Half", "Swing", "Gate", "Tone", "Level", "Vary"];
 /// The setting each target moves.
-pub const LFO_PARAMS: [usize; 13] = [usize::MAX, PITCH, SHUFFLE, REPEAT, RATCHET, RAMP, REVERSE, JUMPS, HALF, SWING, GATE, TONE, LEVEL];
+pub const LFO_PARAMS: [usize; 14] = [usize::MAX, PITCH, SHUFFLE, REPEAT, RATCHET, RAMP, REVERSE, JUMPS, HALF, SWING, GATE, TONE, LEVEL, VARY];
 pub const LFO_RATES: &[&str] = &["1/4", "1/2", "1 bar", "2 bars", "4 bars", "8 bars", "16 bars"];
 const LFO_BEATS: [f64; 7] = [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0];
 pub const LFO_SHAPES: &[&str] = &["Sine", "Triangle", "Ramp up", "Ramp down", "Square", "Random"];
 
 pub const BAR_NAMES: &[&str] = &["Auto", "1", "2", "4", "8"];
-pub const GRIDS: &[&str] = &["1/16", "1/32"];
+/// (1/8 came later, so it is last.)
+pub const GRIDS: &[&str] = &["1/16", "1/32", "1/8"];
 pub const RATCHETS: [u8; 5] = [2, 3, 4, 6, 8];
 pub const RATCHET_NAMES: &[&str] = &["2", "3", "4", "6", "8"];
 pub const FILLS: &[&str] = &["Off", "2 bars", "4 bars", "8 bars"];
@@ -91,6 +99,8 @@ pub static SPECS: &[ParamSpec] = &[
     ParamSpec::choice("LFO 2 Rate", "LFO", LFO_RATES, 4),
     ParamSpec::choice("LFO 2 Shape", "LFO", LFO_SHAPES, 1),
     ParamSpec::lin("LFO 2 Depth", "LFO", -1.0, 1.0, 0.5, Unit::Percent),
+    ParamSpec::choice("Phrase", "Dice", PHRASES, 3),
+    ParamSpec::lin("Vary", "Dice", 0.0, 1.0, 0.5, Unit::Percent),
 ];
 
 /// An LFO's shape at `phase` (0..1) of cycle `cycle`: -1..1.
@@ -185,10 +195,10 @@ fn hash(mut x: u32) -> f32 {
 
 /// Steps in a bar.
 pub fn steps_per_bar(p: &[f32]) -> usize {
-    if p[GRID] >= 0.5 {
-        32
-    } else {
-        16
+    match p[GRID].round() as usize {
+        1 => 32,
+        2 => 8,
+        _ => 16,
     }
 }
 
@@ -232,7 +242,19 @@ pub fn plan_into(out: &mut Vec<Step>, p: &[f32], bars: usize, bar: i64) {
     let within = bar.rem_euclid(bars.max(1) as i64) as usize;
     let fill_every = [0i64, 2, 4, 8][(p[FILL].round() as usize).min(3)];
     let fill = fill_every > 0 && (bar + 1).rem_euclid(fill_every) == 0;
-    let roll = |k: usize, salt: u32| hash(seed.wrapping_mul(0x9E37_79B9) ^ (epoch as u32).wrapping_mul(0x85EB_CA6B) ^ (within as u32).wrapping_mul(0xC2B2_AE35) ^ (k as u32).wrapping_mul(0x27D4_EB2F) ^ salt.wrapping_mul(0x1656_67B1));
+    // The phrase: the bar it is in it; each step's dice those of the phrase's
+    // first bar, or (by Vary) its own.
+    let phrase = match PHRASE_BARS[(p.get(PHRASE).copied().unwrap_or(0.0).round().max(0.0) as usize).min(5)] {
+        0 => bars.max(1),
+        n => n,
+    };
+    let pos = bar.rem_euclid(phrase as i64) as usize;
+    let vary = p.get(VARY).copied().unwrap_or(1.0);
+    let dice = |k: usize, salt: u32, b: usize| hash(seed.wrapping_mul(0x9E37_79B9) ^ (epoch as u32).wrapping_mul(0x85EB_CA6B) ^ (b as u32).wrapping_mul(0xC2B2_AE35) ^ (k as u32).wrapping_mul(0x27D4_EB2F) ^ salt.wrapping_mul(0x1656_67B1));
+    let roll = |k: usize, salt: u32| {
+        let own = pos == 0 || dice(k, 0xBA5E, pos) < vary;
+        dice(k, salt, if own { pos } else { 0 })
+    };
     let most = RATCHETS.iter().position(|r| *r == RATCHETS[(p[RATCHET_MAX].round() as usize).min(4)]).unwrap_or(2);
     // The snare: the cut on the second beat of the break's first bar.
     let snare = n / 4;
@@ -588,7 +610,7 @@ mod tests {
         let a = plan(&p, 1, 0);
         assert!(a.iter().filter(|s| s.cut != 0 && s.ratchet == 1).count() > 3 || a.iter().any(|s| s.ratchet > 1));
         assert_eq!(plan(&p, 1, 0), a, "the same dice, the same bar");
-        assert_eq!(plan(&p, 1, 5), a, "Never: every bar of a one-bar break the same");
+        assert_eq!(plan(&p, 1, 4), a, "Stay: the four-bar phrase the same every time round");
         p[MUTATE] = 1.0;
         assert_ne!(plan(&p, 1, 0), plan(&p, 1, 1), "every bar: another");
         p[SEED] = 7.0;
@@ -610,7 +632,7 @@ mod tests {
                 assert_eq!(x.cut, y.cut, "step {k} keeps its cut");
             }
         }
-        assert_eq!(plan(&p, 1, 9), b, "and stays so, bar after bar");
+        assert_eq!(plan(&p, 1, 8), b, "and stays so, phrase after phrase");
     }
 
     #[test]
@@ -654,6 +676,52 @@ mod tests {
         // An old set, without LFO settings, still plays.
         let old: Vec<f32> = super::tests::p()[..19].to_vec();
         st.render(&old, None, &mut l, &mut r);
+    }
+
+    #[test]
+    fn a_phrase_comes_round_after_its_bars_and_varies_inside_as_much_as_asked() {
+        let mut p = p();
+        p[SHUFFLE] = 0.8;
+        p[RATCHET] = 0.4;
+        p[PHRASE] = 3.0; // 4 bars
+        p[VARY] = 1.0;
+        let bars: Vec<Vec<Step>> = (0..8).map(|b| plan(&p, 1, b)).collect();
+        assert_ne!(bars[0], bars[1], "each bar its own");
+        assert_ne!(bars[1], bars[2]);
+        assert_eq!(bars[4], bars[0], "round again after four");
+        assert_eq!(bars[7], bars[3]);
+        p[VARY] = 0.0;
+        assert!((0..4).all(|b| plan(&p, 1, b) == plan(&p, 1, 0)), "no variation: the first bar again");
+        p[VARY] = 0.25;
+        let same = |a: &[Step], b: &[Step]| a.iter().zip(b).filter(|(x, y)| x == y).count();
+        let (a, b) = (plan(&p, 1, 0), plan(&p, 1, 1));
+        assert!(same(&a, &b) >= 9 && a != b, "a little: {}", same(&a, &b));
+        // A set from before (no Phrase or Vary): as it was, the break's bars each their own.
+        let mut q = p.clone();
+        q.truncate(PHRASE);
+        q[SHUFFLE] = 0.8;
+        let mut r = q.clone();
+        r.extend([0.0, 1.0]);
+        assert_eq!(plan(&q, 2, 1), plan(&r, 2, 1));
+    }
+
+    #[test]
+    fn eighths_cut_a_bar_in_eight() {
+        let mut p = p();
+        p[GRID] = 2.0;
+        assert_eq!(steps_per_bar(&p), 8);
+        let a = plan(&p, 2, 1);
+        assert_eq!(a.iter().map(|s| s.cut).collect::<Vec<_>>(), (8..16).collect::<Vec<_>>());
+        p[FILL] = 1.0;
+        let f = plan(&p, 1, 1);
+        assert!(f[6..].iter().all(|s| s.cut == 2 && s.ratchet >= 2), "the fill on the snare (beat two): {f:?}");
+        let mut st = BreaksState::new(48000.0);
+        st.set_transport(170.0, 0.0, true);
+        let (mut l, mut r) = (vec![0.0f32; 256], vec![0.0f32; 256]);
+        for _ in 0..100 {
+            st.render(&p, None, &mut l, &mut r);
+        }
+        assert!(st.shown.0 >= 0 && st.shown.0 < 8);
     }
 
     #[test]
