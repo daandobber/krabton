@@ -231,6 +231,23 @@ fn look_head(ui: &mut Ui, set: &mut kv::VideoSet) {
     }
 }
 
+/// Under the Look pads: the Looks changing by themselves (Off, in turn, by
+/// chance, or as the steps say) and how often.
+fn look_auto(ui: &mut Ui, set: &mut kv::VideoSet) {
+    ui.spacing_mut().item_spacing.x = 6.0;
+    ui.label(RichText::new("AUTO").small().strong().color(if set.look_seq.on { ACCENT } else { TEXT_DIM }));
+    let mut auto = set.look_seq.auto();
+    let autos: Vec<(kv::LookAuto, String)> = kv::LookAuto::ALL.iter().map(|a| (*a, a.name().to_string())).collect();
+    if vj::segmented(ui, &mut auto, &autos, "The Looks change by themselves while the song plays: every one in turn, by chance (never the same twice), or as the steps say (in the Triggers tab). Off: only when you pick one (or keys 1 to 9)") {
+        set.look_seq.set_auto(auto);
+    }
+    if auto != kv::LookAuto::Off {
+        ui.label(RichText::new("every").small().color(TEXT_DIM));
+        let evs: Vec<(kv::Every, String)> = kv::Every::ALL.iter().map(|e| (*e, e.name().to_string())).collect();
+        vj::chip(ui, "video_look_every", 62.0, &mut set.look_seq.every, &evs, "How often: a sixteenth, an eighth, a beat, a bar, two bars or four");
+    }
+}
+
 /// What hears the hits and what a hit does: the sound, the band, how
 /// sensitive, the least gap and the grid (`what`: what it moves, for the
 /// list of what a hit does).
@@ -329,10 +346,10 @@ pub(super) fn link_response(ui: &mut Ui, i: usize, l: &mut VideoLink) {
 pub(super) const GROUPS: [(&str, [u8; 3], &[Effect]); 9] = [
     ("VISUALS", [0xa0, 0x78, 0xff], &[Effect::Visuals, Effect::Burst, Effect::Warp, Effect::Density, Effect::Rush, Effect::Glow, Effect::Orbit, Effect::Fracture, Effect::Depth, Effect::Detail, Effect::Thickness, Effect::Scatter]),
     ("MOTION", [0x40, 0xc8, 0xdc], &[Effect::Zoom, Effect::Shake, Effect::Spin, Effect::ZoomBlur, Effect::Feedback]),
-    ("SHAPE", [0x5c, 0xd0, 0x7a], &[Effect::Mirror, Effect::Kaleido, Effect::Tile, Effect::Swirl, Effect::Fisheye, Effect::Ripple, Effect::Blur]),
+    ("SHAPE", [0x5c, 0xd0, 0x7a], &[Effect::Mirror, Effect::Kaleido, Effect::Tile, Effect::Checker, Effect::Puzzle, Effect::Prism, Effect::Polar, Effect::Droste, Effect::Swirl, Effect::Fisheye, Effect::Ripple, Effect::Blur]),
     ("COLOUR", [0xff, 0x9a, 0x40], &[Effect::Hue, Effect::Tint, Effect::Grade, Effect::Invert, Effect::Map]),
-    ("STYLE", [0xe0, 0x70, 0xe0], &[Effect::Halftone, Effect::Ascii, Effect::Dither, Effect::Poster, Effect::Edges, Effect::Bloom]),
-    ("GLITCH", [0xff, 0x50, 0x50], &[Effect::Glitch, Effect::Split, Effect::Pixels, Effect::Smear, Effect::Datamosh, Effect::Vhs]),
+    ("STYLE", [0xe0, 0x70, 0xe0], &[Effect::PopArt, Effect::Halftone, Effect::Ascii, Effect::Dither, Effect::Poster, Effect::Edges, Effect::Bloom]),
+    ("GLITCH", [0xff, 0x50, 0x50], &[Effect::Glitch, Effect::Shred, Effect::Melt, Effect::Split, Effect::Pixels, Effect::Smear, Effect::Datamosh, Effect::Vhs]),
     ("LIGHT", [0xf0, 0xd0, 0x40], &[Effect::Flash, Effect::Strobe, Effect::Gate, Effect::Vignette, Effect::Scanlines, Effect::Grain]),
     ("TIME", [0x60, 0x90, 0xff], &[Effect::Trails, Effect::Echo, Effect::Wave]),
     ("FILM", [0xff, 0x60, 0xa0], &[Effect::Speed, Effect::Freeze, Effect::Jump, Effect::Stutter, Effect::Scratch, Effect::NextClip]),
@@ -766,10 +783,10 @@ fn steps_row(ui: &mut Ui, id: impl std::hash::Hash + Copy, steps: &mut Vec<Optio
     let _ = id;
 }
 
-/// The sixteen-by-nine rect in `r`, in its middle.
-fn sixteen_nine(r: Rect) -> Rect {
-    let w = r.width().min(r.height() * 16.0 / 9.0);
-    Rect::from_center_size(r.center(), vec2(w, w * 9.0 / 16.0))
+/// The rect of shape `ratio` (width over height) in `r`, in its middle.
+fn fit_ratio(r: Rect, ratio: f32) -> Rect {
+    let w = r.width().min(r.height() * ratio);
+    Rect::from_center_size(r.center(), vec2(w, w / ratio))
 }
 
 /// m:ss.s
@@ -984,6 +1001,19 @@ impl App {
     /// and what the music does in the middle, the side with its tabs on
     /// the right. Films and pictures dropped on it come into its bank.
     pub(crate) fn ui_video_view(&mut self, ui: &mut Ui) {
+        // 1 to 9: that Look at once; with Shift, that clip.
+        if !ui.ctx().wants_keyboard_input() {
+            const KEYS: [Key; 9] = [Key::Num1, Key::Num2, Key::Num3, Key::Num4, Key::Num5, Key::Num6, Key::Num7, Key::Num8, Key::Num9];
+            for (k, key) in KEYS.into_iter().enumerate() {
+                if ui.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, key)) {
+                    if k < self.project.video.clips.len() {
+                        self.video_launch(k);
+                    }
+                } else if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, key)) && k < self.project.video.looks.len() {
+                    self.video_launch_look(k);
+                }
+            }
+        }
         let all = ui.available_rect_before_wrap();
         ui.allocate_rect(all, Sense::hover());
         let here = crate::import::file_drop_pos(ui.ctx()).is_none_or(|p| all.contains(p));
@@ -1010,12 +1040,14 @@ impl App {
     /// The monitor: the picture (double-click: full screen), the meters, and the scenes of the Visuals.
     fn video_monitor(&mut self, ui: &mut Ui, r: Rect) {
         let pic = Rect::from_min_size(r.min, vec2(r.width(), r.width() * 9.0 / 16.0));
+        // The stage in its shape, in the middle of the monitor's room.
+        let stage_rect = fit_ratio(pic, self.project.video.aspect.ratio());
         let p = ui.painter().clone();
         p.rect_filled(pic, 3.0, Color32::BLACK);
         let set = self.project.video.clone();
         let m = self.video.playing_media(&set);
         let info = m.as_ref().map(|m| m.info()).unwrap_or_default();
-        self.draw_stage(&p, pic);
+        self.draw_stage(&p, stage_rect);
         let pr = ui.interact(pic, Id::new("video_pic"), Sense::click());
         if pr.double_clicked() {
             self.video.screen_open = true;
@@ -1360,7 +1392,13 @@ impl App {
         }
         self.video_bank(ui, pads(clips));
         let mut set = self.project.video.clone();
-        self.video_look_pads(ui, pads(looks), &mut set);
+        // The Look pads, and under them how they change by themselves.
+        let lp = pads(looks);
+        let auto_h = 24.0;
+        let pads_r = Rect::from_min_max(lp.min, pos2(lp.right(), lp.bottom() - auto_h - 4.0));
+        let mut a = ui.new_child(UiBuilder::new().max_rect(Rect::from_min_max(pos2(lp.left(), lp.bottom() - auto_h), lp.max)).layout(egui::Layout::left_to_right(egui::Align::Center)));
+        look_auto(&mut a, &mut set);
+        self.video_look_pads(ui, pads_r, &mut set);
         if set != self.project.video {
             self.project.video = set;
         }
@@ -2765,14 +2803,17 @@ impl App {
             switch(ui, &mut seq.on, "Looks in turn on the song's beat: a step every so often, each step a Look (or -: the deck's own)");
             if seq.on {
                 ui.label(RichText::new("a step every").small().color(TEXT_DIM));
-                if choice(ui, seq.every.name(), false, "How long each step lasts, on the song's beat. Click for the next").clicked() {
+                if choice(ui, seq.every.name(), false, "How long each step lasts, on the song's beat (down to a sixteenth). Click for the next").clicked() {
                     seq.every = seq.every.next();
+                }
+                if choice(ui, "Random", seq.random, "Every step a Look by chance: each once a round in an order of its own, never the same twice in a row (the steps are not used)").clicked() {
+                    seq.random = !seq.random;
                 }
             } else {
                 ui.label(RichText::new("off").small().color(TEXT_DIM));
             }
         });
-        if seq.on {
+        if seq.on && !seq.random {
             let now = song.0.then(|| seq.every.step(song.1, song.2)).map(|s| s.rem_euclid(seq.steps.len().max(1) as i64) as usize);
             ui.horizontal_top(|ui| {
                 ui.add_space(LABEL_W);
@@ -2854,6 +2895,18 @@ impl App {
         });
         note(ui, "Drag the screen's window to a projector or a second screen and double-click it to fill that screen (double-click, F11 or Esc to leave). Double-click the picture here for the same.");
         ui.add_space(4.0);
+        row(ui, "Shape", |ui| {
+            let mut a = set.aspect;
+            let opts: Vec<(kv::Aspect, String)> = kv::Aspect::ALL.iter().map(|a| (*a, a.name().to_string())).collect();
+            if vj::segmented(ui, &mut a, &opts, "The picture's shape: 16:9 wide, 1:1 square, 9:16 tall (a phone held up), 4:5, 4:3, 21:9 (the stage, the screen, the films made of it)") && a != set.aspect {
+                set.aspect = a;
+                // A film's size in the new shape, as big as it was.
+                let sizes = a.sizes();
+                let o = &mut self.video.export_opts;
+                let k = if o.width.min(o.height) >= 1000 { 2 } else if o.width.min(o.height) >= 700 { 1 } else { 0 };
+                (o.width, o.height) = sizes[k];
+            }
+        });
         row(ui, "Picture", |ui| {
             let fits = vec![(kv::Fit::Fill, "Fill".to_string()), (kv::Fit::Fit, "Fit".to_string())];
             dropdown(ui, "video_fit", 70.0, &mut set.fit, &fits, "Fill: the whole screen, cutting off what sticks out. Fit: the whole picture, with black bars (a clip can have its own)");
@@ -2905,7 +2958,7 @@ impl App {
         let o = &mut self.video.export_opts;
         row(ui, "Size", |ui| {
             let mut size = (o.width, o.height);
-            let sizes: Vec<((u32, u32), String)> = export::SIZES.iter().map(|&(w, h)| ((w, h), format!("{h}p ({w} by {h})"))).collect();
+            let sizes: Vec<((u32, u32), String)> = set.aspect.sizes().iter().map(|&(w, h)| ((w, h), format!("{w} by {h}"))).collect();
             if dropdown(ui, "video_out_size", 130.0, &mut size, &sizes, "How big a film is (Record Video and Export Video)") {
                 (o.width, o.height) = size;
             }
@@ -2928,7 +2981,7 @@ impl App {
 
         section(ui, "Keys");
         note(ui, "With the pointer on the picture or the timeline:");
-        for (k, what) in [("I", "Mark In: a part starts here"), ("O", "Mark Out: the part ends here"), ("S", "Split the part the film is in"), ("Delete", "Take the parts picked away"), ("K", "Pause (the music goes on)"), (", and .", "A frame back, a frame on"), ("Esc", "Forget Mark In")] {
+        for (k, what) in [("1 to 9", "That Look at once (with Shift: that clip)"), ("I", "Mark In: a part starts here"), ("O", "Mark Out: the part ends here"), ("S", "Split the part the film is in"), ("Delete", "Take the parts picked away"), ("K", "Pause (the music goes on)"), (", and .", "A frame back, a frame on"), ("Esc", "Forget Mark In")] {
             row(ui, k, |ui| {
                 ui.label(RichText::new(what).small().color(TEXT));
             });
@@ -2961,7 +3014,7 @@ impl App {
                 ui.label("Size");
                 let o = &mut self.video.export_opts;
                 let mut size = (o.width, o.height);
-                let sizes: Vec<((u32, u32), String)> = export::SIZES.iter().map(|&(w, h)| ((w, h), format!("{h}p ({w} by {h})"))).collect();
+                let sizes: Vec<((u32, u32), String)> = self.project.video.aspect.sizes().iter().map(|&(w, h)| ((w, h), format!("{w} by {h}"))).collect();
                 if dropdown(ui, "video_export_size", 130.0, &mut size, &sizes, "How big the film is (Record Video too)") {
                     (o.width, o.height) = size;
                 }
@@ -3030,7 +3083,7 @@ impl App {
             let draw = |ui: &mut Ui, app: &mut App| {
                 let r = ui.max_rect();
                 ui.painter().rect_filled(r, 0.0, Color32::BLACK);
-                let pic = sixteen_nine(r);
+                let pic = fit_ratio(r, app.project.video.aspect.ratio());
                 app.draw_stage(ui.painter(), pic);
                 let resp = ui.interact(r, Id::new("video_screen_area"), Sense::click());
                 // A hint while the mouse is over it (out of the picture when it is still).
@@ -3224,6 +3277,8 @@ impl App {
                     }
                 }
             }
+            // videoaspect=N: the picture's shape (0 16:9, 1 1:1, 2 9:16, 3 4:5, 4 4:3, 5 21:9).
+            "videoaspect" => self.project.video.aspect = kv::Aspect::ALL[(f.first().copied().unwrap_or(0.0) as usize).min(kv::Aspect::ALL.len() - 1)],
             // videosceneparam=K,V: the Visuals scene's own setting K set to V.
             "videosceneparam" => {
                 if let [k, v, ..] = f.as_slice() {
@@ -3312,7 +3367,7 @@ impl App {
                 let mut words = arg.split(',');
                 let path = PathBuf::from(words.next().unwrap_or("").trim());
                 let rest: Vec<u32> = words.filter_map(|w| w.trim().parse().ok()).collect();
-                if let Some(&(w, h)) = rest.first().and_then(|h| export::SIZES.iter().find(|s| s.1 == *h)) {
+                if let Some((w, h)) = rest.first().and_then(|h| self.project.video.aspect.sizes().into_iter().find(|s| s.1 == *h || s.0 == *h)) {
                     self.video.export_opts.width = w;
                     self.video.export_opts.height = h;
                 }

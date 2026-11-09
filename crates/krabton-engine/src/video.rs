@@ -67,6 +67,75 @@ pub struct VideoSet {
     pub clip_hits: Option<HitTrigger>,
     /// How a Look with other Visuals comes in over its morph: everywhere at once (Fade) or by a pattern.
     pub look_change: Transition,
+    /// The picture's shape: wide, square, tall... (the stage, the screen, a film made of it).
+    pub aspect: Aspect,
+}
+
+/// The shape of the picture.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Aspect {
+    #[default]
+    Wide,
+    Square,
+    Tall,
+    Portrait,
+    Classic,
+    Cinema,
+}
+
+impl Aspect {
+    pub const ALL: [Aspect; 6] = [Aspect::Wide, Aspect::Square, Aspect::Tall, Aspect::Portrait, Aspect::Classic, Aspect::Cinema];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Aspect::Wide => "16:9",
+            Aspect::Square => "1:1",
+            Aspect::Tall => "9:16",
+            Aspect::Portrait => "4:5",
+            Aspect::Classic => "4:3",
+            Aspect::Cinema => "21:9",
+        }
+    }
+
+    pub fn about(self) -> &'static str {
+        match self {
+            Aspect::Wide => "Wide, as a screen or a projector",
+            Aspect::Square => "Square",
+            Aspect::Tall => "Tall, as a phone held up (stories, shorts, reels)",
+            Aspect::Portrait => "A little taller than wide, as a feed's post",
+            Aspect::Classic => "As an old television",
+            Aspect::Cinema => "Very wide, as the cinema",
+        }
+    }
+
+    /// Width over height.
+    pub fn ratio(self) -> f32 {
+        let (w, h) = self.stage();
+        w as f32 / h as f32
+    }
+
+    /// The stage's size in pixels (it is drawn at this size, then shown or recorded).
+    pub fn stage(self) -> (i32, i32) {
+        match self {
+            Aspect::Wide => (1280, 720),
+            Aspect::Square => (900, 900),
+            Aspect::Tall => (720, 1280),
+            Aspect::Portrait => (800, 1000),
+            Aspect::Classic => (960, 720),
+            Aspect::Cinema => (1680, 720),
+        }
+    }
+
+    /// The films' sizes on offer: small, middle, large (even numbers, as encoders like).
+    pub fn sizes(self) -> [(u32, u32); 3] {
+        let r = self.ratio();
+        let even = |v: f32| ((v / 2.0).round() as u32) * 2;
+        if r >= 1.0 {
+            [480.0, 720.0, 1080.0].map(|h| (even(h * r), h as u32))
+        } else {
+            [480.0, 720.0, 1080.0].map(|w| (w as u32, even(w / r)))
+        }
+    }
 }
 
 fn is_default_seq(s: &LookSeq) -> bool {
@@ -95,6 +164,7 @@ impl Default for VideoSet {
             look_hits: None,
             clip_hits: None,
             look_change: Transition::Fade,
+            aspect: Aspect::Wide,
         }
     }
 }
@@ -124,6 +194,7 @@ struct SetFile {
     look_hits: Option<HitTrigger>,
     clip_hits: Option<HitTrigger>,
     look_change: Option<Transition>,
+    aspect: Aspect,
     // Older sets: one Look of links.
     links: Option<Vec<VideoLink>>,
     // Older sets: how every clip played.
@@ -177,6 +248,7 @@ impl From<SetFile> for VideoSet {
             look_hits: f.look_hits,
             clip_hits: f.clip_hits,
             look_change: f.look_change.unwrap_or(d.look_change),
+            aspect: f.aspect,
         }
     }
 }
@@ -414,13 +486,17 @@ pub enum Every {
     Bar,
     TwoBars,
     FourBars,
+    Sixteenth,
+    Eighth,
 }
 
 impl Every {
-    pub const ALL: [Every; 4] = [Every::Beat, Every::Bar, Every::TwoBars, Every::FourBars];
+    pub const ALL: [Every; 6] = [Every::Sixteenth, Every::Eighth, Every::Beat, Every::Bar, Every::TwoBars, Every::FourBars];
 
     pub fn name(self) -> &'static str {
         match self {
+            Every::Sixteenth => "1/16",
+            Every::Eighth => "1/8",
             Every::Beat => "Beat",
             Every::Bar => "Bar",
             Every::TwoBars => "2 bars",
@@ -432,6 +508,8 @@ impl Every {
     pub fn beats(self, beats_per_bar: u32) -> f64 {
         let bar = beats_per_bar.max(1) as f64;
         match self {
+            Every::Sixteenth => 0.25,
+            Every::Eighth => 0.5,
             Every::Beat => 1.0,
             Every::Bar => bar,
             Every::TwoBars => 2.0 * bar,
@@ -753,11 +831,57 @@ pub struct LookSeq {
     pub on: bool,
     pub every: Every,
     pub steps: Vec<Option<u8>>,
+    /// Every step a Look by chance (never the same twice in a row), not the steps'.
+    #[serde(default)]
+    pub random: bool,
+    /// Every Look in turn, one a step (not the steps').
+    #[serde(default)]
+    pub turn: bool,
+}
+
+/// How the Looks change by themselves (`LookSeq` as the deck shows it).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LookAuto {
+    Off,
+    InTurn,
+    Random,
+    Steps,
+}
+
+impl LookAuto {
+    pub const ALL: [LookAuto; 4] = [LookAuto::Off, LookAuto::InTurn, LookAuto::Random, LookAuto::Steps];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            LookAuto::Off => "Off",
+            LookAuto::InTurn => "In turn",
+            LookAuto::Random => "Random",
+            LookAuto::Steps => "Steps",
+        }
+    }
 }
 
 impl Default for LookSeq {
     fn default() -> Self {
-        Self { on: false, every: Every::Bar, steps: vec![Some(0), Some(1), Some(0), Some(1)] }
+        Self { on: false, every: Every::Bar, steps: vec![Some(0), Some(1), Some(0), Some(1)], random: false, turn: false }
+    }
+}
+
+impl LookSeq {
+    /// How it changes the Looks, as one choice.
+    pub fn auto(&self) -> LookAuto {
+        match (self.on, self.random, self.turn) {
+            (false, _, _) => LookAuto::Off,
+            (true, true, _) => LookAuto::Random,
+            (true, false, true) => LookAuto::InTurn,
+            _ => LookAuto::Steps,
+        }
+    }
+
+    pub fn set_auto(&mut self, a: LookAuto) {
+        self.on = a != LookAuto::Off;
+        self.random = a == LookAuto::Random;
+        self.turn = a == LookAuto::InTurn;
     }
 }
 
@@ -767,9 +891,41 @@ impl LookSeq {
         if !self.on || self.steps.is_empty() || looks == 0 {
             return None;
         }
-        let step = self.every.step(beat, beats_per_bar).rem_euclid(self.steps.len() as i64) as usize;
+        let at = self.every.step(beat, beats_per_bar);
+        if self.random {
+            return Some(shuffled(at, looks));
+        }
+        if self.turn {
+            return Some(at.rem_euclid(looks as i64) as usize);
+        }
+        let step = at.rem_euclid(self.steps.len() as i64) as usize;
         self.steps[step].map(|k| k as usize).filter(|k| *k < looks)
     }
+}
+
+/// Step `at` of a shuffle of `n`: every one once a round, in an order of
+/// its own each round, and never the same twice in a row.
+fn shuffled(at: i64, n: usize) -> usize {
+    let n = n.clamp(1, 64);
+    if n <= 2 {
+        return at.rem_euclid(n as i64) as usize;
+    }
+    let order = |round: i64| {
+        let mut o = [0usize; 64];
+        for (j, v) in o.iter_mut().enumerate().take(n) {
+            *v = j;
+        }
+        let key = |j: usize| ((round as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (j as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F)).wrapping_mul(0x1656_67B1_9E37_79F9) >> 20;
+        o[..n].sort_by_key(|j| key(*j));
+        o
+    };
+    let round = at.div_euclid(n as i64);
+    let mut o = order(round);
+    // The round starts with another than the one the last ended with.
+    if o[0] == order(round - 1)[n - 1] {
+        o.swap(0, 1);
+    }
+    o[at.rem_euclid(n as i64) as usize]
 }
 
 /// Which Look plays, of `n`: the part's, else the clip's, else the Look
@@ -1780,6 +1936,22 @@ pub enum Effect {
     Thickness,
     /// The Visuals' lines falling apart into points, as a scan of points.
     Scatter,
+    /// A chessboard of the picture: every other square flipped, inverted, turned in colour, shifted or cut out.
+    Checker,
+    /// The picture cut into squares shuffled about, again and again.
+    Puzzle,
+    /// Strips pushed apart, as through a shredder.
+    Shred,
+    /// A kaleidoscope of triangles, repeated all over.
+    Prism,
+    /// The picture wrapped round into a little planet (or a tunnel).
+    Polar,
+    /// The picture inside itself, over and over, zooming on for ever.
+    Droste,
+    /// Copies side by side, each in colours of its own.
+    PopArt,
+    /// The picture melting down in drips.
+    Melt,
 }
 
 /// The Visuals' scenes: what Krabton draws.
@@ -2032,7 +2204,7 @@ pub const VISUAL_PALETTES: [&str; 6] = ["Its colour", "Ice", "Ember", "Neon", "A
 
 impl Effect {
     /// In the order the lists show them: where the picture is, how it looks, its colours, what it leaves behind, the film.
-    pub const ALL: [Effect; 56] = [
+    pub const ALL: [Effect; 64] = [
         Effect::Zoom,
         Effect::Flash,
         Effect::Shake,
@@ -2089,8 +2261,16 @@ impl Effect {
         Effect::Detail,
         Effect::Thickness,
         Effect::Scatter,
+        Effect::Checker,
+        Effect::Puzzle,
+        Effect::Shred,
+        Effect::Prism,
+        Effect::Polar,
+        Effect::Droste,
+        Effect::PopArt,
+        Effect::Melt,
     ];
-    pub const COUNT: usize = 56;
+    pub const COUNT: usize = 64;
 
     /// Its place in [`Look::fx`].
     pub fn index(self) -> usize {
@@ -2155,6 +2335,14 @@ impl Effect {
             Effect::Detail => "Detail",
             Effect::Thickness => "Thickness",
             Effect::Scatter => "Scatter",
+            Effect::Checker => "Checker",
+            Effect::Puzzle => "Puzzle",
+            Effect::Shred => "Shred",
+            Effect::Prism => "Prism",
+            Effect::Polar => "Polar",
+            Effect::Droste => "Droste",
+            Effect::PopArt => "Pop Art",
+            Effect::Melt => "Melt",
         }
     }
 
@@ -2216,6 +2404,14 @@ impl Effect {
             Effect::Detail => "The Visuals finer: more of their small shapes",
             Effect::Thickness => "The Visuals' lines and points thicker",
             Effect::Scatter => "The Visuals' lines falling apart into points, as a scan of points",
+            Effect::Checker => "A chessboard of the picture: every other square flipped, inverted, turned in colour, shifted or cut out (more of them the higher it is)",
+            Effect::Puzzle => "The picture cut into squares that are shuffled about, again and again at its rate",
+            Effect::Shred => "Strips of the picture pushed apart, across or down, as through a shredder",
+            Effect::Prism => "A kaleidoscope of triangles, repeated all over the picture, turning",
+            Effect::Polar => "The picture wrapped round into a little planet, or inside out into a tunnel",
+            Effect::Droste => "The picture inside itself, over and over, zooming on for ever (twisting into a spiral if you like)",
+            Effect::PopArt => "Copies of the picture side by side, each in flat colours of its own, as a pop-art print",
+            Effect::Melt => "The picture melting, dripping down in streaks",
         }
     }
 
@@ -2432,6 +2628,60 @@ impl Effect {
                 const P: &[FxParam] = &[FxParam::range("Wobble", "How much the lines wobble", 0.0, 1.0, 0.5), FxParam::range("Noise", "How much noise, and its band", 0.0, 1.0, 0.5), FxParam::range("Bleed", "How far the colours bleed", 0.0, 1.0, 0.5)];
                 P
             }
+            Effect::Checker => {
+                const P: &[FxParam] = &[
+                    FxParam::range("Squares", "How many squares, top to bottom", 2.0, 24.0, 6.0),
+                    FxParam::pick("Style", "What the other squares do", &["Flip", "Invert", "Colour", "Shift", "Cut out", "Turn"], 0.0),
+                    FxParam::range("Move", "The board sliding by (below 0: the other way)", -2.0, 2.0, 0.0),
+                    FxParam::range("Swap", "How many times a second the squares swap (0: never)", 0.0, 8.0, 0.0),
+                ];
+                P
+            }
+            Effect::Puzzle => {
+                const P: &[FxParam] = &[FxParam::range("Squares", "How many squares, top to bottom", 2.0, 12.0, 4.0), FxParam::range("Rate", "How many times a second it is shuffled again", 0.25, 16.0, 2.0)];
+                P
+            }
+            Effect::Shred => {
+                const P: &[FxParam] = &[
+                    FxParam::range("Strips", "How many strips", 2.0, 80.0, 24.0),
+                    FxParam::pick("Way", "Strips across, pushed sideways, or down, pushed up and down", &["Across", "Down"], 0.0),
+                    FxParam::range("Push", "How far a strip goes at full", 0.0, 1.0, 0.3),
+                    FxParam::range("Speed", "How fast they move", 0.0, 4.0, 1.0),
+                ];
+                P
+            }
+            Effect::Prism => {
+                const P: &[FxParam] = &[FxParam::range("Size", "How many triangles (more: smaller)", 0.5, 8.0, 2.0), FxParam::range("Spin", "How fast it turns (below 0: the other way)", -1.0, 1.0, 0.1)];
+                P
+            }
+            Effect::Polar => {
+                const P: &[FxParam] = &[
+                    FxParam::range("Zoom", "How close", 0.3, 3.0, 1.0),
+                    FxParam::range("Spin", "How fast it turns (below 0: the other way)", -1.0, 1.0, 0.1),
+                    FxParam::pick("Way", "A little planet (the ground in the middle) or a tunnel (the sky in it)", &["Planet", "Tunnel"], 0.0),
+                ];
+                P
+            }
+            Effect::Droste => {
+                const P: &[FxParam] = &[
+                    FxParam::range("Scale", "How much smaller each picture inside is", 1.5, 8.0, 3.0),
+                    FxParam::range("Speed", "How fast it zooms on (below 0: out)", -2.0, 2.0, 0.3),
+                    FxParam::range("Twist", "Turned a little more each time in: a spiral", 0.0, 1.0, 0.0),
+                ];
+                P
+            }
+            Effect::PopArt => {
+                const P: &[FxParam] = &[
+                    FxParam::range("Copies", "How many across and down", 2.0, 4.0, 2.0),
+                    FxParam::range("Steps", "How many shades of each colour", 2.0, 6.0, 3.0),
+                    FxParam::range("Colours", "Where the colours start on the colour circle", 0.0, 1.0, 0.0),
+                ];
+                P
+            }
+            Effect::Melt => {
+                const P: &[FxParam] = &[FxParam::range("Length", "How far it drips", 0.0, 0.6, 0.25), FxParam::range("Drips", "How many drips across", 8.0, 200.0, 60.0), FxParam::range("Speed", "How fast it runs", 0.0, 3.0, 0.5)];
+                P
+            }
             Effect::Invert | Effect::Freeze | Effect::Jump | Effect::NextClip | Effect::Depth | Effect::Detail | Effect::Thickness | Effect::Scatter => &[],
         }
     }
@@ -2462,6 +2712,7 @@ impl Effect {
         matches!(
             self,
             Effect::Feedback | Effect::Wave | Effect::Tile | Effect::Swirl | Effect::Fisheye | Effect::Ripple | Effect::Smear | Effect::Datamosh | Effect::Bloom | Effect::Map | Effect::Halftone | Effect::Ascii | Effect::Dither | Effect::Vhs
+                | Effect::Checker | Effect::Puzzle | Effect::Shred | Effect::Prism | Effect::Polar | Effect::Droste | Effect::PopArt | Effect::Melt
         )
     }
 
@@ -3838,6 +4089,30 @@ mod scene_tests {
     use super::*;
 
     #[test]
+    fn shapes_size_the_stage_and_films_and_looks_change_fast_or_by_chance() {
+        assert_eq!(Aspect::Square.stage().0, Aspect::Square.stage().1);
+        assert!(Aspect::Tall.ratio() < 1.0 && Aspect::Cinema.ratio() > 2.0);
+        assert_eq!(Aspect::Wide.sizes(), [(854, 480), (1280, 720), (1920, 1080)]);
+        assert_eq!(Aspect::Square.sizes()[2], (1080, 1080));
+        assert_eq!(Aspect::Tall.sizes()[2], (1080, 1920));
+        let back: VideoSet = serde_json::from_str(&serde_json::to_string(&VideoSet { aspect: Aspect::Square, ..Default::default() }).unwrap()).unwrap();
+        assert_eq!(back.aspect, Aspect::Square);
+        assert_eq!(VideoSet::default().aspect, Aspect::Wide);
+        // A sixteenth: four steps a beat.
+        assert_eq!(Every::Sixteenth.step(1.0, 4), 4);
+        let seq = LookSeq { on: true, every: Every::Eighth, random: true, ..Default::default() };
+        let picks: Vec<usize> = (0..40).map(|k| seq.look_at(k as f64 * 0.5, 4, 5).unwrap()).collect();
+        assert!(picks.windows(2).all(|w| w[0] != w[1]), "never the same twice: {picks:?}");
+        assert!((0..5).all(|k| picks.contains(&k)), "every Look comes: {picks:?}");
+        let mut seq = LookSeq::default();
+        seq.set_auto(LookAuto::InTurn);
+        assert_eq!((0..6).map(|k| seq.look_at(k as f64 * 4.0, 4, 3).unwrap()).collect::<Vec<_>>(), [0, 1, 2, 0, 1, 2]);
+        assert_eq!(seq.auto(), LookAuto::InTurn);
+        seq.set_auto(LookAuto::Off);
+        assert_eq!(seq.look_at(0.0, 4, 3), None);
+    }
+
+    #[test]
     fn every_scene_has_its_own_settings_kept_per_scene_and_moved_by_links() {
         for (i, name) in VISUAL_SCENES.iter().enumerate() {
             let defs = scene_params(i);
@@ -4967,7 +5242,7 @@ mod tests {
         assert_eq!(look_for(None, None, None, 0, 4), 0);
         assert_eq!(look_for(Some(9), None, None, 1, 4), 1, "a Look that is gone");
         // The sequence: a step a bar, exactly on the bar; a rest is the set's own.
-        let seq = LookSeq { on: true, every: Every::Bar, steps: vec![Some(1), None, Some(2)] };
+        let seq = LookSeq { on: true, every: Every::Bar, steps: vec![Some(1), None, Some(2)], random: false, turn: false };
         assert_eq!(seq.look_at(3.999, 4, 3), Some(1));
         assert_eq!(seq.look_at(4.0, 4, 3), None);
         assert_eq!(seq.look_at(8.0, 4, 3), Some(2));

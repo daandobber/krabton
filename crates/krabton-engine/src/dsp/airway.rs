@@ -73,6 +73,9 @@ pub const NASAL: usize = 19;
 pub const CREATURE: usize = 20;
 pub const CALL: usize = 21;
 pub const LEVEL: usize = 22;
+/// The tongue up or down, and the lips pushed out or drawn in (from its face's handles).
+pub const TONGUE_UP: usize = 23;
+pub const LIP_PUSH: usize = 24;
 
 pub const MODES: &[&str] = &["Vowels", "Words", "Creature"];
 pub const VOICE_COUNTS: &[&str] = &["1", "2", "4"];
@@ -111,6 +114,8 @@ pub static SPECS: &[ParamSpec] = &[
     ParamSpec::choice("Creature", SCREEN_ONLY, CREATURES, 0),
     ParamSpec::int("Call", SCREEN_ONLY, 1.0, 8.0, 1.0, Unit::None),
     ParamSpec::lin("Level", "Out", -24.0, 12.0, 0.0, Unit::Db),
+    ParamSpec::lin("Tongue Up", "Mouth", -1.5, 1.5, 0.0, Unit::None),
+    ParamSpec::lin("Lip Push", "Mouth", -0.5, 0.5, 0.0, Unit::None),
 ];
 
 const PRESETS: &[(&str, &[(usize, f32)])] = &[
@@ -458,20 +463,7 @@ impl AirwayState {
             brightness: Some(p[BRIGHT] as f64),
             ..Default::default()
         };
-        let mut artic = ArticPatch::default();
-        if self.mode == 0 && !plans.vowels.is_empty() {
-            let a = plans.vowels[(p[VOWEL].round().max(0.0) as usize).min(plans.vowels.len() - 1)];
-            let b = plans.vowels[(p[MORPH_TO].round().max(0.0) as usize).min(plans.vowels.len() - 1)];
-            let m = p[MORPH].clamp(0.0, 1.0) as f64;
-            artic = ArticPatch::blend(&[(1.0 - m, a), (m, b)]);
-            let base = |a: &ArticPatch, k: ArticKey| a.get(k).unwrap_or(NEUTRAL.get(k));
-            let (jaw, tb, lips) = (base(&artic, ArticKey::Jaw), base(&artic, ArticKey::TbX), base(&artic, ArticKey::LipAp));
-            artic.set(ArticKey::Jaw, (jaw + p[JAW] as f64).clamp(0.0, 1.2));
-            artic.set(ArticKey::TbX, tb + p[TONGUE] as f64);
-            artic.set(ArticKey::LipAp, (lips + p[LIPS] as f64).max(0.0));
-        }
-        artic.set(ArticKey::Larynx, p[LARYNX] as f64);
-        artic.set(ArticKey::Velum, -0.15 + 0.75 * p[NASAL].clamp(0.0, 1.0) as f64);
+        let artic = mouth(p, plans, self.mode == 0);
         let n = Self::voices_n(p);
         for e in self.engines.iter_mut().take(n) {
             if self.creature.is_none() {
@@ -702,6 +694,37 @@ impl AirwayState {
 
 fn self_ratio(pitch: u8, bend: f32) -> f64 {
     2f64.powf((pitch as f64 + bend as f64 - REF_MIDI) / 12.0)
+}
+
+/// The mouth the settings ask for: the vowel (morphing to the other) with
+/// the jaw, the tongue and the lips moved from it (with `vowel`; else only
+/// what the words leave: the larynx and the nose).
+pub fn mouth(p: &[f32], plans: &Plans, vowel: bool) -> ArticPatch {
+    let get = |k: usize, d: f32| p.get(k).copied().unwrap_or(d);
+    let mut artic = ArticPatch::default();
+    if vowel && !plans.vowels.is_empty() {
+        let a = plans.vowels[(get(VOWEL, 0.0).round().max(0.0) as usize).min(plans.vowels.len() - 1)];
+        let b = plans.vowels[(get(MORPH_TO, 0.0).round().max(0.0) as usize).min(plans.vowels.len() - 1)];
+        let m = get(MORPH, 0.0).clamp(0.0, 1.0) as f64;
+        artic = ArticPatch::blend(&[(1.0 - m, a), (m, b)]);
+        let base = |a: &ArticPatch, k: ArticKey| a.get(k).unwrap_or(NEUTRAL.get(k));
+        let (jaw, tb, ty, lips, push) = (base(&artic, ArticKey::Jaw), base(&artic, ArticKey::TbX), base(&artic, ArticKey::TbY), base(&artic, ArticKey::LipAp), base(&artic, ArticKey::LipProt));
+        artic.set(ArticKey::Jaw, (jaw + get(JAW, 0.0) as f64).clamp(0.0, 1.2));
+        artic.set(ArticKey::TbX, tb + get(TONGUE, 0.0) as f64);
+        artic.set(ArticKey::TbY, ty + get(TONGUE_UP, 0.0) as f64);
+        artic.set(ArticKey::LipAp, (lips + get(LIPS, 0.0) as f64).max(0.0));
+        artic.set(ArticKey::LipProt, (push + get(LIP_PUSH, 0.0) as f64).clamp(0.0, 1.0));
+    }
+    artic.set(ArticKey::Larynx, get(LARYNX, 0.0) as f64);
+    artic.set(ArticKey::Velum, -0.15 + 0.75 * get(NASAL, 0.0).clamp(0.0, 1.0) as f64);
+    artic
+}
+
+/// The mouth the settings ask for, every articulator (`ArticKey` order), for the face to draw while nothing sings.
+pub fn target_artic(p: &[f32], plans: &Plans) -> [f32; 17] {
+    let vowel = p.get(MODE).is_none_or(|m| m.round() as usize == 0);
+    let m = mouth(p, plans, vowel).apply_to(&NEUTRAL);
+    std::array::from_fn(|k| chimera::anatomy::human::ArticKey::ALL.get(k).map_or(0.0, |key| m.get(*key) as f32))
 }
 
 /// Creature `k`'s definition (its calls), as the engine has it.

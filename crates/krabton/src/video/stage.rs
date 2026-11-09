@@ -93,6 +93,8 @@ pub struct Params {
     /// with other Visuals comes in).
     pub sp: [f32; kv::SCENE_P],
     pub sp_from: [f32; kv::SCENE_P],
+    /// The stage's size in pixels, as the set's shape has it.
+    pub stage: [i32; 2],
 }
 
 impl Default for Params {
@@ -129,6 +131,7 @@ impl Default for Params {
             vstyle: 0.0,
             sp: kv::scene_defaults(0),
             sp_from: kv::scene_defaults(0),
+            stage: [STAGE_W, STAGE_H],
         }
     }
 }
@@ -455,6 +458,53 @@ void main() {
         }
         p = (f - 0.5) * vec2(aspect, 1.0);
     }
+    // Checker: the squares that are the other colour of the board, by chance as many as it is up.
+    float chk = 0.0;
+    if (A_CHECKER > 0.001) {
+        float n = max(P_CHECKER.x, 1.0);
+        vec2 g = (p + vec2(u_vtime * P_CHECKER.z * 0.1, 0.0)) * n;
+        vec2 cell = floor(g);
+        float swap = P_CHECKER.w > 0.001 ? floor(u_vtime * P_CHECKER.w) : 0.0;
+        float odd = mod(cell.x + cell.y + swap, 2.0);
+        if (odd > 0.5 && hash(cell.x * 7.13 + cell.y * 3.71) < A_CHECKER * 1.05) {
+            chk = 1.0;
+            vec2 f = fract(g) - 0.5;
+            float style = P_CHECKER.y;
+            if (style < 0.5) { f.x = -f.x; }
+            else if (style > 2.5 && style < 3.5) { f = fract(f + 0.5) - 0.5; }
+            else if (style > 4.5) { f = vec2(-f.y, f.x); }
+            p = (cell + 0.5 + f) / n - vec2(u_vtime * P_CHECKER.z * 0.1, 0.0);
+        }
+    }
+    // Puzzle: squares shuffled about, again at its rate.
+    if (A_PUZZLE > 0.001) {
+        float n = max(P_PUZZLE.x, 1.0);
+        vec2 q = (p / vec2(aspect, 1.0) + 0.5) * n;
+        vec2 cell = floor(q);
+        float t = floor(u_vtime * P_PUZZLE.y);
+        if (hash(cell.x * 5.3 + cell.y * 9.1 + t * 1.7) < A_PUZZLE) {
+            vec2 to = floor(vec2(hash(cell.x + cell.y * 13.0 + t * 3.1), hash(cell.y + cell.x * 7.0 + t * 5.3)) * n);
+            q = to + fract(q);
+            p = (q / n - 0.5) * vec2(aspect, 1.0);
+        }
+    }
+    // Shred: strips pushed apart, across or down.
+    if (A_SHRED > 0.001) {
+        float n = max(P_SHRED.x, 1.0);
+        if (P_SHRED.y < 0.5) {
+            float s = floor((p.y + 0.5) * n);
+            p.x += (hash(s * 1.37) - 0.5) * P_SHRED.z * A_SHRED * aspect * (0.6 + 0.4 * sin(u_vtime * P_SHRED.w * 3.0 + s));
+        } else {
+            float s = floor((p.x / aspect + 0.5) * n);
+            p.y += (hash(s * 1.37) - 0.5) * P_SHRED.z * A_SHRED * (0.6 + 0.4 * sin(u_vtime * P_SHRED.w * 3.0 + s));
+        }
+    }
+    // Melt: dripping down in streaks.
+    if (A_MELT > 0.001) {
+        float col = floor((p.x / aspect + 0.5) * P_MELT.y);
+        float drip = hash(col * 2.31) * (0.6 + 0.4 * sin(u_vtime * P_MELT.z * 2.0 + col * 0.7));
+        p.y += drip * P_MELT.x * A_MELT * (0.5 + p.y);
+    }
     // Swirl: turned round the middle, more near it.
     if (A_SWIRL > 0.001) {
         float r = length(p);
@@ -510,6 +560,56 @@ void main() {
         else if (axis < 3.5) { q.y = abs(q.y); }
         else { q = -abs(q); }
         c = mix(c, at(q), A_MIRROR);
+    }
+    // Checker: its squares in other colours.
+    if (chk > 0.5) {
+        float style = P_CHECKER.y;
+        if (style > 0.5 && style < 1.5) { c = 1.0 - c; }
+        else if (style > 1.5 && style < 2.5) { c = hue_turn(c, 3.1415926); }
+        else if (style > 3.5 && style < 4.5) { c *= 0.0; }
+    }
+    // Prism: triangles' kaleidoscope, all over, turning.
+    if (A_PRISM > 0.001) {
+        vec2 q = turn2(p, u_vtime * P_PRISM.y) * P_PRISM.x;
+        vec2 s = vec2(1.0, 1.7320508);
+        vec2 a = mod(q, s) - s * 0.5;
+        vec2 b = mod(q - s * 0.5, s) - s * 0.5;
+        vec2 h = dot(a, a) < dot(b, b) ? a : b;
+        float seg = 1.0471976;
+        float ang = mod(atan(h.y, h.x), seg);
+        ang = abs(ang - seg * 0.5);
+        c = mix(c, at(vec2(cos(ang), sin(ang)) * length(h) * 0.9), A_PRISM);
+    }
+    // Polar: wrapped round, a little planet or a tunnel.
+    if (A_POLAR > 0.001) {
+        float r = length(p) / max(P_POLAR.x, 0.05);
+        float ang = atan(p.y, p.x) / 6.2831853 + 0.5 + u_vtime * P_POLAR.y * 0.05;
+        float y = P_POLAR.z > 0.5 ? r - 0.5 : 0.5 - r;
+        c = mix(c, at(vec2((fract(ang) - 0.5) * aspect, clamp(y, -0.5, 0.5))), A_POLAR);
+    }
+    // Droste: inside itself, zooming on.
+    if (A_DROSTE > 0.001) {
+        float sc = max(P_DROSTE.x, 1.1);
+        float t = fract(u_vtime * P_DROSTE.y * 0.25);
+        vec2 q = p * pow(sc, -t);
+        float l = log(max(length(q), 1e-4)) / log(sc);
+        float lvl = floor(l + 1.0);
+        q *= pow(sc, -lvl) * sc;
+        q = turn2(q, lvl * P_DROSTE.z * 1.5707963);
+        c = mix(c, at(q * 0.95), A_DROSTE);
+    }
+    // Pop Art: copies side by side, each in flat colours of its own.
+    if (A_POPART > 0.001) {
+        float n = floor(max(P_POPART.x, 1.0) + 0.5);
+        vec2 q = (p / vec2(aspect, 1.0) + 0.5) * n;
+        vec2 cell = floor(q);
+        vec3 src = at((fract(q) - 0.5) * vec2(aspect, 1.0));
+        float steps = max(P_POPART.y, 2.0);
+        float l = floor(luma(src) * steps) / (steps - 1.0);
+        float hue = fract(P_POPART.z + (cell.x + cell.y * n) / (n * n));
+        vec3 ink = 0.5 + 0.5 * cos(6.2831853 * (hue + vec3(0.0, 0.33, 0.67)));
+        vec3 paper = 0.5 + 0.5 * cos(6.2831853 * (hue + 0.5 + vec3(0.0, 0.33, 0.67)));
+        c = mix(c, mix(ink * 0.25, paper, l), A_POPART);
     }
     // Kaleido: mirrored wedges.
     if (A_KALEIDO > 0.001) {
@@ -785,7 +885,7 @@ impl Stage {
         }
     }
 
-    /// The stage last read back (RGBA, `STAGE_W` by `STAGE_H`, bottom row
+    /// The stage last read back (RGBA, at the shape's stage size, bottom row
     /// first) and the frame it was drawn for, once.
     pub fn take_pixels(&self) -> Option<(u64, Vec<u8>)> {
         self.state.lock().ok().and_then(|mut s| s.pixels.take())
@@ -802,9 +902,14 @@ impl Stage {
                 return;
             }
             let gl = p.gl();
+            // Another shape: the stage made again at its size.
+            let want = (params.stage[0].max(16), params.stage[1].max(16));
+            if st.gl.as_ref().is_some_and(|g| (g.w, g.h) != want) {
+                st.gl = None;
+            }
             if st.gl.is_none() {
                 // SAFETY: on the painter's thread with its context current, as egui_glow calls back.
-                match unsafe { Gl::new(gl) } {
+                match unsafe { Gl::sized(gl, want.0, want.1) } {
                     Ok(g) => st.gl = Some(g),
                     Err(e) => {
                         eprintln!("video: {e}");
@@ -826,8 +931,8 @@ impl Stage {
                     g.draw_effects(gl, video_tex, old_tex, &params);
                     if want {
                         // The stage just drawn, still bound to the frame buffer.
-                        let mut px = vec![0u8; (STAGE_W * STAGE_H * 4) as usize];
-                        gl.read_pixels(0, 0, STAGE_W, STAGE_H, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelPackData::Slice(Some(&mut px)));
+                        let mut px = vec![0u8; (g.w * g.h * 4) as usize];
+                        gl.read_pixels(0, 0, g.w, g.h, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelPackData::Slice(Some(&mut px)));
                         read = Some(px);
                     }
                     gl.bind_framebuffer(glow::FRAMEBUFFER, p.intermediate_fbo());
@@ -918,10 +1023,6 @@ unsafe fn new_texture(gl: &glow::Context, w: i32, h: i32) -> Result<glow::Textur
 }
 
 impl Gl {
-    unsafe fn new(gl: &glow::Context) -> Result<Self, String> {
-        Self::sized(gl, STAGE_W, STAGE_H)
-    }
-
     unsafe fn sized(gl: &glow::Context, w: i32, h: i32) -> Result<Self, String> {
         let fx = program(gl, &format!("{}{}{EFFECTS}", defines(), visuals::PATTERNS))?;
         let show = program(gl, SHOW)?;

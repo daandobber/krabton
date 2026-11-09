@@ -20,8 +20,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-/// The film's sizes on offer (16:9).
-pub const SIZES: [(u32, u32); 3] = [(854, 480), (1280, 720), (1920, 1080)];
 /// Frames a second on offer.
 pub const RATES: [u32; 4] = [24, 25, 30, 60];
 

@@ -156,8 +156,18 @@ thread_local! {
     static TRACT: std::cell::RefCell<Option<(u8, chimera::anatomy::human::HumanVocalTract)>> = const { std::cell::RefCell::new(None) };
 }
 
+/// Where the handles are on the drawing, and how many points a centimetre is.
+struct Handles {
+    tongue: Pos2,
+    jaw: Pos2,
+    lips: Pos2,
+    larynx: Pos2,
+    velum: Pos2,
+    cm: f32,
+}
+
 /// The vocal tract seen from the side, as the articulators `artic` shape it, fitted into `r`.
-fn tract(p: &egui::Painter, r: Rect, body: u8, artic: &[f32]) {
+fn tract(p: &egui::Painter, r: Rect, body: u8, artic: &[f32]) -> Option<Handles> {
     use chimera::anatomy::human::{BodyMix, HumanArtic, HumanVocalTract};
     let a: Vec<f64> = artic.iter().map(|v| *v as f64).collect();
     let frame = TRACT.with(|t| {
@@ -173,7 +183,7 @@ fn tract(p: &egui::Painter, r: Rect, body: u8, artic: &[f32]) {
         let art = if a.iter().all(|v| *v == 0.0) { chimera::anatomy::human::NEUTRAL } else { HumanArtic::from_array(&a) };
         t.as_mut().map(|(_, tr)| tr.compute_new(&art))
     });
-    let Some(f) = frame else { return };
+    let f = frame?;
     // Its extent, to fit it (x forward, y up).
     let all = f.outer.iter().chain(f.inner.iter()).chain(f.nasal_cavity.iter()).chain(f.upper_lip.iter()).chain(f.lower_lip.iter());
     let (mut x0, mut x1, mut y0, mut y1) = (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
@@ -184,7 +194,7 @@ fn tract(p: &egui::Painter, r: Rect, body: u8, artic: &[f32]) {
         y1 = y1.max(q.y);
     }
     if x1 <= x0 || y1 <= y0 {
-        return;
+        return None;
     }
     let s = ((r.width() as f64 - 16.0) / (x1 - x0)).min((r.height() as f64 - 16.0) / (y1 - y0));
     let cx = r.center().x as f64 - (x0 + x1) * 0.5 * s;
@@ -212,14 +222,18 @@ fn tract(p: &egui::Painter, r: Rect, body: u8, artic: &[f32]) {
     neon(p, tongue, GREEN, 1.6);
     neon(p, line(&f.upper_lip), PINK, 1.6);
     neon(p, line(&f.lower_lip), PINK, 1.6);
-    // The handles: the tongue's body, the jaw, the lips.
-    for (q, col) in [(to(&f.tongue_center), GREEN), (to(&f.tip), RED)] {
+    // The handles: the tongue's body, the jaw (at the lower teeth), the lips, the larynx, the soft palate.
+    let mid = |v: &[chimera::anatomy::geom::Vec2]| v.get(v.len() / 2).map(to);
+    let jaw = f.lower_teeth.last().map(to).or_else(|| mid(&f.jaw_bone)).unwrap_or(c);
+    let lips = mid(&f.lower_lip).unwrap_or(c);
+    let velum = mid(&f.velum).unwrap_or(c);
+    let larynx = to(&f.glottis);
+    for (q, col) in [(c, GREEN), (jaw, RED), (lips, PINK), (larynx, WHITE), (velum, DEEP)] {
         p.circle_stroke(q, 7.0, Stroke::new(1.2_f32, col));
         p.line_segment([q - vec2(10.0, 0.0), q + vec2(10.0, 0.0)], Stroke::new(1.0_f32, col));
         p.line_segment([q - vec2(0.0, 10.0), q + vec2(0.0, 10.0)], Stroke::new(1.0_f32, col));
     }
-    let g = to(&f.glottis);
-    p.circle_filled(g, 3.0, WHITE);
+    Some(Handles { tongue: c, jaw, lips, larynx, velum, cm: s as f32 })
 }
 
 /// Airway's panel. Returns a message for the player.
@@ -370,21 +384,63 @@ pub(crate) fn panel(ui: &mut Ui, id: Id, preset: &mut String, params: &mut Vec<f
     } else {
         let body = params[aw::BODY].round() as u8;
         let inner = panel_frame(&p, tr, "VOCAL TRACT", ["ADULT MALE", "ADULT FEMALE", "CHILD"][body.min(2) as usize]);
-        tract(&p, Rect::from_min_max(inner.min, pos2(inner.right(), inner.bottom() - 12.0)), body, artic);
+        // Singing: the mouth as the engine moves it; else as the settings ask.
+        let target = aw::target_artic(params, plans);
+        let shown: &[f32] = if vals[aw::VIS_VOICING] > 0.02 && mode != 2 { artic } else { &target };
+        let handles = tract(&p, Rect::from_min_max(inner.min, pos2(inner.right(), inner.bottom() - 12.0)), body, shown);
         // Its numbers, along the bottom.
         let mut x = inner.left();
         for (name, v, unit) in [("F0", f0, "HZ"), ("LUNGS", vals[aw::VIS_LUNGS], "CMH2O"), ("TRACT", vals[aw::VIS_LENGTH], "CM")] {
             let r = p.text(pos2(x, inner.bottom()), Align2::LEFT_BOTTOM, format!("{name} {v:.1} {unit}"), small(), LABEL);
             x = r.right() + 10.0;
         }
-        // Drag in it: the tongue forward and back, the jaw open and shut.
-        let resp = ui.interact(inner, id.with("tract_drag"), Sense::drag());
-        if resp.dragged() {
-            let d = resp.drag_delta();
-            params[aw::TONGUE] = (params[aw::TONGUE] + d.x * 0.01).clamp(-1.0, 1.0);
-            params[aw::JAW] = (params[aw::JAW] + d.y * 0.004).clamp(-0.4, 0.4);
+        // The handles: grab one and move that part of the mouth.
+        if let Some(h) = handles {
+            let cm = h.cm.max(1.0);
+            let grab = id.with("tract_grab");
+            let held: Option<usize> = ui.ctx().data(|d| d.get_temp(grab));
+            let spots = [(h.tongue, "The tongue: forward and back, up and down"), (h.jaw, "The jaw: open and shut"), (h.lips, "The lips: open and shut, pushed out or drawn in"), (h.larynx, "The larynx: up (a smaller, brighter voice) or down (bigger, darker)"), (h.velum, "The soft palate: down opens the nose (a nasal voice)")];
+            let resp = ui.interact(inner, id.with("tract_drag"), Sense::click_and_drag());
+            let pointer = resp.interact_pointer_pos().or(resp.hover_pos());
+            let near = pointer.and_then(|q| spots.iter().enumerate().filter(|(_, (s, _))| s.distance(q) < 16.0).min_by(|a, b| a.1 .0.distance(q).total_cmp(&b.1 .0.distance(q))).map(|(k, _)| k));
+            if resp.drag_started() {
+                ui.ctx().data_mut(|d| d.insert_temp(grab, near));
+            }
+            let held = if resp.dragged() { held.or(near) } else { None };
+            if let Some(k) = held {
+                let d = resp.drag_delta() / cm;
+                let add = |params: &mut Vec<f32>, i: usize, v: f32| {
+                    let s = &aw::SPECS[i];
+                    params[i] = (params[i] + v).clamp(s.min, s.max);
+                };
+                match k {
+                    0 => {
+                        add(params, aw::TONGUE, d.x);
+                        add(params, aw::TONGUE_UP, -d.y);
+                    }
+                    1 => add(params, aw::JAW, d.y * 0.3),
+                    2 => {
+                        add(params, aw::LIPS, d.y * 0.3);
+                        add(params, aw::LIP_PUSH, d.x * 0.3);
+                    }
+                    3 => add(params, aw::LARYNX, -d.y),
+                    _ => add(params, aw::NASAL, d.y * 0.6),
+                }
+                if mode != 0 && k <= 2 {
+                    params[aw::MODE] = 0.0;
+                }
+            }
+            if resp.drag_stopped() {
+                ui.ctx().data_mut(|d| d.remove::<Option<usize>>(grab));
+            }
+            if let Some(k) = held.or(near) {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+                p.circle_stroke(spots[k].0, 11.0, Stroke::new(1.5_f32, WHITE));
+                resp.on_hover_text(spots[k].1);
+            } else {
+                resp.on_hover_text("Grab a handle: the tongue (green), the jaw (red), the lips (pink), the larynx (white), the soft palate (blue)");
+            }
         }
-        resp.on_hover_text("Drag: the tongue forward and back, the jaw open and shut");
     }
 
     // The tube and the vocal folds.

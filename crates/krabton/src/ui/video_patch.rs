@@ -30,7 +30,11 @@ use krabton_engine::video::{self as kv, Effect, Source, VideoLink};
 /// those on the Visuals, then the picture's (as the stage's shader has them).
 pub(crate) const FILM_ORDER: [Effect; 6] = [Effect::Speed, Effect::Freeze, Effect::Jump, Effect::Stutter, Effect::Scratch, Effect::NextClip];
 pub(crate) const VIS_ORDER: [Effect; 11] = [Effect::Burst, Effect::Warp, Effect::Density, Effect::Rush, Effect::Glow, Effect::Orbit, Effect::Fracture, Effect::Depth, Effect::Detail, Effect::Thickness, Effect::Scatter];
-pub(crate) const MAIN_ORDER: [Effect; 38] = [
+pub(crate) const MAIN_ORDER: [Effect; 46] = [
+    Effect::Checker,
+    Effect::Puzzle,
+    Effect::Shred,
+    Effect::Melt,
     Effect::Tile,
     Effect::Swirl,
     Effect::Fisheye,
@@ -45,6 +49,10 @@ pub(crate) const MAIN_ORDER: [Effect; 38] = [
     Effect::Blur,
     Effect::Mirror,
     Effect::Kaleido,
+    Effect::Prism,
+    Effect::Polar,
+    Effect::Droste,
+    Effect::PopArt,
     Effect::Edges,
     Effect::Hue,
     Effect::Grade,

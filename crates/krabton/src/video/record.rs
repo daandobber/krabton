@@ -10,7 +10,6 @@
 //! clock (the frames by the time since, the sound by its samples), so they
 //! stay together however the window's frames come.
 
-use super::stage::{STAGE_H, STAGE_W};
 use krabton_engine::engine::{EngineStatus, RECORD_LEN};
 use std::ffi::OsString;
 use std::io::Write;
@@ -49,13 +48,13 @@ pub fn frames_due(secs: f64, fps: u32) -> u64 {
 
 /// The arguments for the film without sound: raw RGBA frames of the stage
 /// on its input, turned the right way up and made `width` by `height`.
-pub fn picture_args(fps: u32, width: u32, height: u32, out: &Path) -> Vec<OsString> {
+pub fn picture_args(fps: u32, stage: (i32, i32), width: u32, height: u32, out: &Path) -> Vec<OsString> {
     let mut a: Vec<OsString> = Vec::new();
     for s in ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-f", "rawvideo", "-pix_fmt", "rgba"] {
         a.push(s.into());
     }
     a.push("-s".into());
-    a.push(format!("{STAGE_W}x{STAGE_H}").into());
+    a.push(format!("{}x{}", stage.0, stage.1).into());
     a.push("-r".into());
     a.push(fps.to_string().into());
     for s in ["-i", "-", "-vf"] {
@@ -107,7 +106,7 @@ pub fn free_name(dir: &Path, set: &str) -> PathBuf {
 impl Recorder {
     /// Starts recording into `out` (`width` by `height`, `fps` a second);
     /// the engine's tap is switched on.
-    pub fn start(status: &EngineStatus, ffmpeg: &Path, out: PathBuf, width: u32, height: u32, fps: u32) -> Result<Self, String> {
+    pub fn start(status: &EngineStatus, ffmpeg: &Path, out: PathBuf, stage: (i32, i32), width: u32, height: u32, fps: u32) -> Result<Self, String> {
         if let Some(dir) = out.parent() {
             std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         }
@@ -115,7 +114,7 @@ impl Recorder {
         std::fs::create_dir_all(&tmp).map_err(|e| format!("{}: {e}", tmp.display()))?;
         let film = tmp.join("picture.mp4");
         let mut child = super::ffmpeg::command(ffmpeg)
-            .args(picture_args(fps, width, height, &film))
+            .args(picture_args(fps, stage, width, height, &film))
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -275,10 +274,10 @@ mod tests {
 
     #[test]
     fn the_picture_and_the_sound_are_put_together_as_they_are() {
-        let pic: Vec<String> = picture_args(30, 1280, 720, Path::new("C:/tmp/picture.mp4")).into_iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        let pic: Vec<String> = picture_args(30, (1280, 720), 1280, 720, Path::new("C:/tmp/picture.mp4")).into_iter().map(|a| a.to_string_lossy().into_owned()).collect();
         let at = |args: &[String], s: &str| args.iter().position(|a| a == s).unwrap();
         assert_eq!(pic[at(&pic, "-pix_fmt") + 1], "rgba");
-        assert_eq!(pic[at(&pic, "-s") + 1], format!("{STAGE_W}x{STAGE_H}"));
+        assert_eq!(pic[at(&pic, "-s") + 1], "1280x720");
         assert_eq!(pic[at(&pic, "-r") + 1], "30");
         assert_eq!(pic[at(&pic, "-vf") + 1], "vflip,scale=1280:720", "the stage is read bottom row first");
         let mux: Vec<String> = mux_args(Path::new("a/picture.mp4"), Path::new("a/sound.raw"), 44_100, Path::new("b/my set.mp4")).into_iter().map(|a| a.to_string_lossy().into_owned()).collect();

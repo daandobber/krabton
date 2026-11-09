@@ -322,6 +322,8 @@ pub fn frame_params(set: &VideoSet, project: &Project, dir: &mut Director, shot:
     (p.milk, p.milk_old, p.milk_mix, p.milk_style) = (knobs(f.now), knobs(f.old), f.mix, f.style as f32);
     // A Look coming in over another with other Visuals: by the set's pattern.
     p.vstyle = set.look_change.pattern();
+    let (w, h) = set.aspect.stage();
+    p.stage = [w, h];
     p
 }
 /// Each clip's film length (seconds; 0 for a picture or one not read yet).
@@ -362,7 +364,7 @@ impl App {
         let out = path.unwrap_or_else(|| record::free_name(&record::recorded_dir(), &self.project.name));
         let o = self.video.export_opts;
         let status = self.status();
-        match record::Recorder::start(&status, &exe, out, o.width, o.height, o.fps) {
+        match record::Recorder::start(&status, &exe, out, self.project.video.aspect.stage(), o.width, o.height, o.fps) {
             Ok(r) => {
                 self.video.stage.want_pixels(true);
                 println!("video record: started {}", r.out.display());
