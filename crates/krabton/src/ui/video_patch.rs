@@ -7,7 +7,16 @@
 //! a module's x, a right-click on it, Delete or its panel's Remove take it out; drag from a modulator to an
 //! effect to make it move that too; click a module for its settings.
 
-use super::video_view::{effect_detail, milk_panel, track_name, visuals_head, GROUPS};
+use super::video_view::{effect_detail, milk_panel, scene_detail, track_name, visuals_head, GROUPS};
+
+/// The module a link goes to: the Visuals' own, or the effect's.
+fn target(e: Effect) -> Node {
+    if e == Effect::Visuals {
+        Node::Visuals
+    } else {
+        Node::Fx(e)
+    }
+}
 use super::vj;
 use crate::app::App;
 use crate::theme::*;
@@ -146,7 +155,7 @@ pub(crate) fn layout(film: bool, visuals: bool, used: &[Effect], mods: &[(Node, 
     let mut placed: Vec<(Node, f32)> = mods
         .iter()
         .map(|(m, targets)| {
-            let xs: Vec<f32> = targets.iter().filter_map(|e| out.iter().find(|(n, _)| *n == Node::Fx(*e)).map(|(_, r)| r.center().x)).collect();
+            let xs: Vec<f32> = targets.iter().filter_map(|e| out.iter().find(|(n, _)| *n == target(*e)).map(|(_, r)| r.center().x)).collect();
             (*m, if xs.is_empty() { 40.0 } else { xs.iter().sum::<f32>() / xs.len() as f32 })
         })
         .collect();
@@ -310,8 +319,9 @@ impl App {
 
         // The modulators' cables, each with a knob for how much.
         let pointer = ui.input(|i| i.pointer.hover_pos());
+        let scene_now = look.setting(Effect::Visuals).param(Effect::Visuals, 0).round().max(0.0) as usize;
         for (i, l) in look.links.iter_mut().enumerate() {
-            let (Some(a), Some(b)) = (rect_of(Node::Mod(l.source, l.from)), rect_of(Node::Fx(l.effect))) else { continue };
+            let (Some(a), Some(b)) = (rect_of(Node::Mod(l.source, l.from)), rect_of(target(l.effect))) else { continue };
             let col = colour_of(Node::Mod(l.source, l.from));
             let from = pos2(a.center().x, a.top());
             let to = pos2(b.center().x, b.bottom());
@@ -337,7 +347,11 @@ impl App {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
             }
             let how = if l.effect.on_hits() { "how often a hit does it" } else { "how much at full" };
-            let resp = resp.on_hover_text(format!("{} moves {}: {} {:.0} %. Drag up or down, double-click: half. Right-click: take it away", l.source.name(), l.effect.name(), how, l.amount * 100.0));
+            let what = match l.param {
+                Some(k) => format!("the Visuals' {}", kv::scene_params(scene_now).get(k as usize).map_or("setting", |d| d.name)),
+                None => l.effect.name().to_string(),
+            };
+            let resp = resp.on_hover_text(format!("{} moves {}: {} {:.0} %. Drag up or down, double-click: half. Right-click: take it away", l.source.name(), what, how, l.amount * 100.0));
             if resp.secondary_clicked() {
                 // This cable alone (taken away below).
                 ui.ctx().data_mut(|d| d.insert_temp(Id::new("video_patch_unlink"), i));
@@ -526,6 +540,7 @@ impl App {
                                 if scene == crate::video::stage::MILK_SCENE {
                                     milk_panel(ui, &mut look.milk, milk_now);
                                 }
+                                scene_detail(ui, look, &readings, tracks);
                                 ui.add_space(4.0);
                                 if ui.small_button("Remove").on_hover_text("Take the Visuals out of the Look, with their effects and cables (or Delete)").clicked() {
                                     remove = Some(Node::Visuals);

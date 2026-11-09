@@ -228,6 +228,10 @@ uniform sampler2D u_hist;
 uniform float u_vfrom;
 uniform float u_vmix;
 uniform float u_vstyle;
+uniform vec3 u_sa;
+uniform vec3 u_sb;
+uniform vec3 u_fa;
+uniform vec3 u_fb;
 I vec2 v_uv;
 
 #define TAU 6.2831853
@@ -293,20 +297,32 @@ float dens;
 float orbit;
 float aspect;
 
+// The scene's own settings (see `scene_params`), S0 to S5.
+vec3 SA;
+vec3 SB;
+#define S0 SA.x
+#define S1 SA.y
+#define S2 SA.z
+#define S3 SB.x
+#define S4 SB.y
+#define S5 SB.z
+
 vec3 ridges(vec2 p) {
     vec3 col = vec3(0.0);
-    float n = floor(28.0 * dens);
+    float n = min(floor(S0 * dens), 112.0);
+    float top = 0.6 * max(1.0, max(S1, S5));
     for (int i = 0; i < 112; i++) {
         float fi = float(i);
         if (fi >= n) { break; }
         float z = fi / max(n - 1.0, 1.0);
         float base = mix(0.3, -0.42, z);
-        if (p.y > base + 0.6 || p.y < base - 0.08) { continue; }
-        float xs = p.x * mix(1.6, 0.75, z);
+        if (p.y > base + top || p.y < base - 0.08) { continue; }
+        float xs = p.x * mix(1.6, 0.75, z) / max(S2, 0.05);
         float env = exp(-xs * xs * 3.0);
-        float ground = vnoise(vec2(xs * 3.0 * P_WARP.x, z * 6.0 - T * 0.8)) * 0.5 + vnoise(vec2(xs * 7.0, z * 13.0 - T * 1.6)) * 0.25;
+        float ground = vnoise(vec2(xs * 3.0 * P_WARP.x, z * 6.0 - T * 0.8 * S4)) * 0.5 + vnoise(vec2(xs * 7.0, z * 13.0 - T * 1.6 * S4)) * S3
+            + vnoise(vec2(xs * 19.0, z * 29.0 - T * 2.4 * S4)) * S3 * S3 * 0.5;
         float s = spec(abs(xs) * 0.8);
-        float h = env * (ground * (0.12 + 0.3 * warp) + s * 0.16 + burst * 0.3 * h11(fi + floor(T * 4.0)));
+        float h = env * (ground * (0.12 + 0.3 * warp) * S1 + s * 0.16 * S5 + burst * 0.3 * h11(fi + floor(T * 4.0)));
         float y = base + h * (0.4 + z);
         if (p.y < y) { col = vec3(0.0); }
         col += palette(z) * lit(p.y - y, 1.0 + z);
@@ -320,37 +336,39 @@ float lattice_d(vec3 q, float cell, float r) {
 }
 
 vec3 lattice(vec2 p) {
-    vec3 ro = vec3(0.0, 0.0, -T * 2.5);
+    vec3 ro = vec3(0.0, 0.0, -T * S2);
     vec3 rd = normalize(vec3(p, 1.1 - burst * 0.6));
     rd.xz = rot(rd.xz, orbit);
     rd.xy = rot(rd.xy, T * 0.07 + orbit * 0.5);
-    float cell = 2.2 / sqrt(dens);
-    float r = 0.025 + burst * 0.04;
+    float cell = S0 / sqrt(dens);
+    float r = S1 + burst * 0.04;
     float t = 0.0;
     vec3 glow = vec3(0.0);
     float hit = 0.0;
     for (int i = 0; i < 56; i++) {
         vec3 q = ro + rd * t;
-        q.xy = rot(q.xy, q.z * warp * 0.25);
+        q.xy = rot(q.xy, q.z * (warp * 0.25 + S3 * 0.3));
         float d = lattice_d(q, cell, r);
         float band = spec(fract(abs(q.z) * 0.05));
-        glow += palette(fract(q.z * 0.03)) * exp(-d * 18.0) * 0.012 * (0.4 + band * 1.6);
+        glow += palette(fract(q.z * 0.03)) * exp(-d * 18.0) * 0.012 * (0.4 + band * 1.6) * S5;
         if (d < 0.002) { hit = 1.0; break; }
         t += d;
         if (t > 30.0) { break; }
     }
-    float fog = exp(-t * 0.09);
+    float fog = exp(-t * S4);
     return palette(fract((ro.z + rd.z * t) * 0.03)) * hit * fog * 0.9 + glow * (1.0 + 2.0 * A_GLOW);
 }
 
 vec3 swarm(vec2 p) {
     vec3 col = vec3(0.0);
-    float a = orbit + T * 0.15;
-    float m = floor(26.0 * dens);
+    float a = orbit + T * 0.15 * S3;
+    float m = floor(S1 * dens);
+    float shells = floor(S0 + 0.5);
     for (int k = 0; k < 9; k++) {
         float fk = float(k);
+        if (fk >= shells) { break; }
         float r = 0.14 + 0.045 * fk + burst * 0.5 * h11(fk + 3.0) * (0.3 + fk * 0.1);
-        r *= 1.0 + warp * 0.25 * sin(atan(p.y, p.x) * 3.0 + T + fk);
+        r *= 1.0 + warp * 0.25 * S4 * sin(atan(p.y, p.x) * 3.0 + T + fk);
         float rr = dot(p, p);
         if (rr > r * r) { continue; }
         float zz = sqrt(r * r - rr);
@@ -364,9 +382,9 @@ vec3 swarm(vec2 p) {
             vec2 id = floor(g);
             vec2 at = fract(g) - h22(id + fk * 31.0);
             float d = length(at * vec2(TAU * r / (m * 2.0), 3.14159 * r / m) * vec2(sin(sph.y * 3.14159) + 0.05, 1.0));
-            float size = (1.2 + 2.5 * h21(id + 7.0)) / u_stage.y;
+            float size = (1.2 + 2.5 * h21(id + 7.0)) * S2 / u_stage.y;
             float front = side == 0 ? 1.0 : 0.35;
-            float flick = 0.5 + 0.5 * spec(h21(id));
+            float flick = (1.0 - S5) + S5 * spec(h21(id));
             col += palette(fk / 8.0) * front * flick * (smoothstep(size, 0.0, d) + exp(-d / (size * (2.0 + 6.0 * A_GLOW))) * 0.2);
         }
     }
@@ -374,49 +392,58 @@ vec3 swarm(vec2 p) {
 }
 
 vec3 data(vec2 uv) {
-    float cols = floor(40.0 * dens);
+    float cols = floor(S0 * dens);
     float c = floor(uv.x * cols);
     float dir = h11(c) < 0.5 ? -1.0 : 1.0;
-    float y = uv.y + T * (0.1 + h11(c + 9.0) * 0.9) * dir;
+    float y = uv.y + T * S1 * (0.1 + h11(c + 9.0) * 0.9) * dir;
     float rows = 30.0 + floor(h11(c + 4.0) * 3.0) * 20.0;
     float b = floor(y * rows);
-    float bit = step(0.55 - spec(c / cols) * 0.45, h21(vec2(c, b)));
+    float bit = step(1.0 - S2 - spec(c / cols) * 0.45, h21(vec2(c, b)));
     vec2 inside = vec2(fract(uv.x * cols), fract(y * rows));
     float box = step(0.08, inside.x) * step(inside.x, 0.92) * step(0.12, inside.y) * step(inside.y, 0.88);
     vec3 col = palette(c / cols) * bit * box * 0.55;
     // The spectrum's bars, up from the bottom.
     float s = spec(uv.x);
-    float bar = step(1.0 - uv.y, s * 0.6) * step(0.15, fract(uv.x * 128.0));
+    float bar = step(1.0 - uv.y, s * S3) * step(0.15, fract(uv.x * 128.0));
     col = max(col, palette(uv.x) * bar);
     // A barcode across the middle, flickering with the top.
     float stripe = step(0.5, h21(vec2(floor(uv.x * (90.0 + 120.0 * spec(0.9))), floor(T * 12.0))));
     float band = step(abs(uv.y - 0.5 + sin(T * 0.3) * 0.2), 0.02 + 0.06 * spec(0.8));
-    col = max(col, vec3(stripe * band));
+    col = max(col, vec3(stripe * band * S4));
     // A scan line.
-    col += palette(0.5) * lit(uv.y - fract(T * 0.25), 1.0) * 0.8;
+    col += palette(0.5) * lit(uv.y - fract(T * 0.25 * max(S1, 0.05)), 1.0) * S5;
     // Burst: blocks turned over.
     float flip = step(h21(floor(uv * vec2(8.0, 6.0)) + floor(T * 6.0)), burst * 0.7);
     return mix(col, 1.0 - col, flip);
 }
 
+// How far out `q` is in a tunnel of `shape` (0 round, 1 square, 2 triangle, 3 hexagon).
+float tunnel_r(vec2 q, float shape) {
+    if (shape < 0.5) { return length(q); }
+    float n = shape < 1.5 ? 4.0 : (shape < 2.5 ? 3.0 : 6.0);
+    float s = TAU / n;
+    float a = atan(q.y, q.x) + (shape < 1.5 ? s * 0.5 : 0.0);
+    return length(q) * cos(mod(a + s * 0.5, s) - s * 0.5);
+}
+
 vec3 tunnel(vec2 p) {
     vec2 q = rot(p, orbit + T * 0.1);
-    float r = max(length(q), 0.001);
+    float r = max(tunnel_r(q, S5), 0.001);
     float a = atan(q.y, q.x) / TAU + 0.5;
-    float z = 0.3 / r + T * 1.6 - burst * 0.8;
-    a += warp * 0.08 * sin(z * 1.5);
-    float rings = 2.0 * dens;
+    float z = 0.3 / r + T * S2 - burst * 0.8;
+    a += warp * 0.08 * sin(z * 1.5) + S3 * 0.05 * z;
+    float rings = S0 * dens;
     float f = fract(z * rings);
     // A line's width in depth here (a pixel and a half on the screen).
     float w = rings * 0.3 / (r * r) * 1.5 / u_stage.y;
     float ring = smoothstep(w * 1.5, w * 0.3, min(f, 1.0 - f));
-    float segs = 32.0;
+    float segs = floor(S1);
     float sa = fract(a) * segs;
     float seg = floor(sa);
     float sw = segs / (TAU * r) * 1.5 / u_stage.y;
     float spoke = smoothstep(sw * 1.5, sw * 0.3, min(fract(sa), 1.0 - fract(sa))) * 0.35;
     float level = spec(abs(seg / segs * 2.0 - 1.0));
-    float on = step(h21(vec2(seg, floor(z * rings))), 0.12 + level * 1.2);
+    float on = step(h21(vec2(seg, floor(z * rings))), S4 + level * 1.2 * step(0.001, S4));
     float tile = on * (1.0 - ring) * 0.3;
     vec3 col = palette(fract(z * 0.05)) * (ring + spoke + tile);
     return col * smoothstep(0.02, 0.3, r) * (1.0 + A_GLOW);
@@ -424,9 +451,11 @@ vec3 tunnel(vec2 p) {
 
 vec3 scope(vec2 p) {
     vec3 col = vec3(0.0);
-    float amp = 0.32 * (1.0 + burst * 1.5);
-    float round_ = smoothstep(0.2, 0.8, A_ORBIT);
-    int copies = int(1.0 + floor(dens));
+    if (S5 > 0.5) { p.x = -abs(p.x); }
+    if (S5 > 1.5) { p.y = -abs(p.y) + 0.0; }
+    float amp = S1 * (1.0 + burst * 1.5);
+    float round_ = max(smoothstep(0.2, 0.8, A_ORBIT), S3);
+    int copies = int(clamp(floor(S0 + floor(dens) - 1.0 + 0.5), 1.0, 4.0));
     for (int c = 0; c < 4; c++) {
         if (c >= copies) { break; }
         float fc = float(c);
@@ -437,45 +466,46 @@ vec3 scope(vec2 p) {
         float y = wave(x) * amp * (1.0 - fc * 0.2) + off + bend;
         float dx = 1.0 / 128.0;
         float slope = (wave(x + dx) - wave(x - dx)) * amp / (2.0 * dx * aspect);
-        float lin = lit((p.y - y) / sqrt(1.0 + slope * slope), 1.5);
+        float lin = lit((p.y - y) / sqrt(1.0 + slope * slope), S2);
         // Round.
         vec2 q = rot(p, A_ORBIT * P_ORBIT.x * TAU + T * 0.2);
         float ang = atan(q.y, q.x) / TAU + 0.5;
-        float rr = 0.24 + fc * 0.07 + wave(ang) * 0.1 * (1.0 + burst * 1.5) + bend * 0.3;
-        float cir = lit(length(q) - rr, 1.5);
+        float rr = 0.24 + fc * 0.07 + wave(ang) * amp * 0.3 * (1.0 + burst * 1.5) + bend * 0.3;
+        float cir = lit(length(q) - rr, S2);
         col += palette(fc / 3.0) * mix(lin, cir, round_);
     }
     // The spectrum underneath, mirrored about the middle.
     float sx = abs(p.x / aspect) * 2.0;
     float s = spec(sx);
-    col += palette(sx) * step(p.y, -0.5 + s * 0.25) * step(0.2, fract(sx * 64.0)) * 0.6;
+    col += palette(sx) * step(p.y, -0.5 + s * 0.25) * step(0.2, fract(sx * 64.0)) * S4;
     return col;
 }
 
 vec3 contours(vec2 p) {
-    vec2 q = rot(p, orbit) * 1.6;
+    vec2 q = rot(p, orbit) * S1;
     vec2 e = vec2(1.5 / u_stage.y, 0.0);
-    float lv = 10.0 * dens;
+    float lv = S0 * dens;
     float h0 = 0.0;
     float hx = 0.0;
     float hy = 0.0;
     for (int k = 0; k < 3; k++) {
         vec2 s = q + (k == 1 ? e.xy : (k == 2 ? e.yx : vec2(0.0)));
-        vec2 w = s + warp * 0.7 * vec2(fbm(s * 1.3 * P_WARP.x + T * 0.1), fbm(s * 1.3 * P_WARP.x + 5.2 - T * 0.1));
-        float h = fbm(w * 1.2 + vec2(0.0, T * 0.12));
+        vec2 w = s + warp * 0.7 * vec2(fbm(s * 1.3 * P_WARP.x + T * 0.1 * S2), fbm(s * 1.3 * P_WARP.x + 5.2 - T * 0.1 * S2));
+        float h = fbm(w * 1.2 + vec2(0.0, T * 0.12 * S2));
         float l = length(s);
-        h += burst * 0.12 * sin(l * 22.0 - T * 9.0) * exp(-l * 1.5);
+        h += burst * 0.12 * S5 * sin(l * 22.0 - T * 9.0) * exp(-l * 1.5);
         if (k == 0) { h0 = h; } else if (k == 1) { hx = h; } else { hy = h; }
     }
     float g = length(vec2(hx - h0, hy - h0)) / e.x;
     float f = fract(h0 * lv);
     float d = min(f, 1.0 - f) / max(g * lv, 1e-4);
-    float major = step(0.5, fract(floor(h0 * lv) * 0.2 + 0.1));
-    return palette(fract(h0 * 1.5)) * (lit(d, major > 0.5 ? 1.6 : 0.8) + 0.04);
+    float major = step(mod(floor(h0 * lv), floor(S3 + 0.5)), 0.5);
+    return palette(fract(h0 * 1.5)) * (lit(d, major > 0.5 ? 1.6 : 0.8) + S4);
 }
 
 vec3 shards(vec2 p) {
-    vec2 q = rot(p, orbit) * (4.0 * dens);
+    float cells = S0 * dens;
+    vec2 q = rot(p, orbit) * cells;
     q += warp * 0.6 * sin(q.yx * 1.3 + T);
     vec2 i = floor(q);
     float d1 = 8.0;
@@ -485,19 +515,19 @@ vec3 shards(vec2 p) {
         for (int x = -1; x <= 1; x++) {
             vec2 c = i + vec2(float(x), float(y));
             vec2 o = h22(c);
-            o = 0.5 + 0.42 * sin(T * 0.6 + TAU * o);
+            o = 0.5 + S5 * sin(T * 0.6 * S1 + TAU * o);
             vec2 pt = c + o;
             pt += normalize(pt + 0.001) * burst * 1.2 * h21(c + 3.3);
             float d = length(pt - q);
             if (d < d1) { d2 = d1; d1 = d; best = c; } else if (d < d2) { d2 = d; }
         }
     }
-    float edge = (d2 - d1) / (4.0 * dens) ;
+    float edge = (d2 - d1) / max(cells, 0.1);
     float pitch = 36.0 + floor(h21(best) * 48.0);
     float on = note(pitch);
-    float fill = on + spec(h21(best + 1.0)) * 0.25;
-    vec3 col = palette(h21(best + 2.0)) * fill * 0.7;
-    return col + palette(0.8) * lit(edge, 0.8);
+    float fill = on * S3 + spec(h21(best + 1.0)) * S4;
+    vec3 col = palette(h21(best + 2.0)) * fill;
+    return col + palette(0.8) * lit(edge, S2);
 }
 
 vec3 notegrid(vec2 uv) {
@@ -505,32 +535,39 @@ vec3 notegrid(vec2 uv) {
     q = rot(q * vec2(aspect, 1.0), orbit) / vec2(aspect, 1.0);
     q /= 1.0 + burst * 0.3;
     q += 0.5;
-    vec2 g = vec2(q.x * 12.0, (1.0 - q.y) * 8.0 + 1.0);
+    float cols = floor(S0 + 0.5);
+    float rows = floor(S1 + 0.5);
+    vec2 g = vec2(q.x * cols, (1.0 - q.y) * rows);
     vec2 id = floor(g);
     if (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0) { return vec3(0.0); }
     vec2 f = fract(g) - 0.5;
-    float v = note(id.y * 12.0 + id.x);
+    float v = note(floor(S4 + 0.5) * 12.0 + id.y * cols + id.x);
     float box = max(abs(f.x), abs(f.y));
-    float cell = smoothstep(0.42, 0.40, box);
-    float outline = smoothstep(0.03, 0.0, abs(box - 0.43)) * 0.18;
-    float halo = exp(-box * (8.0 - 5.0 * A_GLOW)) * v * 0.6;
-    vec3 col = palette(id.x / 11.0);
+    float half_ = 0.5 - S2;
+    float cell = smoothstep(half_, half_ - 0.02, box);
+    float outline = smoothstep(0.03, 0.0, abs(box - half_ - 0.01)) * S5;
+    float halo = exp(-box * (8.0 - 5.0 * A_GLOW)) * v * 0.6 * S3;
+    vec3 col = palette(id.x / max(cols - 1.0, 1.0));
     return col * (cell * v + outline + halo) + col * spec(q.x) * 0.06;
 }
 
 vec3 strings(vec2 p) {
     vec3 col = vec3(0.0);
     float x = p.x / aspect + 0.5;
-    float ends = sin(3.14159 * clamp(x, 0.0, 1.0));
-    for (int i = 24; i < 108; i++) {
+    float ends = mix(sin(3.14159 * clamp(x, 0.0, 1.0)), 1.0, S5);
+    float lo = floor(S0);
+    float hi = max(floor(S1), lo + 1.0);
+    for (int i = 0; i < 128; i++) {
         float n = float(i);
-        float y0 = mix(-0.42, 0.42, (n - 24.0) / 84.0);
-        if (abs(p.y - y0) > 0.2) { continue; }
+        if (n < lo) { continue; }
+        if (n > hi) { break; }
+        float y0 = mix(-0.42, 0.42, (n - lo) / (hi - lo));
+        if (abs(p.y - y0) > 0.25) { continue; }
         float v = note(n);
-        float freq = pow(2.0, (n - 60.0) / 24.0) * (2.0 + dens * 2.0);
-        float shake = v * (0.07 + burst * 0.1) * ends * sin(x * freq * TAU + T * (6.0 + n * 0.05)) * (1.0 + warp * sin(x * 13.0 + T));
-        float idle = mod(n, 12.0) < 0.5 ? 0.16 : 0.05;
-        col += palette((n - 24.0) / 84.0) * lit(p.y - y0 - shake, 1.0 + v) * max(v, idle);
+        float freq = pow(2.0, (n - 60.0) / 24.0) * (S3 + dens * 2.0);
+        float shake = v * (0.07 + burst * 0.1) * S2 * ends * sin(x * freq * TAU + T * (6.0 + n * 0.05)) * (1.0 + warp * sin(x * 13.0 + T));
+        float idle = mod(n, 12.0) < 0.5 ? S4 * 3.2 : S4;
+        col += palette((n - lo) / (hi - lo)) * lit(p.y - y0 - shake, 1.0 + v) * max(v, idle);
     }
     return col;
 }
@@ -538,10 +575,12 @@ vec3 strings(vec2 p) {
 vec3 starfield(vec2 p) {
     vec3 col = vec3(0.0);
     vec2 q = rot(p, orbit * 0.5);
+    float layers = floor(S0 + 0.5);
     for (int i = 0; i < 6; i++) {
         float fi = float(i);
-        float depth = fract(T * 0.25 + fi / 6.0);
-        float scale = mix(18.0, 0.6, depth) * (0.6 + 0.4 * dens);
+        if (fi >= layers) { break; }
+        float depth = fract(T * S1 + fi / layers);
+        float scale = mix(18.0, 0.6, depth) * (0.6 + 0.4 * dens) * S5;
         vec2 g = q * scale + vec2(fi * 7.3, fi * 3.1);
         vec2 id = floor(g);
         vec2 at = h22(id + fi * 13.0) - 0.5;
@@ -551,46 +590,59 @@ vec3 starfield(vec2 p) {
         vec2 out_ = normalize(q + 0.0001);
         float along = dot(d, out_);
         float across = length(d - out_ * along);
-        float streak = (0.02 + burst * 0.25 + A_RUSH * 0.15) * depth * scale;
-        float star = smoothstep(0.06 * (1.0 - depth * 0.5), 0.0, across) * smoothstep(streak + 0.05, 0.0, abs(along + streak * 0.5));
-        float flick = 0.6 + 0.4 * spec(h21(id + fi));
+        float streak = (0.02 + burst * 0.25 + A_RUSH * 0.15) * S2 * depth * scale;
+        float star = smoothstep(0.06 * S3 * (1.0 - depth * 0.5), 0.0, across) * smoothstep(streak + 0.05 * S3, 0.0, abs(along + streak * 0.5));
+        float flick = (1.0 - S4) + S4 * spec(h21(id + fi)) * 1.5;
         col += palette(h21(id + 3.0)) * star * fade * flick;
     }
     return col * (1.0 + A_GLOW);
 }
 
 vec3 fractal(vec2 p) {
-    vec2 z = rot(p, orbit) * (2.6 / (1.0 + 0.6 * (dens - 1.0)));
-    vec2 c = vec2(-0.76 + 0.12 * sin(T * 0.11), 0.17 + 0.08 * cos(T * 0.07)) + vec2(warp * 0.05 * sin(T), burst * 0.04);
+    vec2 z0 = rot(p, orbit) * (2.6 / (1.0 + 0.6 * (dens - 1.0))) / S1;
+    vec2 drift = vec2(0.12 * sin(T * 0.11), 0.08 * cos(T * 0.07)) * S4 + vec2(warp * 0.05 * sin(T), burst * 0.04);
+    vec2 z;
+    vec2 c;
+    if (S0 < 0.5) {
+        z = z0;
+        c = vec2(S2, S3) + drift;
+    } else {
+        z = vec2(0.0);
+        c = z0 + vec2(S2, S3) + drift * 0.2 / S1;
+    }
     float it = 0.0;
     float m = 0.0;
-    for (int i = 0; i < 64; i++) {
+    for (int i = 0; i < 80; i++) {
+        if (S0 > 1.5 && S0 < 2.5) { z = abs(z); }
+        if (S0 > 2.5) { z.y = -z.y; }
         z = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;
         m = dot(z, z);
         if (m > 64.0) { break; }
         it += 1.0;
     }
-    if (it >= 63.5) { return palette(0.02) * 0.08; }
+    if (it >= 79.5) { return palette(0.02) * 0.08; }
     float s = it - log2(log2(max(m, 1.0001))) + 4.0;
-    float t = fract(s * 0.035 + T * 0.02);
-    return palette(t) * (0.35 + 0.65 * sin(s * 0.3) * sin(s * 0.3)) * (1.0 + A_GLOW);
+    float t = fract(s * 0.035 * S5 + T * 0.02);
+    float b = sin(s * 0.3 * S5);
+    return palette(t) * (0.35 + 0.65 * b * b) * (1.0 + A_GLOW);
 }
 
 vec3 plexus(vec2 p) {
     vec3 col = vec3(0.0);
-    vec2 q = rot(p, orbit) * (3.5 * dens);
+    float scale = S0 * dens;
+    vec2 q = rot(p, orbit) * scale;
     vec2 cell = floor(q);
-    float px = 3.5 * dens / u_stage.y;
+    float px = scale / u_stage.y;
     // The points of this cell and those round it, drifting.
     vec2 pts[9];
     for (int y = -1; y <= 1; y++) {
         for (int x = -1; x <= 1; x++) {
             vec2 c = cell + vec2(float(x), float(y));
             vec2 o = h22(c);
-            vec2 pt = c + 0.5 + 0.4 * sin(T * (0.3 + o) + o * 6.2831853);
+            vec2 pt = c + 0.5 + 0.4 * sin(T * S2 * (0.3 + o) + o * 6.2831853);
             pt += normalize(pt - q + 0.001) * burst * 0.3 * h21(c);
             pts[(y + 1) * 3 + (x + 1)] = pt;
-            col += palette(h21(c + 2.0)) * smoothstep(px * 3.0, 0.0, length(q - pt) - 0.03) * (0.7 + 0.6 * spec(h21(c)));
+            col += palette(h21(c + 2.0)) * smoothstep(px * 3.0, 0.0, length(q - pt) - S3) * (0.7 + 0.6 * spec(h21(c))) * S5;
         }
     }
     // Lines between points that are near each other.
@@ -600,11 +652,11 @@ vec3 plexus(vec2 p) {
             vec2 a = pts[i];
             vec2 b = pts[j];
             float len = length(b - a);
-            if (len > 1.3) { continue; }
+            if (len > S1) { continue; }
             vec2 ab = b - a;
             float h = clamp(dot(q - a, ab) / dot(ab, ab), 0.0, 1.0);
             float d = length(q - a - ab * h);
-            col += palette(h * 0.5 + 0.2) * smoothstep(px * 1.5, 0.0, d) * (1.0 - len / 1.3) * 0.8;
+            col += palette(h * 0.5 + 0.2) * smoothstep(px * 1.5, 0.0, d) * (1.0 - len / S1) * S4;
         }
     }
     return col * (1.0 + A_GLOW);
@@ -613,42 +665,47 @@ vec3 plexus(vec2 p) {
 vec3 metaballs(vec2 p) {
     vec2 q = rot(p, orbit);
     float f = 0.0;
-    vec2 grad = vec2(0.0);
     float hue = 0.0;
+    float count = floor(S0 + 0.5);
     for (int i = 0; i < 8; i++) {
         float fi = float(i);
-        vec2 c = vec2(sin(T * (0.31 + fi * 0.07) + fi * 1.7) * 0.55, cos(T * (0.27 + fi * 0.05) + fi * 2.3) * 0.32);
+        if (fi >= count) { break; }
+        vec2 c = vec2(sin(T * S2 * (0.31 + fi * 0.07) + fi * 1.7) * 0.55, cos(T * S2 * (0.27 + fi * 0.05) + fi * 2.3) * 0.32) * S5;
         c *= 1.0 + burst * 0.8;
         c += warp * 0.1 * vec2(sin(q.y * 6.0 + T), cos(q.x * 6.0 - T));
-        float r = (0.07 + 0.09 * spec(fi / 8.0)) * (0.8 + 0.3 * dens);
+        float r = (0.07 + 0.09 * spec(fi / 8.0)) * (0.8 + 0.3 * dens) * S1;
         vec2 d = q - c;
         float v = r * r / max(dot(d, d), 1e-5);
         f += v;
-        hue += v * fi / 8.0;
+        hue += v * fi / max(count, 1.0);
     }
     hue /= max(f, 1e-5);
     float inside = smoothstep(0.95, 1.05, f);
-    float edge = smoothstep(0.08, 0.0, abs(f - 1.0)) ;
-    return palette(hue) * (inside * 0.35 + edge * 1.2 + smoothstep(0.3, 1.0, f) * 0.15) * (1.0 + A_GLOW);
+    float edge = smoothstep(S3, 0.0, abs(f - 1.0));
+    return palette(hue) * (inside * S4 + edge * 1.2 + smoothstep(0.3, 1.0, f) * 0.15) * (1.0 + A_GLOW);
 }
 
 // The spectrum some frames ago (row 0: now, 63: about three seconds back), at x (0..1, low to high).
 float hist(float x, float row) { return texture2D(u_hist, vec2(clamp(x, 0.0, 1.0) * (127.0 / 128.0) + 0.5 / 128.0, (row + 0.5) / 64.0)).r; }
 
-// A landscape: its height at a point of the ground (x across, z away).
+// A landscape: its height at a point of the ground (x across, z away), as high and hilly as these say.
+float t_height = 1.0;
+float t_hills = 1.0;
 float terrain(vec2 w) {
-    float d = 1.0 + 2.0 * A_DETAIL;
+    float d = (1.0 + 2.0 * A_DETAIL) * t_hills;
     float n = vnoise(w * 1.3 * d) * 0.6 + vnoise(w * 3.1 * d + 7.0) * 0.3;
-    return n * (0.22 + 0.5 * warp) + spec(clamp(abs(w.x) * 0.45, 0.0, 1.0)) * 0.22;
+    return (n * (0.22 + 0.5 * warp) + spec(clamp(abs(w.x) * 0.45, 0.0, 1.0)) * 0.22) * t_height;
 }
 
 vec3 pointterrain(vec2 p) {
+    t_height = S1;
+    t_hills = 1.0;
     vec3 col = vec3(0.0);
     float px = 1.0 / u_stage.y;
-    float camh = 0.55 + 0.35 * A_DEPTH;
-    float rows = floor(56.0 * dens);
-    float step_ = 0.1 / sqrt(dens);
-    float scroll = T * 0.5;
+    float camh = S3 + 0.35 * A_DEPTH;
+    float rows = min(floor(S0 * dens), 128.0);
+    float step_ = 0.1 * 56.0 / max(S0, 1.0) / sqrt(dens);
+    float scroll = T * S2;
     float back = floor(scroll / step_);
     float near = 0.5;
     float scan = near + fract(T * 0.12) * rows * step_;
@@ -659,7 +716,7 @@ vec3 pointterrain(vec2 p) {
         float zl = fi * step_ - fract(scroll / step_) * step_ + near;
         float persp = 1.0 / zl;
         float ylo = -camh * persp * 0.9 + 0.25;
-        float yhi = (0.8 - camh) * persp * 0.9 + 0.25;
+        float yhi = (0.8 * max(S1, 1.0) - camh) * persp * 0.9 + 0.25;
         if (p.y < ylo - 0.03 || p.y > yhi + 0.03) { continue; }
         float wz = (fi + back) * step_;
         float sp = 0.012 * zl;
@@ -668,21 +725,23 @@ vec3 pointterrain(vec2 p) {
         vec2 w = vec2(xg, wz);
         float h = terrain(w) + burst * 0.5 * h21(w * 13.0 + floor(T * 4.0)) * h21(w * 7.0);
         vec2 at = vec2(xg * persp, (h - camh) * persp * 0.9 + 0.25);
-        float size = px * (0.8 + 0.5 * persp) * (1.0 + 2.5 * A_THICKNESS);
+        float size = px * (0.8 + 0.5 * persp) * (1.0 + 2.5 * A_THICKNESS) * S5;
         float d = length(p - at);
         float fog = exp(-(zl - near) * 0.35);
         float sweep = exp(-abs(zl - scan) * 10.0);
-        col += palette(fract(h * 1.2 + 0.1)) * smoothstep(size * 1.6, size * 0.3, d) * fog * (0.7 + 1.8 * sweep);
+        col += palette(fract(h * 1.2 + 0.1)) * smoothstep(size * 1.6, size * 0.3, d) * fog * (0.7 + S4 * sweep);
     }
     return col * (1.0 + A_GLOW);
 }
 
 vec3 mesh(vec2 p) {
+    t_height = S1;
+    t_hills = S5;
     vec3 col = vec3(0.0);
-    float camh = 0.42 + 0.5 * A_DEPTH;
-    float rows = floor(30.0 * dens);
-    float step_ = 0.16 / sqrt(dens);
-    float scroll = T * 0.45;
+    float camh = S3 + 0.5 * A_DEPTH;
+    float rows = min(floor(S0 * dens), 96.0);
+    float step_ = 0.16 * 30.0 / max(S0, 1.0) / sqrt(dens);
+    float scroll = T * S2;
     float back = floor(scroll / step_);
     // Far to near, the nearer covering what is behind it.
     for (int k = 0; k < 96; k++) {
@@ -690,7 +749,7 @@ vec3 mesh(vec2 p) {
         if (fi >= rows) { continue; }
         float zl = fi * step_ - fract(scroll / step_) * step_ + 0.3;
         float persp = 1.0 / zl;
-        float yhi = (0.9 - camh) * persp * 0.8 + 0.08;
+        float yhi = (0.9 * max(S1, 1.0) - camh) * persp * 0.8 + 0.08;
         if (p.y > yhi + 0.03) { continue; }
         float wz = (fi + back) * step_;
         float fog = exp(-zl * 0.3);
@@ -701,7 +760,7 @@ vec3 mesh(vec2 p) {
         col += palette(fi / max(rows, 1.0)) * lit(p.y - y, 0.8) * fog;
         // Across to the nearer row, where the grid is.
         float zn = zl - step_;
-        if (zn > 0.25) {
+        if (zn > 0.25 && S4 > 0.001) {
             float pn = 1.0 / zn;
             float sp = step_ * 0.8;
             float xg = (floor(xw / sp + 0.5)) * sp;
@@ -709,7 +768,7 @@ vec3 mesh(vec2 p) {
             vec2 b = vec2(xg * pn, (terrain(vec2(xg, wz - step_)) - camh) * pn * 0.8 + 0.08);
             vec2 ab = b - a;
             float t = clamp(dot(p - a, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
-            col += palette(fi / max(rows, 1.0)) * lit(length(p - a - ab * t), 0.6) * fog * 0.6;
+            col += palette(fi / max(rows, 1.0)) * lit(length(p - a - ab * t), 0.6) * fog * S4;
         }
     }
     return col * (1.0 + A_GLOW * 0.5);
@@ -717,27 +776,29 @@ vec3 mesh(vec2 p) {
 
 vec3 waterfall(vec2 p) {
     vec3 col = vec3(0.0);
-    float camh = 0.45 + 0.3 * A_DEPTH;
+    float camh = S2 + 0.3 * A_DEPTH;
+    float lines = floor(S3);
     p = rot(p, orbit * 0.1);
     // The oldest at the back, now at the front.
     for (int k = 0; k < 64; k++) {
         float fi = float(63 - k);
-        float z = 0.4 + fi * 0.04 * (1.0 + A_DEPTH);
+        if (fi >= lines) { continue; }
+        float z = 0.4 + fi * 0.04 * S1 * (1.0 + A_DEPTH) * 64.0 / max(lines, 1.0);
         float persp = 1.0 / z;
-        float xw = p.x / persp;
+        float xw = p.x / persp / S5;
         if (abs(xw) > 1.2) { continue; }
         float edge = smoothstep(1.2, 0.85, abs(xw));
-        float h = (hist(abs(xw) * 0.85, fi) * (0.3 + 0.5 * warp) + burst * 0.15 * h11(fi + floor(T * 4.0))) * edge;
+        float h = (hist(abs(xw) * 0.85, fi) * (0.3 + 0.5 * warp) * S0 + burst * 0.15 * h11(fi + floor(T * 4.0))) * edge;
         float y = (h * 1.6 - camh) * persp * 0.55 + 0.22;
         if (p.y < y - 0.002) { col *= 0.0; }
-        col += palette(fi / 63.0) * lit(p.y - y, 1.0) * exp(-fi * 0.02);
+        col += palette(fi / max(lines - 1.0, 1.0)) * lit(p.y - y, 1.0) * exp(-fi * S4);
     }
     return col;
 }
 
 vec2 flow_at(vec2 q) {
     float e = 0.02;
-    float t = T * 0.07;
+    float t = T * 0.07 * S4;
     float a = vnoise(q + vec2(0.0, e) + t) + 0.5 * vnoise(q * 2.1 + vec2(0.0, e) - t);
     float b = vnoise(q - vec2(0.0, e) + t) + 0.5 * vnoise(q * 2.1 - vec2(0.0, e) - t);
     float c = vnoise(q + vec2(e, 0.0) + t) + 0.5 * vnoise(q * 2.1 + vec2(e, 0.0) - t);
@@ -746,47 +807,52 @@ vec2 flow_at(vec2 q) {
 }
 
 vec3 flow(vec2 p) {
-    vec2 q = rot(p, orbit) * (1.6 * (1.0 + A_DETAIL)) * (1.0 + warp * 0.6);
+    vec2 q = rot(p, orbit) * (S0 * (1.0 + A_DETAIL)) * (1.0 + warp * 0.6);
     float acc = 0.0;
     vec2 a = q;
     float grid = 160.0 * dens;
+    float steps = floor(S1);
     for (int k = 0; k < 16; k++) {
+        if (float(k) >= steps) { break; }
         vec2 v = flow_at(a);
         a += v / max(length(v), 1e-4) * 0.011;
-        // Sparse points, streaked along the flow (and moving along it with time).
-        vec2 g = floor(a * grid + vec2(0.0, T * 0.0));
-        float pt = step(0.965 - burst * 0.05, h21(g + floor(T * 3.0 + float(k) * 0.0)));
-        acc += pt * (1.0 - float(k) / 16.0);
+        // Sparse points, streaked along the flow.
+        vec2 g = floor(a * grid);
+        float pt = step(1.0 - 0.1 * S2 - burst * 0.05, h21(g + floor(T * 3.0 * S3)));
+        acc += pt * (1.0 - float(k) / steps);
     }
     float shade = vnoise(q * 0.7 + T * 0.05);
-    return palette(shade) * acc * 0.55 * (1.0 + A_GLOW);
+    return mix(palette(0.5), palette(shade), S5) * acc * 0.55 * (1.0 + A_GLOW);
 }
 
 vec3 strata(vec2 uv) {
-    float n = floor(110.0 * dens);
+    float n = floor(S0 * dens);
     // Bands slipping sideways on the kick.
-    float band = floor(uv.y * 7.0);
-    float x = uv.x + (h11(band + floor(T * 2.0)) - 0.5) * 0.25 * burst;
+    float band = floor(uv.y * floor(S5));
+    float x = uv.x + (h11(band + floor(T * 2.0)) - 0.5) * S4 * burst;
     float i = floor(uv.y * n + 0.5);
     float base = i / n;
     float det = 1.0 + 2.0 * A_DETAIL;
-    float bend = (vnoise(vec2(x * 3.0 * det, i * 0.05 + T * 0.15)) - 0.5) * (0.5 + 2.5 * warp) * 4.0 / n;
-    bend += (spec(x) - 0.2) * 3.0 / n * sin(x * 25.0 + i * 0.7 + T);
+    float bend = (vnoise(vec2(x * 3.0 * det, i * 0.05 + T * 0.15 * S2)) - 0.5) * (0.5 + 2.5 * warp) * 4.0 * S1 / n;
+    bend += (spec(x) - 0.2) * 3.0 * S3 / n * sin(x * 25.0 + i * 0.7 + T * S2);
     float d = uv.y - base - bend;
-    float bright = 0.5 + 0.7 * vnoise(vec2(i * 0.31, T * 0.4));
+    float bright = 0.5 + 0.7 * vnoise(vec2(i * 0.31, T * 0.4 * S2));
     return palette(base) * lit(d, 0.55) * bright;
 }
 
 vec3 dust(vec2 p) {
     vec3 col = vec3(0.0);
-    float a = orbit + T * 0.12;
+    float a = orbit + T * S3;
     float ca = cos(a);
     float sa = sin(a);
     float det = 1.6 * (1.0 + A_DETAIL);
+    float layers = floor(S0 + 0.5);
+    float thick = mix(0.82, 0.42, S2);
     for (int k = 0; k < 9; k++) {
         float fk = float(k);
-        float z = mix(-0.6, 0.6, fk / 8.0);
-        float scale = 70.0 * dens * (1.0 + z * 0.3 * (1.0 + A_DEPTH));
+        if (fk >= layers) { break; }
+        float z = mix(-0.6, 0.6, fk / max(layers - 1.0, 1.0));
+        float scale = S1 * dens * (1.0 + z * 0.3 * (1.0 + A_DEPTH));
         vec2 g = p * scale + fk * 17.0;
         vec2 id = floor(g);
         vec2 off = h22(id);
@@ -795,10 +861,10 @@ vec3 dust(vec2 p) {
         vec3 r = vec3(w.x * ca + w.z * sa, w.y, -w.x * sa + w.z * ca);
         // Clouds: where the noise is thick, and thinning away from the middle.
         float den = fbm(r.xz * det + vec2(0.0, T * 0.05)) + fbm(r.yz * det + 5.0 - T * 0.04) - 0.9 * length(r);
-        float show = smoothstep(0.62 - 0.15 * burst - 0.08 * warp, 0.85, den);
+        float show = smoothstep(thick - 0.15 * burst - 0.08 * warp, thick + 0.23, den);
         float d = length(g - id - off);
-        float size = 0.22 * (1.0 + 2.0 * A_THICKNESS);
-        col += palette(fk / 8.0) * smoothstep(size, 0.0, d) * show * (0.8 + 0.6 * spec(h21(id))) * 1.6;
+        float size = 0.22 * (1.0 + 2.0 * A_THICKNESS) * S4;
+        col += palette(fk / max(layers - 1.0, 1.0)) * smoothstep(size, 0.0, d) * show * (0.8 + 0.6 * spec(h21(id))) * S5;
     }
     return col * (1.0 + A_GLOW);
 }
@@ -868,11 +934,16 @@ void main() {
         }
     }
     vec2 p = vec2((uv.x - 0.5) * aspect, 0.5 - uv.y);
+    SA = u_sa;
+    SB = u_sb;
     vec3 c = scene_at(P_VISUALS.x, p, uv);
     // A change of Look from one scene to another: both, the new coming in by its pattern.
     if (u_vmix < 0.999 && abs(u_vfrom - P_VISUALS.x) > 0.5) {
         float w = tr_weight(v_uv, aspect, u_vmix, u_vstyle);
         if (w < 0.999) {
+            // The scene it comes from, with its own settings.
+            SA = u_fa;
+            SB = u_fb;
             c = mix(scene_at(u_vfrom, p, uv), c, w);
         }
     }

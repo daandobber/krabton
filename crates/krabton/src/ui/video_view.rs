@@ -463,11 +463,113 @@ pub(super) fn visuals_head(ui: &mut Ui, look: &mut kv::VideoLook) {
     }
 }
 
+/// The Visuals scene's own settings (the scene picked now), each with what
+/// in the music pushes it up towards the top of its range (a link of its
+/// own: + picks the source, then how much and whose sound), with Random and
+/// Reset for the scene.
+pub(super) fn scene_detail(ui: &mut Ui, look: &mut kv::VideoLook, readings: &[f32], tracks: &[(u64, String)]) {
+    let scene = look.setting(Effect::Visuals).param(Effect::Visuals, 0).round().max(0.0) as usize;
+    let defs = kv::scene_params(scene);
+    if defs.is_empty() {
+        return;
+    }
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(kv::VISUAL_SCENES.get(scene).copied().unwrap_or("").to_uppercase()).small().color(TEXT_DIM));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.small_button("Reset").on_hover_text("This scene's settings as they start").clicked() {
+                look.reset_scene(scene);
+            }
+            if ui.small_button("Random").on_hover_text("Every setting of this scene somewhere else, by chance").clicked() {
+                let mut seed = (ui.input(|i| i.time) * 1000.0) as u32 | 1;
+                for (k, d) in defs.iter().enumerate() {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 17;
+                    seed ^= seed << 5;
+                    let t = (seed >> 8) as f32 / 16_777_216.0;
+                    look.set_scene_param(scene, k, d.min + (d.max - d.min) * t);
+                }
+            }
+        });
+    });
+    let sources: Vec<(Source, String)> = Source::ALL.iter().map(|s| (*s, s.name().to_string())).collect();
+    let mut add: Option<(usize, Source)> = None;
+    let mut unlink: Option<usize> = None;
+    for (k, d) in defs.iter().enumerate() {
+        let mut v = look.scene_param(scene, k);
+        let link = look.links.iter().position(|l| l.effect == Effect::Visuals && l.param == Some(k as u8));
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 3.0;
+            let w = (ui.available_width() - 30.0).max(80.0);
+            let changed = if d.choices.is_empty() {
+                let span = d.max - d.min;
+                let dec = if span > 20.0 { 0 } else if span < 0.25 { 3 } else { 2 };
+                vj::bar(ui, &mut v, d.min, d.max, d.default, d.name, |v| format!("{v:.dec$}"), w, None, d.about).changed()
+            } else {
+                let mut i = v.round() as usize;
+                let opts: Vec<(usize, String)> = d.choices.iter().enumerate().map(|(i, n)| (i, n.to_string())).collect();
+                ui.label(RichText::new(d.name).small().color(TEXT_DIM));
+                let c = vj::segmented(ui, &mut i, &opts, d.about);
+                v = i as f32;
+                c
+            };
+            if changed {
+                look.set_scene_param(scene, k, v);
+            }
+            if d.choices.is_empty() && link.is_none() {
+                let b = ui.add(egui::Button::new(RichText::new("+♪").small().color(TEXT_DIM)).frame(false)).on_hover_text("Let the music push it up: pick what moves it");
+                egui::Popup::menu(&b).show(|ui| {
+                    ui.set_max_width(260.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = vec2(3.0, 3.0);
+                        for src in Source::ALL {
+                            if vj::word_tile(ui, src.name(), true, src.about()).clicked() {
+                                add = Some((k, src));
+                                ui.close();
+                            }
+                        }
+                    });
+                });
+            }
+        });
+        // Its link: what moves it, how much, whose sound.
+        if let Some(i) = link {
+            let l = &mut look.links[i];
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 3.0;
+                ui.add_space(10.0);
+                ui.label(RichText::new("♪").small().color(ACCENT));
+                let about = l.source.about();
+                vj::chip(ui, ("video_scene_src", k), 58.0, &mut l.source, &sources, about);
+                if l.source.has_track() {
+                    let none = if l.source.listens() { "Master" } else { "All tracks" };
+                    let mut options: Vec<(Option<u64>, String)> = vec![(None, none.to_string())];
+                    options.extend(tracks.iter().map(|(id, n)| (Some(*id), n.clone())));
+                    vj::chip(ui, ("video_scene_from", k), 70.0, &mut l.from, &options, "The sound it listens to, or whose notes");
+                }
+                let w = (ui.available_width() - 20.0).max(40.0);
+                vj::bar(ui, &mut l.amount, 0.0, 1.0, 0.5, "", vj::pct, w, readings.get(i).copied(), "How far up it is pushed at full");
+                if ui.add(egui::Button::new(RichText::new("x").small().color(TEXT_DIM)).frame(false)).on_hover_text("Take this link away").clicked() {
+                    unlink = Some(i);
+                }
+            });
+        }
+    }
+    if let Some(i) = unlink {
+        look.links.remove(i);
+    }
+    if let Some((k, src)) = add {
+        if look.links.len() < kv::MAX_LINKS {
+            look.links.push(kv::VideoLink { param: Some(k as u8), ..kv::VideoLink::new(src, Effect::Visuals, 0.5) });
+        }
+    }
+}
+
 /// An effect's fader, its name and what moves it. Its name clicked: where
 /// to show its settings (the place under it).
 fn fader_column(ui: &mut Ui, look: &mut kv::VideoLook, e: Effect, live: Option<&kv::Look>, col: Color32) -> Option<[f32; 2]> {
     let mut s = look.setting(e);
-    let links: Vec<Source> = look.links.iter().filter(|l| l.effect == e).map(|l| l.source).collect();
+    let links: Vec<Source> = look.links.iter().filter(|l| l.effect == e && l.param.is_none()).map(|l| l.source).collect();
     let used = s.base > 0.0 || !links.is_empty();
     let dim = s.off || !used;
     let now = live.map_or(s.base, |l| l.get(e));
@@ -548,6 +650,9 @@ pub(super) fn effect_detail(ui: &mut Ui, look: &mut kv::VideoLook, e: Effect, re
             s.set_param(e, k, v);
         }
     }
+    if e == Effect::Visuals {
+        scene_detail(ui, look, readings, tracks);
+    }
     if e.has_color() && e != Effect::Visuals {
         row(ui, "Colour", |ui| {
             let own = s.color.is_some();
@@ -566,7 +671,7 @@ pub(super) fn effect_detail(ui: &mut Ui, look: &mut kv::VideoLook, e: Effect, re
     ui.label(RichText::new("MOVED BY").small().color(TEXT_DIM));
     let sources: Vec<(Source, String)> = Source::ALL.iter().map(|s| (*s, s.name().to_string())).collect();
     let mut remove = None;
-    for (i, l) in look.links.iter_mut().enumerate().filter(|(_, l)| l.effect == e) {
+    for (i, l) in look.links.iter_mut().enumerate().filter(|(_, l)| l.effect == e && l.param.is_none()) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
             let about = l.source.about();
@@ -3117,6 +3222,14 @@ impl App {
                         ("videoparam", [k, v, ..]) => s.set_param(e, *k as usize, *v),
                         _ => {}
                     }
+                }
+            }
+            // videosceneparam=K,V: the Visuals scene's own setting K set to V.
+            "videosceneparam" => {
+                if let [k, v, ..] = f.as_slice() {
+                    let look = self.project.video.edited_look_mut();
+                    let scene = look.setting(Effect::Visuals).param(Effect::Visuals, 0).round().max(0.0) as usize;
+                    look.set_scene_param(scene, *k as usize, *v);
                 }
             }
             "videomorph" => self.project.video.morph_beats = f.first().copied().unwrap_or(0.0),

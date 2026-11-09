@@ -796,11 +796,53 @@ pub struct VideoLook {
     /// The Visuals' Milk scene: its preset, tweaks and changes (see `milk`).
     #[serde(skip_serializing_if = "crate::milk::MilkLook::is_default")]
     pub milk: crate::milk::MilkLook,
+    /// Each Visuals scene's own settings (see [`scene_params`]), by scene
+    /// and place; missing ones are their defaults. Every scene keeps its
+    /// own, so changing scene and back finds them as they were.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub scenes: Vec<Vec<f32>>,
 }
 
 impl VideoLook {
     pub fn new(name: impl Into<String>, links: Vec<VideoLink>) -> Self {
-        Self { name: name.into(), fx: Default::default(), links, milk: Default::default() }
+        Self { name: name.into(), fx: Default::default(), links, milk: Default::default(), scenes: Vec::new() }
+    }
+
+    /// Scene `scene`'s setting `k` (its default when not set).
+    pub fn scene_param(&self, scene: usize, k: usize) -> f32 {
+        let Some(d) = scene_params(scene).get(k) else { return 0.0 };
+        self.scenes.get(scene).and_then(|v| v.get(k)).map_or(d.default, |v| d.fit(*v))
+    }
+
+    /// Sets scene `scene`'s setting `k`.
+    pub fn set_scene_param(&mut self, scene: usize, k: usize, v: f32) {
+        let defs = scene_params(scene);
+        if k >= defs.len() {
+            return;
+        }
+        if self.scenes.len() <= scene {
+            self.scenes.resize(scene + 1, Vec::new());
+        }
+        let s = &mut self.scenes[scene];
+        while s.len() <= k {
+            s.push(defs[s.len()].default);
+        }
+        s[k] = defs[k].fit(v);
+    }
+
+    /// Scene `scene`'s settings as they start.
+    pub fn reset_scene(&mut self, scene: usize) {
+        if let Some(s) = self.scenes.get_mut(scene) {
+            s.clear();
+        }
+        while self.scenes.last().is_some_and(|s| s.is_empty()) {
+            self.scenes.pop();
+        }
+    }
+
+    /// All of scene `scene`'s settings (unused places 0).
+    pub fn scene_values(&self, scene: usize) -> [f32; SCENE_P] {
+        std::array::from_fn(|k| self.scene_param(scene, k))
     }
 
     /// How effect `e` is set (as it starts when it is not).
@@ -825,6 +867,14 @@ impl VideoLook {
         }
         for (e, s) in self.fx.iter_mut() {
             s.sanitize(*e);
+        }
+        self.scenes.truncate(VISUAL_SCENES.len());
+        for (i, v) in self.scenes.iter_mut().enumerate() {
+            let defs = scene_params(i);
+            v.truncate(defs.len());
+            for (x, d) in v.iter_mut().zip(defs) {
+                *x = d.fit(*x);
+            }
         }
     }
 }
@@ -1736,6 +1786,245 @@ pub enum Effect {
 pub const VISUAL_SCENES: [&str; 21] = [
     "Ridges", "Lattice", "Swarm", "Data", "Tunnel", "Scope", "Contours", "Shards", "Note Grid", "Strings", "Milk", "Starfield", "Fractal", "Plexus", "Metaballs", "Point Terrain", "Mesh", "Waterfall", "Flow", "Strata", "Dust",
 ];
+const SPEED: &str = "How fast it moves by itself (below 0: the other way)";
+
+/// How many settings of its own a Visuals scene has (at most).
+pub const SCENE_P: usize = 6;
+
+/// A Visuals scene's own settings (by its place in `VISUAL_SCENES`): what
+/// the scene draws, in its own terms. Milk has its own panel instead.
+pub fn scene_params(scene: usize) -> &'static [FxParam] {
+    match scene {
+        0 => {
+            const P: &[FxParam] = &[
+                FxParam::range("Lines", "How many ridges, front to back", 4.0, 112.0, 28.0),
+                FxParam::range("Height", "How high the hills rise", 0.0, 3.0, 1.0),
+                FxParam::range("Width", "How wide the hills spread across", 0.2, 3.0, 1.0),
+                FxParam::range("Rough", "Smooth hills or rough, jagged ones", 0.0, 1.0, 0.25),
+                FxParam::range("Scroll", SPEED, -3.0, 3.0, 1.0),
+                FxParam::range("Spectrum", "How much the music's spectrum lifts them", 0.0, 3.0, 1.0),
+            ];
+            P
+        }
+        1 => {
+            const P: &[FxParam] = &[
+                FxParam::range("Cell", "How far apart the bars are", 0.8, 5.0, 2.2),
+                FxParam::range("Bars", "How thick the bars are", 0.005, 0.15, 0.025),
+                FxParam::range("Fly", "How fast it flies through (below 0: backwards)", -6.0, 6.0, 2.5),
+                FxParam::range("Twist", "The lattice twisting as it goes away", 0.0, 2.0, 0.0),
+                FxParam::range("Fog", "How soon the far bars fade", 0.0, 0.4, 0.09),
+                FxParam::range("Shine", "How much the bars glow", 0.0, 3.0, 1.0),
+            ];
+            P
+        }
+        2 => {
+            const P: &[FxParam] = &[
+                FxParam::range("Shells", "How many spheres of points, one in another", 1.0, 9.0, 9.0),
+                FxParam::range("Points", "How many points on each", 6.0, 60.0, 26.0),
+                FxParam::range("Size", "How big the points are", 0.3, 4.0, 1.0),
+                FxParam::range("Spin", SPEED, -3.0, 3.0, 1.0),
+                FxParam::range("Wobble", "The spheres bulging (with Warp)", 0.0, 3.0, 1.0),
+                FxParam::range("Flicker", "How much the points flicker with the music", 0.0, 1.0, 0.5),
+            ];
+            P
+        }
+        3 => {
+            const P: &[FxParam] = &[
+                FxParam::range("Columns", "How many columns of bits", 8.0, 120.0, 40.0),
+                FxParam::range("Speed", "How fast they run", 0.0, 4.0, 1.0),
+                FxParam::range("Bits", "How many bits are lit", 0.0, 1.0, 0.45),
+                FxParam::range("Bars", "How high the spectrum's bars rise", 0.0, 2.0, 0.6),
+                FxParam::range("Barcode", "The barcode across the middle", 0.0, 1.0, 1.0),
+                FxParam::range("Scan", "The scan line running down", 0.0, 1.0, 0.8),
+            ];
+            P
+        }
+        4 => {
+            const P: &[FxParam] = &[
+                FxParam::range("Rings", "How close the rings are", 0.5, 8.0, 2.0),
+                FxParam::range("Spokes", "How many lines run along it", 4.0, 64.0, 32.0),
+                FxParam::range("Speed", "How fast it rushes in (below 0: out)", -5.0, 5.0, 1.6),
+                FxParam::range("Twist", "The tunnel turning as it goes", 0.0, 3.0, 0.0),
+                FxParam::range("Tiles", "How many of its tiles are lit", 0.0, 1.0, 0.12),
+                FxParam::pick("Shape", "The tunnel's shape", &["Round", "Square", "Triangle", "Hexagon"], 0.0),
+            ];
+            P
+        }
+        5 => {
+            const P: &[FxParam] = &[
+                FxParam::range("Copies", "How many waves (Density makes more)", 1.0, 4.0, 2.0),
+                FxParam::range("Height", "How tall the wave is", 0.05, 1.0, 0.32),
+                FxParam::range("Line", "How thick the line is", 0.5, 6.0, 1.5),
+                FxParam::range("Round", "A line across, or round in a circle", 0.0, 1.0, 0.0),
+                FxParam::range("Spectrum", "How bright the spectrum is underneath", 0.0, 1.0, 0.6),
+                FxParam::pick("Mirror", "The wave mirrored about the middle", &["Off", "Mirror", "Four ways"], 0.0),
+            ];
+            P
+        }
+        6 => {
+            const P: &[FxParam] = &[
+                FxParam::range("Levels", "How many lines, as on a map", 2.0, 40.0, 10.0),
+                FxParam::range("Scale", "How big the hills are (small: many)", 0.3, 4.0, 1.6),
+                FxParam::range("Drift", "How fast the land changes", 0.0, 3.0, 1.0),
+                FxParam::range("Major", "A thick line every so many", 2.0, 10.0, 5.0),
+                FxParam::range("Fill", "The land between the lines lit", 0.0, 1.0, 0.04),
+                FxParam::range("Ripple", "Rings out from the middle on the kick (with Burst)", 0.0, 3.0, 1.0),
+            ];
+            P
+        }
+        7 => {
+            const P: &[FxParam] = &[
+                FxParam::range("Cells", "How many shards (Density makes more)", 1.0, 12.0, 4.0),
+                FxParam::range("Motion", "How fast they move", 0.0, 3.0, 1.0),
+                FxParam::range("Edge", "How thick the edges are", 0.2, 4.0, 0.8),
+                FxParam::range("Fill", "How bright a shard is when its note plays", 0.0, 1.5, 0.7),
+                FxParam::range("Glass", "How much the spectrum lights them, notes or not", 0.0, 1.0, 0.25),
+                FxParam::range("Spread", "How far they wander from their place", 0.0, 0.5, 0.42),
+            ];
+            P
+        }
+        8 => {
+            const P: &[FxParam] = &[
+                FxParam::range("Columns", "Notes across", 4.0, 24.0, 12.0),
+                FxParam::range("Rows", "Rows of them", 2.0, 12.0, 8.0),
+                FxParam::range("Gap", "The space between the cells", 0.0, 0.4, 0.08),
+                FxParam::range("Halo", "The glow round a note playing", 0.0, 3.0, 1.0),
+                FxParam::range("Octave", "The lowest octave, at the bottom", 0.0, 6.0, 1.0),
+                FxParam::range("Outline", "The cells' outlines when quiet", 0.0, 1.0, 0.18),
+            ];
+            P
+        }
+        9 => {
+            const P: &[FxParam] = &[
+                FxParam::range("Low", "The lowest note, at the bottom", 12.0, 96.0, 24.0),
+                FxParam::range("High", "The highest note, at the top", 24.0, 127.0, 108.0),
+                FxParam::range("Swing", "How far a string swings when its note plays", 0.0, 3.0, 1.0),
+                FxParam::range("Waves", "How many waves along a string", 0.5, 8.0, 2.0),
+                FxParam::range("Idle", "How bright the quiet strings are", 0.0, 0.5, 0.05),
+                FxParam::range("Free ends", "Held at the ends, or swinging all along", 0.0, 1.0, 0.0),
+            ];
+            P
+        }
+        10 => &[],
+        11 => {
+            const P: &[FxParam] = &[
+                FxParam::range("Layers", "How many layers of stars", 1.0, 6.0, 6.0),
+                FxParam::range("Speed", "How fast it flies (below 0: backwards)", -2.0, 2.0, 0.25),
+                FxParam::range("Streak", "How long the stars streak", 0.0, 3.0, 1.0),
+                FxParam::range("Size", "How big the stars are", 0.3, 3.0, 1.0),
+                FxParam::range("Twinkle", "How much they twinkle with the music", 0.0, 1.0, 0.4),
+                FxParam::range("Stars", "How many stars", 0.2, 3.0, 1.0),
+            ];
+            P
+        }
+        12 => {
+            const P: &[FxParam] = &[
+                FxParam::pick("Kind", "Which fractal", &["Julia", "Mandelbrot", "Burning Ship", "Tricorn"], 0.0),
+                FxParam::range("Zoom", "How far in", 0.2, 40.0, 1.0),
+                FxParam::range("X", "Julia: its constant, across; the others: where it looks", -2.0, 1.0, -0.76),
+                FxParam::range("Y", "Julia: its constant, up and down; the others: where it looks", -1.2, 1.2, 0.17),
+                FxParam::range("Drift", "How much it wanders by itself", 0.0, 2.0, 1.0),
+                FxParam::range("Bands", "How many colour bands", 0.1, 4.0, 1.0),
+            ];
+            P
+        }
+        13 => {
+            const P: &[FxParam] = &[
+                FxParam::range("Points", "How many points (Density makes more)", 1.0, 8.0, 3.5),
+                FxParam::range("Reach", "How far apart two points may be and still be joined", 0.4, 1.4, 1.3),
+                FxParam::range("Speed", "How fast they drift", 0.0, 3.0, 1.0),
+                FxParam::range("Dot", "How big the points are", 0.0, 0.12, 0.03),
+                FxParam::range("Lines", "How bright the lines are", 0.0, 2.0, 0.8),
+                FxParam::range("Dots", "How bright the points are", 0.0, 2.0, 1.0),
+            ];
+            P
+        }
+        14 => {
+            const P: &[FxParam] = &[
+                FxParam::range("Count", "How many blobs", 2.0, 8.0, 8.0),
+                FxParam::range("Size", "How big they are", 0.3, 3.0, 1.0),
+                FxParam::range("Speed", "How fast they move", 0.0, 3.0, 1.0),
+                FxParam::range("Edge", "How wide their edge is", 0.02, 0.3, 0.08),
+                FxParam::range("Fill", "How much their insides are lit", 0.0, 1.0, 0.35),
+                FxParam::range("Spread", "How far they roam", 0.2, 2.0, 1.0),
+            ];
+            P
+        }
+        15 => {
+            const P: &[FxParam] = &[
+                FxParam::range("Rows", "How many rows of points", 8.0, 128.0, 56.0),
+                FxParam::range("Height", "How high the land rises", 0.0, 3.0, 1.0),
+                FxParam::range("Speed", SPEED, -3.0, 3.0, 0.5),
+                FxParam::range("Camera", "How high it looks from", 0.2, 1.2, 0.55),
+                FxParam::range("Scan", "How bright the scan running through it is", 0.0, 4.0, 1.8),
+                FxParam::range("Points", "How big the points are", 0.3, 4.0, 1.0),
+            ];
+            P
+        }
+        16 => {
+            const P: &[FxParam] = &[
+                FxParam::range("Rows", "How many rows", 8.0, 96.0, 30.0),
+                FxParam::range("Height", "How high the land rises", 0.0, 3.0, 1.0),
+                FxParam::range("Speed", SPEED, -3.0, 3.0, 0.45),
+                FxParam::range("Camera", "How high it looks from", 0.2, 1.2, 0.42),
+                FxParam::range("Grid", "How bright the lines across are", 0.0, 1.5, 0.6),
+                FxParam::range("Hills", "How many hills (small: few, wide)", 0.3, 3.0, 1.0),
+            ];
+            P
+        }
+        17 => {
+            const P: &[FxParam] = &[
+                FxParam::range("Height", "How high the spectrum rises", 0.0, 3.0, 1.0),
+                FxParam::range("Depth", "How far apart the lines are, front to back", 0.5, 3.0, 1.0),
+                FxParam::range("Camera", "How high it looks from", 0.2, 1.0, 0.45),
+                FxParam::range("Lines", "How many seconds of it (as lines)", 8.0, 64.0, 64.0),
+                FxParam::range("Fade", "How soon the old lines fade", 0.0, 0.1, 0.02),
+                FxParam::range("Width", "How wide it is", 0.4, 2.0, 1.0),
+            ];
+            P
+        }
+        18 => {
+            const P: &[FxParam] = &[
+                FxParam::range("Scale", "How big the swirls are (small: many)", 0.3, 4.0, 1.6),
+                FxParam::range("Length", "How long the streaks are", 2.0, 16.0, 16.0),
+                FxParam::range("Amount", "How many points", 0.0, 1.0, 0.35),
+                FxParam::range("Sparkle", "How fast the points change", 0.0, 4.0, 1.0),
+                FxParam::range("Drift", "How fast the flow changes", 0.0, 4.0, 1.0),
+                FxParam::range("Shade", "Coloured by the flow, or one colour", 0.0, 1.0, 1.0),
+            ];
+            P
+        }
+        19 => {
+            const P: &[FxParam] = &[
+                FxParam::range("Lines", "How many lines", 10.0, 200.0, 110.0),
+                FxParam::range("Bend", "How much they bend", 0.0, 3.0, 1.0),
+                FxParam::range("Speed", "How fast they move", 0.0, 3.0, 1.0),
+                FxParam::range("Spectrum", "How much the spectrum ripples them", 0.0, 3.0, 1.0),
+                FxParam::range("Slip", "How far bands slip sideways (with Burst)", 0.0, 1.0, 0.25),
+                FxParam::range("Bands", "How many bands slip", 2.0, 20.0, 7.0),
+            ];
+            P
+        }
+        20 => {
+            const P: &[FxParam] = &[
+                FxParam::range("Layers", "How many layers of dust", 1.0, 9.0, 9.0),
+                FxParam::range("Grain", "How fine the dust is", 10.0, 200.0, 70.0),
+                FxParam::range("Clouds", "Thin clouds or thick ones", 0.0, 1.0, 0.5),
+                FxParam::range("Spin", SPEED, -1.0, 1.0, 0.12),
+                FxParam::range("Size", "How big a grain is", 0.3, 3.0, 1.0),
+                FxParam::range("Bright", "How bright it is", 0.0, 3.0, 1.6),
+            ];
+            P
+        }
+        _ => &[],
+    }
+}
+
+/// Scene `scene`'s settings as they start (unused places 0).
+pub fn scene_defaults(scene: usize) -> [f32; SCENE_P] {
+    std::array::from_fn(|k| scene_params(scene).get(k).map_or(0.0, |d| d.default))
+}
+
 /// How the Visuals go on the film.
 pub const VISUAL_BLENDS: [&str; 7] = ["Instead of the film", "Over the film", "Screen", "Multiply", "Difference", "The film inside it", "Bends the film"];
 /// The Visuals' colours.
@@ -2455,6 +2744,11 @@ pub struct VideoLink {
     /// The band heard (Hz, from and to; Source::Band).
     #[serde(default = "default_band", skip_serializing_if = "is_default_band")]
     pub band: (f32, f32),
+    /// On the Visuals: the scene's own setting it moves (see
+    /// [`scene_params`]), up from where it is set towards the top of its
+    /// range, rather than how much of the Visuals there are.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub param: Option<u8>,
 }
 
 fn is_default_lfo(l: &Lfo) -> bool {
@@ -2471,7 +2765,7 @@ fn is_default_band(b: &(f32, f32)) -> bool {
 
 impl VideoLink {
     pub fn new(source: Source, effect: Effect, amount: f32) -> Self {
-        Self { source, from: None, effect, amount, low: 0.0, response: Response::default(), lfo: Lfo::default(), band: default_band() }
+        Self { source, from: None, effect, amount, low: 0.0, response: Response::default(), lfo: Lfo::default(), band: default_band(), param: None }
     }
 
     pub fn sanitize(&mut self) {
@@ -2954,11 +3248,13 @@ pub struct Look {
     pub tint_link: Option<usize>,
     /// How far Spin's Speed has turned it (turns, kept by whoever plays it).
     pub turned: f32,
+    /// How far the links push each of the Visuals scene's own settings (0..1 of the way up).
+    pub sp: [f32; SCENE_P],
 }
 
 impl Default for Look {
     fn default() -> Self {
-        Self { fx: [0.0; Effect::COUNT], jump: false, stutter: false, next_clip: false, tint_link: None, turned: 0.0 }
+        Self { fx: [0.0; Effect::COUNT], jump: false, stutter: false, next_clip: false, tint_link: None, turned: 0.0, sp: [0.0; SCENE_P] }
     }
 }
 
@@ -2975,6 +3271,9 @@ impl Look {
             *o = x + (y - x) * t;
         }
         out.turned = a.turned + (b.turned - a.turned) * t;
+        for (o, (x, y)) in out.sp.iter_mut().zip(a.sp.iter().zip(b.sp.iter())) {
+            *o = x + (y - x) * t;
+        }
         out
     }
 }
@@ -3055,6 +3354,13 @@ pub fn look(links: &[VideoLink], fx: &std::collections::BTreeMap<Effect, FxSetti
         } else {
             range(value) * amount
         };
+        // A scene's own setting, not how much of the Visuals.
+        if let (Effect::Visuals, Some(k)) = (l.effect, l.param) {
+            if let Some(slot) = out.sp.get_mut(k as usize) {
+                *slot = slot.max(v.clamp(0.0, 1.0));
+            }
+            continue;
+        }
         let slot = &mut out.fx[l.effect.index()];
         *slot = slot.max(v.clamp(0.0, 1.0));
         if l.effect == Effect::Tint && v >= tint_best && v > 0.0 {
@@ -3524,6 +3830,45 @@ impl Playhead {
             None if clip.play.mode == PlayMode::Slices => self.slice = Some(Self::slice_at(clip, spans, t)),
             None => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod scene_tests {
+    use super::*;
+
+    #[test]
+    fn every_scene_has_its_own_settings_kept_per_scene_and_moved_by_links() {
+        for (i, name) in VISUAL_SCENES.iter().enumerate() {
+            let defs = scene_params(i);
+            assert!(defs.len() <= SCENE_P, "{name}");
+            if i != 10 {
+                assert_eq!(defs.len(), SCENE_P, "{name} has all six");
+            }
+            for d in defs {
+                assert!(d.min <= d.default && d.default <= d.max, "{name}: {}", d.name);
+            }
+        }
+        let mut look = VideoLook::default();
+        assert_eq!(look.scene_param(0, 0), 28.0);
+        look.set_scene_param(4, 1, 12.0);
+        look.set_scene_param(4, 5, 9.0);
+        assert_eq!(look.scene_param(4, 1), 12.0);
+        assert_eq!(look.scene_param(4, 5), 3.0, "a choice kept to its choices");
+        assert_eq!(look.scene_param(0, 1), 1.0, "another scene keeps its own");
+        let back: VideoLook = serde_json::from_str(&serde_json::to_string(&look).unwrap()).unwrap();
+        assert_eq!(back.scene_values(4), look.scene_values(4));
+        look.reset_scene(4);
+        assert!(look.scenes.is_empty());
+        // A link on a setting moves it, not the Visuals.
+        let mut l = VideoLink::new(Source::Kick, Effect::Visuals, 1.0);
+        l.param = Some(2);
+        let out = super::look(&[l], &Default::default(), 1.0, &mut Dice::default(), |_| Reading { value: 0.5, hit: false });
+        assert_eq!(out.get(Effect::Visuals), 0.0);
+        assert!((out.sp[2] - 0.5).abs() < 1e-6);
+        // Sets from before have none.
+        let old: VideoLink = serde_json::from_str(r#"{"source":"Kick","effect":"Zoom","amount":0.5}"#).unwrap();
+        assert_eq!(old.param, None);
     }
 }
 

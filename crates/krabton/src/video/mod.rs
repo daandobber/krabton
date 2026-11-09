@@ -280,6 +280,17 @@ pub fn stage_params(set: &VideoSet, project: &Project, def: &VideoLook, look: &L
     p.old_size = sizes.1.unwrap_or([0.0, 0.0]);
     p.frame = framing(set, set.clips.get(shot.clip));
     p.old_frame = framing(set, shot.from.and_then(|f| set.clips.get(f.0)));
+    // The Visuals scene's own settings, the links pushing each up towards the top of its range.
+    let scene = p.p[Effect::Visuals.index()][0].round().max(0.0) as usize;
+    let defs = kv::scene_params(scene);
+    for k in 0..kv::SCENE_P {
+        let base = def.scene_param(scene, k);
+        p.sp[k] = match defs.get(k) {
+            Some(d) if d.choices.is_empty() => base + (d.max - base) * look.sp[k].clamp(0.0, 1.0),
+            _ => base,
+        };
+    }
+    p.sp_from = p.sp;
     p
 }
 

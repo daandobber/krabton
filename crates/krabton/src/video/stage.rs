@@ -12,7 +12,7 @@ use eframe::egui_glow;
 use eframe::glow::{self, HasContext};
 use super::visuals::{self, Scope, SCOPE_W};
 use krabton_engine::milk::{self, MILK_N};
-use krabton_engine::video::{Effect, FxSetting};
+use krabton_engine::video::{self as kv, Effect, FxSetting};
 
 /// Milk's place among the Visuals' scenes.
 pub const MILK_SCENE: usize = 10;
@@ -88,6 +88,11 @@ pub struct Params {
     pub vfrom: f32,
     pub vmix: f32,
     pub vstyle: f32,
+    /// The Visuals scene's own settings as they are now (see
+    /// `kv::scene_params`), and the scene's it comes from (while a Look
+    /// with other Visuals comes in).
+    pub sp: [f32; kv::SCENE_P],
+    pub sp_from: [f32; kv::SCENE_P],
 }
 
 impl Default for Params {
@@ -122,6 +127,8 @@ impl Default for Params {
             vfrom: 0.0,
             vmix: 1.0,
             vstyle: 0.0,
+            sp: kv::scene_defaults(0),
+            sp_from: kv::scene_defaults(0),
         }
     }
 }
@@ -178,10 +185,21 @@ impl Params {
         let v = Effect::Visuals.index();
         if b.fx[v] < 0.001 && a.fx[v] > 0.001 {
             out.p[v] = a.p[v];
+            out.sp = a.sp;
         } else if a.fx[v] > 0.001 && (a.p[v][0] - b.p[v][0]).abs() > 0.5 {
-            // From one scene to another: both drawn, the new coming in.
+            // From one scene to another: both drawn, the new coming in, each with its own settings.
             out.vfrom = a.p[v][0];
             out.vmix = t;
+            out.sp_from = a.sp;
+        } else {
+            // The same scene: its settings on the way (a choice is the new one's).
+            let defs = kv::scene_params(b.p[v][0].round().max(0.0) as usize);
+            for (k, o) in out.sp.iter_mut().enumerate() {
+                if defs.get(k).is_some_and(|d| d.choices.is_empty()) {
+                    *o = l(a.sp[k], b.sp[k]);
+                }
+            }
+            out.sp_from = out.sp;
         }
         out
     }
@@ -1026,6 +1044,10 @@ impl Gl {
         gl.uniform_1_f32(u("u_vfrom").as_ref(), p.vfrom);
         gl.uniform_1_f32(u("u_vmix").as_ref(), p.vmix);
         gl.uniform_1_f32(u("u_vstyle").as_ref(), p.vstyle);
+        gl.uniform_3_f32(u("u_sa").as_ref(), p.sp[0], p.sp[1], p.sp[2]);
+        gl.uniform_3_f32(u("u_sb").as_ref(), p.sp[3], p.sp[4], p.sp[5]);
+        gl.uniform_3_f32(u("u_fa").as_ref(), p.sp_from[0], p.sp_from[1], p.sp_from[2]);
+        gl.uniform_3_f32(u("u_fb").as_ref(), p.sp_from[3], p.sp_from[4], p.sp_from[5]);
         let _ = milk;
         gl.uniform_2_f32(u("u_stage").as_ref(), self.w as f32, self.h as f32);
         gl.uniform_4_f32_slice(u("u_fx[0]").as_ref(), &packed_amounts(&p.fx));
