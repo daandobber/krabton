@@ -21,7 +21,7 @@ use krabton_engine::video::{self as kv, Effect, HitTrigger, Launch, PlayMode, So
 use std::path::PathBuf;
 
 /// A choice that changes with a click (lit when `on`).
-fn choice(ui: &mut Ui, label: &str, on: bool, tip: &str) -> egui::Response {
+pub(super) fn choice(ui: &mut Ui, label: &str, on: bool, tip: &str) -> egui::Response {
     let b = egui::Button::new(RichText::new(label).color(if on { TEXT_DARK } else { TEXT })).fill(if on { ACCENT } else { PANEL3 });
     ui.add(b).on_hover_text(tip)
 }
@@ -106,7 +106,7 @@ const LABEL_W: f32 = 84.0;
 
 /// A row of the side: its label in the dim colour on the left, the
 /// controls after it.
-fn row<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
+pub(super) fn row<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
     ui.horizontal(|ui| {
         let (r, _) = ui.allocate_exact_size(vec2(LABEL_W, 20.0), Sense::hover());
         ui.painter().with_clip_rect(r).text(pos2(r.left(), r.center().y), Align2::LEFT_CENTER, label, small(), TEXT_DIM);
@@ -140,7 +140,7 @@ fn deck_title(ui: &mut Ui, title: &str) {
 }
 
 /// A small on/off switch. Clicked: it turns.
-fn switch(ui: &mut Ui, on: &mut bool, tip: &str) -> egui::Response {
+pub(super) fn switch(ui: &mut Ui, on: &mut bool, tip: &str) -> egui::Response {
     let (r, mut resp) = ui.allocate_exact_size(vec2(28.0, 16.0), Sense::click());
     let p = ui.painter();
     let track = Rect::from_center_size(r.center(), vec2(26.0, 14.0));
@@ -156,7 +156,7 @@ fn switch(ui: &mut Ui, on: &mut bool, tip: &str) -> egui::Response {
 
 /// A length to click through (right-click goes back), one of `lengths`
 /// (in beats, with its name). Whether it changed.
-fn length_button(ui: &mut Ui, value: &mut f32, lengths: &[(f32, &str)], tip: &str) -> bool {
+pub(super) fn length_button(ui: &mut Ui, value: &mut f32, lengths: &[(f32, &str)], tip: &str) -> bool {
     let k = lengths.iter().position(|l| (l.0 - *value).abs() < 1e-3);
     let label = k.map_or_else(|| format!("{value} beats"), |k| lengths[k].1.to_string());
     let r = ui.add(egui::Button::new(RichText::new(label).color(TEXT)).fill(PANEL3).min_size(vec2(62.0, 0.0))).on_hover_text(format!("{tip}. Click: longer, right-click: shorter"));
@@ -183,7 +183,7 @@ const CHANGE_LENGTHS: [(f32, &str); 5] = [(0.25, "1/4 beat"), (0.5, "1/2 beat"),
 const MORPH_LENGTHS: [(f32, &str); 6] = [(0.0, "Cut"), (0.25, "1/4 beat"), (0.5, "1/2 beat"), (1.0, "1 beat"), (2.0, "2 beats"), (4.0, "4 beats")];
 
 /// The name of a track (`none` for no track, the master or every one).
-fn track_name(tracks: &[(u64, String)], id: Option<u64>, none: &str) -> String {
+pub(super) fn track_name(tracks: &[(u64, String)], id: Option<u64>, none: &str) -> String {
     match id {
         None => none.to_string(),
         Some(id) => tracks.iter().find(|t| t.0 == id).map_or("a track gone".to_string(), |t| t.1.clone()),
@@ -288,7 +288,7 @@ fn hits_row(ui: &mut Ui, id: impl std::hash::Hash + Copy, t: &mut Option<HitTrig
 /// How a link answers its source: where the effect rests, how fast it
 /// rises and falls, its curve, threshold and invert, and an LFO's or a
 /// band's own settings.
-fn link_response(ui: &mut Ui, i: usize, l: &mut VideoLink) {
+pub(super) fn link_response(ui: &mut Ui, i: usize, l: &mut VideoLink) {
     let fader = |ui: &mut Ui, label: &str, v: &mut f32, range: std::ops::RangeInclusive<f32>, suffix: &str, tip: &str| {
         let d = range.start().max(0.0);
         vj::bar(ui, v, *range.start(), *range.end(), if label == "Curve" { 1.0 } else { d }, label, |v| format!("{v:.2}{suffix}"), 0.0, None, tip);
@@ -326,7 +326,7 @@ fn link_response(ui: &mut Ui, i: usize, l: &mut VideoLink) {
 }
 
 /// The Look's faders, in groups: (name, colour, effects).
-const GROUPS: [(&str, [u8; 3], &[Effect]); 9] = [
+pub(super) const GROUPS: [(&str, [u8; 3], &[Effect]); 9] = [
     ("VISUALS", [0xa0, 0x78, 0xff], &[Effect::Visuals, Effect::Burst, Effect::Warp, Effect::Density, Effect::Rush, Effect::Glow, Effect::Orbit, Effect::Fracture, Effect::Depth, Effect::Detail, Effect::Thickness, Effect::Scatter]),
     ("MOTION", [0x40, 0xc8, 0xdc], &[Effect::Zoom, Effect::Shake, Effect::Spin, Effect::ZoomBlur, Effect::Feedback]),
     ("SHAPE", [0x5c, 0xd0, 0x7a], &[Effect::Mirror, Effect::Kaleido, Effect::Tile, Effect::Swirl, Effect::Fisheye, Effect::Ripple, Effect::Blur]),
@@ -345,7 +345,7 @@ const MILK_DRAW: [(MilkParam, &str); 8] = [(MilkParam::WaveAlpha, "Wave"), (Milk
 
 /// Milk's panel: its preset (and the one playing), how it goes on to the
 /// next, and faders that move the preset's values (in the middle: as it is).
-fn milk_panel(ui: &mut Ui, m: &mut milk::MilkLook, now: Option<(&str, [f32; milk::MILK_N])>) {
+pub(super) fn milk_panel(ui: &mut Ui, m: &mut milk::MilkLook, now: Option<(&str, [f32; milk::MILK_N])>) {
     let col = Color32::from_rgb(0xe8, 0xe0, 0xd0);
     egui::Frame::new().fill(mix(PANEL2, col, 0.05)).stroke(Stroke::new(1.0_f32, mix(LINE_SOFT, col, 0.3))).corner_radius(5).inner_margin(egui::Margin::symmetric(6, 5)).show(ui, |ui| {
         ui.vertical(|ui| {
@@ -430,7 +430,7 @@ fn milk_panel(ui: &mut Ui, m: &mut milk::MilkLook, now: Option<(&str, [f32; milk
 }
 
 /// The Visuals' blend and colours, in their group's head.
-fn visuals_head(ui: &mut Ui, look: &mut kv::VideoLook) {
+pub(super) fn visuals_head(ui: &mut Ui, look: &mut kv::VideoLook) {
     let e = Effect::Visuals;
     let mut s = look.setting(e);
     ui.add_space(6.0);
@@ -504,7 +504,7 @@ fn fader_column(ui: &mut Ui, look: &mut kv::VideoLook, e: Effect, live: Option<&
 
 /// An effect's settings and what moves it (its links: the source, what it
 /// hears, how much, how it answers). Whether to close.
-fn effect_detail(ui: &mut Ui, look: &mut kv::VideoLook, e: Effect, readings: &[f32], tracks: &[(u64, String)], add: &mut Option<Source>) -> bool {
+pub(super) fn effect_detail(ui: &mut Ui, look: &mut kv::VideoLook, e: Effect, readings: &[f32], tracks: &[(u64, String)], add: &mut Option<Source>) -> bool {
     let mut close = false;
     let mut s = look.setting(e);
     ui.spacing_mut().item_spacing.y = 4.0;
@@ -1043,7 +1043,22 @@ impl App {
             let tracks: Vec<(u64, String)> = self.project.tracks.iter().map(|t| (t.id, t.name.clone())).collect();
             match tab {
                 VideoTab::Clip => self.video_tab_clip(ui, &mut set, &tracks),
-                VideoTab::Look => self.video_controls(ui, &mut set, &tracks),
+                VideoTab::Look => {
+                    // The Look as a patch (only what is in it), or as the desk of every fader.
+                    let mode_id = Id::new("video_look_mode");
+                    let mut desk: bool = ui.ctx().data(|d| d.get_temp(mode_id)).unwrap_or(false);
+                    ui.horizontal(|ui| {
+                        if vj::segmented(ui, &mut desk, &[(false, "Patch".to_string()), (true, "Desk".to_string())], "Patch: only what the Look uses, joined by cables. Desk: every effect as a fader") {
+                            ui.ctx().data_mut(|d| d.insert_temp(mode_id, desk));
+                        }
+                    });
+                    ui.add_space(4.0);
+                    if desk {
+                        self.video_controls(ui, &mut set, &tracks)
+                    } else {
+                        self.video_patch(ui, &mut set, &tracks)
+                    }
+                }
                 VideoTab::Triggers => self.video_tab_triggers(ui, &mut set, &tracks),
                 VideoTab::Output => self.video_tab_output(ui, &mut set),
             }
@@ -2408,7 +2423,7 @@ impl App {
             PlayMode::Slices if cued => "Each note shows the film from its cue, as filmed, for as long as its pad's sound plays".to_string(),
             PlayMode::Slices if seq_on => format!("Cut in {} slices of the part that plays: the notes (or hits) pick one", clip.play.slices),
             PlayMode::Slices if clip.play.part_slices && parts_n > 1 => format!("Notes play its parts, like pads: C1 the first part, C#1 the second ({parts_n} parts)"),
-            PlayMode::Slices => format!("Cut in {} slices that notes play, like pads: C1 the first, C#1 the second...", clip.play.slices),
+            PlayMode::Slices => format!("Cut in {} slices that notes play ({})", clip.play.slices, clip.play.slice_pick.name().to_lowercase()),
         };
         hint(ui, &plain);
         match clip.play.mode {
@@ -2450,7 +2465,7 @@ impl App {
             row(ui, "Slices", |ui| {
                 ui.spacing_mut().item_spacing.x = 3.0;
                 let by_part = clip.play.part_slices && parts_n > 1 && !seq_on;
-                for n in [4, 8, 16, 32] {
+                for n in [4, 8, 16, 32, 64] {
                     if choice(ui, &n.to_string(), !by_part && clip.play.slices == n, "In how many equal slices it is cut (of its parts back to back, or of the part that plays)").clicked() {
                         clip.play.slices = n;
                         clip.play.part_slices = false;
@@ -2461,6 +2476,19 @@ impl App {
                     clip.play.part_slices = !clip.play.part_slices;
                 }
             });
+            // How the notes pick them, whether they go on by themselves, and how each plays.
+            row(ui, "Pick", |ui| {
+                let picks: Vec<(kv::SlicePick, String)> = kv::SlicePick::ALL.iter().map(|p| (*p, p.name().to_string())).collect();
+                let tip = clip.play.slice_pick.about();
+                vj::segmented(ui, &mut clip.play.slice_pick, &picks, tip);
+            });
+            row(ui, "Auto", |ui| {
+                let lengths: Vec<(f32, &str)> = kv::SLICE_AUTO.to_vec();
+                length_button(ui, &mut clip.play.slice_auto, &lengths, "Another slice by itself every so often while the song plays (as Pick says; By note goes in turn), also without notes");
+            });
+            vj::bar(ui, &mut clip.play.slice_reverse, 0.0, 1.0, 0.0, "Reverse", vj::pct, 0.0, None, "The chance each new slice plays backwards");
+            vj::bar(ui, &mut clip.play.slice_speed, 0.0, 2.0, 0.0, "Vary speed", |v| if v <= 0.0 { "as filmed".to_string() } else { format!("up to x{:.1}", 2f32.powf(v)) }, 0.0, None, "Each new slice faster or slower by chance, up to so much either way");
+            vj::bar(ui, &mut clip.play.slice_jitter, 0.0, 1.0, 0.0, "Jitter", vj::pct, 0.0, None, "Each new slice from somewhere inside it, up to so far in");
         } else {
             row(ui, "Jump cuts", |ui| {
                 ui.spacing_mut().item_spacing.x = 3.0;

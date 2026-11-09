@@ -82,6 +82,7 @@ pub(crate) mod map_plans;
 pub mod map_view;
 pub mod windows;
 pub mod transport;
+pub mod video_patch;
 pub mod video_view;
 pub mod vj;
 pub mod granulator_view;

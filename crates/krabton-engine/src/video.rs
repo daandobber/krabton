@@ -332,13 +332,80 @@ pub struct ClipPlay {
     pub slice_hits: Option<HitTrigger>,
     /// Its parts one at a time, changing on the beat (Slices then cut the part that plays).
     pub seq: PartSeq,
+    /// Slices: how a note picks one (see `SlicePick`).
+    pub slice_pick: SlicePick,
+    /// Slices: another by itself every so many beats while the song plays (0: by notes and hits only).
+    pub slice_auto: f32,
+    /// Slices: each new one by chance backwards (0..1), faster or slower
+    /// (up to so many octaves either way), from somewhere inside it (up to
+    /// so much of it in).
+    pub slice_reverse: f32,
+    pub slice_speed: f32,
+    pub slice_jitter: f32,
 }
 
 impl Default for ClipPlay {
     fn default() -> Self {
-        Self { mode: PlayMode::Loop, speed: 1.0, bars: 4, slices: 16, slice_track: None, reverse: false, part_slices: false, bounce: false, offset: 0.0, freeze: false, slice_hits: None, seq: PartSeq::default() }
+        Self {
+            mode: PlayMode::Loop,
+            speed: 1.0,
+            bars: 4,
+            slices: 16,
+            slice_track: None,
+            reverse: false,
+            part_slices: false,
+            bounce: false,
+            offset: 0.0,
+            freeze: false,
+            slice_hits: None,
+            seq: PartSeq::default(),
+            slice_pick: SlicePick::Walk,
+            slice_auto: 0.0,
+            slice_reverse: 0.0,
+            slice_speed: 0.0,
+            slice_jitter: 0.0,
+        }
     }
 }
+
+/// How a note picks a slice.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SlicePick {
+    /// Each note on to the next slice every time it plays (starting where By Note puts it): a few drums go through them all.
+    #[default]
+    Walk,
+    /// The next slice, whatever note plays.
+    InTurn,
+    /// A slice by chance (never the same twice in a row).
+    Random,
+    /// Its own slice for each note: C1 the first, C#1 the second.
+    ByNote,
+}
+
+impl SlicePick {
+    pub const ALL: [SlicePick; 4] = [SlicePick::Walk, SlicePick::InTurn, SlicePick::Random, SlicePick::ByNote];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            SlicePick::Walk => "Walk",
+            SlicePick::InTurn => "In turn",
+            SlicePick::Random => "Random",
+            SlicePick::ByNote => "By note",
+        }
+    }
+
+    pub fn about(self) -> &'static str {
+        match self {
+            SlicePick::Walk => "Each note goes on to the next slice every time it plays: a kick, a snare and a hat go through all of them, each its own way",
+            SlicePick::InTurn => "The next slice for every note, whichever it is",
+            SlicePick::Random => "A slice by chance for every note, never the same twice in a row",
+            SlicePick::ByNote => "Its own slice for each note, as pads: C1 the first, C#1 the second (a few drums show a few slices)",
+        }
+    }
+}
+
+/// The lengths `slice_auto` can be (beats; 0: off).
+pub const SLICE_AUTO: [(f32, &str); 6] = [(0.0, "Off"), (0.25, "1/16"), (0.5, "1/8"), (1.0, "1/4"), (2.0, "1/2"), (4.0, "1 bar")];
 
 /// How often something changes in time with the song.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -3119,6 +3186,13 @@ pub struct Playhead {
     pub part: Option<usize>,
     step: Option<i64>,
     pub dice: Dice,
+    /// Slices: where each note has walked to, the turn of In Turn, the song's step of Auto.
+    walk: Vec<u16>,
+    turn: usize,
+    auto_step: Option<i64>,
+    /// The slice playing backwards, and how fast (0: as it is).
+    rev: bool,
+    rate: f64,
 }
 
 /// Which of `spans` (back to back) holds `t` seconds into them, and how far into it.
@@ -3145,6 +3219,41 @@ impl Playhead {
         self.stutter = None;
         self.part = None;
         self.step = None;
+        self.walk.clear();
+        self.turn = 0;
+        self.auto_step = None;
+        self.rev = false;
+        self.rate = 0.0;
+    }
+
+    /// The slice note `note` (or Auto, with none) picks, of `n`.
+    fn pick_slice(&mut self, pick: SlicePick, note: Option<u8>, n: u32) -> usize {
+        let n = n.max(1) as usize;
+        let now = self.slice.unwrap_or(0);
+        match (pick, note) {
+            (SlicePick::ByNote, Some(p)) => slice_for_note(p, n as u32),
+            (SlicePick::Walk, Some(p)) => {
+                if self.walk.len() < 128 {
+                    self.walk.resize(128, u16::MAX);
+                }
+                let w = &mut self.walk[(p & 127) as usize];
+                *w = if *w == u16::MAX { slice_for_note(p, n as u32) as u16 } else { ((*w as usize + 1) % n) as u16 };
+                *w as usize % n
+            }
+            (SlicePick::Random, _) => other_slice(&mut self.dice, now, n as u32),
+            _ => {
+                self.turn = (self.slice.map_or(self.turn, |s| s) + 1) % n;
+                self.turn
+            }
+        }
+    }
+
+    /// A new slice's way: backwards by chance, faster or slower, from somewhere inside it (a fraction of it in).
+    fn vary(&mut self, play: &ClipPlay) -> f64 {
+        self.rev = self.dice.chance(play.slice_reverse.clamp(0.0, 1.0));
+        let spread = play.slice_speed.clamp(0.0, 2.0);
+        self.rate = if spread > 0.0 { 2f64.powf(((self.dice.unit() * 2.0 - 1.0) * spread) as f64) } else { 1.0 };
+        (self.dice.unit() * play.slice_jitter.clamp(0.0, 1.0)) as f64
     }
 
     /// The slice that `pos` (into the parts) is in.
@@ -3306,18 +3415,32 @@ impl Playhead {
                 }
             }
             (PlayMode::Slices, None) => {
+                // Auto: another on every step of the song.
+                let auto = if play.slice_auto > 0.0 && inp.playing {
+                    let step = ((inp.beat + 1e-9) / play.slice_auto as f64).floor() as i64;
+                    let new = self.auto_step.is_some_and(|s| s != step);
+                    self.auto_step = Some(step);
+                    new
+                } else {
+                    self.auto_step = None;
+                    false
+                };
                 let k = match (inp.note, inp.slice_step) {
-                    (Some(n), _) => Some(slice_for_note(n, slices)),
+                    (Some(n), _) => Some(self.pick_slice(play.slice_pick, Some(n), slices)),
                     (None, Some(s)) => Some(s.from(self.slice.unwrap_or_else(|| Self::slice_at(clip, &spans, self.pos.rem_euclid(dur))), slices as usize, &mut self.dice)),
+                    _ if auto => Some(self.pick_slice(if play.slice_pick == SlicePick::ByNote { SlicePick::InTurn } else { play.slice_pick }, None, slices)),
                     _ => None,
                 };
                 if let Some(k) = k {
                     self.slice = Some(k);
+                    let into = self.vary(play);
                     let (a, b) = bounds(k);
-                    self.pos = if play.reverse { b - 1e-6 } else { a };
+                    self.pos = if play.reverse != self.rev { b - 1e-6 - into * (b - a) } else { a + into * (b - a) };
                     self.stutter = None;
                 } else {
-                    self.pos += dt * play.speed as f64 * push * dir;
+                    let way = if self.rev { -dir } else { dir };
+                    let rate = if self.rate > 0.0 { self.rate } else { 1.0 };
+                    self.pos += dt * play.speed as f64 * push * way * rate;
                 }
             }
         }
@@ -3839,6 +3962,88 @@ mod tests {
         }
         // 1.5 s on, round the one-second slice: 2.5 s.
         assert!((ph.pos - 2.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_few_drums_walk_through_every_slice() {
+        // A kick, a snare and a hat, over and over, on 32 slices.
+        let drums = [36u8, 38, 42, 38];
+        let seen = |pick: SlicePick| {
+            let c = clip(PlayMode::Slices, |p| {
+                p.slices = 32;
+                p.slice_pick = pick;
+            });
+            let mut ph = Playhead::default();
+            let mut i = input(0.016, 0.0);
+            let mut out = std::collections::HashSet::new();
+            let mut last = None;
+            let mut repeats = 0;
+            for k in 0..64 {
+                i.note = Some(drums[k % 4]);
+                ph.advance(&c, &i);
+                if last == ph.slice {
+                    repeats += 1;
+                }
+                last = ph.slice;
+                out.insert(ph.slice.unwrap());
+            }
+            (out.len(), repeats)
+        };
+        assert_eq!(seen(SlicePick::ByNote).0, 3, "by note: three drums, three slices");
+        assert!(seen(SlicePick::Walk).0 >= 30, "walking: all of them ({})", seen(SlicePick::Walk).0);
+        assert_eq!(seen(SlicePick::InTurn).0, 32);
+        let (n, repeats) = seen(SlicePick::Random);
+        assert!(n > 20 && repeats == 0, "by chance, never twice: {n} {repeats}");
+    }
+
+    #[test]
+    fn slices_go_on_by_themselves_and_vary() {
+        // Auto: a new slice every beat while the song plays, no notes.
+        let c = clip(PlayMode::Slices, |p| {
+            p.slices = 16;
+            p.slice_auto = 1.0;
+            p.slice_pick = SlicePick::InTurn;
+        });
+        let mut ph = Playhead::default();
+        let mut slices = Vec::new();
+        for f in 0..=80 {
+            ph.advance(&c, &input(0.05, f as f64 * 0.1));
+            slices.push(ph.slice);
+        }
+        let changes = slices.windows(2).filter(|w| w[0] != w[1]).count();
+        assert_eq!(changes, 8, "eight beats: {slices:?}");
+        // Backwards always: it runs down through its slice.
+        let c = clip(PlayMode::Slices, |p| {
+            p.slices = 8;
+            p.slice_reverse = 1.0;
+        });
+        let mut ph = Playhead::default();
+        let mut i = input(0.1, 0.0);
+        i.note = Some(37);
+        ph.advance(&c, &i);
+        let start = ph.pos;
+        i.note = None;
+        ph.advance(&c, &i);
+        assert!(ph.pos < start && start > 1.9 && start < 2.0, "slice 1 (1..2 s) from its end, going back: {start} {}", ph.pos);
+        // Faster or slower, from somewhere inside.
+        let c = clip(PlayMode::Slices, |p| {
+            p.slices = 8;
+            p.slice_speed = 1.0;
+            p.slice_jitter = 1.0;
+        });
+        let mut ph = Playhead::default();
+        let mut starts = std::collections::HashSet::new();
+        for k in 0..20 {
+            let mut i = input(0.016, 0.0);
+            i.note = Some(36 + (k % 2) as u8);
+            ph.advance(&c, &i);
+            starts.insert((ph.pos * 1000.0) as i64);
+            assert!(ph.rate >= 0.5 && ph.rate <= 2.0);
+        }
+        assert!(starts.len() > 10, "from all over: {}", starts.len());
+        // A set from before keeps its notes' slices... as Walk, which starts where they were.
+        let old: ClipPlay = serde_json::from_str(r#"{"mode":"Slices","slices":8}"#).unwrap();
+        assert_eq!((old.slice_pick, old.slice_auto), (SlicePick::Walk, 0.0));
     }
 
     #[test]
