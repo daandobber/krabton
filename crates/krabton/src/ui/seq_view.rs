@@ -107,6 +107,7 @@ pub(crate) fn editor(ui: &mut Ui, id: Id, kind: MidiFxKind, params: &mut [f32], 
         MidiFxKind::Raga => super::world_view::raga(ui, id, params, live, accent, height),
         MidiFxKind::Call => super::world_view::call(ui, id, params, live, accent, height),
         MidiFxKind::HomeRhythms => super::home_view::home(ui, id, params, live, accent, height),
+        MidiFxKind::Breakline => super::breakline_view::breakline(ui, id, params, live, height),
         MidiFxKind::Step => super::classic_view::step(ui, id, params, data, live, lane, accent, height),
         MidiFxKind::Acid => super::classic_view::acid(ui, id, params, data, live, accent, height),
         MidiFxKind::Inferno => {

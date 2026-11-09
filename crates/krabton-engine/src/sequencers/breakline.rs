@@ -262,6 +262,8 @@ fn gap(p: &[f32], k: i64) -> i64 {
 
 impl SeqState {
     pub(crate) fn breakline(&mut self, k: i64, p: &[f32], at: u64, step_frames: f64, out: &mut Vec<MidiEvent>, ctx: &MidiCtx) {
+        // Where it is, for the face (rests too).
+        self.visual[0] = k.max(0) as u64;
         let Some(n) = note_at(p, k) else { return };
         let (home, _) = ctx.scale.locate(p[CENTER].round() as i32);
         let each = step_frames / n.hits as f64;
@@ -271,7 +273,6 @@ impl SeqState {
             let fade = if n.hits > 1 { 1.0 - 0.12 * h as f32 } else { 1.0 };
             self.mlater(ctx, at + (h as f64 * each) as u64, pitch, n.vel * fade, held, out);
         }
-        self.visual[0] = k.max(0) as u64;
     }
 }
 

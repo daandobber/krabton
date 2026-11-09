@@ -1402,6 +1402,26 @@ const INFERNO: Skin = Skin {
     logo_case: Case::Upper,
     ..BASE
 };
+/// Breakline: a tracker on a cold CRT: scanlines, cyan rows, amber beats,
+/// a pixel font.
+const BREAKLINE: Skin = Skin {
+    top: hex(0x0b1220),
+    bottom: hex(0x050810),
+    surface: Surface::Scan,
+    stripes: &[hex(0x39e6ff), hex(0x050810), hex(0xffb02e)],
+    ink: hex(0xcfe9ff),
+    dim: hex(0x6a82a8),
+    well: hex(0x03050a),
+    well_ink: hex(0x39e6ff),
+    accent: hex(0x39e6ff),
+    knob: Knob::Led,
+    cap: hex(0x14203a),
+    logo: Font::Pixel,
+    logo_size: 18.0,
+    logo_ink: hex(0xffb02e),
+    logo_case: Case::Upper,
+    ..BASE
+};
 const MIDI_FX: Skin = Skin { accent: hex(0x8fe388), knob: Knob::Led, cap: hex(0x3a3c41), logo_case: Case::Upper, ..BASE };
 
 /// The look of an instrument, by its name (as its title shows it).
@@ -1522,6 +1542,9 @@ pub fn for_effect(kind: EffectKind) -> Option<Skin> {
 pub fn for_midi(kind: MidiFxKind) -> Option<Skin> {
     if kind == MidiFxKind::Inferno {
         return Some(INFERNO);
+    }
+    if kind == MidiFxKind::Breakline {
+        return Some(BREAKLINE);
     }
     Some(if kind.is_sequencer() { SEQUENCER } else { MIDI_FX })
 }
