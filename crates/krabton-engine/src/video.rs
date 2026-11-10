@@ -957,11 +957,100 @@ pub struct VideoLook {
     /// own, so changing scene and back finds them as they were.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub scenes: Vec<Vec<f32>>,
+    /// The order its effects work in, where it is not as they start (see
+    /// `SHAPE_STAGE` and `PICTURE_STAGE`; the others keep their places).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub order: Vec<Effect>,
+}
+
+/// The effects that bend, cut or repeat the picture's shape, in the order
+/// they work on it as they start (a Look can put them in another).
+pub const SHAPE_STAGE: [Effect; 13] = [Effect::Ripple, Effect::Fisheye, Effect::Swirl, Effect::Melt, Effect::Shred, Effect::Puzzle, Effect::Checker, Effect::Tile, Effect::Shake, Effect::Spin, Effect::Zoom, Effect::Pixels, Effect::Glitch];
+/// The effects that fold, blur or repeat the picture taken, in the order they start in.
+pub const PICTURE_STAGE: [Effect; 8] = [Effect::ZoomBlur, Effect::Blur, Effect::Mirror, Effect::Prism, Effect::Polar, Effect::Droste, Effect::PopArt, Effect::Kaleido];
+
+/// The stage `e` is in (its effects in the order they start in), if it is in one.
+pub fn stage_of(e: Effect) -> Option<&'static [Effect]> {
+    if SHAPE_STAGE.contains(&e) {
+        Some(&SHAPE_STAGE)
+    } else if PICTURE_STAGE.contains(&e) {
+        Some(&PICTURE_STAGE)
+    } else {
+        None
+    }
 }
 
 impl VideoLook {
     pub fn new(name: impl Into<String>, links: Vec<VideoLink>) -> Self {
-        Self { name: name.into(), fx: Default::default(), links, milk: Default::default(), scenes: Vec::new() }
+        Self { name: name.into(), fx: Default::default(), links, milk: Default::default(), scenes: Vec::new(), order: Vec::new() }
+    }
+
+    /// The effects of `stage` in the order this Look has them work.
+    pub fn stage_order(&self, stage: &[Effect]) -> Vec<Effect> {
+        let mut out: Vec<Effect> = Vec::with_capacity(stage.len());
+        for e in self.order.iter().filter(|e| stage.contains(e)) {
+            if !out.contains(e) {
+                out.push(*e);
+            }
+        }
+        // The ones never moved, at their own places.
+        for (k, e) in stage.iter().enumerate() {
+            if !out.contains(e) {
+                out.insert(k.min(out.len()), *e);
+            }
+        }
+        out
+    }
+
+    fn set_stage_order(&mut self, stage: &[Effect], now: Vec<Effect>) {
+        self.order.retain(|e| !stage.contains(e));
+        if now.as_slice() != stage {
+            self.order.extend(now);
+        }
+    }
+
+    /// Effect `e` to place `to` among those of its stage (in the order they work).
+    pub fn move_effect(&mut self, e: Effect, to: usize) {
+        let Some(stage) = stage_of(e) else { return };
+        let mut now = self.stage_order(stage);
+        let Some(at) = now.iter().position(|x| *x == e) else { return };
+        now.remove(at);
+        now.insert(to.min(now.len()), e);
+        self.set_stage_order(stage, now);
+    }
+
+    /// Effect `e` one earlier (-1) or later (+1) among those this Look uses of its stage.
+    pub fn nudge_effect(&mut self, e: Effect, by: i32) {
+        let Some(stage) = stage_of(e) else { return };
+        let used = self.effects();
+        let now = self.stage_order(stage);
+        let mine: Vec<Effect> = now.iter().copied().filter(|x| used.contains(x) || *x == e).collect();
+        let Some(k) = mine.iter().position(|x| *x == e) else { return };
+        let j = k as i32 + by;
+        if j < 0 || j as usize >= mine.len() {
+            return;
+        }
+        let other = mine[j as usize];
+        let to = now.iter().position(|x| *x == other).unwrap_or(0);
+        self.move_effect(e, to);
+    }
+
+    /// Both stages in an order by chance (from `seed`).
+    pub fn shuffle_order(&mut self, seed: u32) {
+        let mut d = Dice::new(seed);
+        for stage in [&SHAPE_STAGE[..], &PICTURE_STAGE[..]] {
+            let mut now = self.stage_order(stage);
+            for i in (1..now.len()).rev() {
+                let j = (d.next() as usize) % (i + 1);
+                now.swap(i, j);
+            }
+            self.set_stage_order(stage, now);
+        }
+    }
+
+    /// Back to the order they start in.
+    pub fn reset_order(&mut self) {
+        self.order.clear();
     }
 
     /// Scene `scene`'s setting `k` (its default when not set).
@@ -4087,6 +4176,34 @@ impl Playhead {
 #[cfg(test)]
 mod scene_tests {
     use super::*;
+
+    #[test]
+    fn a_look_puts_its_effects_in_an_order_of_its_own() {
+        let mut look = VideoLook::default();
+        assert_eq!(look.stage_order(&SHAPE_STAGE), SHAPE_STAGE.to_vec());
+        look.move_effect(Effect::Swirl, 0);
+        let o = look.stage_order(&SHAPE_STAGE);
+        assert_eq!(o[0], Effect::Swirl);
+        assert_eq!(o.len(), SHAPE_STAGE.len());
+        // Nudged among those the Look uses: Tile before Checker.
+        look.setting_mut(Effect::Tile).base = 0.5;
+        look.setting_mut(Effect::Checker).base = 0.5;
+        look.nudge_effect(Effect::Tile, -1);
+        let o = look.stage_order(&SHAPE_STAGE);
+        assert!(o.iter().position(|e| *e == Effect::Tile) < o.iter().position(|e| *e == Effect::Checker), "{o:?}");
+        // Kept in the set's file; another stage left alone.
+        let back: VideoLook = serde_json::from_str(&serde_json::to_string(&look).unwrap()).unwrap();
+        assert_eq!(back.stage_order(&SHAPE_STAGE), o);
+        assert_eq!(back.stage_order(&PICTURE_STAGE), PICTURE_STAGE.to_vec());
+        look.shuffle_order(7);
+        let mut a = look.stage_order(&PICTURE_STAGE);
+        a.sort_by_key(|e| e.index());
+        let mut b = PICTURE_STAGE.to_vec();
+        b.sort_by_key(|e| e.index());
+        assert_eq!(a, b, "the same effects, in another order");
+        look.reset_order();
+        assert!(look.order.is_empty());
+    }
 
     #[test]
     fn shapes_size_the_stage_and_films_and_looks_change_fast_or_by_chance() {

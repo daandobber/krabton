@@ -95,6 +95,21 @@ pub struct Params {
     pub sp_from: [f32; kv::SCENE_P],
     /// The stage's size in pixels, as the set's shape has it.
     pub stage: [i32; 2],
+    /// The order the shape and the picture stages' effects work in (their places in `Effect::ALL`).
+    pub shape: [f32; 13],
+    pub pic: [f32; 8],
+}
+
+/// A stage's effects as the shader takes their order.
+pub fn order_of<const N: usize>(effects: &[Effect]) -> [f32; N] {
+    std::array::from_fn(|k| effects.get(k).map_or(-1.0, |e| e.index() as f32))
+}
+
+/// The shape stage as the shader takes it: where the picture is taken from
+/// is moved last by what works on the picture first.
+pub fn shape_order(effects: &[Effect]) -> [f32; 13] {
+    let back: Vec<Effect> = effects.iter().rev().copied().collect();
+    order_of(&back)
 }
 
 impl Default for Params {
@@ -132,6 +147,8 @@ impl Default for Params {
             sp: kv::scene_defaults(0),
             sp_from: kv::scene_defaults(0),
             stage: [STAGE_W, STAGE_H],
+            shape: shape_order(&kv::SHAPE_STAGE),
+            pic: order_of(&kv::PICTURE_STAGE),
         }
     }
 }
@@ -235,6 +252,11 @@ pub(crate) fn defines() -> String {
         s.push_str(&format!("#define A_{name} u_fx[{}].{}\n#define P_{name} u_p[{i}]\n", i / 4, ["x", "y", "z", "w"][i % 4]));
     }
     s.push_str(&format!("#define FX_VEC4 {}\n#define FX_N {}\n", Effect::COUNT.div_ceil(4), Effect::COUNT));
+    // Each effect's place, for the stages' order (u_shape, u_pic).
+    for e in Effect::ALL {
+        s.push_str(&format!("#define E_{} {}.0\n", format!("{e:?}").to_uppercase(), e.index()));
+    }
+    s.push_str(&format!("#define SHAPE_N {}\n#define PIC_N {}\n", kv::SHAPE_STAGE.len(), kv::PICTURE_STAGE.len()));
     s
 }
 
@@ -417,36 +439,32 @@ vec3 hue_turn(vec3 c, float a) {
     return c * ca + cross(k, c) * sin(a) + k * dot(k, c) * (1.0 - ca);
 }
 
-void main() {
-    float aspect = u_stage.x / u_stage.y;
-    vec2 st = v_uv;
-    // Scanlines: the glass bulges.
-    float off_glass = 1.0;
-    if (A_SCANLINES > 0.001 && P_SCANLINES.y > 0.001) {
-        vec2 c = st - 0.5;
-        c *= 1.0 + dot(c, c) * P_SCANLINES.y * A_SCANLINES;
-        st = c + 0.5;
-        off_glass = mix(1.0, inside(st, vec4(0.0)), A_SCANLINES);
-    }
-    // Glitch: strips pushed sideways, different every time it changes.
+// Every effect of the shape and picture stages, called in the Look's order.
+uniform float u_shape[SHAPE_N];
+uniform float u_pic[PIC_N];
+float chk;
+
+vec2 s_glitch(vec2 p, float aspect) {
+    vec2 st = vec2(p.x / aspect, p.y) + 0.5;
     if (A_GLITCH > 0.001) {
         float band = floor(st.y * P_GLITCH.x + hash(u_seed) * 5.0);
         if (hash(band * 3.17 + u_seed * 11.0) < A_GLITCH * 0.7) {
             st.x += (hash(band * 1.71 + u_seed) - 0.5) * P_GLITCH.y * A_GLITCH;
         }
     }
-    // Pixels: blocks up to its size in stage pixels.
+    return (st - 0.5) * vec2(aspect, 1.0);
+}
+
+vec2 s_pixels(vec2 p, float aspect) {
+    vec2 st = vec2(p.x / aspect, p.y) + 0.5;
     if (A_PIXELS > 0.001) {
         float px = mix(1.0, P_PIXELS.x, A_PIXELS * A_PIXELS);
         st = (floor(st * u_stage / px) + 0.5) * px / u_stage;
     }
-    vec2 p = st - 0.5;
-    p.x *= aspect;
-    vec2 centre = vec2(P_ZOOM.y * aspect, P_ZOOM.z);
-    p = (p - centre) / (1.0 + pow(A_ZOOM, P_ZOOM.w) * P_ZOOM.x) + centre;
-    p = turn2(p, u_spin * 6.2831853);
-    p -= u_shake * vec2(aspect, 1.0);
-    // Tile: repeated across and down (every other mirrored).
+    return (st - 0.5) * vec2(aspect, 1.0);
+}
+
+vec2 s_tile(vec2 p, float aspect) {
     if (A_TILE > 0.001) {
         float n = 1.0 + floor(A_TILE * (P_TILE.x - 1.0) + 0.5);
         vec2 q = (p / vec2(aspect, 1.0) + 0.5) * n;
@@ -458,10 +476,10 @@ void main() {
         }
         p = (f - 0.5) * vec2(aspect, 1.0);
     }
-    // Checker: the whole picture repeated as a chessboard (more squares the
-    // higher it is), every other square flipped, inverted, turned in colour,
-    // shifted, cut out or turned.
-    float chk = 0.0;
+    return p;
+}
+
+vec2 s_checker(vec2 p, float aspect) {
     if (A_CHECKER > 0.001) {
         float n = 1.0 + floor(A_CHECKER * (max(P_CHECKER.x, 1.0) - 1.0) + 0.5);
         vec2 q = (p / vec2(aspect, 1.0) + 0.5) * n + vec2(u_vtime * P_CHECKER.z * 0.25, 0.0);
@@ -477,7 +495,10 @@ void main() {
         }
         p = (f - 0.5) * vec2(aspect, 1.0);
     }
-    // Puzzle: squares shuffled about, again at its rate.
+    return p;
+}
+
+vec2 s_puzzle(vec2 p, float aspect) {
     if (A_PUZZLE > 0.001) {
         float n = max(P_PUZZLE.x, 1.0);
         vec2 q = (p / vec2(aspect, 1.0) + 0.5) * n;
@@ -489,7 +510,10 @@ void main() {
             p = (q / n - 0.5) * vec2(aspect, 1.0);
         }
     }
-    // Shred: strips pushed apart, across or down.
+    return p;
+}
+
+vec2 s_shred(vec2 p, float aspect) {
     if (A_SHRED > 0.001) {
         float n = max(P_SHRED.x, 1.0);
         if (P_SHRED.y < 0.5) {
@@ -500,39 +524,54 @@ void main() {
             p.y += (hash(s * 1.37) - 0.5) * P_SHRED.z * A_SHRED * (0.6 + 0.4 * sin(u_vtime * P_SHRED.w * 3.0 + s));
         }
     }
-    // Melt: dripping down in streaks.
+    return p;
+}
+
+vec2 s_melt(vec2 p, float aspect) {
     if (A_MELT > 0.001) {
         float col = floor((p.x / aspect + 0.5) * P_MELT.y);
         float drip = hash(col * 2.31) * (0.6 + 0.4 * sin(u_vtime * P_MELT.z * 2.0 + col * 0.7));
         p.y += drip * P_MELT.x * A_MELT * (0.5 + p.y);
     }
-    // Swirl: turned round the middle, more near it.
+    return p;
+}
+
+vec2 s_swirl(vec2 p, float aspect) {
     if (A_SWIRL > 0.001) {
         float r = length(p);
         float k = smoothstep(P_SWIRL.y, 0.0, r);
         p = turn2(p, A_SWIRL * P_SWIRL.x * 6.2831853 * k * k);
     }
-    // Fisheye: bulged out (or pinched in).
+    return p;
+}
+
+vec2 s_fisheye(vec2 p, float aspect) {
     if (A_FISHEYE > 0.001) {
         float k = A_FISHEYE * P_FISHEYE.x;
         float r2 = dot(p, p);
         p = p / (1.0 + k * (1.2 - 2.4 * r2));
     }
-    // Ripple: rings running out from the middle.
+    return p;
+}
+
+vec2 s_ripple(vec2 p, float aspect) {
     if (A_RIPPLE > 0.001) {
         float r = length(p);
         if (r > 0.0001) {
             p += p / r * sin(r * P_RIPPLE.x * 12.0 - u_vtime * P_RIPPLE.y * 6.0) * 0.015 * A_RIPPLE;
         }
     }
-    // VHS: the lines wobbling, a band of noise rolling down, pushing them aside.
-    if (A_VHS > 0.001) {
-        float y = 0.5 - p.y;
-        float band = smoothstep(0.06, 0.0, abs(fract(u_vtime * 0.12) - y)) * P_VHS.y;
-        p.x += (sin(y * 90.0 + u_vtime * 7.0) * 0.0015 + sin(y * 9.0 + u_vtime * 1.3) * 0.004) * P_VHS.x * A_VHS * aspect + band * 0.03 * A_VHS * (hash(floor(y * 200.0) + floor(u_vtime * 30.0)) - 0.5);
-    }
-    vec3 c = at(p);
-    // Zoom Blur: streaks out from its point.
+    return p;
+}
+
+vec2 s_zoom(vec2 p, float aspect) {
+    vec2 centre = vec2(P_ZOOM.y * aspect, P_ZOOM.z);
+    return (p - centre) / (1.0 + pow(A_ZOOM, P_ZOOM.w) * P_ZOOM.x) + centre;
+}
+vec2 s_spin(vec2 p, float aspect) { return turn2(p, u_spin * 6.2831853); }
+vec2 s_shake(vec2 p, float aspect) { return p - u_shake * vec2(aspect, 1.0); }
+
+vec3 c_zoomblur(vec3 c, vec2 p, float aspect) {
     if (A_ZOOMBLUR > 0.001) {
         vec2 zc = vec2(P_ZOOMBLUR.y * aspect, P_ZOOMBLUR.z);
         vec3 sum = c;
@@ -541,7 +580,10 @@ void main() {
         }
         c = sum / 8.0;
     }
-    // Blur: the picture round each point.
+    return c;
+}
+
+vec3 c_blur(vec3 c, vec2 p, float aspect) {
     if (A_BLUR > 0.001) {
         float r = A_BLUR * P_BLUR.x * 0.02;
         vec3 sum = c;
@@ -551,7 +593,10 @@ void main() {
         }
         c = sum / 9.0;
     }
-    // Mirror: one half onto the other (or four ways).
+    return c;
+}
+
+vec3 c_mirror(vec3 c, vec2 p, float aspect) {
     if (A_MIRROR > 0.001) {
         vec2 q = p;
         float axis = P_MIRROR.x;
@@ -562,14 +607,10 @@ void main() {
         else { q = -abs(q); }
         c = mix(c, at(q), A_MIRROR);
     }
-    // Checker: its squares in other colours.
-    if (chk > 0.5) {
-        float style = P_CHECKER.y;
-        if (style > 0.5 && style < 1.5) { c = 1.0 - c; }
-        else if (style > 1.5 && style < 2.5) { c = hue_turn(c, 3.1415926); }
-        else if (style > 3.5 && style < 4.5) { c *= 0.0; }
-    }
-    // Prism: triangles' kaleidoscope, all over, turning.
+    return c;
+}
+
+vec3 c_prism(vec3 c, vec2 p, float aspect) {
     if (A_PRISM > 0.001) {
         vec2 q = turn2(p, u_vtime * P_PRISM.y) * P_PRISM.x;
         vec2 s = vec2(1.0, 1.7320508);
@@ -581,14 +622,20 @@ void main() {
         ang = abs(ang - seg * 0.5);
         c = mix(c, at(vec2(cos(ang), sin(ang)) * length(h) * 0.9), A_PRISM);
     }
-    // Polar: wrapped round, a little planet or a tunnel.
+    return c;
+}
+
+vec3 c_polar(vec3 c, vec2 p, float aspect) {
     if (A_POLAR > 0.001) {
         float r = length(p) / max(P_POLAR.x, 0.05);
         float ang = atan(p.y, p.x) / 6.2831853 + 0.5 + u_vtime * P_POLAR.y * 0.05;
         float y = P_POLAR.z > 0.5 ? r - 0.5 : 0.5 - r;
         c = mix(c, at(vec2((fract(ang) - 0.5) * aspect, clamp(y, -0.5, 0.5))), A_POLAR);
     }
-    // Droste: inside itself, zooming on.
+    return c;
+}
+
+vec3 c_droste(vec3 c, vec2 p, float aspect) {
     if (A_DROSTE > 0.001) {
         float sc = max(P_DROSTE.x, 1.1);
         float t = fract(u_vtime * P_DROSTE.y * 0.25);
@@ -599,7 +646,10 @@ void main() {
         q = turn2(q, lvl * P_DROSTE.z * 1.5707963);
         c = mix(c, at(q * 0.95), A_DROSTE);
     }
-    // Pop Art: copies side by side, each in flat colours of its own.
+    return c;
+}
+
+vec3 c_popart(vec3 c, vec2 p, float aspect) {
     if (A_POPART > 0.001) {
         float n = floor(max(P_POPART.x, 1.0) + 0.5);
         vec2 q = (p / vec2(aspect, 1.0) + 0.5) * n;
@@ -612,12 +662,85 @@ void main() {
         vec3 paper = 0.5 + 0.5 * cos(6.2831853 * (hue + 0.5 + vec3(0.0, 0.33, 0.67)));
         c = mix(c, mix(ink * 0.25, paper, l), A_POPART);
     }
-    // Kaleido: mirrored wedges.
+    return c;
+}
+
+vec3 c_kaleido(vec3 c, vec2 p, float aspect) {
     if (A_KALEIDO > 0.001) {
         float seg = 6.2831853 / max(P_KALEIDO.x, 1.0);
         float ang = mod(atan(p.y, p.x) + P_KALEIDO.y * 6.2831853, seg);
         ang = abs(ang - seg * 0.5);
         c = mix(c, at(vec2(cos(ang), sin(ang)) * length(p)), A_KALEIDO);
+    }
+    return c;
+}
+
+// One effect of the shape stage, `e` its place in `Effect::ALL`.
+vec2 shape_step(float e, vec2 p, float aspect) {
+    if (abs(e - E_GLITCH) < 0.5) { return s_glitch(p, aspect); }
+    if (abs(e - E_PIXELS) < 0.5) { return s_pixels(p, aspect); }
+    if (abs(e - E_ZOOM) < 0.5) { return s_zoom(p, aspect); }
+    if (abs(e - E_SPIN) < 0.5) { return s_spin(p, aspect); }
+    if (abs(e - E_SHAKE) < 0.5) { return s_shake(p, aspect); }
+    if (abs(e - E_TILE) < 0.5) { return s_tile(p, aspect); }
+    if (abs(e - E_CHECKER) < 0.5) { return s_checker(p, aspect); }
+    if (abs(e - E_PUZZLE) < 0.5) { return s_puzzle(p, aspect); }
+    if (abs(e - E_SHRED) < 0.5) { return s_shred(p, aspect); }
+    if (abs(e - E_MELT) < 0.5) { return s_melt(p, aspect); }
+    if (abs(e - E_SWIRL) < 0.5) { return s_swirl(p, aspect); }
+    if (abs(e - E_FISHEYE) < 0.5) { return s_fisheye(p, aspect); }
+    if (abs(e - E_RIPPLE) < 0.5) { return s_ripple(p, aspect); }
+    return p;
+}
+
+// One effect of the picture stage.
+vec3 pic_step(float e, vec3 c, vec2 p, float aspect) {
+    if (abs(e - E_ZOOMBLUR) < 0.5) { return c_zoomblur(c, p, aspect); }
+    if (abs(e - E_BLUR) < 0.5) { return c_blur(c, p, aspect); }
+    if (abs(e - E_MIRROR) < 0.5) { return c_mirror(c, p, aspect); }
+    if (abs(e - E_PRISM) < 0.5) { return c_prism(c, p, aspect); }
+    if (abs(e - E_POLAR) < 0.5) { return c_polar(c, p, aspect); }
+    if (abs(e - E_DROSTE) < 0.5) { return c_droste(c, p, aspect); }
+    if (abs(e - E_POPART) < 0.5) { return c_popart(c, p, aspect); }
+    if (abs(e - E_KALEIDO) < 0.5) { return c_kaleido(c, p, aspect); }
+    return c;
+}
+
+void main() {
+    float aspect = u_stage.x / u_stage.y;
+    vec2 st = v_uv;
+    // Scanlines: the glass bulges.
+    float off_glass = 1.0;
+    if (A_SCANLINES > 0.001 && P_SCANLINES.y > 0.001) {
+        vec2 c = st - 0.5;
+        c *= 1.0 + dot(c, c) * P_SCANLINES.y * A_SCANLINES;
+        st = c + 0.5;
+        off_glass = mix(1.0, inside(st, vec4(0.0)), A_SCANLINES);
+    }
+    vec2 p = st - 0.5;
+    p.x *= aspect;
+    // The shape stage, in the Look's order.
+    chk = 0.0;
+    for (int i = 0; i < SHAPE_N; i++) {
+        p = shape_step(u_shape[i], p, aspect);
+    }
+    // VHS: the lines wobbling, a band of noise rolling down, pushing them aside.
+    if (A_VHS > 0.001) {
+        float y = 0.5 - p.y;
+        float band = smoothstep(0.06, 0.0, abs(fract(u_vtime * 0.12) - y)) * P_VHS.y;
+        p.x += (sin(y * 90.0 + u_vtime * 7.0) * 0.0015 + sin(y * 9.0 + u_vtime * 1.3) * 0.004) * P_VHS.x * A_VHS * aspect + band * 0.03 * A_VHS * (hash(floor(y * 200.0) + floor(u_vtime * 30.0)) - 0.5);
+    }
+    vec3 c = at(p);
+    // Checker: its squares in other colours.
+    if (chk > 0.5) {
+        float style = P_CHECKER.y;
+        if (style > 0.5 && style < 1.5) { c = 1.0 - c; }
+        else if (style > 1.5 && style < 2.5) { c = hue_turn(c, 3.1415926); }
+        else if (style > 3.5 && style < 4.5) { c *= 0.0; }
+    }
+    // The picture stage, in the Look's order.
+    for (int i = 0; i < PIC_N; i++) {
+        c = pic_step(u_pic[i], c, p, aspect);
     }
     // Edges: the outlines, in their colour.
     if (A_EDGES > 0.001) {
@@ -1241,6 +1364,8 @@ impl Gl {
         gl.uniform_4_f32_slice(u("u_fx[0]").as_ref(), &packed_amounts(&p.fx));
         let settings: Vec<f32> = p.p.iter().flatten().copied().collect();
         gl.uniform_4_f32_slice(u("u_p[0]").as_ref(), &settings);
+        gl.uniform_1_f32_slice(u("u_shape[0]").as_ref(), &p.shape);
+        gl.uniform_1_f32_slice(u("u_pic[0]").as_ref(), &p.pic);
         for (name, v) in [("u_spin", p.spin), ("u_seed", p.seed), ("u_grain", p.grain), ("u_transition", p.transition), ("u_mix", p.mix)] {
             gl.uniform_1_f32(u(name).as_ref(), v);
         }

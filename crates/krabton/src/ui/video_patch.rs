@@ -31,19 +31,19 @@ use krabton_engine::video::{self as kv, Effect, Source, VideoLink};
 pub(crate) const FILM_ORDER: [Effect; 6] = [Effect::Speed, Effect::Freeze, Effect::Jump, Effect::Stutter, Effect::Scratch, Effect::NextClip];
 pub(crate) const VIS_ORDER: [Effect; 11] = [Effect::Burst, Effect::Warp, Effect::Density, Effect::Rush, Effect::Glow, Effect::Orbit, Effect::Fracture, Effect::Depth, Effect::Detail, Effect::Thickness, Effect::Scatter];
 pub(crate) const MAIN_ORDER: [Effect; 46] = [
-    Effect::Checker,
-    Effect::Puzzle,
-    Effect::Shred,
-    Effect::Melt,
-    Effect::Tile,
-    Effect::Swirl,
-    Effect::Fisheye,
     Effect::Ripple,
-    Effect::Glitch,
-    Effect::Pixels,
-    Effect::Zoom,
-    Effect::Spin,
+    Effect::Fisheye,
+    Effect::Swirl,
+    Effect::Melt,
+    Effect::Shred,
+    Effect::Puzzle,
+    Effect::Checker,
+    Effect::Tile,
     Effect::Shake,
+    Effect::Spin,
+    Effect::Zoom,
+    Effect::Pixels,
+    Effect::Glitch,
     Effect::Split,
     Effect::ZoomBlur,
     Effect::Blur,
@@ -79,6 +79,34 @@ pub(crate) const MAIN_ORDER: [Effect; 46] = [
     Effect::Feedback,
 ];
 
+/// The picture's effects in the order this Look has them work: MAIN_ORDER,
+/// with the shape and the picture stages as the Look puts them.
+pub(crate) fn main_order(look: &kv::VideoLook) -> Vec<Effect> {
+    let shape = look.stage_order(&kv::SHAPE_STAGE);
+    let pic = look.stage_order(&kv::PICTURE_STAGE);
+    let (mut a, mut b) = (shape.into_iter(), pic.into_iter());
+    MAIN_ORDER
+        .iter()
+        .map(|e| {
+            if kv::SHAPE_STAGE.contains(e) {
+                a.next().unwrap_or(*e)
+            } else if kv::PICTURE_STAGE.contains(e) {
+                b.next().unwrap_or(*e)
+            } else {
+                *e
+            }
+        })
+        .collect()
+}
+
+/// Whether `a` and `b` are in the same stage (so one can take the other's place).
+fn same_stage(a: Effect, b: Effect) -> bool {
+    match (kv::stage_of(a), kv::stage_of(b)) {
+        (Some(x), Some(y)) => std::ptr::eq(x, y),
+        _ => false,
+    }
+}
+
 /// A module of the patch.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Node {
@@ -112,7 +140,7 @@ fn colour_of(n: Node) -> Color32 {
 
 /// Where the modules sit: the sources and theirs in rows, then the
 /// picture's effects in rows to the Output, the modulators under them.
-pub(crate) fn layout(film: bool, visuals: bool, used: &[Effect], mods: &[(Node, Vec<Effect>)], width: f32) -> Vec<(Node, Rect)> {
+pub(crate) fn layout(film: bool, visuals: bool, used: &[Effect], order: &[Effect], mods: &[(Node, Vec<Effect>)], width: f32) -> Vec<(Node, Rect)> {
     let mut out: Vec<(Node, Rect)> = Vec::new();
     let mut y = 12.0;
     let mut sources = 0;
@@ -143,7 +171,7 @@ pub(crate) fn layout(film: bool, visuals: bool, used: &[Effect], mods: &[(Node, 
     if sources == 2 {
         chain.push(Node::Mix);
     }
-    chain.extend(MAIN_ORDER.iter().filter(|e| used.contains(e)).map(|e| Node::Fx(*e)));
+    chain.extend(order.iter().filter(|e| used.contains(e)).map(|e| Node::Fx(*e)));
     chain.push(Node::Output);
     for n in chain {
         let size = match n {
@@ -225,6 +253,7 @@ impl App {
         let mut remove: Option<Node> = None;
         let mut add_fx: Option<Effect> = None;
         let mut go_clip = false;
+        let mut reorder: Option<(Effect, Effect)> = None;
 
         // The head: the Look's name, how much the music moves it, Add, Presets.
         ui.horizontal(|ui| {
@@ -256,6 +285,19 @@ impl App {
                     });
                 }
             });
+            let shuffle = ui
+                .add(egui::Button::new(RichText::new("Shuffle").color(TEXT)).corner_radius(4.0).min_size(vec2(0.0, vj::H)))
+                .on_hover_text("The effects in another order by chance: the same effects make another picture.\nDrag a module onto another to swap places; right-click: back to the order they start in");
+            if shuffle.clicked() {
+                let seed = (ui.input(|i| i.time) * 1000.0) as u32 ^ (k as u32).wrapping_mul(0x9e37_79b9);
+                look.shuffle_order(seed);
+            }
+            shuffle.context_menu(|ui| {
+                if ui.button("Order as they start").clicked() {
+                    look.reset_order();
+                    ui.close();
+                }
+            });
             vj::bar(ui, &mut set.amount, 0.0, 1.0, 1.0, "Music", vj::pct, 150.0, None, "How much the music moves the picture: every cable of every Look at once");
         });
         ui.add_space(6.0);
@@ -273,7 +315,8 @@ impl App {
             }
         }
         let width = ui.available_width();
-        let placed = layout(film, visuals, &used, &mods, width);
+        let order = main_order(look);
+        let placed = layout(film, visuals, &used, &order, &mods, width);
         let height = placed.iter().map(|(_, r)| r.bottom()).fold(0.0, f32::max) + 24.0;
         let (canvas, bg) = ui.allocate_exact_size(vec2(width, height.max(200.0)), Sense::click());
         let origin = canvas.min.to_vec2();
@@ -316,7 +359,7 @@ impl App {
             }
         }
         let mut last = mixer.or(source_ends.first().copied());
-        for n in MAIN_ORDER.iter().filter(|e| used.contains(e)).map(|e| Node::Fx(*e)).chain(std::iter::once(Node::Output)) {
+        for n in order.iter().filter(|e| used.contains(e)).map(|e| Node::Fx(*e)).chain(std::iter::once(Node::Output)) {
             if let Some(b) = rect_of(n) {
                 if let Some(a) = last {
                     join(&p, a, b, signal);
@@ -450,6 +493,18 @@ impl App {
                             if s.off {
                                 text(&p, pos2(body.right(), r.top() + 11.0), Align2::RIGHT_CENTER, "off", small(), TEXT_DIM);
                             }
+                            // A module of its stage dropped on it: they change places.
+                            if resp.drag_started() && kv::stage_of(e).is_some() {
+                                dragging = Some(n);
+                            }
+                            if let Some(Node::Fx(d)) = dragging {
+                                if d != e && same_stage(d, e) && pointer.is_some_and(|pt| r.contains(pt)) {
+                                    p.rect_stroke(r.expand(3.0), 7.0, Stroke::new(2.0_f32, colour_of(Node::Fx(d))), egui::StrokeKind::Outside);
+                                    if ui.input(|i| i.pointer.any_released()) {
+                                        reorder = Some((d, e));
+                                    }
+                                }
+                            }
                             // A cable dropped on it: it is moved by that modulator too.
                             if let Some(Node::Mod(src, from)) = dragging {
                                 if pointer.is_some_and(|pt| r.contains(pt)) {
@@ -459,7 +514,8 @@ impl App {
                                     }
                                 }
                             }
-                            resp.clone().on_hover_text(format!("{}\nClick: its settings and what moves it", e.about()));
+                            let tip = if kv::stage_of(e).is_some() { "Click: its settings and what moves it. Drag onto another of its kind: they change places" } else { "Click: its settings and what moves it" };
+                            resp.clone().on_hover_text(format!("{}\n{tip}", e.about()));
                         }
                         Node::Mod(..) => {}
                     }
@@ -485,6 +541,23 @@ impl App {
             }
             if resp.clicked() && n != Node::Film {
                 selected = if selected == Some(n) { None } else { Some(n) };
+            }
+        }
+        // A module being moved: it goes with the pointer.
+        if let (Some(Node::Fx(d)), Some(pt)) = (dragging, pointer) {
+            if let Some(r) = rect_of(Node::Fx(d)) {
+                let ghost = Rect::from_center_size(pt, r.size());
+                let col = colour_of(Node::Fx(d));
+                p.rect_filled(ghost, 6.0, mix(PANEL2, col, 0.25).gamma_multiply(0.85));
+                p.rect_stroke(ghost, 6.0, Stroke::new(1.5_f32, col), egui::StrokeKind::Inside);
+                text(&p, ghost.center(), Align2::CENTER_CENTER, d.name().to_uppercase(), small(), col);
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+            }
+        }
+        if let Some((d, onto)) = reorder {
+            if let Some(stage) = kv::stage_of(d) {
+                let to = look.stage_order(stage).iter().position(|x| *x == onto).unwrap_or(0);
+                look.move_effect(d, to);
             }
         }
         if ui.input(|i| i.pointer.any_released()) {
@@ -514,9 +587,20 @@ impl App {
                             Node::Fx(e) => {
                                 close = effect_detail(ui, look, e, &readings, tracks, &mut add_src);
                                 ui.add_space(4.0);
-                                if ui.small_button("Remove").on_hover_text("Take it out of the Look, with its cables (or Delete)").clicked() {
-                                    remove = Some(n);
-                                }
+                                ui.horizontal(|ui| {
+                                    if ui.small_button("Remove").on_hover_text("Take it out of the Look, with its cables (or Delete)").clicked() {
+                                        remove = Some(n);
+                                    }
+                                    if kv::stage_of(e).is_some() {
+                                        ui.add_space(8.0);
+                                        if ui.small_button("< Earlier").on_hover_text("Let it work on the picture before the one left of it").clicked() {
+                                            look.nudge_effect(e, -1);
+                                        }
+                                        if ui.small_button("Later >").on_hover_text("Let it work on the picture after the one right of it").clicked() {
+                                            look.nudge_effect(e, 1);
+                                        }
+                                    }
+                                });
                             }
                             Node::Visuals | Node::Mix => {
                                 ui.horizontal(|ui| {
@@ -698,7 +782,7 @@ mod tests {
     fn the_modules_are_laid_out_in_their_order_and_the_modulators_under_them() {
         let used = [Effect::Burst, Effect::Zoom, Effect::Hue, Effect::Visuals];
         let mods = [(Node::Mod(Source::Kick, None), vec![Effect::Zoom])];
-        let placed = layout(true, true, &used, &mods, 900.0);
+        let placed = layout(true, true, &used, &MAIN_ORDER, &mods, 900.0);
         let at = |n: Node| placed.iter().find(|(m, _)| *m == n).map(|(_, r)| *r).unwrap();
         assert!(at(Node::Visuals).right() < at(Node::Fx(Effect::Burst)).left(), "a Visuals' knob after the Visuals");
         assert!(at(Node::Fx(Effect::Zoom)).right() < at(Node::Fx(Effect::Hue)).left(), "Zoom before Hue, as the picture has them");
@@ -708,7 +792,7 @@ mod tests {
         assert!((at(Node::Mod(Source::Kick, None)).center().x - at(Node::Fx(Effect::Zoom)).center().x).abs() < 1.0);
         // A narrow patch goes on in rows.
         let many: Vec<Effect> = MAIN_ORDER[..10].to_vec();
-        let placed = layout(false, false, &many, &[], 400.0);
+        let placed = layout(false, false, &many, &MAIN_ORDER, &[], 400.0);
         let ys: std::collections::BTreeSet<i32> = placed.iter().map(|(_, r)| r.top() as i32).collect();
         assert!(ys.len() > 2, "rows: {ys:?}");
     }

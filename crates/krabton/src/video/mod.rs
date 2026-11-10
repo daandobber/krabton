@@ -278,6 +278,9 @@ pub fn stage_params(set: &VideoSet, project: &Project, def: &VideoLook, look: &L
     p.mix = shot.from.map_or(1.0, |f| f.2);
     p.video_size = sizes.0.unwrap_or([0.0, 0.0]);
     p.old_size = sizes.1.unwrap_or([0.0, 0.0]);
+    // The order its effects work in.
+    p.shape = stage::shape_order(&def.stage_order(&kv::SHAPE_STAGE));
+    p.pic = stage::order_of(&def.stage_order(&kv::PICTURE_STAGE));
     p.frame = framing(set, set.clips.get(shot.clip));
     p.old_frame = framing(set, shot.from.and_then(|f| set.clips.get(f.0)));
     // The Visuals scene's own settings, the links pushing each up towards the top of its range.

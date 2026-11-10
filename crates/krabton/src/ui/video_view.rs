@@ -3279,6 +3279,11 @@ impl App {
             }
             // videoaspect=N: the picture's shape (0 16:9, 1 1:1, 2 9:16, 3 4:5, 4 4:3, 5 21:9).
             "videoaspect" => self.project.video.aspect = kv::Aspect::ALL[(f.first().copied().unwrap_or(0.0) as usize).min(kv::Aspect::ALL.len() - 1)],
+            // videoshuffle=SEED: the Look's effects in an order by chance (0: as they start).
+            "videoshuffle" => match f.first().copied().unwrap_or(0.0) as u32 {
+                0 => self.project.video.edited_look_mut().reset_order(),
+                seed => self.project.video.edited_look_mut().shuffle_order(seed),
+            },
             // videosceneparam=K,V: the Visuals scene's own setting K set to V.
             "videosceneparam" => {
                 if let [k, v, ..] = f.as_slice() {
