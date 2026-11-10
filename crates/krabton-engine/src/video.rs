@@ -2404,7 +2404,7 @@ impl Effect {
             Effect::Detail => "The Visuals finer: more of their small shapes",
             Effect::Thickness => "The Visuals' lines and points thicker",
             Effect::Scatter => "The Visuals' lines falling apart into points, as a scan of points",
-            Effect::Checker => "A chessboard of the picture: every other square flipped, inverted, turned in colour, shifted or cut out (more of them the higher it is)",
+            Effect::Checker => "The whole picture repeated as a chessboard, every other square flipped, inverted, turned in colour, shifted, cut out or turned: one picture at nothing, as many squares as Squares says at full (link it to the kick and it breaks into a board on every kick)",
             Effect::Puzzle => "The picture cut into squares that are shuffled about, again and again at its rate",
             Effect::Shred => "Strips of the picture pushed apart, across or down, as through a shredder",
             Effect::Prism => "A kaleidoscope of triangles, repeated all over the picture, turning",
@@ -2630,7 +2630,7 @@ impl Effect {
             }
             Effect::Checker => {
                 const P: &[FxParam] = &[
-                    FxParam::range("Squares", "How many squares, top to bottom", 2.0, 24.0, 6.0),
+                    FxParam::range("Squares", "How many copies across and down at full", 2.0, 16.0, 4.0),
                     FxParam::pick("Style", "What the other squares do", &["Flip", "Invert", "Colour", "Shift", "Cut out", "Turn"], 0.0),
                     FxParam::range("Move", "The board sliding by (below 0: the other way)", -2.0, 2.0, 0.0),
                     FxParam::range("Swap", "How many times a second the squares swap (0: never)", 0.0, 8.0, 0.0),

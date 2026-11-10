@@ -458,23 +458,24 @@ void main() {
         }
         p = (f - 0.5) * vec2(aspect, 1.0);
     }
-    // Checker: the squares that are the other colour of the board, by chance as many as it is up.
+    // Checker: the whole picture repeated as a chessboard (more squares the
+    // higher it is), every other square flipped, inverted, turned in colour,
+    // shifted, cut out or turned.
     float chk = 0.0;
     if (A_CHECKER > 0.001) {
-        float n = max(P_CHECKER.x, 1.0);
-        vec2 g = (p + vec2(u_vtime * P_CHECKER.z * 0.1, 0.0)) * n;
-        vec2 cell = floor(g);
+        float n = 1.0 + floor(A_CHECKER * (max(P_CHECKER.x, 1.0) - 1.0) + 0.5);
+        vec2 q = (p / vec2(aspect, 1.0) + 0.5) * n + vec2(u_vtime * P_CHECKER.z * 0.25, 0.0);
+        vec2 cell = floor(q);
+        vec2 f = fract(q);
         float swap = P_CHECKER.w > 0.001 ? floor(u_vtime * P_CHECKER.w) : 0.0;
-        float odd = mod(cell.x + cell.y + swap, 2.0);
-        if (odd > 0.5 && hash(cell.x * 7.13 + cell.y * 3.71) < A_CHECKER * 1.05) {
+        if (n > 1.5 && mod(cell.x + cell.y + swap, 2.0) > 0.5) {
             chk = 1.0;
-            vec2 f = fract(g) - 0.5;
             float style = P_CHECKER.y;
-            if (style < 0.5) { f.x = -f.x; }
-            else if (style > 2.5 && style < 3.5) { f = fract(f + 0.5) - 0.5; }
-            else if (style > 4.5) { f = vec2(-f.y, f.x); }
-            p = (cell + 0.5 + f) / n - vec2(u_vtime * P_CHECKER.z * 0.1, 0.0);
+            if (style < 0.5) { f.x = 1.0 - f.x; }
+            else if (style > 2.5 && style < 3.5) { f = fract(f + 0.5); }
+            else if (style > 4.5) { f = vec2(f.y, 1.0 - f.x); }
         }
+        p = (f - 0.5) * vec2(aspect, 1.0);
     }
     // Puzzle: squares shuffled about, again at its rate.
     if (A_PUZZLE > 0.001) {
