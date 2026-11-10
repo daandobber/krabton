@@ -3279,6 +3279,16 @@ impl App {
             }
             // videoaspect=N: the picture's shape (0 16:9, 1 1:1, 2 9:16, 3 4:5, 4 4:3, 5 21:9).
             "videoaspect" => self.project.video.aspect = kv::Aspect::ALL[(f.first().copied().unwrap_or(0.0) as usize).min(kv::Aspect::ALL.len() - 1)],
+            // videodice=SEED: a Look by chance.
+            "videodice" => self.project.video.edited_look_mut().dice(f.first().copied().unwrap_or(1.0) as u32),
+            // videoreorder=N,EVERY: the order changing by itself (0 fixed, 1 shuffle, 2 turn; EVERY a place in Every::ALL).
+            "videoreorder" => {
+                let look = self.project.video.edited_look_mut();
+                let how = f.first().copied().unwrap_or(0.0) as u8;
+                let every = kv::Every::ALL[(f.get(1).copied().unwrap_or(3.0) as usize).min(kv::Every::ALL.len() - 1)];
+                look.reorder = (how > 0).then_some(every);
+                look.reorder_turn = how == 2;
+            }
             // videoshuffle=SEED: the Look's effects in an order by chance (0: as they start).
             "videoshuffle" => match f.first().copied().unwrap_or(0.0) as u32 {
                 0 => self.project.video.edited_look_mut().reset_order(),

@@ -961,6 +961,12 @@ pub struct VideoLook {
     /// `SHAPE_STAGE` and `PICTURE_STAGE`; the others keep their places).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub order: Vec<Effect>,
+    /// The order changing by itself while the song plays, this often.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reorder: Option<Every>,
+    /// ...each one moving on a place (rather than by chance).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub reorder_turn: bool,
 }
 
 /// The effects that bend, cut or repeat the picture's shape, in the order
@@ -968,21 +974,36 @@ pub struct VideoLook {
 pub const SHAPE_STAGE: [Effect; 13] = [Effect::Ripple, Effect::Fisheye, Effect::Swirl, Effect::Melt, Effect::Shred, Effect::Puzzle, Effect::Checker, Effect::Tile, Effect::Shake, Effect::Spin, Effect::Zoom, Effect::Pixels, Effect::Glitch];
 /// The effects that fold, blur or repeat the picture taken, in the order they start in.
 pub const PICTURE_STAGE: [Effect; 8] = [Effect::ZoomBlur, Effect::Blur, Effect::Mirror, Effect::Prism, Effect::Polar, Effect::Droste, Effect::PopArt, Effect::Kaleido];
+/// The effects that change its colours and draw it in another style, in the order they start in.
+pub const COLOUR_STAGE: [Effect; 12] = [Effect::Edges, Effect::Hue, Effect::Grade, Effect::Poster, Effect::Tint, Effect::Invert, Effect::Smear, Effect::Bloom, Effect::Map, Effect::Halftone, Effect::Ascii, Effect::Dither];
+/// The stages whose effects a Look puts in an order of its own.
+pub static STAGES: [&[Effect]; 3] = [&SHAPE_STAGE, &PICTURE_STAGE, &COLOUR_STAGE];
+
+/// Which stage `e` is in, if it is in one.
+pub fn stage_index(e: Effect) -> Option<usize> {
+    STAGES.iter().position(|s| s.contains(&e))
+}
 
 /// The stage `e` is in (its effects in the order they start in), if it is in one.
 pub fn stage_of(e: Effect) -> Option<&'static [Effect]> {
-    if SHAPE_STAGE.contains(&e) {
-        Some(&SHAPE_STAGE)
-    } else if PICTURE_STAGE.contains(&e) {
-        Some(&PICTURE_STAGE)
-    } else {
-        None
+    stage_index(e).map(|k| STAGES[k])
+}
+
+/// The effects a Look made by chance can take besides the stages' (the light, the time's).
+pub const DICE_EXTRAS: [Effect; 10] = [Effect::Split, Effect::Vhs, Effect::Scanlines, Effect::Grain, Effect::Vignette, Effect::Trails, Effect::Echo, Effect::Feedback, Effect::Flash, Effect::Strobe];
+/// What the music moving a Look made by chance can be.
+const DICE_SOURCES: [Source; 11] = [Source::Kick, Source::Hits, Source::Bass, Source::Mids, Source::Highs, Source::Level, Source::Notes, Source::Beat, Source::Bar, Source::Ramp, Source::Lfo];
+
+fn shuffle_with(v: &mut [Effect], d: &mut Dice) {
+    for i in (1..v.len()).rev() {
+        let j = (d.next() as usize) % (i + 1);
+        v.swap(i, j);
     }
 }
 
 impl VideoLook {
     pub fn new(name: impl Into<String>, links: Vec<VideoLink>) -> Self {
-        Self { name: name.into(), fx: Default::default(), links, milk: Default::default(), scenes: Vec::new(), order: Vec::new() }
+        Self { name: name.into(), fx: Default::default(), links, milk: Default::default(), scenes: Vec::new(), order: Vec::new(), reorder: None, reorder_turn: false }
     }
 
     /// The effects of `stage` in the order this Look has them work.
@@ -1035,17 +1056,104 @@ impl VideoLook {
         self.move_effect(e, to);
     }
 
-    /// Both stages in an order by chance (from `seed`).
+    /// Every stage in an order by chance (from `seed`).
     pub fn shuffle_order(&mut self, seed: u32) {
         let mut d = Dice::new(seed);
-        for stage in [&SHAPE_STAGE[..], &PICTURE_STAGE[..]] {
+        for stage in STAGES {
             let mut now = self.stage_order(stage);
-            for i in (1..now.len()).rev() {
-                let j = (d.next() as usize) % (i + 1);
-                now.swap(i, j);
-            }
+            shuffle_with(&mut now, &mut d);
             self.set_stage_order(stage, now);
         }
+    }
+
+    /// The effects of `stage` in the order they work at the song's beat
+    /// `beat`: as set, or, changing by itself (`reorder`), those it uses
+    /// moved on a place every step or put in another order by chance
+    /// (never the same two steps running).
+    pub fn order_at(&self, stage: &[Effect], beat: f64, beats_per_bar: u32) -> Vec<Effect> {
+        let mut now = self.stage_order(stage);
+        let Some(every) = self.reorder else { return now };
+        let used = self.effects();
+        let slots: Vec<usize> = (0..now.len()).filter(|k| used.contains(&now[*k]) && !self.setting(now[*k]).off).collect();
+        if slots.len() < 2 {
+            return now;
+        }
+        let mine: Vec<Effect> = slots.iter().map(|k| now[*k]).collect();
+        let n = every.step(beat, beats_per_bar);
+        let salt = stage.first().map_or(0, |e| e.index() as u32).wrapping_mul(0x85EB_CA6B);
+        let dealt = |n: i64| {
+            let mut m = mine.clone();
+            shuffle_with(&mut m, &mut Dice::new((n as u32).wrapping_mul(0x9E37_79B9) ^ salt ^ 0x2545_F491));
+            m
+        };
+        let moved: Vec<Effect> = if self.reorder_turn {
+            let r = n.rem_euclid(mine.len() as i64) as usize;
+            (0..mine.len()).map(|i| mine[(i + r) % mine.len()]).collect()
+        } else {
+            let mut m = dealt(n);
+            if m == dealt(n - 1) {
+                m.rotate_left(1);
+            }
+            m
+        };
+        for (k, e) in slots.iter().zip(moved) {
+            now[*k] = e;
+        }
+        now
+    }
+
+    /// A Look by chance (from `seed`): one or two effects bending its
+    /// shape, up to two folding or repeating it, one or two in its colours
+    /// or style and maybe one of light or time, each at settings by chance
+    /// and moved by something in the music, in an order by chance. The
+    /// Visuals and the film's effects (and what moves them) stay.
+    pub fn dice(&mut self, seed: u32) {
+        let mut d = Dice::new(seed ^ 0x6D2B_79F5);
+        let rolled = |e: &Effect| STAGES.iter().any(|s| s.contains(e)) || DICE_EXTRAS.contains(e);
+        self.fx.retain(|e, _| !rolled(e));
+        self.links.retain(|l| !rolled(&l.effect));
+        self.order.clear();
+        let pick = |d: &mut Dice, from: &[Effect], least: usize, most: usize| -> Vec<Effect> {
+            let n = least + (d.next() as usize) % (most - least + 1);
+            let mut all = from.to_vec();
+            shuffle_with(&mut all, d);
+            all.truncate(n);
+            all
+        };
+        let mut chosen = pick(&mut d, &SHAPE_STAGE, 1, 2);
+        chosen.extend(pick(&mut d, &PICTURE_STAGE, 0, 2));
+        chosen.extend(pick(&mut d, &COLOUR_STAGE, 1, 2));
+        if d.next() % 2 == 0 {
+            chosen.extend(pick(&mut d, &DICE_EXTRAS, 1, 1));
+        }
+        for e in chosen {
+            // What flashes goes with the beat, not always on.
+            let flashy = matches!(e, Effect::Invert | Effect::Flash | Effect::Strobe);
+            let s = self.setting_mut(e);
+            s.base = if flashy || d.unit() < 0.3 { 0.0 } else { 0.15 + 0.4 * d.unit() };
+            for (k, def) in e.params().iter().enumerate() {
+                let v = if !def.choices.is_empty() {
+                    ((d.next() as usize) % def.choices.len()) as f32
+                } else {
+                    let to = def.min + (def.max - def.min) * d.unit();
+                    def.default + (to - def.default) * 0.6
+                };
+                s.set_param(e, k, v);
+            }
+            let sources: &[Source] = if flashy { &[Source::Kick, Source::Hits, Source::Beat, Source::Bar] } else { &DICE_SOURCES };
+            let source = sources[(d.next() as usize) % sources.len()];
+            if self.links.len() < MAX_LINKS {
+                self.links.push(VideoLink::new(source, e, 0.3 + 0.6 * d.unit()));
+            }
+        }
+        self.shuffle_order(d.next());
+        // Now and then the order changes by itself too.
+        self.reorder = match d.next() % 5 {
+            0 => Some(Every::Bar),
+            1 => Some(Every::TwoBars),
+            _ => None,
+        };
+        self.reorder_turn = d.next() % 2 == 0;
     }
 
     /// Back to the order they start in.
@@ -4176,6 +4284,66 @@ impl Playhead {
 #[cfg(test)]
 mod scene_tests {
     use super::*;
+
+    #[test]
+    fn the_order_changes_by_itself_with_the_song() {
+        let mut look = VideoLook::default();
+        for e in [Effect::Hue, Effect::Poster, Effect::Halftone] {
+            look.setting_mut(e).base = 0.5;
+        }
+        let set = look.order_at(&COLOUR_STAGE, 5.0, 4);
+        assert_eq!(set, look.stage_order(&COLOUR_STAGE), "as set while it does not change by itself");
+        look.reorder = Some(Every::Beat);
+        let used = |o: Vec<Effect>| o.into_iter().filter(|e| matches!(e, Effect::Hue | Effect::Poster | Effect::Halftone)).collect::<Vec<_>>();
+        let mut last = used(look.order_at(&COLOUR_STAGE, 0.0, 4));
+        for b in 1..12 {
+            let now = used(look.order_at(&COLOUR_STAGE, b as f64, 4));
+            assert_ne!(now, last, "another order every beat");
+            assert_eq!(now.len(), 3);
+            last = now;
+        }
+        // The ones it does not use keep their places.
+        let o = look.order_at(&COLOUR_STAGE, 3.0, 4);
+        for (k, e) in COLOUR_STAGE.iter().enumerate() {
+            if !matches!(e, Effect::Hue | Effect::Poster | Effect::Halftone) {
+                assert_eq!(o[k], *e);
+            }
+        }
+        // Moving on a place: round again after three.
+        look.reorder_turn = true;
+        let a = used(look.order_at(&COLOUR_STAGE, 0.0, 4));
+        assert_ne!(a, used(look.order_at(&COLOUR_STAGE, 1.0, 4)));
+        assert_eq!(a, used(look.order_at(&COLOUR_STAGE, 3.0, 4)));
+    }
+
+    #[test]
+    fn a_look_by_chance_has_something_of_every_kind_moved_by_the_music() {
+        let mut look = VideoLook::default();
+        look.setting_mut(Effect::Visuals).base = 1.0;
+        look.links.push(VideoLink::new(Source::Kick, Effect::Burst, 0.5));
+        look.setting_mut(Effect::Kaleido).base = 0.9;
+        let mut kinds_seen = std::collections::BTreeSet::new();
+        for seed in 1..40 {
+            let mut l = look.clone();
+            l.dice(seed);
+            let used = l.effects();
+            assert!(used.contains(&Effect::Visuals) && l.links.iter().any(|k| k.effect == Effect::Burst), "the Visuals stay");
+            assert!(used.iter().any(|e| SHAPE_STAGE.contains(e)), "{used:?}");
+            assert!(used.iter().any(|e| COLOUR_STAGE.contains(e)), "{used:?}");
+            for e in used.iter().filter(|e| stage_of(**e).is_some() || DICE_EXTRAS.contains(e)) {
+                assert!(l.links.iter().any(|k| k.effect == *e), "{e:?} moved by the music");
+                kinds_seen.insert(e.index());
+                for (k, def) in e.params().iter().enumerate() {
+                    let v = l.setting(*e).param(*e, k);
+                    assert!(v >= def.min - 1e-4 && v <= def.max + 1e-4, "{e:?} {}", def.name);
+                }
+            }
+            let mut again = look.clone();
+            again.dice(seed);
+            assert_eq!(again, l, "the same from the same seed");
+        }
+        assert!(kinds_seen.len() > 20, "many effects come up: {}", kinds_seen.len());
+    }
 
     #[test]
     fn a_look_puts_its_effects_in_an_order_of_its_own() {

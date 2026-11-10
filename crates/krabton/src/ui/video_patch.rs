@@ -59,14 +59,14 @@ pub(crate) const MAIN_ORDER: [Effect; 46] = [
     Effect::Poster,
     Effect::Tint,
     Effect::Invert,
-    Effect::Flash,
-    Effect::Vhs,
     Effect::Smear,
     Effect::Bloom,
     Effect::Map,
     Effect::Halftone,
     Effect::Ascii,
     Effect::Dither,
+    Effect::Flash,
+    Effect::Vhs,
     Effect::Vignette,
     Effect::Scanlines,
     Effect::Grain,
@@ -82,29 +82,13 @@ pub(crate) const MAIN_ORDER: [Effect; 46] = [
 /// The picture's effects in the order this Look has them work: MAIN_ORDER,
 /// with the shape and the picture stages as the Look puts them.
 pub(crate) fn main_order(look: &kv::VideoLook) -> Vec<Effect> {
-    let shape = look.stage_order(&kv::SHAPE_STAGE);
-    let pic = look.stage_order(&kv::PICTURE_STAGE);
-    let (mut a, mut b) = (shape.into_iter(), pic.into_iter());
-    MAIN_ORDER
-        .iter()
-        .map(|e| {
-            if kv::SHAPE_STAGE.contains(e) {
-                a.next().unwrap_or(*e)
-            } else if kv::PICTURE_STAGE.contains(e) {
-                b.next().unwrap_or(*e)
-            } else {
-                *e
-            }
-        })
-        .collect()
+    let mut stages: Vec<std::vec::IntoIter<Effect>> = kv::STAGES.iter().map(|s| look.stage_order(s).into_iter()).collect();
+    MAIN_ORDER.iter().map(|e| kv::stage_index(*e).and_then(|k| stages[k].next()).unwrap_or(*e)).collect()
 }
 
 /// Whether `a` and `b` are in the same stage (so one can take the other's place).
 fn same_stage(a: Effect, b: Effect) -> bool {
-    match (kv::stage_of(a), kv::stage_of(b)) {
-        (Some(x), Some(y)) => std::ptr::eq(x, y),
-        _ => false,
-    }
+    kv::stage_index(a).is_some() && kv::stage_index(a) == kv::stage_index(b)
 }
 
 /// A module of the patch.
@@ -254,9 +238,10 @@ impl App {
         let mut add_fx: Option<Effect> = None;
         let mut go_clip = false;
         let mut reorder: Option<(Effect, Effect)> = None;
+        let mut dice_all: Option<u32> = None;
 
         // The head: the Look's name, how much the music moves it, Add, Presets.
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             let look = set.edited_look_mut();
             ui.add(egui::TextEdit::singleline(&mut look.name).desired_width(120.0).hint_text(format!("Look {}", k + 1)));
@@ -287,7 +272,7 @@ impl App {
             });
             let shuffle = ui
                 .add(egui::Button::new(RichText::new("Shuffle").color(TEXT)).corner_radius(4.0).min_size(vec2(0.0, vj::H)))
-                .on_hover_text("The effects in another order by chance: the same effects make another picture.\nDrag a module onto another to swap places; right-click: back to the order they start in");
+                .on_hover_text("The effects in another order by chance: the same effects make another picture.\nDrag a module onto another of its kind to take its place; right-click: back to the order they start in");
             if shuffle.clicked() {
                 let seed = (ui.input(|i| i.time) * 1000.0) as u32 ^ (k as u32).wrapping_mul(0x9e37_79b9);
                 look.shuffle_order(seed);
@@ -298,8 +283,46 @@ impl App {
                     ui.close();
                 }
             });
+            let dice = ui
+                .add(egui::Button::new(RichText::new("Dice").color(TEXT_DARK)).fill(Color32::from_rgb(0xff, 0x4f, 0xa3)).corner_radius(4.0).min_size(vec2(0.0, vj::H)))
+                .on_hover_text("A wild Look by chance: effects that bend, fold, colour and light it, at settings by chance, each moved by something in the music, in an order by chance (the Visuals and the film's stay). Again for another; Ctrl+Z for the one before. Right-click: every Look at once");
+            if dice.clicked() {
+                let seed = (ui.input(|i| i.time) * 1000.0) as u32 ^ (k as u32 + 1).wrapping_mul(0x2545_f491);
+                look.dice(seed);
+                selected = None;
+            }
+            dice.context_menu(|ui| {
+                if ui.button("Dice every Look").on_hover_text("Every Look of the set by chance, each its own (with AUTO by the Looks: a new picture every change)").clicked() {
+                    dice_all = Some((ui.input(|i| i.time) * 1000.0) as u32);
+                    ui.close();
+                }
+            });
+            // The order changing by itself.
+            ui.label(RichText::new("ORDER").small().strong().color(if look.reorder.is_some() { ACCENT } else { TEXT_DIM }));
+            let mut how: u8 = match (look.reorder.is_some(), look.reorder_turn) {
+                (false, _) => 0,
+                (true, false) => 1,
+                (true, true) => 2,
+            };
+            let hows = [(0u8, "Fixed".to_string()), (1, "Shuffle".to_string()), (2, "Turn".to_string())];
+            if vj::segmented(ui, &mut how, &hows, "The order changing by itself while the song plays: Fixed (as it is set), Shuffle (another by chance every time) or Turn (each moving on a place, round again)") {
+                look.reorder = if how == 0 { None } else { Some(look.reorder.unwrap_or(kv::Every::Bar)) };
+                look.reorder_turn = how == 2;
+            }
+            if let Some(mut every) = look.reorder {
+                let evs: Vec<(kv::Every, String)> = kv::Every::ALL.iter().map(|e| (*e, e.name().to_string())).collect();
+                if vj::chip(ui, "video_reorder_every", 62.0, &mut every, &evs, "How often: a sixteenth, an eighth, a beat, a bar, two bars or four") {
+                    look.reorder = Some(every);
+                }
+            }
             vj::bar(ui, &mut set.amount, 0.0, 1.0, 1.0, "Music", vj::pct, 150.0, None, "How much the music moves the picture: every cable of every Look at once");
         });
+        if let Some(seed) = dice_all {
+            for (i, l) in set.looks.iter_mut().enumerate() {
+                l.dice(seed ^ (i as u32 + 1).wrapping_mul(0x9e37_79b9));
+            }
+            selected = None;
+        }
         ui.add_space(6.0);
 
         let look = set.edited_look_mut();

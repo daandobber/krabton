@@ -98,6 +98,7 @@ pub struct Params {
     /// The order the shape and the picture stages' effects work in (their places in `Effect::ALL`).
     pub shape: [f32; 13],
     pub pic: [f32; 8],
+    pub col: [f32; 12],
 }
 
 /// A stage's effects as the shader takes their order.
@@ -149,6 +150,7 @@ impl Default for Params {
             stage: [STAGE_W, STAGE_H],
             shape: shape_order(&kv::SHAPE_STAGE),
             pic: order_of(&kv::PICTURE_STAGE),
+            col: order_of(&kv::COLOUR_STAGE),
         }
     }
 }
@@ -256,7 +258,7 @@ pub(crate) fn defines() -> String {
     for e in Effect::ALL {
         s.push_str(&format!("#define E_{} {}.0\n", format!("{e:?}").to_uppercase(), e.index()));
     }
-    s.push_str(&format!("#define SHAPE_N {}\n#define PIC_N {}\n", kv::SHAPE_STAGE.len(), kv::PICTURE_STAGE.len()));
+    s.push_str(&format!("#define SHAPE_N {}\n#define PIC_N {}\n#define COL_N {}\n", kv::SHAPE_STAGE.len(), kv::PICTURE_STAGE.len(), kv::COLOUR_STAGE.len()));
     s
 }
 
@@ -706,6 +708,189 @@ vec3 pic_step(float e, vec3 c, vec2 p, float aspect) {
     return c;
 }
 
+// Every effect of the colour stage, called in the Look's order.
+uniform float u_col[COL_N];
+
+vec3 k_edges(vec3 c, vec2 p, float aspect) {
+    if (A_EDGES > 0.001) {
+        float d = P_EDGES.x / u_stage.y;
+        float gx = luma(at(p + vec2(d, 0.0))) - luma(at(p - vec2(d, 0.0)));
+        float gy = luma(at(p + vec2(0.0, d))) - luma(at(p - vec2(0.0, d)));
+        vec3 lines = u_edges * clamp(length(vec2(gx, gy)) * 4.0, 0.0, 1.0);
+        c = mix(c, P_EDGES.y < 0.5 ? lines : max(c, lines), A_EDGES);
+    }
+    return c;
+}
+
+vec3 k_hue(vec3 c, vec2 p, float aspect) {
+    if (A_HUE > 0.001) {
+        c = clamp(hue_turn(c, A_HUE * P_HUE.x * 6.2831853), 0.0, 1.0);
+        c = clamp(mix(vec3(luma(c)), c, 1.0 + (P_HUE.y - 1.0) * A_HUE), 0.0, 1.0);
+    }
+    return c;
+}
+
+vec3 k_grade(vec3 c, vec2 p, float aspect) {
+    if (A_GRADE > 0.001) {
+        c = (c - 0.5) * (1.0 + (P_GRADE.y - 1.0) * A_GRADE) + 0.5 + P_GRADE.x * A_GRADE;
+        c = clamp(mix(vec3(luma(c)), c, 1.0 + (P_GRADE.z - 1.0) * A_GRADE), 0.0, 1.0);
+    }
+    return c;
+}
+
+vec3 k_poster(vec3 c, vec2 p, float aspect) {
+    if (A_POSTER > 0.001) {
+        float levels = mix(24.0, P_POSTER.x, A_POSTER);
+        c = floor(c * levels + 0.5) / levels;
+    }
+    return c;
+}
+
+vec3 k_smear(vec3 c, vec2 p, float aspect) {
+    if (A_SMEAR > 0.001) {
+        float a = P_SMEAR.z * 6.2831853;
+        vec2 dir = vec2(sin(a) * aspect, cos(a)) * P_SMEAR.y * A_SMEAR / 10.0;
+        for (int k = 1; k <= 10; k++) {
+            vec3 s = at(p + dir * float(k));
+            if (luma(s) > P_SMEAR.x && luma(s) > luma(c)) {
+                c = mix(c, s, 1.0 - float(k) / 11.0);
+            }
+        }
+    }
+    return c;
+}
+
+vec3 k_bloom(vec3 c, vec2 p, float aspect) {
+    if (A_BLOOM > 0.001) {
+        vec3 glow = vec3(0.0);
+        float reach = 0.01 + 0.05 * P_BLOOM.y;
+        for (int k = 0; k < 12; k++) {
+            float a = float(k) * 0.5235988;
+            float d = reach * (0.35 + 0.65 * fract(float(k) * 0.618));
+            vec3 s = at(p + vec2(cos(a), sin(a)) * d);
+            glow += max(s - P_BLOOM.x, 0.0);
+        }
+        c += glow / 12.0 * 2.5 * A_BLOOM;
+    }
+    return c;
+}
+
+vec3 k_map(vec3 c, vec2 p, float aspect) {
+    if (A_MAP > 0.001) {
+        float l = clamp(luma(c), 0.0, 1.0);
+        float m = P_MAP.x;
+        vec3 mapped;
+        if (m < 0.5) {
+            mapped = clamp(vec3(1.5 * l - 0.2, sin(l * 3.14159) * 1.1 - 0.1, 0.9 - 1.6 * l) + vec3(0.0, 0.0, smoothstep(0.85, 1.0, l)), 0.0, 1.0);
+            mapped = mix(vec3(0.05, 0.0, 0.25), mapped, smoothstep(0.0, 0.2, l));
+        } else if (m < 1.5) {
+            mapped = vec3(0.15, 1.0, 0.25) * (0.15 + 1.1 * l) + (hash(v_uv.x * 731.0 + v_uv.y * 977.0 + u_grain) - 0.5) * 0.12;
+        } else if (m < 2.5) {
+            mapped = vec3(1.0, 0.85, 0.62) * l + vec3(0.08, 0.04, 0.0);
+        } else if (m < 3.5) {
+            mapped = mix(vec3(0.05, 0.05, 0.12), u_map_col, l);
+        } else if (m < 4.5) {
+            mapped = vec3(0.0, 1.0, 0.35) * l * (0.6 + 0.4 * step(0.5, fract(v_uv.y * u_stage.y / 3.0)));
+        } else {
+            mapped = vec3(1.0 - l * 0.2, 0.25 + 0.6 * (1.0 - l), 0.6 + 0.4 * l) * (0.4 + 0.8 * luma(vec3(c.g, c.g, c.r)));
+        }
+        c = mix(c, mapped, A_MAP);
+    }
+    return c;
+}
+
+vec3 k_halftone(vec3 c, vec2 p, float aspect) {
+    if (A_HALFTONE > 0.001) {
+        float size = P_HALFTONE.x / u_stage.y;
+        vec2 q = turn2(p, P_HALFTONE.y * 6.2831853) / size;
+        vec2 cell = floor(q) + 0.5;
+        vec3 ink = at(turn2(cell * size, -P_HALFTONE.y * 6.2831853));
+        float l = luma(ink);
+        float ink_mode = P_HALFTONE.z;
+        float r = sqrt(ink_mode > 1.5 ? l : (ink_mode > 0.5 ? 1.0 - l : l)) * 0.7;
+        float dot_ = smoothstep(r + 0.06, r - 0.06, length(q - cell));
+        vec3 h;
+        if (ink_mode < 0.5) { h = ink * dot_ * 1.2; }
+        else if (ink_mode < 1.5) { h = vec3(1.0 - dot_) * vec3(0.98, 0.96, 0.9); }
+        else { h = vec3(dot_); }
+        c = mix(c, h, A_HALFTONE);
+    }
+    return c;
+}
+
+vec3 k_ascii(vec3 c, vec2 p, float aspect) {
+    if (A_ASCII > 0.001) {
+        float size = P_ASCII.x / u_stage.y;
+        vec2 q = (p + vec2(aspect, 1.0) * 0.5) / size;
+        vec2 cell = floor(q);
+        vec2 f = fract(q) - 0.5;
+        vec3 ink = at((cell + 0.5) * size - vec2(aspect, 1.0) * 0.5);
+        float l = luma(ink);
+        float k = floor(clamp(l, 0.0, 0.999) * 10.0);
+        float w = 0.09;
+        float on = 0.0;
+        vec2 a = abs(f);
+        if (k < 0.5) { on = 0.0; }
+        else if (k < 1.5) { on = step(length(f - vec2(0.0, 0.3)), 0.08); }
+        else if (k < 2.5) { on = step(a.y, w) * step(a.x, 0.3); }
+        else if (k < 3.5) { on = max(step(a.y, w) * step(a.x, 0.32), step(a.x, w) * step(a.y, 0.32)); }
+        else if (k < 4.5) { on = step(abs(f.x - f.y), w * 1.4) * step(a.x, 0.32) + step(abs(f.x + f.y), w * 1.4) * step(a.x, 0.32); }
+        else if (k < 5.5) { on = step(abs(length(f) - 0.28), w); }
+        else if (k < 6.5) { on = max(step(abs(a.x - 0.16), w) * step(a.y, 0.38), step(abs(a.y - 0.14), w) * step(a.x, 0.38)); }
+        else if (k < 7.5) { on = max(step(abs(max(a.x, a.y) - 0.3), w), step(length(f), 0.1)); }
+        else if (k < 8.5) { on = step(length(f), 0.32); }
+        else { on = step(max(a.x, a.y), 0.38); }
+        on = clamp(on, 0.0, 1.0);
+        vec3 ink_c = P_ASCII.y < 0.5 ? ink * 1.4 : (P_ASCII.y < 1.5 ? vec3(0.2, 1.0, 0.35) : vec3(1.0));
+        c = mix(c, ink_c * on, A_ASCII);
+    }
+    return c;
+}
+
+vec3 k_dither(vec3 c, vec2 p, float aspect) {
+    if (A_DITHER > 0.001) {
+        vec2 px = floor(v_uv * u_stage / max(P_DITHER.y, 1.0));
+        vec2 a = mod(px, 2.0);
+        vec2 b = mod(floor(px / 2.0), 2.0);
+        float bayer = (4.0 * mod(a.x * 2.0 + a.y * 3.0, 4.0) + mod(b.x * 2.0 + b.y * 3.0, 4.0)) / 16.0;
+        float levels = max(P_DITHER.x - 1.0, 1.0);
+        vec3 d = floor(clamp(c, 0.0, 1.0) * levels + bayer) / levels;
+        c = mix(c, d, A_DITHER);
+    }
+    return c;
+}
+
+vec3 k_tint(vec3 c, vec2 p, float aspect) {
+    if (A_TINT > 0.001) {
+        // Tint, blended as it says.
+        float blend = P_TINT.x;
+        vec3 tinted = blend < 0.5 ? u_tint * (0.2 + luma(c) * 1.3) : blend < 1.5 ? c * u_tint : blend < 2.5 ? 1.0 - (1.0 - c) * (1.0 - u_tint) : c + u_tint;
+        c = mix(c, tinted, A_TINT);
+    }
+    return c;
+}
+
+vec3 k_invert(vec3 c, vec2 p, float aspect) {
+    return mix(c, 1.0 - c, A_INVERT);
+}
+
+// One effect of the colour stage.
+vec3 col_step(float e, vec3 c, vec2 p, float aspect) {
+    if (abs(e - E_EDGES) < 0.5) { return k_edges(c, p, aspect); }
+    if (abs(e - E_HUE) < 0.5) { return k_hue(c, p, aspect); }
+    if (abs(e - E_GRADE) < 0.5) { return k_grade(c, p, aspect); }
+    if (abs(e - E_POSTER) < 0.5) { return k_poster(c, p, aspect); }
+    if (abs(e - E_TINT) < 0.5) { return k_tint(c, p, aspect); }
+    if (abs(e - E_INVERT) < 0.5) { return k_invert(c, p, aspect); }
+    if (abs(e - E_SMEAR) < 0.5) { return k_smear(c, p, aspect); }
+    if (abs(e - E_BLOOM) < 0.5) { return k_bloom(c, p, aspect); }
+    if (abs(e - E_MAP) < 0.5) { return k_map(c, p, aspect); }
+    if (abs(e - E_HALFTONE) < 0.5) { return k_halftone(c, p, aspect); }
+    if (abs(e - E_ASCII) < 0.5) { return k_ascii(c, p, aspect); }
+    if (abs(e - E_DITHER) < 0.5) { return k_dither(c, p, aspect); }
+    return c;
+}
+
 void main() {
     float aspect = u_stage.x / u_stage.y;
     vec2 st = v_uv;
@@ -742,31 +927,10 @@ void main() {
     for (int i = 0; i < PIC_N; i++) {
         c = pic_step(u_pic[i], c, p, aspect);
     }
-    // Edges: the outlines, in their colour.
-    if (A_EDGES > 0.001) {
-        float d = P_EDGES.x / u_stage.y;
-        float gx = luma(at(p + vec2(d, 0.0))) - luma(at(p - vec2(d, 0.0)));
-        float gy = luma(at(p + vec2(0.0, d))) - luma(at(p - vec2(0.0, d)));
-        vec3 lines = u_edges * clamp(length(vec2(gx, gy)) * 4.0, 0.0, 1.0);
-        c = mix(c, P_EDGES.y < 0.5 ? lines : max(c, lines), A_EDGES);
+    // The colour stage, in the Look's order.
+    for (int i = 0; i < COL_N; i++) {
+        c = col_step(u_col[i], c, p, aspect);
     }
-    if (A_HUE > 0.001) {
-        c = clamp(hue_turn(c, A_HUE * P_HUE.x * 6.2831853), 0.0, 1.0);
-        c = clamp(mix(vec3(luma(c)), c, 1.0 + (P_HUE.y - 1.0) * A_HUE), 0.0, 1.0);
-    }
-    if (A_GRADE > 0.001) {
-        c = (c - 0.5) * (1.0 + (P_GRADE.y - 1.0) * A_GRADE) + 0.5 + P_GRADE.x * A_GRADE;
-        c = clamp(mix(vec3(luma(c)), c, 1.0 + (P_GRADE.z - 1.0) * A_GRADE), 0.0, 1.0);
-    }
-    if (A_POSTER > 0.001) {
-        float levels = mix(24.0, P_POSTER.x, A_POSTER);
-        c = floor(c * levels + 0.5) / levels;
-    }
-    // Tint, blended as it says.
-    float blend = P_TINT.x;
-    vec3 tinted = blend < 0.5 ? u_tint * (0.2 + luma(c) * 1.3) : blend < 1.5 ? c * u_tint : blend < 2.5 ? 1.0 - (1.0 - c) * (1.0 - u_tint) : c + u_tint;
-    c = mix(c, tinted, A_TINT);
-    c = mix(c, 1.0 - c, A_INVERT);
     c = mix(c, u_flash, A_FLASH * P_FLASH.x);
     // VHS: the colours bleeding sideways, noise over it.
     if (A_VHS > 0.001) {
@@ -778,102 +942,6 @@ void main() {
         float n = hash(floor(v_uv.x * u_stage.x * 0.5) * 3.1 + floor(y * u_stage.y * 0.5) * 7.7 + floor(u_vtime * 30.0) * 13.0);
         c += (n - 0.5) * P_VHS.y * A_VHS * (0.12 + band * 0.6);
         c = mix(c, c * vec3(1.05, 0.95, 1.08), A_VHS * 0.5);
-    }
-    // Smear: the bright parts dragged along (as pixels sorted).
-    if (A_SMEAR > 0.001) {
-        float a = P_SMEAR.z * 6.2831853;
-        vec2 dir = vec2(sin(a) * aspect, cos(a)) * P_SMEAR.y * A_SMEAR / 10.0;
-        for (int k = 1; k <= 10; k++) {
-            vec3 s = at(p + dir * float(k));
-            if (luma(s) > P_SMEAR.x && luma(s) > luma(c)) {
-                c = mix(c, s, 1.0 - float(k) / 11.0);
-            }
-        }
-    }
-    // Bloom: the bright parts glowing over the rest.
-    if (A_BLOOM > 0.001) {
-        vec3 glow = vec3(0.0);
-        float reach = 0.01 + 0.05 * P_BLOOM.y;
-        for (int k = 0; k < 12; k++) {
-            float a = float(k) * 0.5235988;
-            float d = reach * (0.35 + 0.65 * fract(float(k) * 0.618));
-            vec3 s = at(p + vec2(cos(a), sin(a)) * d);
-            glow += max(s - P_BLOOM.x, 0.0);
-        }
-        c += glow / 12.0 * 2.5 * A_BLOOM;
-    }
-    // Colour Map: its light as other colours.
-    if (A_MAP > 0.001) {
-        float l = clamp(luma(c), 0.0, 1.0);
-        float m = P_MAP.x;
-        vec3 mapped;
-        if (m < 0.5) {
-            mapped = clamp(vec3(1.5 * l - 0.2, sin(l * 3.14159) * 1.1 - 0.1, 0.9 - 1.6 * l) + vec3(0.0, 0.0, smoothstep(0.85, 1.0, l)), 0.0, 1.0);
-            mapped = mix(vec3(0.05, 0.0, 0.25), mapped, smoothstep(0.0, 0.2, l));
-        } else if (m < 1.5) {
-            mapped = vec3(0.15, 1.0, 0.25) * (0.15 + 1.1 * l) + (hash(v_uv.x * 731.0 + v_uv.y * 977.0 + u_grain) - 0.5) * 0.12;
-        } else if (m < 2.5) {
-            mapped = vec3(1.0, 0.85, 0.62) * l + vec3(0.08, 0.04, 0.0);
-        } else if (m < 3.5) {
-            mapped = mix(vec3(0.05, 0.05, 0.12), u_map_col, l);
-        } else if (m < 4.5) {
-            mapped = vec3(0.0, 1.0, 0.35) * l * (0.6 + 0.4 * step(0.5, fract(v_uv.y * u_stage.y / 3.0)));
-        } else {
-            mapped = vec3(1.0 - l * 0.2, 0.25 + 0.6 * (1.0 - l), 0.6 + 0.4 * l) * (0.4 + 0.8 * luma(vec3(c.g, c.g, c.r)));
-        }
-        c = mix(c, mapped, A_MAP);
-    }
-    // Halftone: in dots, as printed.
-    if (A_HALFTONE > 0.001) {
-        float size = P_HALFTONE.x / u_stage.y;
-        vec2 q = turn2(p, P_HALFTONE.y * 6.2831853) / size;
-        vec2 cell = floor(q) + 0.5;
-        vec3 ink = at(turn2(cell * size, -P_HALFTONE.y * 6.2831853));
-        float l = luma(ink);
-        float ink_mode = P_HALFTONE.z;
-        float r = sqrt(ink_mode > 1.5 ? l : (ink_mode > 0.5 ? 1.0 - l : l)) * 0.7;
-        float dot_ = smoothstep(r + 0.06, r - 0.06, length(q - cell));
-        vec3 h;
-        if (ink_mode < 0.5) { h = ink * dot_ * 1.2; }
-        else if (ink_mode < 1.5) { h = vec3(1.0 - dot_) * vec3(0.98, 0.96, 0.9); }
-        else { h = vec3(dot_); }
-        c = mix(c, h, A_HALFTONE);
-    }
-    // ASCII: in signs, by how light each cell is.
-    if (A_ASCII > 0.001) {
-        float size = P_ASCII.x / u_stage.y;
-        vec2 q = (p + vec2(aspect, 1.0) * 0.5) / size;
-        vec2 cell = floor(q);
-        vec2 f = fract(q) - 0.5;
-        vec3 ink = at((cell + 0.5) * size - vec2(aspect, 1.0) * 0.5);
-        float l = luma(ink);
-        float k = floor(clamp(l, 0.0, 0.999) * 10.0);
-        float w = 0.09;
-        float on = 0.0;
-        vec2 a = abs(f);
-        if (k < 0.5) { on = 0.0; }
-        else if (k < 1.5) { on = step(length(f - vec2(0.0, 0.3)), 0.08); }
-        else if (k < 2.5) { on = step(a.y, w) * step(a.x, 0.3); }
-        else if (k < 3.5) { on = max(step(a.y, w) * step(a.x, 0.32), step(a.x, w) * step(a.y, 0.32)); }
-        else if (k < 4.5) { on = step(abs(f.x - f.y), w * 1.4) * step(a.x, 0.32) + step(abs(f.x + f.y), w * 1.4) * step(a.x, 0.32); }
-        else if (k < 5.5) { on = step(abs(length(f) - 0.28), w); }
-        else if (k < 6.5) { on = max(step(abs(a.x - 0.16), w) * step(a.y, 0.38), step(abs(a.y - 0.14), w) * step(a.x, 0.38)); }
-        else if (k < 7.5) { on = max(step(abs(max(a.x, a.y) - 0.3), w), step(length(f), 0.1)); }
-        else if (k < 8.5) { on = step(length(f), 0.32); }
-        else { on = step(max(a.x, a.y), 0.38); }
-        on = clamp(on, 0.0, 1.0);
-        vec3 ink_c = P_ASCII.y < 0.5 ? ink * 1.4 : (P_ASCII.y < 1.5 ? vec3(0.2, 1.0, 0.35) : vec3(1.0));
-        c = mix(c, ink_c * on, A_ASCII);
-    }
-    // Dither: few shades, dithered with a pattern of dots.
-    if (A_DITHER > 0.001) {
-        vec2 px = floor(v_uv * u_stage / max(P_DITHER.y, 1.0));
-        vec2 a = mod(px, 2.0);
-        vec2 b = mod(floor(px / 2.0), 2.0);
-        float bayer = (4.0 * mod(a.x * 2.0 + a.y * 3.0, 4.0) + mod(b.x * 2.0 + b.y * 3.0, 4.0)) / 16.0;
-        float levels = max(P_DITHER.x - 1.0, 1.0);
-        vec3 d = floor(clamp(c, 0.0, 1.0) * levels + bayer) / levels;
-        c = mix(c, d, A_DITHER);
     }
     // Vignette: darker towards the corners.
     if (A_VIGNETTE > 0.001) {
@@ -1366,6 +1434,7 @@ impl Gl {
         gl.uniform_4_f32_slice(u("u_p[0]").as_ref(), &settings);
         gl.uniform_1_f32_slice(u("u_shape[0]").as_ref(), &p.shape);
         gl.uniform_1_f32_slice(u("u_pic[0]").as_ref(), &p.pic);
+        gl.uniform_1_f32_slice(u("u_col[0]").as_ref(), &p.col);
         for (name, v) in [("u_spin", p.spin), ("u_seed", p.seed), ("u_grain", p.grain), ("u_transition", p.transition), ("u_mix", p.mix)] {
             gl.uniform_1_f32(u(name).as_ref(), v);
         }
