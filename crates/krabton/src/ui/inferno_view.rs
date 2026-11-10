@@ -780,7 +780,7 @@ pub(crate) fn face(ui: &mut Ui, id: Id, params: &mut [f32], data: &mut Vec<u8>, 
         let r = Rect::from_min_size(pos2(rx - w, head.top() + 1.0), vec2(w, head_h - 2.0));
         let resp = fire_button(ui, r, id.with(label), label, params[pi] >= 0.5, heat).on_hover_text(tip);
         // Down while it is held; a right-click leaves it on (or takes it off).
-        let down = resp.is_pointer_button_down_on() && ui.input(|i| i.pointer.primary_down());
+        let down = held(ui, &resp);
         let held_id = id.with((label, "held"));
         if down != ui.ctx().data(|d| d.get_temp::<bool>(held_id)).unwrap_or(false) {
             ui.ctx().data_mut(|d| d.insert_temp(held_id, down));

@@ -111,6 +111,24 @@ pub fn button(ui: &mut Ui, rect: Rect, id: Id, label: &str, on: bool, on_color: 
     resp
 }
 
+/// Whether a button is held down with the left mouse button: from a press
+/// on it until the button is let go (anywhere), however long it is held and
+/// however the hand moves. egui's own press of a click-only widget is
+/// forgotten after a moment, which let held buttons go after a second.
+pub(crate) fn held(ui: &Ui, resp: &Response) -> bool {
+    let key = resp.id.with("held_down");
+    let (pressed, down) = ui.input(|i| (i.pointer.primary_pressed(), i.pointer.primary_down()));
+    let was = ui.ctx().data(|d| d.get_temp::<bool>(key)).unwrap_or(false);
+    let now = down && (was || (pressed && resp.contains_pointer()) || resp.is_pointer_button_down_on());
+    if now != was {
+        ui.ctx().data_mut(|d| d.insert_temp(key, now));
+    }
+    if now {
+        ui.ctx().request_repaint();
+    }
+    now
+}
+
 pub(crate) fn arc_points(center: Pos2, r: f32, a0: f32, a1: f32) -> Vec<Pos2> {
     let steps = (((a1 - a0).abs() / (PI / 24.0)).ceil() as usize).max(2);
     (0..=steps)

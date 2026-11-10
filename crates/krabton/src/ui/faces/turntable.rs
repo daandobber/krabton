@@ -383,7 +383,7 @@ fn cue_color(k: usize) -> Color32 {
 
 /// A pad held down: (pressed now, let go now, held).
 fn hold(ui: &Ui, resp: &egui::Response, id: Id) -> (bool, bool, bool) {
-    let down = resp.is_pointer_button_down_on();
+    let down = crate::widgets::held(ui, resp);
     let key = id.with("down");
     let was = ui.ctx().memory(|m| m.data.get_temp::<bool>(key)).unwrap_or(false);
     if down != was {

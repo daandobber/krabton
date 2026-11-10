@@ -677,7 +677,7 @@ impl App {
         for k in 0..8 {
             let r = Rect::from_min_size(rect.min + vec2((k % 4) as f32 * w, (k / 4) as f32 * h), vec2(w, h)).shrink(2.0);
             let resp = ui.interact(r, Id::new(("dj_pad", d, k)), Sense::click_and_drag());
-            let down = resp.is_pointer_button_down_on() && ui.input(|i| i.pointer.primary_down());
+            let down = crate::widgets::held(ui, &resp);
             if down {
                 held = Some(k);
             }

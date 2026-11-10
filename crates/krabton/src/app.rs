@@ -5004,6 +5004,15 @@ impl App {
                         }
                     }
                 }
+                // mousedown=x,y / mouseup=x,y: the left button pressed there and held, or let go (for buttons held down).
+                "mousedown" | "mouseup" => {
+                    let f: Vec<f32> = arg.split(',').filter_map(|v| v.trim().parse().ok()).collect();
+                    if f.len() >= 2 {
+                        let pos = egui::pos2(f[0], f[1]);
+                        self.script_input.push_back(vec![egui::Event::PointerMoved(pos)]);
+                        self.script_input.push_back(vec![egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: name == "mousedown", modifiers: Modifiers::NONE }]);
+                    }
+                }
                 "click" | "drag" => {
                     let f: Vec<f32> = arg.split(',').filter_map(|v| v.trim().parse().ok()).collect();
                     if f.len() >= 2 {

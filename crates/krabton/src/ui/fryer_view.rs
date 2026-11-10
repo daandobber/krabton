@@ -79,7 +79,7 @@ fn holds(ui: &mut Ui, id: Id, r: Rect, p: &mut [f32], latched: &mut Latched) -> 
         if resp.secondary_clicked() {
             latched.0[k] = !latched.0[k];
         }
-        let down = resp.is_pointer_button_down_on() && ui.input(|i| i.pointer.primary_down());
+        let down = crate::widgets::held(ui, &resp);
         let want = if down || latched.0[k] { 1.0 } else { 0.0 };
         if p[pi] != want {
             p[pi] = want;

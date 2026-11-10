@@ -111,7 +111,7 @@ impl App {
                 let latched = self.perform_latched & bit != 0;
                 let on = self.perform_sent & bit != 0;
                 let (r, resp) = ui.allocate_exact_size(vec2(92.0, 34.0), Sense::click());
-                let down = resp.is_pointer_button_down_on() && ui.input(|i| i.pointer.primary_down());
+                let down = crate::widgets::held(ui, &resp);
                 if resp.secondary_clicked() {
                     self.perform_latched ^= bit;
                 }

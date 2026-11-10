@@ -164,7 +164,7 @@ pub(crate) fn rackverb_panel(ui: &mut Ui, id: Id, dev_id: u64, p: &mut Vec<f32>,
     for (k, (label, by)) in [("DOWN", -1), ("UP", 1)].into_iter().enumerate() {
         let b = Rect::from_center_size(pos2(rect.left() + 400.0 + k as f32 * 56.0, mid_y - 6.0), vec2(44.0, 36.0));
         let resp = ui.interact(b, id.with(("step", k)), Sense::click());
-        let down = resp.is_pointer_button_down_on();
+        let down = crate::widgets::held(ui, &resp);
         painter.rect_filled(b, 2.0, if down { Color32::from_gray(0x16) } else { Color32::from_gray(0x2a) });
         painter.rect_stroke(b, 2.0, Stroke::new(1.0_f32, Color32::from_gray(if down { 0x22 } else { 0x4c })), StrokeKind::Inside);
         painter.text(pos2(b.center().x, b.bottom() + 3.0), Align2::CENTER_TOP, label, FontId::proportional(9.5), DIM);

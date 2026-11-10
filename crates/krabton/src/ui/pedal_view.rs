@@ -96,7 +96,7 @@ pub(crate) fn pedal_face(ui: &mut Ui, id: Id, kind: EffectKind, params: &mut [f3
     // The footswitch.
     let fr = Rect::from_center_size(foot, vec2(30.0, 30.0));
     let resp = ui.interact(fr, id.with("foot"), Sense::click());
-    let pressed = resp.is_pointer_button_down_on();
+    let pressed = crate::widgets::held(ui, &resp);
     p.circle_filled(foot, 13.0, Color32::from_rgb(0x9a, 0x9c, 0xa2));
     p.circle_filled(foot, 10.0, if pressed { Color32::from_rgb(0xa8, 0xaa, 0xb0) } else { Color32::from_rgb(0xc8, 0xca, 0xd0) });
     p.circle_stroke(foot, 10.0, Stroke::new(1.0_f32, Color32::from_rgb(0x70, 0x72, 0x78)));

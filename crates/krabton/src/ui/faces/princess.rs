@@ -753,7 +753,7 @@ pub(crate) fn panel(ui: &mut Ui, id: Id, preset: &mut String, params: &mut Vec<f
         if resp.secondary_clicked() {
             st.latched[k] = !st.latched[k];
         }
-        let down = resp.is_pointer_button_down_on() && ui.input(|i| i.pointer.primary_down());
+        let down = crate::widgets::held(ui, &resp);
         let want = if down || st.latched[k] { 1.0 } else { 0.0 };
         if kn.params[pi] != want {
             kn.params[pi] = want;
