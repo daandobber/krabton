@@ -2994,22 +2994,24 @@ impl Project {
     /// Finds what the audio clips' warping needs before the audio thread
     /// plays them: their samples' transients, and the reversed audio of
     /// clips that play backwards. Done once per sample; cheap after.
-    /// Every Looper in the set: on the tracks, the returns and the master,
-    /// and in the sounds clips keep.
+    /// Every Looper (and Spool: they keep their sound on the same tape) in
+    /// the set: on the tracks, the returns and the master, and in the
+    /// sounds clips keep.
     pub fn loopers_mut(&mut self) -> Vec<&mut Device> {
+        let tape = |d: &&mut Device| matches!(d.kind, EffectKind::Looper | EffectKind::Spool);
         let mut out = Vec::new();
         for t in &mut self.tracks {
-            out.extend(t.devices.iter_mut().filter(|d| d.kind == EffectKind::Looper));
+            out.extend(t.devices.iter_mut().filter(tape));
             for c in t.slots.iter_mut().flatten().chain(t.arrangement.iter_mut().map(|a| &mut a.clip)) {
                 if let Some(s) = &mut c.sound {
-                    out.extend(s.devices.iter_mut().filter(|d| d.kind == EffectKind::Looper));
+                    out.extend(s.devices.iter_mut().filter(tape));
                 }
             }
         }
         for r in &mut self.returns {
-            out.extend(r.devices.iter_mut().filter(|d| d.kind == EffectKind::Looper));
+            out.extend(r.devices.iter_mut().filter(tape));
         }
-        out.extend(self.master.devices.iter_mut().filter(|d| d.kind == EffectKind::Looper));
+        out.extend(self.master.devices.iter_mut().filter(tape));
         out
     }
 

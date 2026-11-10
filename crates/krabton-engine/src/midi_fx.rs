@@ -206,6 +206,8 @@ pub enum MidiFxKind {
     Circle,
     /// Was Breakline (taken out): sets that had it still open; it plays nothing.
     Breakline,
+    /// Shatter: a breakcore melody from a motif and what each bar does with it.
+    Shatter,
 }
 
 const ARP_STYLES: &[&str] = &["Up", "Down", "Up Down", "Down Up", "Converge", "Diverge", "Random", "Played", "Chord"];
@@ -323,7 +325,7 @@ impl MidiFxKind {
     pub fn group(self) -> &'static str {
         use MidiFxKind as K;
         match self {
-            K::Step | K::Acid | K::Inferno | K::DrumGrid | K::Progression | K::Drummer | K::HatRolls | K::Hook | K::SlideBass => "Classic",
+            K::Step | K::Acid | K::Inferno | K::DrumGrid | K::Progression | K::Drummer | K::HatRolls | K::Hook | K::SlideBass | K::Shatter => "Classic",
             K::GuitarChords | K::Ukulele | K::PianoPlayer | K::BassPlayer | K::Banjo | K::Section | K::OrganGrinder | K::MusicBox => "Players",
             K::Euclid | K::DrumMap | K::Marbles | K::Chance | K::Bits | K::Percussion | K::HomeRhythms => "Rhythm",
             K::Spinner | K::Endless | K::Hands | K::Draw | K::Touch => "Played",
@@ -338,10 +340,11 @@ impl MidiFxKind {
         }
     }
 
-    pub const SEQUENCERS: [MidiFxKind; 81] = [
+    pub const SEQUENCERS: [MidiFxKind; 82] = [
         MidiFxKind::Step,
         MidiFxKind::Acid,
         MidiFxKind::Inferno,
+        MidiFxKind::Shatter,
         MidiFxKind::HatRolls,
         MidiFxKind::Hook,
         MidiFxKind::SlideBass,
@@ -433,6 +436,7 @@ impl MidiFxKind {
             MidiFxKind::Step => crate::classic_seq::step_default(),
             MidiFxKind::Acid => crate::classic_seq::acid_default(),
             MidiFxKind::Inferno => sequencers::inferno::inferno_default(),
+            MidiFxKind::Shatter => sequencers::shatter::shatter_default(),
             MidiFxKind::DrumGrid => crate::classic_seq::drum_default(),
             MidiFxKind::Progression => crate::classic_seq::progression_default(),
             MidiFxKind::Life => sequencers::life_default(),
@@ -455,6 +459,7 @@ impl MidiFxKind {
             MidiFxKind::Step => "Step",
             MidiFxKind::Acid => "Acid",
             MidiFxKind::Inferno => "Inferno",
+            MidiFxKind::Shatter => "Shatter",
             MidiFxKind::HatRolls => "Hat Rolls",
             MidiFxKind::Hook => "Hook",
             MidiFxKind::SlideBass => "Slide Bass",
@@ -557,6 +562,7 @@ impl MidiFxKind {
             MidiFxKind::Step => "Classic 16-step sequencer: note, velocity, length and ratchets per step",
             MidiFxKind::Acid => "TB-303 style bass line with accent, slide and tie",
             MidiFxKind::Inferno => "A big bass sequencer for synths: eight patterns of up to 64 steps, per step a note, octave, accent, slide, tie, gate, ratchets, chance, condition, nudge and wob; Ignite writes a line in twenty genres (acid, techno, house, garage, dubstep, drum and bass, trap, drill, synthwave, funk, psytrance, amapiano...), Evolve keeps changing it, Burn plays it hotter; in the band per part",
+            MidiFxKind::Shatter => "A melody maker for breakcore: a motif of a few notes drawn in the key, and a move for every bar of the phrase (play it, answer it, climb, invert, backwards, run it at double speed, stutter its end, leap in octaves, shatter it, rest); Write makes one in a mood (sad, rave stabs, J-core runs, orchestral, glitch), Vary keeps changing it a little, Stack puts chords on it, Run, Stutter, Up and Cut held play it hotter; in the band it follows the chords",
             MidiFxKind::HatRolls => "A hi-hat for trap and pluggnb: ticking on the eighths or sixteenths, broken up by rolls of two, three, four or six that climb or fall, with a fill at the end of its cycle and an open hat now and then. The same pattern until you pick another seed",
             MidiFxKind::Hook => "A melody of a few notes in the song's key on the dotted rhythm those tracks stand on, repeating, its end changing every fourth time round. Another seed is another hook",
             MidiFxKind::SlideBass => "Long bass notes on the three-three-two, mostly on the root, that overlap to slide into each other: put it on the Glide synth",
@@ -659,6 +665,7 @@ impl MidiFxKind {
             MidiFxKind::Step => crate::classic_seq::STEP,
             MidiFxKind::Acid => crate::classic_seq::ACID,
             MidiFxKind::Inferno => sequencers::inferno::SPECS,
+            MidiFxKind::Shatter => sequencers::shatter::SPECS,
             MidiFxKind::HatRolls => sequencers::rolls::HAT_ROLLS,
             MidiFxKind::Hook => sequencers::rolls::HOOK,
             MidiFxKind::SlideBass => sequencers::rolls::SLIDE_BASS,

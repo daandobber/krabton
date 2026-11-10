@@ -116,6 +116,8 @@ pub enum EffectKind {
     Tune,
     /// Rackverb: the little rack reverbs of the late eighties.
     Rackverb,
+    /// Spool: four heads looping a sound on a tape.
+    Spool,
 }
 
 const FMODES: &[&str] = &["Lowpass", "Highpass", "Bandpass", "Notch"];
@@ -227,7 +229,7 @@ static UTILITY: &[ParamSpec] = &[
 ];
 
 impl EffectKind {
-    pub const ALL: [EffectKind; 97] = [
+    pub const ALL: [EffectKind; 98] = [
         EffectKind::Eq3,
         EffectKind::AutoFilter,
         EffectKind::VaFilter,
@@ -316,6 +318,7 @@ impl EffectKind {
         EffectKind::AwEnsemble,
         EffectKind::AwInfinity2,
         EffectKind::Looper,
+        EffectKind::Spool,
         EffectKind::Fryer,
         EffectKind::Vocoder,
         EffectKind::Cassette,
@@ -418,6 +421,7 @@ impl EffectKind {
             EffectKind::Sky | EffectKind::Massive | EffectKind::Smear | EffectKind::Convolution => "Reverb & Resonance",
             EffectKind::Snowglobe => "Delay & Loop",
             EffectKind::Looper => "Delay & Loop",
+            EffectKind::Spool => "Delay & Loop",
             EffectKind::Fryer => "Distortion",
             EffectKind::Vocoder => "Reverb & Resonance",
             EffectKind::Cassette => "Distortion",
@@ -482,6 +486,7 @@ impl EffectKind {
             EffectKind::Convolution => "Convolution",
             EffectKind::Snowglobe => "Snowglobe",
             EffectKind::Looper => "Looper",
+            EffectKind::Spool => "Spool",
             EffectKind::Fryer => "Fryer",
             EffectKind::Vocoder => "Vocoder",
             EffectKind::Cassette => "Cassette",
@@ -595,6 +600,7 @@ impl EffectKind {
             EffectKind::Ring => "The sound multiplied by a tone: the notes go, the sum and the difference stay. Bells out of pads, robots out of voices, and with Key on the tone is a note of the song's key",
             EffectKind::Brain => "Plays what goes in again out of other sounds: give it sounds (its brain), cut into short blocks and joined to those like them, and each block of the track is played by the block of the brain most like it. A beat as a cappellas, a voice as bubbling mud. Search, novelty, stickiness and autotune change how it picks",
             EffectKind::Looper => "A loop pedal: one button records a loop, overdubs onto it and plays it; Stop, Clear, Undo and Redo of the last overdub, Multiply, half and double speed, Reverse, Feedback, and the input heard always, never or while recording. With the song it starts and ends on the bar and follows the tempo (or the first loop sets it); drag the loop out as a clip",
+            EffectKind::Spool => "Four heads on one sound, each looping a stretch of its own: where and how long, its speed, forwards or backwards, round or back and forth, its pitch, level and pan. They wind up and down as tape does (with the song, always, or with the notes), and Stretch plays them as grains, so a head slowed to a crawl holds its pitch as a drone. Drop a sound in or capture what comes in; it is kept with the set",
             EffectKind::AwGalactic => "A huge, lush, slowly drifting stereo reverb for pads and ambient spaces (Airwindows)",
             EffectKind::AwVerbity2 => "A smooth, dense room-to-hall reverb with size, sustain and darkness (Airwindows)",
             EffectKind::AwChamber => "An echo-chamber reverb with size, decay, highpass and lowpass (Airwindows)",
@@ -689,6 +695,7 @@ impl EffectKind {
             EffectKind::Convolution => super::fx::convolution::SPECS,
             EffectKind::Snowglobe => super::fx::snowglobe::SPECS,
             EffectKind::Looper => super::fx::looper::SPECS,
+            EffectKind::Spool => super::fx::spool::SPECS,
             EffectKind::Fryer => super::fx::fryer::SPECS,
             EffectKind::Vocoder => super::fx::vocoder::SPECS,
             EffectKind::Cassette => super::fx::cassette::SPECS,
@@ -759,6 +766,9 @@ pub struct FxCtx {
     pub playing: bool,
     /// The song's key.
     pub scale: crate::scale::Scale,
+    /// The lowest note the track holds now, if it holds one (its notes
+    /// after its MIDI effects; a Spool plays with them).
+    pub note: Option<u8>,
 }
 
 pub enum EffectState {
@@ -805,6 +815,7 @@ pub enum EffectState {
     Convolution(Box<super::fx::convolution::Convolution>),
     Snowglobe(Box<super::fx::snowglobe::Snowglobe>),
     Looper(Box<super::fx::looper::Looper>),
+    Spool(Box<super::fx::spool::Spool>),
     Fryer(Box<super::fx::fryer::Fryer>),
     Vocoder(Box<super::fx::vocoder::Vocoder>),
     Cassette(Box<super::fx::cassette::Cassette>),
@@ -913,6 +924,7 @@ impl EffectState {
             EffectKind::Convolution => EffectState::Convolution(Box::new(super::fx::convolution::Convolution::new(sr))),
             EffectKind::Snowglobe => EffectState::Snowglobe(Box::new(super::fx::snowglobe::Snowglobe::new(sr))),
             EffectKind::Looper => EffectState::Looper(Box::new(super::fx::looper::Looper::new())),
+            EffectKind::Spool => EffectState::Spool(Box::new(super::fx::spool::Spool::new())),
             EffectKind::Fryer => EffectState::Fryer(Box::new(super::fx::fryer::Fryer::new(sr))),
             EffectKind::Vocoder => EffectState::Vocoder(Box::new(super::fx::vocoder::Vocoder::new(sr))),
             EffectKind::Cassette => EffectState::Cassette(Box::new(super::fx::cassette::Cassette::new(sr))),
@@ -1049,6 +1061,7 @@ impl EffectState {
             EffectState::Convolution(_) => EffectKind::Convolution,
             EffectState::Snowglobe(_) => EffectKind::Snowglobe,
             EffectState::Looper(_) => EffectKind::Looper,
+            EffectState::Spool(_) => EffectKind::Spool,
             EffectState::Fryer(_) => EffectKind::Fryer,
             EffectState::Vocoder(_) => EffectKind::Vocoder,
             EffectState::Cassette(_) => EffectKind::Cassette,
@@ -1316,6 +1329,7 @@ impl EffectState {
             EffectState::Convolution(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Snowglobe(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Looper(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
+            EffectState::Spool(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Fryer(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Vocoder(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
             EffectState::Cassette(s) => s.process(p, &mut l[..n], &mut r[..n], ctx),
@@ -1367,7 +1381,7 @@ mod tests {
 
     #[test]
     fn all_effects_stay_finite() {
-        let ctx = FxCtx { sr: 48000.0, bpm: 120.0, beat: 0.0, playing: false, scale: Default::default() };
+        let ctx = FxCtx { sr: 48000.0, bpm: 120.0, beat: 0.0, playing: false, scale: Default::default(), note: None };
         for kind in EffectKind::ALL {
             let p = crate::params::defaults(kind.specs());
             let mut st = EffectState::new(kind, 48000.0);
@@ -1384,7 +1398,7 @@ mod tests {
 
     #[test]
     fn eq3_flat_is_transparent() {
-        let ctx = FxCtx { sr: 48000.0, bpm: 120.0, beat: 0.0, playing: false, scale: Default::default() };
+        let ctx = FxCtx { sr: 48000.0, bpm: 120.0, beat: 0.0, playing: false, scale: Default::default(), note: None };
         let p = crate::params::defaults(EffectKind::Eq3.specs());
         let mut st = EffectState::new(EffectKind::Eq3, 48000.0);
         let mut rng = Rng::new(9);

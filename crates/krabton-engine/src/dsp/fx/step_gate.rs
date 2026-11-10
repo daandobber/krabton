@@ -96,7 +96,7 @@ mod tests {
     const SR: f32 = 48000.0;
 
     fn ctx(beat: f64, playing: bool) -> FxCtx {
-        FxCtx { sr: SR, bpm: 120.0, beat, playing, scale: Scale::new(0, ScaleKind::Minor) }
+        FxCtx { sr: SR, bpm: 120.0, beat, playing, scale: Scale::new(0, ScaleKind::Minor), note: None }
     }
 
     fn pattern(on: &[f32]) -> Vec<f32> {

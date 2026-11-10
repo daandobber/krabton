@@ -389,7 +389,7 @@ mod tests {
     fn run(p: &[f32], secs: f32) -> (Vec<f32>, Grains) {
         let sr = 48000.0;
         let mut g = Grains::new(sr);
-        let ctx = FxCtx { sr, bpm: 120.0, beat: 0.0, playing: true, scale: Default::default() };
+        let ctx = FxCtx { sr, bpm: 120.0, beat: 0.0, playing: true, scale: Default::default(), note: None };
         let n = (secs * sr) as usize;
         let mut out = Vec::with_capacity(n);
         let mut t = 0usize;

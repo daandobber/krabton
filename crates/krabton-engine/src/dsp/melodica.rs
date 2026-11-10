@@ -509,7 +509,7 @@ impl MelodicaState {
                     d[j] = y;
                 }
             }
-            let ctx = FxCtx { scale: Default::default(), sr, bpm: if self.bpm > 1.0 { self.bpm } else { 120.0 }, beat: self.beat, playing: self.playing };
+            let ctx = FxCtx { scale: Default::default(), sr, bpm: if self.bpm > 1.0 { self.bpm } else { 120.0 }, beat: self.beat, playing: self.playing, note: None };
             // The dub desk: the echo, then the spring that the echoes fall into too.
             self.el[..len].fill(0.0);
             self.er[..len].fill(0.0);

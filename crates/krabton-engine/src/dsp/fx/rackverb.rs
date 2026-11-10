@@ -138,7 +138,7 @@ mod tests {
     const SR: f32 = 48000.0;
 
     fn ctx() -> FxCtx {
-        FxCtx { sr: SR, bpm: 120.0, beat: 0.0, playing: false, scale: crate::scale::Scale::new(0, crate::scale::ScaleKind::Major) }
+        FxCtx { sr: SR, bpm: 120.0, beat: 0.0, playing: false, scale: crate::scale::Scale::new(0, crate::scale::ScaleKind::Major), note: None }
     }
 
     fn run(p: &[f32], seconds: f32, burst: f32) -> (Vec<f32>, Vec<f32>) {

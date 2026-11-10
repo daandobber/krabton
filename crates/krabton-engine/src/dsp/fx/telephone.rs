@@ -81,7 +81,7 @@ mod tests {
         let mut p = crate::params::defaults(SPECS);
         p[LINE] = 0.0;
         p[SQUASH] = 0.0;
-        let ctx = FxCtx { sr, bpm: 120.0, beat: 0.0, playing: false, scale: Default::default() };
+        let ctx = FxCtx { sr, bpm: 120.0, beat: 0.0, playing: false, scale: Default::default(), note: None };
         let mut tone = |f: f32| -> f32 {
             let mut l: Vec<f32> = (0..24000).map(|i| (std::f32::consts::TAU * f * i as f32 / sr).sin() * 0.5).collect();
             let mut r = l.clone();

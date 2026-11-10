@@ -2361,7 +2361,7 @@ impl Engine {
         // Start and Stop go out once, with this segment's clocks.
         let (out_start, out_stop) = (std::mem::take(&mut self.out_start), std::mem::take(&mut self.out_stop));
         // Effects that keep time follow the session clock (it starts from the song position).
-        let ctx = FxCtx { sr, bpm: project.bpm as f32, beat: s0, playing, scale: project.scale };
+        let ctx = FxCtx { sr, bpm: project.bpm as f32, beat: s0, playing, scale: project.scale, note: None };
 
         // The Pulsars: their notes go to the tracks as played notes do.
         {
@@ -2532,7 +2532,7 @@ impl Engine {
                 None => (spb, s0),
             };
             let t1 = t0 + if playing { seg as f64 / tspb } else { 0.0 };
-            let tctx = FxCtx { bpm: track.tempo.unwrap_or(project.bpm) as f32, beat: t0, ..ctx };
+            let mut tctx = FxCtx { bpm: track.tempo.unwrap_or(project.bpm) as f32, beat: t0, ..ctx };
             let snd = track.sound(rt.sound_from);
             // The modulators move the track's own instrument (a clip's sound
             // is the track's own a moment later).
@@ -2940,6 +2940,14 @@ impl Engine {
                     }
                 }
             }
+            // A track without an instrument still counts its notes (a Spool plays with them).
+            if snd.instrument.is_none() {
+                for ev in events.iter() {
+                    let n = &mut sounding[(ev.pitch & 127) as usize];
+                    *n = if ev.on { n.saturating_add(1).min(8) } else { n.saturating_sub(1) };
+                }
+            }
+            tctx.note = sounding.iter().position(|&n| n > 0).map(|p| p as u8);
             pre_l[..seg].copy_from_slice(&l[..seg]);
             pre_r[..seg].copy_from_slice(&r[..seg]);
             for (dev, (_, st)) in snd.devices.iter().zip(devices.iter_mut()) {
@@ -3286,6 +3294,13 @@ fn sync_devices(devs: &[Device], rts: &mut Vec<(u64, EffectState)>, sr: f32, tra
         if let EffectState::Looper(lp) = st {
             lp.attach(d.looper.0.as_ref());
             if let Some(old) = lp.take_retired() {
+                trash.push(GarbageInner::Loop(old));
+            }
+        }
+        // A Spool's tape (the same memory as a Looper's).
+        if let EffectState::Spool(sp) = st {
+            sp.attach(d.looper.0.as_ref());
+            if let Some(old) = sp.take_retired() {
                 trash.push(GarbageInner::Loop(old));
             }
         }

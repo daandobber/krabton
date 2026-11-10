@@ -73,7 +73,7 @@ mod tests {
         let n = 24000;
         let mut l: Vec<f32> = (0..n).map(|i| (std::f32::consts::TAU * hz * i as f32 / SR).sin() * level).collect();
         let mut r = l.clone();
-        let ctx = FxCtx { sr: SR, bpm: 120.0, beat: 0.0, playing: true, scale: Scale::new(0, ScaleKind::Minor) };
+        let ctx = FxCtx { sr: SR, bpm: 120.0, beat: 0.0, playing: true, scale: Scale::new(0, ScaleKind::Minor), note: None };
         let mut d = DeEsser::new(SR);
         for (a, b) in l.chunks_mut(256).zip(r.chunks_mut(256)) {
             d.process(p, a, b, &ctx);

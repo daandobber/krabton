@@ -958,6 +958,7 @@ impl App {
         let brain_making = kind == EffectKind::Brain && self.brain_making(dev_id);
         let mut brain_act = None;
         let mut looper_act = None;
+        let mut spool_act = None;
         let _skin = crate::skin::Scope::new(crate::skin::for_effect(kind));
         let mut conv_act = None;
         let mut picked = None;
@@ -975,6 +976,7 @@ impl App {
             EffectKind::Beads => 400.0,
             EffectKind::Convolution => 340.0,
             EffectKind::Looper => 700.0,
+            EffectKind::Spool => 640.0,
             EffectKind::Brain => 420.0,
             _ => 400.0,
         };
@@ -1061,6 +1063,11 @@ impl App {
                 let (c, act) = crate::ui::looper_view::looper_panel(ui, id, &mut params, loop_mem.as_ref(), h, mv.as_mut());
                 looper_act = act;
                 c
+            } else if kind == EffectKind::Spool {
+                let name = conv_file.as_ref().map(|s| s.name.clone());
+                let (c, act) = crate::ui::spool_view::spool_panel(ui, id, &mut params, loop_mem.as_ref(), name.as_deref(), h, &mut width);
+                spool_act = act;
+                c
             } else if kind == EffectKind::Fryer {
                 crate::ui::fryer_view::fryer_panel(ui, id, &mut params, h, mv.as_mut())
             } else if kind == EffectKind::Brain {
@@ -1133,6 +1140,18 @@ impl App {
                 }
             }
             Some(crate::ui::brain_view::BrainAct::Clear) => self.chain_mut(sel)?.get_mut(d)?.sounds.clear(),
+            None => {}
+        }
+        match spool_act {
+            Some(crate::ui::spool_view::SpoolAct::Load(path)) => self.spool_load(dev_id, &path),
+            Some(crate::ui::spool_view::SpoolAct::Clear) => {
+                if let Some(m) = self.looper_memory(dev_id) {
+                    m.clear();
+                }
+                if let Some(dev) = self.chain_mut(sel).and_then(|c| c.get_mut(d)) {
+                    dev.sample = None;
+                }
+            }
             None => {}
         }
         match looper_act {

@@ -141,6 +141,7 @@ pub fn effect(kind: EffectKind) -> &'static [Preset] {
         E::Convolution => CONVOLUTION,
         E::Snowglobe => SNOWGLOBE,
         E::Looper => LOOPER,
+        E::Spool => SPOOL,
         E::Fryer => FRYER,
         E::AwTapeDelay2 => AW_TAPE_DELAY,
         E::AwPear2 => AW_PEAR2_PRESETS,
@@ -251,6 +252,7 @@ pub fn midi(kind: MidiFxKind) -> &'static [Preset] {
         K::SlideBass => SLIDE_BASS,
         K::HomeRhythms => HOME_RHYTHMS,
         K::Inferno => crate::sequencers::inferno::PRESETS,
+        K::Shatter => crate::sequencers::shatter::PRESETS,
         _ => crate::sequencers::players::presets(kind),
     }
 }
@@ -757,6 +759,19 @@ static SNOWGLOBE: &[Preset] = &[
     p("Dotted Echoes", &[("Mode", C("Rhythm")), ("Variation", C("B")), ("Repeats", N(0.45)), ("Space", N(0.25))]),
     p("Bending Echoes", &[("Mode", C("Bend")), ("Variation", C("C")), ("Repeats", N(0.5)), ("Space", N(0.3))]),
     p("Frozen Glitter", &[("Mode", C("Mist")), ("Variation", C("C")), ("Activity", N(0.9)), ("Space", N(0.8)), ("Filter", N(0.2)), ("Mix", N(0.7))]),
+];
+
+static SPOOL: &[Preset] = &[
+    p("Four Heads", &[]),
+    p("Ambient Bed", &[("Stretch", N(1.0)), ("1 Speed", N(0.25)), ("2 Speed", N(0.5)), ("3 Speed", N(0.35)), ("4 Speed", N(0.2)), ("1 Length", N(0.35)), ("2 Length", N(0.25)), ("3 Length", N(0.4)), ("4 Length", N(0.3)), ("Fade In", N(0.35)), ("Fade Out", N(0.35)), ("Tone", N(-0.3)), ("Grain", N(220.0)), ("Spray", N(0.25)), ("Inertia", N(0.6))]),
+    p("Tape Drift", &[("1 Speed", N(0.98)), ("2 Speed", N(1.02)), ("3 Speed", N(0.5)), ("4 Speed", N(2.0)), ("2 Ping-Pong", N(1.0)), ("4 Ping-Pong", N(1.0)), ("Fade In", N(0.15)), ("Fade Out", N(0.15)), ("Inertia", N(0.5))]),
+    p("Reverse Swells", &[("1 Reverse", N(1.0)), ("2 Reverse", N(1.0)), ("3 Reverse", N(1.0)), ("4 Reverse", N(1.0)), ("Fade In", N(0.45)), ("Fade Out", N(0.08)), ("1 Length", N(0.3)), ("2 Length", N(0.22)), ("3 Length", N(0.35)), ("4 Length", N(0.18))]),
+    p("Glitch Stutter", &[("1 Length", N(0.006)), ("2 Length", N(0.012)), ("3 Length", N(0.004)), ("4 Length", N(0.02)), ("2 Speed", N(2.0)), ("3 Speed", N(0.5)), ("Fade In", N(0.02)), ("Fade Out", N(0.05)), ("Inertia", N(0.0))]),
+    p("Frozen Drone", &[("Stretch", N(1.0)), ("1 Speed", N(0.05)), ("2 Speed", N(0.05)), ("3 Speed", N(0.07)), ("4 Speed", N(0.06)), ("Grain", N(320.0)), ("Spray", N(0.3)), ("Fade In", N(0.1)), ("Fade Out", N(0.1)), ("Tone", N(-0.2))]),
+    p("Octave Choir", &[("Stretch", N(1.0)), ("2 Pitch", N(12.0)), ("3 Pitch", N(-12.0)), ("4 Pitch", N(7.0)), ("1 Speed", N(0.5)), ("2 Speed", N(0.4)), ("3 Speed", N(0.6)), ("4 Speed", N(0.3)), ("Grain", N(180.0)), ("Spray", N(0.15))]),
+    p("Ping-Pong Grains", &[("Stretch", N(1.0)), ("1 Ping-Pong", N(1.0)), ("2 Ping-Pong", N(1.0)), ("3 Ping-Pong", N(1.0)), ("4 Ping-Pong", N(1.0)), ("Grain", N(40.0)), ("Spray", N(0.6)), ("2 Speed", N(1.5)), ("4 Speed", N(0.7))]),
+    p("Tape Stop Song", &[("Playback", C("Transport")), ("Inertia", N(0.8))]),
+    p("Played by Notes", &[("Playback", C("MIDI")), ("Inertia", N(0.15))]),
 ];
 
 static LOOPER: &[Preset] = &[

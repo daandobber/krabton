@@ -90,11 +90,13 @@ pub mod breaks_view;
 pub mod gabber_view;
 pub mod airway_view;
 pub mod looper_view;
+pub mod spool_view;
 pub mod fryer_view;
 pub mod stretch_view;
 pub mod home_view;
 pub mod inferno_fire;
 pub mod inferno_view;
+pub mod shatter_view;
 
 use crate::app::{App, ArrClipDrag, BrowserItem, ClipSel, SlotDrag, View};
 use crate::theme::*;

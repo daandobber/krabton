@@ -120,6 +120,7 @@ pub(crate) fn editor(ui: &mut Ui, id: Id, kind: MidiFxKind, params: &mut [f32], 
             }
             changed
         }
+        MidiFxKind::Shatter => super::shatter_view::shatter(ui, id, params, data, live, height),
         MidiFxKind::DrumGrid => super::classic_view::drum_grid(ui, id, params, data, live, accent, height),
         MidiFxKind::Progression => super::classic_view::progression(ui, id, params, data, live, accent, height),
         MidiFxKind::PianoPlayer | MidiFxKind::BassPlayer | MidiFxKind::Banjo | MidiFxKind::Section => super::players_view::player(ui, id, kind, params, data, live, accent, height),

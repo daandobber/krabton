@@ -65,8 +65,9 @@ impl App {
             TrackSel::Return(j) => self.project.returns.get(j).map(|r| &r.devices),
             TrackSel::Master => Some(&self.project.master.devices),
         };
-        let first = |ds: &Vec<Device>| ds.iter().find(|d| d.looper.0.is_some()).and_then(|d| d.looper.0.clone());
-        chain.and_then(first).or_else(|| self.project.all_devices().find(|d| d.looper.0.is_some()).and_then(|d| d.looper.0.clone()))
+        let looper = |d: &&Device| d.kind == krabton_engine::dsp::effects::EffectKind::Looper && d.looper.0.is_some();
+        let first = |ds: &Vec<Device>| ds.iter().find(looper).and_then(|d| d.looper.0.clone());
+        chain.and_then(first).or_else(|| self.project.all_devices().find(looper).and_then(|d| d.looper.0.clone()))
     }
 
     /// F8 (Shift+F8: stop): the Looper's pedal.
@@ -171,7 +172,7 @@ impl App {
                 d.data.clear();
                 continue;
             }
-            let path = dir.join(format!("{name} Looper {}.wav", k + 1));
+            let path = dir.join(format!("{name} {} {}.wav", d.kind.name(), k + 1));
             let gen = m.generation.load(std::sync::atomic::Ordering::Relaxed);
             let fresh = d.sample.as_ref().and_then(|s| s.path.as_deref()) == Some(path.as_path()) && path.exists();
             if fresh && m.saved.load(std::sync::atomic::Ordering::Relaxed) == gen {
@@ -182,7 +183,7 @@ impl App {
             match krabton_engine::render::write_wav(&path, sr, &audio) {
                 Ok(()) => {
                     m.saved.store(gen, std::sync::atomic::Ordering::Relaxed);
-                    let label = format!("{name} Looper {}", k + 1);
+                    let label = format!("{name} {} {}", d.kind.name(), k + 1);
                     d.sample = Some(SampleRef::new(SampleData::from_buffers(label, Some(path), sr, l, r)));
                     d.data = m.loop_bpm.load().to_le_bytes().to_vec();
                 }
@@ -192,6 +193,34 @@ impl App {
         if let Some(e) = errors.into_iter().next() {
             self.toast(e);
         }
+    }
+
+    /// A sound onto a Spool's tape (read at the engine's rate), kept in the device for the set.
+    pub(crate) fn spool_load(&mut self, dev: u64, path: &std::path::Path) {
+        let s = match SampleRef::load(path) {
+            Ok(s) => s,
+            Err(e) => {
+                self.toast(e);
+                return;
+            }
+        };
+        let Some(m) = self.looper_memory(dev) else {
+            self.toast("The Spool is not ready yet: try again");
+            return;
+        };
+        let (l, r) = at_rate(&s, m.rate());
+        if l.len() > m.capacity() {
+            self.toast(format!("Spool keeps the first {:.0} seconds", MAX_SECONDS));
+        }
+        m.load(&l, &r, 0.0);
+        let name = s.name.clone();
+        for d in self.project.loopers_mut() {
+            if d.id == dev {
+                d.sample = Some(s.clone());
+                d.data.clear();
+            }
+        }
+        self.toast(format!("{name} on the tape"));
     }
 
     /// What the Looper with this id is doing (for scripts and the status bar).

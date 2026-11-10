@@ -179,6 +179,9 @@ pub struct LoopMemory {
     pub bar_beats: AtomicF32,
     /// The generation last saved next to the set (the UI's).
     pub saved: AtomicU32,
+    /// A Spool's heads: where each is (0..1 of the tape; below 0: still) and how loud.
+    pub heads: [AtomicF32; 4],
+    pub head_peaks: [AtomicF32; 4],
     queue: [AtomicU8; QUEUE],
     head: AtomicU32,
     tail: AtomicU32,
@@ -206,6 +209,8 @@ impl LoopMemory {
             set_tempo: AtomicF32::new(0.0),
             bar_beats: AtomicF32::new(4.0),
             saved: AtomicU32::new(0),
+            heads: std::array::from_fn(|_| AtomicF32::new(-1.0)),
+            head_peaks: std::array::from_fn(|_| AtomicF32::new(0.0)),
             queue: std::array::from_fn(|_| AtomicU8::new(0)),
             head: AtomicU32::new(0),
             tail: AtomicU32::new(0),
@@ -239,6 +244,20 @@ impl LoopMemory {
             a.store(l.to_bits(), RELAXED);
             b.store(r.to_bits(), RELAXED);
         }
+    }
+
+    /// Frame `i` written (a Spool capturing).
+    #[inline]
+    pub fn put(&self, i: usize, l: f32, r: f32) {
+        self.write(i, l, r);
+    }
+
+    /// Emptied (the UI's Clear on a Spool).
+    pub fn clear(&self) {
+        self.len.store(0, RELAXED);
+        self.layers.store(0, RELAXED);
+        self.state.store(LoopState::Empty as u8, RELAXED);
+        self.generation.fetch_add(1, RELAXED);
     }
 
     fn is_touched(&self, i: usize) -> bool {

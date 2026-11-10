@@ -285,7 +285,7 @@ mod tests {
     fn the_effect_rings_with_its_input() {
         let mut fx = RingsFx::new(48000.0);
         let p = crate::params::defaults(FX_SPECS);
-        let ctx = FxCtx { sr: 48000.0, bpm: 120.0, beat: 0.0, playing: false, scale: Default::default() };
+        let ctx = FxCtx { sr: 48000.0, bpm: 120.0, beat: 0.0, playing: false, scale: Default::default(), note: None };
         let mut rng = crate::dsp::Rng::new(1);
         let mut l: Vec<f32> = (0..48000).map(|i| if i < 2000 { rng.bipolar() * 0.5 } else { 0.0 }).collect();
         let mut r = l.clone();

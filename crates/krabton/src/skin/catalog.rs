@@ -1399,12 +1399,48 @@ const LOOPER: Skin = Skin {
     ..BASE
 };
 
+/// Spool: a tape machine in brushed grey, its screen dark, the heads' teal.
+const SPOOL: Skin = Skin {
+    top: hex(0x3b3f45),
+    bottom: hex(0x24272b),
+    surface: Surface::Brushed,
+    screws: true,
+    ink: hex(0xe8ecef),
+    dim: hex(0xa1a9b1),
+    well: hex(0x15171a),
+    well_ink: hex(0xd9dee3),
+    accent: hex(0x2ec4c8),
+    knob: Knob::Ring,
+    logo: Font::Sport,
+    logo_size: 17.0,
+    logo_ink: hex(0x2ec4c8),
+    logo_case: Case::Upper,
+    ..BASE
+};
+
 const UTILITY: Skin = Skin { accent: hex(0x9fd8ff), knob: Knob::Ring, logo_case: Case::Upper, ..BASE };
 
 const VA_FILTER: Skin = Skin { heroes: &["Cutoff", "Resonance"], ..ANALOG };
 
 /// A sequencer's or a MIDI effect's look.
 const SEQUENCER: Skin = Skin { accent: hex(0xff4f4f), knob: Knob::Led, cap: hex(0x3a3c41), logo_case: Case::Upper, ..BASE };
+/// Shatter: black glass, cracked, edged in cyan and magenta.
+const SHATTER: Skin = Skin {
+    top: hex(0x0a0a10),
+    bottom: hex(0x030306),
+    surface: Surface::Carbon,
+    stripes: &[hex(0xff2bd6), hex(0x3ef3ff)],
+    ink: hex(0xf4f6ff),
+    dim: hex(0x7c8096),
+    well: hex(0x06060a),
+    well_ink: hex(0x3ef3ff),
+    accent: hex(0xff2bd6),
+    knob: Knob::Led,
+    cap: hex(0x16161f),
+    logo_case: Case::Upper,
+    ..BASE
+};
+
 /// Inferno: gloss black and a flame job, yellow through red to pink.
 const INFERNO: Skin = Skin {
     top: hex(0x0b0707),
@@ -1525,6 +1561,7 @@ pub fn for_effect(kind: EffectKind) -> Option<Skin> {
         Beads => Skin { accent: hex(0xc83cd0), ..MODULE },
         Rings => Skin { accent: hex(0xd49a1e), heroes: &["Structure"], ..MODULE },
         Looper => LOOPER,
+        Spool => SPOOL,
         Fryer => PRINCESS,
         _ => match kind.category() {
             "Reverb & Resonance" => REVERB,
@@ -1544,6 +1581,9 @@ pub fn for_effect(kind: EffectKind) -> Option<Skin> {
 pub fn for_midi(kind: MidiFxKind) -> Option<Skin> {
     if kind == MidiFxKind::Inferno {
         return Some(INFERNO);
+    }
+    if kind == MidiFxKind::Shatter {
+        return Some(SHATTER);
     }
     Some(if kind.is_sequencer() { SEQUENCER } else { MIDI_FX })
 }

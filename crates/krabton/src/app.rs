@@ -5241,6 +5241,21 @@ impl App {
                         }
                     }
                 }
+                // spoolload=PATH: a sound onto the first Spool's tape; spool=K,V: its setting K set to V.
+                "spoolload" => {
+                    let dev = self.project.all_devices().find(|d| d.kind == krabton_engine::dsp::effects::EffectKind::Spool).map(|d| d.id);
+                    if let Some(d) = dev {
+                        self.spool_load(d, std::path::Path::new(arg.trim()));
+                    }
+                }
+                "spool" => {
+                    let f: Vec<f32> = arg.split(',').filter_map(|v| v.trim().parse().ok()).collect();
+                    if let ([k, v, ..], Some(d)) = (f.as_slice(), self.project.loopers_mut().into_iter().find(|d| d.kind == krabton_engine::dsp::effects::EffectKind::Spool)) {
+                        if let Some(x) = d.params.get_mut(*k as usize) {
+                            *x = *v;
+                        }
+                    }
+                }
                 "fx" => {
                     // Adds an effect (by its index in the effect list) to the selected chain.
                     let all = krabton_engine::dsp::effects::EffectKind::ALL;

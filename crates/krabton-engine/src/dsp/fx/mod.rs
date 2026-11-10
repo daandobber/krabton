@@ -35,6 +35,7 @@ pub mod sky;
 pub mod smear;
 pub mod snowglobe;
 pub mod looper;
+pub mod spool;
 pub mod fryer;
 pub mod slam;
 pub mod spring;
@@ -224,7 +225,7 @@ pub(crate) mod test_util {
     use super::super::effects::FxCtx;
 
     pub fn ctx() -> FxCtx {
-        FxCtx { sr: 48000.0, bpm: 120.0, beat: 0.0, playing: false, scale: Default::default() }
+        FxCtx { sr: 48000.0, bpm: 120.0, beat: 0.0, playing: false, scale: Default::default(), note: None }
     }
 
     pub fn tone(freq: f32, secs: f32, amp: f32) -> Vec<f32> {

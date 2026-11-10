@@ -657,7 +657,7 @@ mod tests {
     }
 
     fn ctx() -> FxCtx {
-        FxCtx { sr: SR, bpm: 120.0, beat: 0.0, playing: true, scale: Default::default() }
+        FxCtx { sr: SR, bpm: 120.0, beat: 0.0, playing: true, scale: Default::default(), note: None }
     }
 
     #[test]

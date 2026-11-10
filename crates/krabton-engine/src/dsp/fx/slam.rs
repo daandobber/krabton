@@ -83,7 +83,7 @@ mod tests {
         p[DRIVE] = 0.0;
         p[PUMP] = 1.0;
         // At 120 BPM a beat is 24000 frames: quiet at its start, loud near its end.
-        let ctx = FxCtx { sr, bpm: 120.0, beat: 0.0, playing: true, scale: Default::default() };
+        let ctx = FxCtx { sr, bpm: 120.0, beat: 0.0, playing: true, scale: Default::default(), note: None };
         let mut l = vec![0.3; 24000];
         let mut r = vec![0.3; 24000];
         s.process(&p, &mut l, &mut r, &ctx);
@@ -98,7 +98,7 @@ mod tests {
         let mut p = crate::params::defaults(SPECS);
         p[PUNCH] = 1.0;
         p[DRIVE] = 0.0;
-        let ctx = FxCtx { sr, bpm: 120.0, beat: 0.0, playing: false, scale: Default::default() };
+        let ctx = FxCtx { sr, bpm: 120.0, beat: 0.0, playing: false, scale: Default::default(), note: None };
         let mut l = vec![0.0; 4800];
         for (i, x) in l.iter_mut().enumerate().skip(100) {
             *x = 0.2 * ((i as f32) * 0.3).sin();

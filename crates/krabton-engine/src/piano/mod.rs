@@ -441,7 +441,7 @@ impl PianoState {
             hp[hall::DIFFUSION] = 0.8;
             hp[hall::MODULATION] = 0.0;
             hp[hall::MIX] = room;
-            let ctx = FxCtx { sr: self.sr, bpm: 120.0, beat: 0.0, playing: false, scale: Default::default() };
+            let ctx = FxCtx { sr: self.sr, bpm: 120.0, beat: 0.0, playing: false, scale: Default::default(), note: None };
             self.hall.process(hp, bl, br, &ctx, None);
         }
         // Headroom for big chords, and a soft knee above -2 dBFS for the loudest.
