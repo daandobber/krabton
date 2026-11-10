@@ -204,6 +204,7 @@ pub enum MidiFxKind {
     /// Was the Wheel: sets from then still load.
     #[serde(alias = "Wheel")]
     Circle,
+    /// Was Breakline (taken out): sets that had it still open; it plays nothing.
     Breakline,
 }
 
@@ -322,7 +323,7 @@ impl MidiFxKind {
     pub fn group(self) -> &'static str {
         use MidiFxKind as K;
         match self {
-            K::Step | K::Acid | K::Inferno | K::DrumGrid | K::Progression | K::Drummer | K::HatRolls | K::Hook | K::SlideBass | K::Breakline => "Classic",
+            K::Step | K::Acid | K::Inferno | K::DrumGrid | K::Progression | K::Drummer | K::HatRolls | K::Hook | K::SlideBass => "Classic",
             K::GuitarChords | K::Ukulele | K::PianoPlayer | K::BassPlayer | K::Banjo | K::Section | K::OrganGrinder | K::MusicBox => "Players",
             K::Euclid | K::DrumMap | K::Marbles | K::Chance | K::Bits | K::Percussion | K::HomeRhythms => "Rhythm",
             K::Spinner | K::Endless | K::Hands | K::Draw | K::Touch => "Played",
@@ -337,14 +338,13 @@ impl MidiFxKind {
         }
     }
 
-    pub const SEQUENCERS: [MidiFxKind; 82] = [
+    pub const SEQUENCERS: [MidiFxKind; 81] = [
         MidiFxKind::Step,
         MidiFxKind::Acid,
         MidiFxKind::Inferno,
         MidiFxKind::HatRolls,
         MidiFxKind::Hook,
         MidiFxKind::SlideBass,
-        MidiFxKind::Breakline,
         MidiFxKind::DrumGrid,
         MidiFxKind::Progression,
         MidiFxKind::Polymeter,
@@ -560,7 +560,7 @@ impl MidiFxKind {
             MidiFxKind::HatRolls => "A hi-hat for trap and pluggnb: ticking on the eighths or sixteenths, broken up by rolls of two, three, four or six that climb or fall, with a fill at the end of its cycle and an open hat now and then. The same pattern until you pick another seed",
             MidiFxKind::Hook => "A melody of a few notes in the song's key on the dotted rhythm those tracks stand on, repeating, its end changing every fourth time round. Another seed is another hook",
             MidiFxKind::SlideBass => "Long bass notes on the three-three-two, mostly on the root, that overlap to slide into each other: put it on the Glide synth",
-            MidiFxKind::Breakline => "A melody for breakbeat in the song's key: a sad tune wandering slowly over the breaks (Lullaby), scales run up and down at speed (Runs), a minor chord broken up fast, a chord a bar (Arp Rush), or the root with hard accents (Acid); a phrase of 1 to 8 bars, how much its bars vary, rolls and octave jumps, from a seed",
+            MidiFxKind::Breakline => "Taken out: it plays nothing",
             MidiFxKind::DrumGrid => "x0x drum machine grid: 8 lanes, 16 steps, accents and swing",
             MidiFxKind::Progression => "A chord progression in the project key, with rhythms",
             MidiFxKind::Euclid => "Four euclidean rhythm rings, great for drums",
@@ -662,7 +662,7 @@ impl MidiFxKind {
             MidiFxKind::HatRolls => sequencers::rolls::HAT_ROLLS,
             MidiFxKind::Hook => sequencers::rolls::HOOK,
             MidiFxKind::SlideBass => sequencers::rolls::SLIDE_BASS,
-            MidiFxKind::Breakline => sequencers::breakline::SPECS,
+            MidiFxKind::Breakline => &[],
             MidiFxKind::DrumGrid => crate::classic_seq::DRUM_GRID,
             MidiFxKind::Progression => crate::classic_seq::PROGRESSION,
             MidiFxKind::Euclid => sequencers::EUCLID,

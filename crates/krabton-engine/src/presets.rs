@@ -249,7 +249,6 @@ pub fn midi(kind: MidiFxKind) -> &'static [Preset] {
         K::HatRolls => HAT_ROLLS,
         K::Hook => HOOK,
         K::SlideBass => SLIDE_BASS,
-        K::Breakline => BREAKLINE,
         K::HomeRhythms => HOME_RHYTHMS,
         K::Inferno => crate::sequencers::inferno::PRESETS,
         _ => crate::sequencers::players::presets(kind),
@@ -1426,16 +1425,6 @@ static HOOK: &[Preset] = &[
     p("Busy Lead", &[("Density", N(0.8)), ("Range", N(8.0))]),
     p("Rising", &[("Shape", C("Rise")), ("Length", C("1 Bar"))]),
     p("Question and Answer", &[("Shape", C("Answer")), ("Length", C("4 Bars")), ("Change", N(0.8))]),
-];
-
-static BREAKLINE: &[Preset] = &[
-    p("Lullaby", &[]),
-    p("Music Box", &[("Rate", C("1/8")), ("Center", N(84.0)), ("Density", N(0.45)), ("Jumps", N(0.3)), ("Vary", N(0.15))]),
-    p("Bass Runs", &[("Style", C("Runs")), ("Center", N(43.0)), ("Density", N(0.9)), ("Ratchet", N(0.2)), ("Range", N(12.0))]),
-    p("Lead Runs", &[("Style", C("Runs")), ("Center", N(72.0)), ("Rate", C("1/32")), ("Density", N(0.85)), ("Vary", N(0.6))]),
-    p("Arp Rush", &[("Style", C("Arp Rush")), ("Rate", C("1/16 T")), ("Density", N(1.0)), ("Jumps", N(0.1))]),
-    p("Strings Rush", &[("Style", C("Arp Rush")), ("Center", N(60.0)), ("Density", N(1.0)), ("Ratchet", N(0.25)), ("Mutate", C("Every phrase"))]),
-    p("Acid Breaks", &[("Style", C("Acid")), ("Center", N(36.0)), ("Density", N(0.75)), ("Jumps", N(0.25)), ("Ratchet", N(0.15)), ("Accent", N(0.8))]),
 ];
 
 static SLIDE_BASS: &[Preset] = &[

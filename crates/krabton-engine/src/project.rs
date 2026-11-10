@@ -1145,6 +1145,8 @@ pub enum Instrument {
         #[serde(skip)]
         plans: crate::dsp::airway::PlansRef,
     },
+    /// Gabber: the hardcore kick, tuned to the key and driven (see `dsp::gabber`).
+    Gabber { preset: String, params: Vec<f32> },
     /// Breaks: a break cut on the grid and played again on the song's,
     /// shuffled, repeated, rolled, backwards, pitched (see `dsp::breaks`);
     /// without a sample, a break of its own.
@@ -1472,6 +1474,10 @@ impl Instrument {
         Instrument::Airway { preset: preset.to_string(), params, text, plans }
     }
 
+    pub fn gabber(preset: &str) -> Self {
+        Instrument::Gabber { preset: preset.to_string(), params: crate::dsp::gabber::preset(preset) }
+    }
+
     pub fn breaks(preset: &str) -> Self {
         // Its own break made now, not on the audio thread.
         crate::dsp::breaks::warm();
@@ -1568,6 +1574,7 @@ impl Instrument {
             Instrument::Theremin { .. } => "Theremin",
             Instrument::Granulator { .. } => "Granulator",
             Instrument::Breaks { .. } => "Breaks",
+            Instrument::Gabber { .. } => "Gabber",
             Instrument::Airway { .. } => "Airway",
             Instrument::Keytone { .. } => "Keytone",
             Instrument::Princess { .. } => "Analog Princess",
@@ -1598,6 +1605,7 @@ impl Instrument {
             Instrument::Theremin { preset, .. } => preset.clone(),
             Instrument::Granulator { preset, .. } => preset.clone(),
             Instrument::Breaks { preset, .. } => preset.clone(),
+            Instrument::Gabber { preset, .. } => preset.clone(),
             Instrument::Airway { preset, .. } => preset.clone(),
             Instrument::Keytone { preset, .. } => preset.clone(),
             Instrument::Princess { preset, .. } => preset.clone(),
@@ -2857,6 +2865,7 @@ impl Project {
                         params::fix_len(params, crate::dsp::airway::SPECS);
                         *plans = crate::dsp::airway::prepare(text, params[crate::dsp::airway::BODY].round() as u8);
                     }
+                    Some(Instrument::Gabber { params, .. }) => params::fix_len(params, crate::dsp::gabber::SPECS),
                     Some(Instrument::Breaks { params, sample, .. }) => {
                         params::fix_len(params, crate::dsp::breaks::SPECS);
                         crate::dsp::breaks::warm();

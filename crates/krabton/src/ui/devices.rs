@@ -2205,6 +2205,9 @@ impl App {
                             self.toast(msg);
                         }
                     }
+                    Instrument::Gabber { preset, params } => {
+                        super::gabber_view::panel(ui, Id::new(("gabber", track_id)), preset, params, &live, h - 36.0, mv.as_mut());
+                    }
                     Instrument::Breaks { preset, params, sample } => {
                         if let Some(msg) = super::breaks_view::breaks_panel(ui, Id::new(("breaks", track_id)), preset, params, sample, &live, h - 36.0, mv.as_mut()) {
                             self.toast(msg);

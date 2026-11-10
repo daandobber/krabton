@@ -78,6 +78,7 @@ pub mod tides;
 pub mod theremin;
 pub mod granulator;
 pub mod breaks;
+pub mod gabber;
 pub mod airway;
 pub mod princess;
 pub mod keytone;
